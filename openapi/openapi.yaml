@@ -1,0 +1,1638 @@
+openapi: 3.1.0
+info:
+  title: WtF API
+  version: "1"
+  description: |
+    Version 1 of the API, served under /api/v1. Within a version the API only
+    grows (new routes, optional fields, fields in answers); every answer names
+    the current revision in the `API-Revision` header. A breaking change would
+    become /api/v2, served next to /api/v1 for a while. A request for a
+    version the server doesn't serve gets an `unsupported-api-version`
+    problem that lists the versions it does serve (`supported`).
+
+    Where the Fuck: a register of the things you own and where they are.
+    Every endpoint calls one database function; see API.md for the semantics
+    and WTFD.md for the HTTP conventions.
+
+    - Numbers of attributes and items with a unit group are given and stored in
+      the SI base unit of the group's quantity; responses add a `display` value
+      in the best-scaling unit of the group.
+    - Errors are RFC 9457 problem details (`application/problem+json`).
+    - `GET /classes` and `GET /locations` support `ETag` / `If-None-Match`.
+    - Each tenant has its own hostname; the Host header selects the tenant.
+      POST /login sets the session cookie `wtf_session` (HttpOnly,
+      SameSite=Strict, Path=/api); send it back with every request. Only
+      /api/health, /openapi.yaml and /login work without it. Requests that
+      change something are refused (403) when their Origin header names
+      another site.
+
+servers:
+  - url: /api/v1
+
+security:
+  - session: []
+
+paths:
+  /health:
+    servers:
+      - url: /api
+    get:
+      summary: Database reachability
+      operationId: health
+      security: []
+      responses:
+        "200":
+          description: The database is reachable.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { const: ok }
+        "503": { $ref: "#/components/responses/Problem" }
+
+  /openapi.yaml:
+    get:
+      summary: This document
+      operationId: openapi
+      security: []
+      responses:
+        "200":
+          description: The OpenAPI description.
+          content:
+            application/yaml: {}
+
+  /quantities:
+    get:
+      summary: All quantities with their base units
+      operationId: quantityList
+      responses:
+        "200":
+          description: Quantities, alphabetically.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  allOf:
+                    - $ref: "#/components/schemas/Quantity"
+                    - type: object
+                      properties:
+                        base_unit: { $ref: "#/components/schemas/Unit" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /quantities/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: One quantity with its units and unit groups
+      operationId: quantityGet
+      responses:
+        "200":
+          description: The quantity.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Quantity"
+                  - type: object
+                    properties:
+                      base_unit: { $ref: "#/components/schemas/Unit" }
+                      units: { type: array, items: { $ref: "#/components/schemas/Unit" } }
+                      unit_groups:
+                        type: array
+                        items: { $ref: "#/components/schemas/NamedRef" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /units:
+    get:
+      summary: All units
+      operationId: unitList
+      parameters:
+        - { name: quantity, in: query, schema: { $ref: "#/components/schemas/Uuid" }, description: Only units of this quantity. }
+      responses:
+        "200":
+          description: Units, alphabetically.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Unit" } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /units/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: One unit
+      operationId: unitGet
+      responses:
+        "200":
+          description: The unit.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Unit" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /unit-groups:
+    get:
+      summary: All unit groups
+      operationId: unitGroupList
+      parameters:
+        - { name: quantity, in: query, schema: { $ref: "#/components/schemas/Uuid" }, description: Only groups of this quantity. }
+      responses:
+        "200":
+          description: Unit groups, alphabetically.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/UnitGroup" } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /unit-groups/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: One unit group with its units, smallest first
+      operationId: unitGroupGet
+      responses:
+        "200":
+          description: The unit group.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/UnitGroup"
+                  - type: object
+                    properties:
+                      units: { type: array, items: { $ref: "#/components/schemas/Unit" } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /attributes:
+    get:
+      summary: All attributes
+      operationId: attributeList
+      responses:
+        "200":
+          description: Attributes, alphabetically.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Attribute" } }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      summary: Create an attribute
+      operationId: attributeCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, datatype]
+              properties:
+                name: { type: string }
+                datatype: { $ref: "#/components/schemas/Datatype" }
+                unit_group:
+                  oneOf: [{ $ref: "#/components/schemas/Uuid" }, { type: "null" }]
+                  description: With a unit group, the datatype must be the group's quantity's datatype.
+      responses:
+        "201": { $ref: "#/components/responses/AttributeCreated" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /attributes/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: One attribute (with options for choice attributes)
+      operationId: attributeGet
+      responses:
+        "200": { $ref: "#/components/responses/Attribute" }
+        default: { $ref: "#/components/responses/Problem" }
+    patch:
+      summary: Change an attribute
+      operationId: attributePatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string }
+                datatype: { $ref: "#/components/schemas/Datatype" }
+                unit_group: { $ref: "#/components/schemas/Uuid" }
+      responses:
+        "200": { $ref: "#/components/responses/Attribute" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: Delete an attribute
+      operationId: attributeDelete
+      responses:
+        "204": { description: Deleted. }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /attributes/{id}/options:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: The options of a choice attribute
+      operationId: attributeOptionList
+      responses:
+        "200":
+          description: Options, alphabetically.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Option" } }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      summary: Add an option to a choice attribute
+      operationId: attributeOptionCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { type: string }
+      responses:
+        "201":
+          description: Created. `Location` points at /options/{id}.
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Option" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /options/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: One option
+      operationId: attributeOptionGet
+      responses:
+        "200": { $ref: "#/components/responses/Option" }
+        default: { $ref: "#/components/responses/Problem" }
+    patch:
+      summary: Rename an option
+      operationId: attributeOptionPatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/Option" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: Delete an option
+      operationId: attributeOptionDelete
+      responses:
+        "204": { description: Deleted. }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /classes:
+    get:
+      summary: The whole class tree
+      operationId: classList
+      parameters: [{ $ref: "#/components/parameters/IfNoneMatch" }]
+      responses:
+        "200": { $ref: "#/components/responses/Tree" }
+        "304": { $ref: "#/components/responses/NotModified" }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      summary: Create a class
+      operationId: classCreate
+      requestBody: { $ref: "#/components/requestBodies/TreeNodeCreate" }
+      responses:
+        "201":
+          description: Created. `Location` points at /classes/{id}.
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClassDetail" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /classes/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: One class with its effective attributes
+      operationId: classGet
+      responses:
+        "200": { $ref: "#/components/responses/Class" }
+        default: { $ref: "#/components/responses/Problem" }
+    patch:
+      summary: Rename, move or (un)mark a class as a container
+      operationId: classPatch
+      requestBody: { $ref: "#/components/requestBodies/TreeNodePatch" }
+      responses:
+        "200": { $ref: "#/components/responses/Class" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: Delete a class; with recursive=true also every class below it
+      description: |
+        Without `recursive`, the class must have no subclasses or items (else 409).
+        With `recursive=true`, the class and every class below it are deleted in one
+        transaction. If any of them has items, nothing is deleted (409), unless `force=true`,
+        which deletes the items too (with their values, stock rows and attachments; this
+        also needs the data write privilege). `GET /classes/{id}/deletion` previews it.
+      operationId: classDelete
+      parameters:
+        - { $ref: "#/components/parameters/Recursive" }
+        - { $ref: "#/components/parameters/Force" }
+      responses:
+        "200":
+          description: "recursive=true: what was deleted."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClassDeletion" }
+        "204": { description: Deleted (without recursive). }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /classes/{id}/deletion:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+    get:
+      summary: What a recursive delete of the class would delete; deletes nothing
+      description: |
+        Needs the same privileges as the delete. Unlike the delete, it reports items
+        without `force` instead of failing.
+      operationId: classDeletion
+      parameters:
+        - { $ref: "#/components/parameters/Force" }
+      responses:
+        "200":
+          description: What `DELETE /classes/{id}?recursive=true` would delete.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ClassDeletion" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /classes/{id}/attributes/{attribute}:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+      - { $ref: "#/components/parameters/Attribute" }
+    put:
+      summary: Assign an attribute to a class, or change its default
+      operationId: classAttributeSet
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                default:
+                  description: Optional default in the attribute's datatype (numbers in the base unit); null for none.
+                per_unit:
+                  type: boolean
+                  default: false
+                  description: Values live on stock rows (each physical thing or batch) instead of on the item. Can't change while values exist.
+                required:
+                  type: boolean
+                  default: false
+                  description: New items (or stock rows, for per-unit attributes) need a value unless there is a default.
+      responses:
+        "200": { $ref: "#/components/responses/Class" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: Remove an attribute from a class
+      operationId: classAttributeRemove
+      responses:
+        "200": { $ref: "#/components/responses/Class" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /items:
+    get:
+      summary: Items, alphabetically, paged
+      operationId: itemList
+      parameters:
+        - { name: class, in: query, schema: { $ref: "#/components/schemas/Uuid" }, description: Only items in this class or its subclasses. }
+        - name: search
+          in: query
+          schema: { type: string }
+          description: |
+            Words separated by spaces. Every word must occur, as a case-insensitive
+            substring, in the item name, a class in the item's class path, a text
+            or url value, or a choice value (including class defaults the item
+            shows). Different words may match in different places, so
+            "resistor 0805" finds 0805 resistors.
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Offset" }
+      responses:
+        "200":
+          description: One page of items.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - type: object
+                    properties:
+                      rows: { type: array, items: { $ref: "#/components/schemas/ItemListed" } }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      summary: Create an item
+      operationId: itemCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [class, name]
+              properties:
+                class: { $ref: "#/components/schemas/Uuid" }
+                name: { type: string }
+                unit_group:
+                  oneOf: [{ $ref: "#/components/schemas/Uuid" }, { type: "null" }]
+                  description: Unit group stock is measured in; none means pieces.
+                values:
+                  type: object
+                  description: Initial values, keyed by attribute id.
+                  additionalProperties: true
+      responses:
+        "201":
+          description: Created. `Location` points at /items/{id}.
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ItemDetail" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /items/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: One item with its values and stock rows
+      operationId: itemGet
+      responses:
+        "200": { $ref: "#/components/responses/Item" }
+        default: { $ref: "#/components/responses/Problem" }
+    patch:
+      summary: Change an item
+      operationId: itemPatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                class: { $ref: "#/components/schemas/Uuid" }
+                name: { type: string }
+                unit_group: { $ref: "#/components/schemas/Uuid" }
+      responses:
+        "200": { $ref: "#/components/responses/Item" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: Delete an item (it must have no stock)
+      operationId: itemDelete
+      responses:
+        "204": { description: Deleted. }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /items/{id}/values/{attribute}:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+      - { $ref: "#/components/parameters/Attribute" }
+    put:
+      summary: Set one value of an item
+      operationId: valueSet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [value]
+              properties:
+                value:
+                  description: The value in the attribute's datatype; numbers in the base unit.
+      responses:
+        "200": { $ref: "#/components/responses/Item" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: Remove one value of an item
+      operationId: valueDelete
+      responses:
+        "200": { $ref: "#/components/responses/Item" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /locations:
+    get:
+      summary: The whole location tree
+      operationId: locationList
+      parameters: [{ $ref: "#/components/parameters/IfNoneMatch" }]
+      responses:
+        "200": { $ref: "#/components/responses/Tree" }
+        "304": { $ref: "#/components/responses/NotModified" }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      summary: Create a location
+      operationId: locationCreate
+      requestBody: { $ref: "#/components/requestBodies/TreeNodeCreate" }
+      responses:
+        "201":
+          description: Created. `Location` points at /locations/{id}.
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Location" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /locations/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: One location
+      operationId: locationGet
+      responses:
+        "200": { $ref: "#/components/responses/Location" }
+        default: { $ref: "#/components/responses/Problem" }
+    patch:
+      summary: Rename and/or move a location
+      operationId: locationPatch
+      requestBody: { $ref: "#/components/requestBodies/TreeNodePatch" }
+      responses:
+        "200": { $ref: "#/components/responses/Location" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: Delete a location; with recursive=true also every location below it
+      description: |
+        Without `recursive`, the location must have no sublocations or stock (else 409).
+        With `recursive=true`, the location and every location below it are deleted in one
+        transaction. If there is stock in any of them, nothing is deleted (409), unless
+        `force=true`, which deletes those stock rows too. `GET /locations/{id}/deletion`
+        previews it.
+      operationId: locationDelete
+      parameters:
+        - { $ref: "#/components/parameters/Recursive" }
+        - { $ref: "#/components/parameters/Force" }
+      responses:
+        "200":
+          description: "recursive=true: what was deleted."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LocationDeletion" }
+        "204": { description: Deleted (without recursive). }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /locations/{id}/deletion:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+    get:
+      summary: What a recursive delete of the location would delete; deletes nothing
+      description: |
+        Needs the same privileges as the delete. Unlike the delete, it reports stock
+        without `force` instead of failing.
+      operationId: locationDeletion
+      parameters:
+        - { $ref: "#/components/parameters/Force" }
+      responses:
+        "200":
+          description: What `DELETE /locations/{id}?recursive=true` would delete.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LocationDeletion" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /stock:
+    get:
+      summary: Stock rows, paged
+      operationId: stockList
+      parameters:
+        - { name: item, in: query, schema: { $ref: "#/components/schemas/Uuid" }, description: Only this item. }
+        - { name: location, in: query, schema: { $ref: "#/components/schemas/Uuid" }, description: Only this location and everything below it. }
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Offset" }
+      responses:
+        "200":
+          description: One page of stock rows.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - type: object
+                    properties:
+                      rows: { type: array, items: { $ref: "#/components/schemas/Stock" } }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      summary: Register stock of an item at a location
+      operationId: stockCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [item, location]
+              properties:
+                item: { $ref: "#/components/schemas/Uuid" }
+                location: { $ref: "#/components/schemas/Uuid" }
+                quantity:
+                  type: [number, "null"]
+                  description: In the base unit of the item's unit group (pieces if none); null = not counted.
+                values:
+                  type: object
+                  description: Per-unit values, keyed by attribute id.
+                  additionalProperties: true
+      responses:
+        "201":
+          description: Created. `Location` points at /stock/{id}.
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Stock" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /stock/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: One stock row
+      operationId: stockGet
+      responses:
+        "200": { $ref: "#/components/responses/Stock" }
+        default: { $ref: "#/components/responses/Problem" }
+    patch:
+      summary: Correct a stock row
+      operationId: stockPatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                item: { $ref: "#/components/schemas/Uuid" }
+                location: { $ref: "#/components/schemas/Uuid" }
+                quantity: { type: [number, "null"] }
+      responses:
+        "200": { $ref: "#/components/responses/Stock" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: Delete a stock row
+      operationId: stockDelete
+      responses:
+        "204": { description: Deleted. }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /stock/{id}/move:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Move (part of) a stock row to another location
+      description: |
+        Without quantity the whole row moves. If the destination already holds
+        exactly one counted row of the same item, the amount is merged into it.
+      operationId: stockMove
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [location]
+              properties:
+                location: { $ref: "#/components/schemas/Uuid" }
+                quantity: { type: [number, "null"] }
+      responses:
+        "200": { $ref: "#/components/responses/Stock" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /stock/{id}/values/{attribute}:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+      - { $ref: "#/components/parameters/Attribute" }
+    put:
+      summary: Set one per-unit value of a stock row
+      operationId: stockValueSet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [value]
+              properties:
+                value:
+                  description: The value in the attribute's datatype; numbers in the base unit.
+      responses:
+        "200": { $ref: "#/components/responses/Stock" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: Remove one per-unit value of a stock row
+      operationId: stockValueDelete
+      responses:
+        "200": { $ref: "#/components/responses/Stock" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /items/{id}/attachments:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Attach a file to a item
+      operationId: itemAttachmentCreate
+      requestBody: { $ref: "#/components/requestBodies/Upload" }
+      responses:
+        "201": { $ref: "#/components/responses/AttachmentCreated" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /stock/{id}/attachments:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Attach a file to a stock row
+      operationId: stockAttachmentCreate
+      requestBody: { $ref: "#/components/requestBodies/Upload" }
+      responses:
+        "201": { $ref: "#/components/responses/AttachmentCreated" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /locations/{id}/attachments:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Attach a file to a location
+      operationId: locationAttachmentCreate
+      requestBody: { $ref: "#/components/requestBodies/Upload" }
+      responses:
+        "201": { $ref: "#/components/responses/AttachmentCreated" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /classes/{id}/attachments:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Attach a file to a class
+      operationId: classAttachmentCreate
+      requestBody: { $ref: "#/components/requestBodies/Upload" }
+      responses:
+        "201": { $ref: "#/components/responses/AttachmentCreated" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /attachments/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: An attachment's metadata
+      operationId: attachmentGet
+      responses:
+        "200": { $ref: "#/components/responses/Attachment" }
+        default: { $ref: "#/components/responses/Problem" }
+    patch:
+      summary: Change an attachment's file name, caption or primary photo flag
+      operationId: attachmentPatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                file_name: { type: string }
+                caption: { type: [string, "null"] }
+                primary_photo: { type: boolean, description: true replaces any previous primary photo of the object; images only. }
+      responses:
+        "200": { $ref: "#/components/responses/Attachment" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: Delete an attachment (the file is removed later by wtfd gc)
+      operationId: attachmentDelete
+      responses:
+        "204": { description: Deleted. }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /attachments/{id}/content:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: An attachment's content
+      description: |
+        Images (except SVG), PDF and plain text are sent inline, everything
+        else as a download. The ETag is the SHA-256 of the content, which never
+        changes; Range requests are supported.
+      operationId: attachmentContent
+      responses:
+        "200":
+          description: The file.
+          headers:
+            ETag: { schema: { type: string } }
+            Content-Disposition: { schema: { type: string } }
+          content:
+            "*/*": {}
+        "304": { description: Not modified. }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /login:
+    post:
+      summary: Log in to the tenant of the request's hostname
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string }
+      responses:
+        "200":
+          description: |
+            Logged in. The session is in the cookie `wtf_session`, never in the body;
+            it expires after 30 days without use, and every answer renews it.
+          headers:
+            Set-Cookie:
+              description: "wtf_session=<token>; Path=/api; Max-Age=2592000; HttpOnly; SameSite=Strict (and Secure over HTTPS)"
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  account: { $ref: "#/components/schemas/Account" }
+                  tenant: { $ref: "#/components/schemas/Tenant" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "429":
+          description: Too many failed logins; one attempt per minute until a login succeeds.
+          headers:
+            Retry-After: { schema: { type: integer } }
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
+  /logout:
+    post:
+      summary: End the current session
+      operationId: logout
+      responses:
+        "204":
+          description: Logged out; the session cookie is deleted.
+          headers:
+            Set-Cookie: { schema: { type: string } }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /me:
+    get:
+      summary: The logged-in account and its tenant
+      operationId: me
+      responses:
+        "200":
+          description: The account.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Account"
+                  - type: object
+                    properties:
+                      tenant: { $ref: "#/components/schemas/Tenant" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /me/password:
+    put:
+      summary: Change the own password (ends all other sessions)
+      operationId: passwordChange
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [current, new]
+              properties:
+                current: { type: string }
+                new: { type: string, minLength: 8, description: At most 72 bytes. }
+      responses:
+        "204": { description: Changed. }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /accounts:
+    get:
+      summary: The tenant's accounts (account read privilege)
+      operationId: accountList
+      responses:
+        "200":
+          description: Accounts, by email.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Account" } }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      summary: Create an account (account write privilege)
+      operationId: accountCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: { type: string }
+                password: { type: [string, "null"], description: Without a password the account can't log in. }
+                data_privilege: { $ref: "#/components/schemas/Privilege" }
+                model_privilege: { $ref: "#/components/schemas/Privilege" }
+                account_privilege: { $ref: "#/components/schemas/Privilege" }
+                history_privilege: { $ref: "#/components/schemas/Privilege" }
+      responses:
+        "201":
+          description: Created. `Location` points at /accounts/{id}.
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /accounts/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: One account (account read privilege)
+      operationId: accountGet
+      responses:
+        "200":
+          description: The account.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        default: { $ref: "#/components/responses/Problem" }
+    patch:
+      summary: Change an account (account write privilege)
+      description: Changing the password ends the account's sessions. You can't remove your own account privilege.
+      operationId: accountPatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                email: { type: string }
+                password: { type: [string, "null"], description: null removes the password (the account can't log in). }
+                data_privilege: { $ref: "#/components/schemas/Privilege" }
+                model_privilege: { $ref: "#/components/schemas/Privilege" }
+                account_privilege: { $ref: "#/components/schemas/Privilege" }
+                history_privilege: { $ref: "#/components/schemas/Privilege" }
+      responses:
+        "200":
+          description: The account.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Account" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: Delete an account (account write privilege; not your own)
+      description: The account is marked deleted (history keeps referring to it); its email can be used again.
+      operationId: accountDelete
+      responses:
+        "204": { description: Deleted. }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /items/{id}/history:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: History of an item
+      description: The item, its values, its stock rows and their per-unit values, and the attachments of the item and its stock rows. Newest first; also for deleted objects. Needs the history privilege.
+      operationId: itemHistory
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Offset" }
+      responses:
+        "200": { $ref: "#/components/responses/History" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /stock/{id}/history:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: History of a stock row
+      description: The row, its per-unit values and its attachments. Newest first; also for deleted objects. Needs the history privilege.
+      operationId: stockHistory
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Offset" }
+      responses:
+        "200": { $ref: "#/components/responses/History" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /locations/{id}/history:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: History of a location
+      description: The location, stock rows that were there (including arrivals and departures) and its attachments. Newest first; also for deleted objects. Needs the history privilege.
+      operationId: locationHistory
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Offset" }
+      responses:
+        "200": { $ref: "#/components/responses/History" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /classes/{id}/history:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: History of a class
+      description: The class, its attribute assignments and its attachments. Newest first; also for deleted objects. Needs the history privilege.
+      operationId: classHistory
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Offset" }
+      responses:
+        "200": { $ref: "#/components/responses/History" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /attributes/{id}/history:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: History of an attribute
+      description: The attribute and its options. Newest first; also for deleted objects. Needs the history privilege.
+      operationId: attributeHistory
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Offset" }
+      responses:
+        "200": { $ref: "#/components/responses/History" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /accounts/{id}/history:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: History of an account
+      description: Changes to the account itself. Newest first; also for deleted objects. Needs the history privilege.
+      operationId: accountHistory
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Offset" }
+      responses:
+        "200": { $ref: "#/components/responses/History" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /codes/{code}:
+    parameters:
+      - name: code
+        in: path
+        required: true
+        description: A label code. Case and hyphens are ignored; I, L, O and U are invalid (clients map I/L to 1 and O to 0).
+        schema: { type: string }
+    get:
+      summary: What a label code belongs to
+      operationId: codeResolve
+      responses:
+        "200":
+          description: The object the code belongs to.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  type: { type: string, enum: [location, item, stock] }
+                  object:
+                    oneOf:
+                      - $ref: "#/components/schemas/Location"
+                      - $ref: "#/components/schemas/ItemDetail"
+                      - $ref: "#/components/schemas/Stock"
+        default: { $ref: "#/components/responses/Problem" }
+
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: wtf_session
+      description: The session cookie set by POST /login, on the tenant's own hostname.
+
+  headers:
+    API-Revision:
+      description: The revision of API version 1 the server implements; it grows with every addition.
+      schema: { type: integer }
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/Uuid" }
+    Attribute:
+      name: attribute
+      in: path
+      required: true
+      description: Attribute id.
+      schema: { $ref: "#/components/schemas/Uuid" }
+    Recursive:
+      name: recursive
+      in: query
+      description: Delete everything below as well.
+      schema: { type: boolean, default: false }
+    Force:
+      name: force
+      in: query
+      description: "With recursive: also delete what uses the deleted nodes (items of classes, stock at locations)."
+      schema: { type: boolean, default: false }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+    Offset:
+      name: offset
+      in: query
+      schema: { type: integer, minimum: 0, default: 0 }
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      description: The ETag of the tree the client already has.
+      schema: { type: string }
+
+  requestBodies:
+    Upload:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            required: [file]
+            properties:
+              file:
+                type: string
+                format: binary
+                description: The file; its file name and Content-Type are kept (the type is detected when missing or application/octet-stream).
+              caption: { type: string }
+              primary_photo: { type: boolean, description: Make it the object's primary photo (images only). }
+    TreeNodeCreate:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [name]
+            properties:
+              name: { type: string }
+              parent:
+                oneOf: [{ $ref: "#/components/schemas/Uuid" }, { type: "null" }]
+                description: Parent node; none for a root.
+              container:
+                type: boolean
+                default: false
+                description: Holds only other classes (no items) or locations (no stock).
+              grid:
+                type: object
+                description: |
+                  Locations only: also create a compartment below the new location for every
+                  cell of a grid, named like spreadsheet cells (columns A, B, …, Z, AA, …; rows
+                  1 …), e.g. 8 × 5 gives A1 … H5. The location becomes a container. Nothing
+                  about the grid is stored.
+                additionalProperties: false
+                required: [columns, rows]
+                properties:
+                  columns: { type: integer, minimum: 1 }
+                  rows: { type: integer, minimum: 1 }
+                  confirm:
+                    type: boolean
+                    default: false
+                    description: |
+                      Required (true) when the grid creates more than 1000 locations (compartments
+                      plus the location itself); otherwise the request fails with 400. Ask the
+                      user first.
+    TreeNodePatch:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            properties:
+              name: { type: string }
+              parent:
+                oneOf: [{ $ref: "#/components/schemas/Uuid" }, { type: "null" }]
+                description: New parent; null makes it a root.
+              container:
+                type: boolean
+                description: Rejected (422) while the class has items or the location has stock.
+
+  responses:
+    History:
+      description: One page of history entries, newest first.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Page"
+              - type: object
+                properties:
+                  rows: { type: array, items: { $ref: "#/components/schemas/HistoryEntry" } }
+    Attachment:
+      description: The attachment.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Attachment" }
+    AttachmentCreated:
+      description: Created. `Location` points at /attachments/{id}.
+      headers:
+        Location: { schema: { type: string } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Attachment" }
+    Problem:
+      description: An error (RFC 9457).
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    NotModified:
+      description: The client's tree is current.
+      headers:
+        ETag: { schema: { type: string } }
+    Tree:
+      description: The tree with its version.
+      headers:
+        ETag: { schema: { type: string } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Tree" }
+    AttributeCreated:
+      description: Created. `Location` points at /attributes/{id}.
+      headers:
+        Location: { schema: { type: string } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Attribute" }
+    Attribute:
+      description: The attribute.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Attribute" }
+    Option:
+      description: The option.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Option" }
+    Class:
+      description: The class.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ClassDetail" }
+    Location:
+      description: The location.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Location" }
+    Item:
+      description: The item.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ItemDetail" }
+    Stock:
+      description: The stock row.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Stock" }
+
+  schemas:
+    Uuid:
+      type: string
+      format: uuid
+    ClassDeletion:
+      type: object
+      properties:
+        classes:
+          type: array
+          description: Deepest first.
+          items:
+            type: object
+            properties:
+              id: { $ref: "#/components/schemas/Uuid" }
+              path: { type: string }
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { $ref: "#/components/schemas/Uuid" }
+              code: { type: string }
+              name: { type: string }
+              class: { $ref: "#/components/schemas/Uuid" }
+        stock: { type: integer, description: Number of stock rows of those items. }
+    LocationDeletion:
+      type: object
+      properties:
+        locations:
+          type: array
+          description: Deepest first.
+          items:
+            type: object
+            properties:
+              id: { $ref: "#/components/schemas/Uuid" }
+              code: { type: string }
+              path: { type: string }
+        stock:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { $ref: "#/components/schemas/Uuid" }
+              code: { type: string }
+              item:
+                type: object
+                properties:
+                  id: { $ref: "#/components/schemas/Uuid" }
+                  code: { type: string }
+                  name: { type: string }
+              location: { $ref: "#/components/schemas/Uuid" }
+              quantity: { type: ["number", "null"] }
+
+    Datatype:
+      type: string
+      enum: [text, integer, float, date, boolean, url, choice]
+
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: { type: string, examples: [/problems/not-found] }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        sqlstate: { type: string, description: PostgreSQL error code, when the error came from the database. }
+
+    NamedRef:
+      type: object
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        name: { type: string }
+
+    PathEntry:
+      $ref: "#/components/schemas/NamedRef"
+
+    Page:
+      type: object
+      properties:
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+        rows: { type: array }
+
+    Quantity:
+      type: object
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        name: { type: string }
+        datatype: { type: string, enum: [integer, float] }
+
+    Unit:
+      type: object
+      description: base = value × base_factor + base_offset.
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        name: { type: string }
+        symbol: { type: string }
+        quantity: { $ref: "#/components/schemas/Quantity" }
+        base_factor: { type: number }
+        base_offset: { type: number }
+        is_base: { type: boolean }
+
+    UnitGroup:
+      type: object
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        name: { type: string }
+        quantity: { $ref: "#/components/schemas/Quantity" }
+        base_unit: { $ref: "#/components/schemas/Unit" }
+
+    HistoryEntry:
+      type: object
+      properties:
+        id: { type: integer }
+        happened_at: { type: string, format: date-time, description: Start of the transaction. }
+        transaction: { type: string, description: Entries of one API call share it. }
+        account:
+          description: Who made the change; null for changes outside the API.
+          oneOf:
+            - type: object
+              properties:
+                id: { $ref: "#/components/schemas/Uuid" }
+                email: { type: string }
+                deleted: { type: boolean }
+            - type: "null"
+        table: { type: string, description: e.g. item, value, stock, location. }
+        operation: { type: string, enum: [insert, update, delete] }
+        data: { type: object, description: The row after the change (before it, for a delete). }
+        changes:
+          type: [object, "null"]
+          description: 'Updates only: {column: {old, new}}. A password change appears as {"password": "changed"}.'
+
+    Privilege:
+      type: string
+      enum: [none, read_only, read_write]
+
+    Account:
+      type: object
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        email: { type: string }
+        has_password: { type: boolean }
+        data_privilege: { $ref: "#/components/schemas/Privilege" }
+        model_privilege: { $ref: "#/components/schemas/Privilege" }
+        account_privilege: { $ref: "#/components/schemas/Privilege" }
+        history_privilege: { $ref: "#/components/schemas/Privilege", description: read_write counts as read_only. }
+        deleted: { type: boolean, description: Deleted accounts can't log in; they stay visible because history refers to them. }
+
+    Tenant:
+      type: object
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        name: { type: string }
+        hostname: { type: string }
+
+    Attachment:
+      type: object
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        file_name: { type: string }
+        content_type: { type: string }
+        size: { type: integer }
+        sha256: { type: string, description: Hex SHA-256 of the content. }
+        caption: { type: [string, "null"] }
+        primary_photo: { type: boolean }
+
+    Attachments:
+      type: array
+      description: The primary photo first, then by file name.
+      items: { $ref: "#/components/schemas/Attachment" }
+
+    Values:
+      type: array
+      description: Own values plus class defaults (is_default) where there is no own value.
+      items:
+        type: object
+        properties:
+          attribute: { $ref: "#/components/schemas/Attribute" }
+          value: { description: The value in the attribute's datatype; numbers in the base unit. }
+          unit: { oneOf: [{ $ref: "#/components/schemas/Unit" }, { type: "null" }] }
+          display: { $ref: "#/components/schemas/Display" }
+          is_default: { type: boolean, description: The class default, shown because there is no own value. }
+
+    Missing:
+      type: array
+      description: Required attributes without a value (and without a default).
+      items: { $ref: "#/components/schemas/NamedRef" }
+
+    Display:
+      type: [object, "null"]
+      description: A base-unit number in the best-scaling unit of the group.
+      properties:
+        value: { type: number }
+        unit: { $ref: "#/components/schemas/Unit" }
+
+    Attribute:
+      type: object
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        name: { type: string }
+        datatype: { $ref: "#/components/schemas/Datatype" }
+        unit_group:
+          oneOf: [{ $ref: "#/components/schemas/UnitGroup" }, { type: "null" }]
+        options:
+          type: array
+          description: Only for choice attributes in GET /attributes/{id}.
+          items: { $ref: "#/components/schemas/NamedRef" }
+
+    Option:
+      type: object
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        attribute: { $ref: "#/components/schemas/Uuid" }
+        name: { type: string }
+
+    TreeNode:
+      type: object
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        code: { type: string, description: Label code; location trees only. }
+        name: { type: string }
+        parent: { oneOf: [{ $ref: "#/components/schemas/Uuid" }, { type: "null" }] }
+        container: { type: boolean }
+        children: { type: array, items: { $ref: "#/components/schemas/TreeNode" } }
+
+    Tree:
+      type: object
+      properties:
+        version: { type: integer }
+        unchanged: { type: boolean }
+        tree: { type: array, items: { $ref: "#/components/schemas/TreeNode" } }
+
+    ClassDetail:
+      type: object
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        name: { type: string }
+        parent: { oneOf: [{ $ref: "#/components/schemas/Uuid" }, { type: "null" }] }
+        container: { type: boolean, description: Holds only other classes, no items. }
+        path: { type: array, items: { $ref: "#/components/schemas/PathEntry" } }
+        attributes:
+          type: array
+          items:
+            type: object
+            properties:
+              attribute: { $ref: "#/components/schemas/Attribute" }
+              defined_on_class: { $ref: "#/components/schemas/Uuid" }
+              inherited: { type: boolean }
+              default: { description: The default in the attribute's datatype, or null. }
+              default_display: { $ref: "#/components/schemas/Display" }
+              per_unit: { type: boolean }
+              required: { type: boolean }
+        attachments: { $ref: "#/components/schemas/Attachments" }
+
+    Location:
+      type: object
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        code: { type: string, description: Label code (Crockford Base32), e.g. 1A7K. }
+        name: { type: string }
+        parent: { oneOf: [{ $ref: "#/components/schemas/Uuid" }, { type: "null" }] }
+        container: { type: boolean, description: Holds only other locations, no stock. }
+        path: { type: array, items: { $ref: "#/components/schemas/PathEntry" } }
+        attachments:
+          $ref: "#/components/schemas/Attachments"
+          description: Only in GET /locations/{id}.
+
+    ItemSummary:
+      type: object
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        code: { type: string, description: Label code (Crockford Base32), e.g. 1A7K. }
+        name: { type: string }
+        class: { $ref: "#/components/schemas/Uuid" }
+        unit_group:
+          oneOf: [{ $ref: "#/components/schemas/UnitGroup" }, { type: "null" }]
+
+    ItemListed:
+      allOf:
+        - $ref: "#/components/schemas/ItemSummary"
+        - type: object
+          properties:
+            stock:
+              type: object
+              properties:
+                total: { type: number }
+                unit: { oneOf: [{ $ref: "#/components/schemas/Unit" }, { type: "null" }] }
+                display: { $ref: "#/components/schemas/Display" }
+                uncounted: { type: boolean }
+            incomplete: { type: boolean, description: The item or one of its stock rows lacks a required value. }
+            photo: { oneOf: [{ $ref: "#/components/schemas/Attachment" }, { type: "null" }] }
+
+    ItemDetail:
+      type: object
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        code: { type: string, description: Label code (Crockford Base32), e.g. 1A7K. }
+        name: { type: string }
+        class: { $ref: "#/components/schemas/ClassDetail" }
+        unit_group:
+          oneOf: [{ $ref: "#/components/schemas/UnitGroup" }, { type: "null" }]
+        values: { $ref: "#/components/schemas/Values" }
+        missing: { $ref: "#/components/schemas/Missing" }
+        photo: { oneOf: [{ $ref: "#/components/schemas/Attachment" }, { type: "null" }] }
+        attachments: { $ref: "#/components/schemas/Attachments" }
+        stock:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { $ref: "#/components/schemas/Uuid" }
+              code: { type: string, description: Label code (Crockford Base32), e.g. 1A7K. }
+              location: { $ref: "#/components/schemas/Uuid" }
+              quantity: { type: [number, "null"] }
+              display: { $ref: "#/components/schemas/Display" }
+              values: { $ref: "#/components/schemas/Values" }
+              missing: { $ref: "#/components/schemas/Missing" }
+              attachments: { $ref: "#/components/schemas/Attachments" }
+
+    Stock:
+      type: object
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        code: { type: string, description: Label code (Crockford Base32), e.g. 1A7K. }
+        item: { $ref: "#/components/schemas/ItemSummary" }
+        location: { $ref: "#/components/schemas/Uuid" }
+        quantity: { type: [number, "null"] }
+        unit: { oneOf: [{ $ref: "#/components/schemas/Unit" }, { type: "null" }] }
+        display: { $ref: "#/components/schemas/Display" }
+        values:
+          $ref: "#/components/schemas/Values"
+          description: Not in GET /stock list rows.
+        missing:
+          $ref: "#/components/schemas/Missing"
+          description: Not in GET /stock list rows.
+        attachments:
+          $ref: "#/components/schemas/Attachments"
+          description: Not in GET /stock list rows.

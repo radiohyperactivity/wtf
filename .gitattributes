@@ -1,0 +1,10 @@
+# Text files are stored with Unix line endings (LF) in the repository, on
+# every system, so diffs look the same on Windows, macOS and Linux.
+* text=auto eol=lf
+
+# Windows scripts keep Windows line endings in the working tree.
+*.ps1 text eol=crlf
+
+# Binary files are never touched.
+*.png binary
+*.jpg binary

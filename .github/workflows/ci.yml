@@ -1,0 +1,61 @@
+# CI: on every push and pull request, GitHub's own machines check the code.
+# They only run the scripts in scripts/, so anyone can run exactly the same
+# checks locally. Pull requests from outside contributors only run after the
+# owner approves them (a repository setting), and no job here runs on the
+# owner's own machines; releases will get a workflow of their own.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    # A throw-away PostgreSQL next to the job, for the integration tests.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # psql (scripts/test-db.sh) as the superuser of that server
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      # The roles' passwords; only valid on that throw-away server
+      WTFD_DBA_DATABASE_PASSWORD: ci-dba-password
+      WTFD_API_DATABASE_PASSWORD: ci-api-password
+      WTFD_TEST_DATABASE_NAME: wtf_test
+      WTFD_TEST_DATABASE_HOST: localhost
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Create the test database
+        run: scripts/test-db.sh
+      - name: Formatting, vet and all tests
+        run: scripts/test.sh
+
+  build:
+    name: Build for every platform
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build wtf and wtfd
+        run: scripts/build.sh
