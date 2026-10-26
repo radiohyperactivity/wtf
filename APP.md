@@ -80,7 +80,7 @@ Every screen has a URL. In the web app it shows in the address bar, and it works
 | `/stock/1C3D` | A stock row: quantity, location, per-unit values; move it (all or part), or edit it. |
 | `/me` | Your account: email, privileges, change password, log out. |
 
-**Choosing things:** wherever a location or class must be chosen, a picker with search and the tree replaces the CLI's typing with Tab. Units work as in the CLI: you can type `12mm` or `2.5 m` into a number field.
+**Choosing things:** wherever a location or class must be chosen, a picker with search and the tree replaces the CLI's typing with Tab. Units work as in the CLI: you can type `12mm` or `2.5 m` into a number field, and the app converts and checks it as you type, with the same rules as the CLI (decision 1).
 
 ## Layout: one design for every screen size
 
@@ -118,7 +118,7 @@ Testing uses `flutter_test`, which is built into Flutter.
 
 ## Decisions
 
-1. **Numbers with units are converted on the server.** The API accepts a number with its unit (`"12 mm"`) wherever it expects a number, so every client shares one implementation (an addition: API revision 2).
+1. **Numbers with units are converted by each client, for now.** The API keeps taking numbers in the base unit of the quantity, as before. Each client turns `12mm` into `0.012` itself and checks it while you type, so mistakes are caught at once. The CLI does this today (`internal/cli/units.go`), and the apps get the same rules in Dart. Doing it on the server was tried, and set aside because prompts and forms could then only report mistakes when saving.
 2. **No `--dev-origin` for now.** Development uses the Windows app, which needs nothing on the server, and the web app is tested through `--web-root`. The switch can come later if web development without hot reload becomes a nuisance.
 3. **The start screen is search.**
 4. **The name under the icon is "WtF".** If the stores object to "Where the Fxxx", WtF can also stand for "Where to Find".
