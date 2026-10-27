@@ -75,12 +75,15 @@ class Quantity {
     required this.id,
     required this.name,
     required this.datatype,
+    this.baseSymbol = '',
   });
 
   factory Quantity.fromJson(Json json) => Quantity(
     id: json['id'] as int,
     name: json['name'] as String,
     datatype: json['datatype'] as String,
+    baseSymbol:
+        (_obj(json['base_unit']) ?? const {})['symbol'] as String? ?? '',
   );
 
   final int id;
@@ -88,6 +91,64 @@ class Quantity {
 
   /// integer or float.
   final String datatype;
+
+  /// The symbol of the unit numbers are stored in (API revision 5).
+  final String baseSymbol;
+}
+
+/// The answer of POST /units/import: what was (or would be) added, how much
+/// was there already, and the conflicts.
+class UnitImport {
+  const UnitImport({
+    required this.applied,
+    required this.quantities,
+    required this.families,
+    required this.units,
+    required this.existing,
+    required this.conflicts,
+  });
+
+  factory UnitImport.fromJson(Json json) {
+    List<Json> added(String kind) =>
+        _list((json[kind] as Json)['added']).toList();
+    int existing(String kind) =>
+        (((json[kind] as Json)['existing'] as List?) ?? const []).length;
+    return UnitImport(
+      applied: json['applied'] as bool,
+      quantities: [for (final q in added('quantities')) '${q['name']}'],
+      families: [
+        for (final f in added('families')) '${f['quantity']} › ${f['name']}',
+      ],
+      units: [
+        for (final u in added('units'))
+          ('${u['quantity']} › ${u['family']}', '${u['symbol']}'),
+      ],
+      existing:
+          existing('quantities') + existing('families') + existing('units'),
+      conflicts: [
+        for (final c in _list(json['conflicts']))
+          ('${c['where']}', '${c['message']}'),
+      ],
+    );
+  }
+
+  final bool applied;
+
+  /// Names of quantities added; families as "Quantity › Family".
+  final List<String> quantities;
+  final List<String> families;
+
+  /// (Quantity › Family, symbol) of each unit added.
+  final List<(String, String)> units;
+
+  /// How many quantities, families and units were there already.
+  final int existing;
+
+  /// (where, message) of each conflict.
+  final List<(String, String)> conflicts;
+
+  bool get nothingNew =>
+      quantities.isEmpty && families.isEmpty && units.isEmpty;
 }
 
 /// base = value × baseFactor + baseOffset. Each unit is in one family of its

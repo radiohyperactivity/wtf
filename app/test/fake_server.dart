@@ -252,6 +252,90 @@ class FakeServer {
     'history_privilege': 'read_only',
   };
 
+  /// The bodies of POST /units/import, as sent, with dry_run.
+  final List<(String, bool)> unitImports = [];
+
+  /// POST /units/import, as the server does it for files that only add
+  /// quantities, or add to Voltage: conflicts when a quantity named Voltage
+  /// has another base unit.
+  Map<String, dynamic> _importUnits(
+    Map<String, dynamic> file,
+    String text, {
+    required bool dryRun,
+  }) {
+    final added = {'quantities': [], 'families': [], 'units': []};
+    final existing = {'quantities': [], 'families': [], 'units': []};
+    final conflicts = [];
+    final newFamilies = <Map<String, dynamic>>[];
+    for (final q in (file['quantities'] as List).cast<Map<String, dynamic>>()) {
+      final name = q['name'] as String;
+      if (name == 'Voltage') {
+        if ((q['base_unit'] as Map)['symbol'] != 'V') {
+          conflicts.add({
+            'where': 'Voltage',
+            'message': 'There is a quantity Voltage already, with base unit V',
+          });
+          continue;
+        }
+        existing['quantities']!.add({'name': name});
+      } else {
+        added['quantities']!.add({'name': name});
+      }
+      final quantity = {
+        'id': 2000 + newFamilies.length,
+        'name': name,
+        'datatype': 'float',
+      };
+      for (final f
+          in ((q['families'] as List?) ?? []).cast<Map<String, dynamic>>()) {
+        final family = f['name'] as String;
+        final units = [];
+        for (final u
+            in ((f['units'] as List?) ?? []).cast<Map<String, dynamic>>()) {
+          final known =
+              family == 'Voltage' &&
+              (u['symbol'] == 'V' || u['symbol'] == 'mV');
+          (known ? existing : added)['units']!.add({
+            'quantity': name,
+            'family': family,
+            'symbol': u['symbol'],
+            'name': u['name'],
+          });
+          units.add({
+            'id': 3000 + units.length,
+            'name': u['name'],
+            'symbol': u['symbol'],
+            'family': {'id': 2000 + newFamilies.length, 'name': family},
+            'quantity': quantity,
+            'base_factor': u['factor'],
+            'base_offset': 0,
+          });
+        }
+        if (family == 'Voltage') {
+          existing['families']!.add({'quantity': name, 'name': family});
+        } else {
+          added['families']!.add({'quantity': name, 'name': family});
+          newFamilies.add({
+            'id': 2000 + newFamilies.length,
+            'name': family,
+            'quantity': quantity,
+            'units': units,
+          });
+        }
+      }
+    }
+    unitImports.add((text, dryRun));
+    final applied = !dryRun && conflicts.isEmpty;
+    if (applied) families.addAll(newFamilies);
+    return {
+      'applied': applied,
+      'dry_run': dryRun,
+      for (final k in added.keys)
+        k: {'added': added[k], 'existing': existing[k]},
+      'conflicts': conflicts,
+    };
+  }
+
   /// The where filters of the last GET /items, as sent.
   String? lastWhere;
 
@@ -413,6 +497,10 @@ class FakeServer {
           }
         }
         return _problem(404, 'Not found');
+      case ('POST', ['units', 'import']):
+        return _json(
+          _importUnits(body!, req.body, dryRun: q['dry_run'] == 'true'),
+        );
       case ('GET', ['unit-families']):
         return _json(families);
       case ('GET', ['units']):

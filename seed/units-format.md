@@ -141,3 +141,4 @@ Made while you were away; each is easy to change.
 5. **An imported unit can't be removed** through the API, the same as the bootstrap units. If that turns out to be needed, it would be a "delete unit, if nothing uses it" action, outside the file format.
 6. **Conflicts are reported in the answer (200, `applied: false`), not as an error,** so a client can show all of them. Only a file that isn't a valid unit file is an error (400).
 7. **The bootstrap set as a file** ([units.json](units.json)) is generated from migration `0002_units.sql`. A test imports it and checks that it changes nothing, so the two can't drift apart.
+8. **The app chooses files with the `file_picker` package,** a new dependency (APP.md decision 33). Pasting the JSON would avoid it.

@@ -11,7 +11,7 @@ import 'units.dart';
 /// The API version and revision this app was built for.
 const apiPath = '/api/v1';
 const apiVersion = 1;
-const apiRevision = 4;
+const apiRevision = 5;
 
 const sessionCookie = 'wtf_session';
 
@@ -105,6 +105,13 @@ class ApiProblem implements Exception {
   String toString() => message;
 }
 
+/// A request body that is JSON text already, sent as it is.
+class RawJson {
+  const RawJson(this.text);
+
+  final String text;
+}
+
 /// JSON for a request body. [Decimal] numbers are written exactly as they
 /// are, which jsonEncode can't do (it would round them to a double).
 String encodeBody(Object? body) {
@@ -168,7 +175,7 @@ class ApiClient {
   // Data that rarely changes, kept for the session: the trees (revalidated
   // with their ETag on every use), and the unit families with their units.
   // A tree this client changes is fetched again at once (see _wrote); units
-  // can't be changed through the API.
+  // only change by an import (see importUnits).
   final Map<TreeKind, Tree> _trees = {};
   Future<List<UnitFamily>>? _families;
   final _treeChanges = StreamController<TreeKind>.broadcast();
@@ -605,6 +612,20 @@ class ApiClient {
     for (final f in await unitFamilies()) ...f.units,
   ];
 
+  /// POST /units/import: imports a unit file (seed/units-format.md), sent as
+  /// it is, so no factor loses digits. With [dryRun], only tells.
+  Future<UnitImport> importUnits(String file, {bool dryRun = false}) async {
+    final json = await _call(
+      'POST',
+      '/units/import',
+      query: {if (dryRun) 'dry_run': 'true'},
+      body: RawJson(file),
+    ) as Json;
+    final report = UnitImport.fromJson(json);
+    if (report.applied) _families = null; // fetched again with the new units
+    return report;
+  }
+
   /// What numbers in [unit] may be typed in, for [parseMeasure].
   Future<UnitChoice> unitChoice(Unit unit) async {
     final families = await unitFamilies();
@@ -850,7 +871,7 @@ class ApiClient {
       ..headers.addAll(headers);
     if (body != null) {
       req.headers['Content-Type'] = 'application/json';
-      req.body = encodeBody(body);
+      req.body = body is RawJson ? body.text : encodeBody(body);
     }
     req.headers.addAll(authHeaders);
     final http.Response resp;

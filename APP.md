@@ -92,7 +92,7 @@ Every screen has a URL. In the web app it shows in the address bar, and it works
 | `/manage` | Links to attributes, units and accounts. |
 | `/attributes`, `/attributes/<id>` | The attributes; one attribute with its options (add, rename, delete). |
 | `/accounts`, `/accounts/<id>` | The accounts: email, privileges, password (keep, set or remove). |
-| `/units` | The unit families and their units, for reference. |
+| `/units` | The units by quantity and family, for reference; Import adds more from a unit file. |
 
 **Choosing things:** wherever a location or class must be chosen, a picker with search and the tree replaces the CLI's typing with Tab. Units work as in the CLI: you can type `12mm` or `2.5 m` into a number field, and the app converts and checks it as you type, with the same rules as the CLI (decision 1).
 
@@ -264,3 +264,15 @@ Built for API revision 4, with `where` on `GET /items` and `--where` in the CLI 
 32. **Results in two shapes.**
     - **Narrow (under 720 points):** compact rows, as before: name, code, class, stock, and where each stock row is.
     - **Wide:** a table with the item, its class, stock and locations, and a column for every attribute the found items show, per-unit ones included (their values from all stock rows). Columns appear in the order they are first seen, so they don't move as more rows load. Class defaults are shown in grey italics. The table scrolls sideways when it doesn't fit.
+
+### Importing units
+
+Built for API revision 5, with unit files ([seed/units-format.md](seed/units-format.md)) and `POST /units/import`. Made while you were away; see the decisions to discuss there.
+
+33. **Import on the Units screen,** for accounts with the model write privilege, like `wtf unit import`.
+    - **Choosing the file** uses the `file_picker` package, a new dependency. It works on the web, Windows, Android and iOS, and the Windows and web builds succeed with it. If you'd rather not depend on it, pasting the JSON into a text box would do instead.
+    - **A preview comes first** (a dry run): what the file adds, by quantity, family and unit, and how much of it is there already. Import then imports it, and the screen shows the new units at once.
+    - **Conflicts** are listed with where they are and why, and then there's only Close: nothing is imported until the file is fixed.
+    - **The file is sent as it was chosen,** so factors keep every digit.
+    - **A file that isn't a unit file** is refused with the server's reason, such as a missing key or a newer version.
+

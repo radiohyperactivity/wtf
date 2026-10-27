@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wtf/app.dart';
+import 'package:wtf/screens/attribute_screens.dart';
 import 'package:wtf/screens/search_screen.dart';
 import 'package:wtf/session.dart';
 
@@ -155,6 +158,68 @@ void main() {
     expect(find.text('Imperial length'), findsNWidgets(2));
     expect(find.text('Metric length'), findsNothing);
     expect(find.text('Voltage'), findsNothing);
+  });
+
+  testWidgets('import a unit file: a preview first, then the units', (
+    tester,
+  ) async {
+    setSize(tester, 400, 800);
+    final fake = FakeServer();
+    String file = '';
+    pickUnitFile = () async => (name: 'pressure.json', text: file);
+    addTearDown(() => pickUnitFile = () async => null);
+    await startApp(tester, fake);
+    await tester.tap(find.text('Manage'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Units'));
+    await tester.pumpAndSettle();
+
+    // Conflicts: shown, and nothing to press but Close.
+    file = jsonEncode({
+      'format': 'wtf-units',
+      'version': 1,
+      'quantities': [
+        {
+          'name': 'Voltage',
+          'base_unit': {'symbol': 'mV', 'name': 'millivolt'},
+        },
+      ],
+    });
+    await tester.tap(find.text('Import'));
+    await tester.pumpAndSettle();
+    expect(find.text('Import pressure.json'), findsOneWidget);
+    expect(find.textContaining('Nothing can be imported'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, 'Import'), findsNothing);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+    expect(fake.unitImports.single.$2, isTrue); // only the dry run
+
+    // A file that adds: the preview names it all, and Import imports it.
+    file =
+        '{"format": "wtf-units", "version": 1, "name": "Pressure", "quantities": [{'
+        '"name": "Pressure", "base_unit": {"symbol": "Pa", "name": "pascal"}, '
+        '"families": [{"name": "Pascals", "units": ['
+        '{"symbol": "Pa", "name": "pascal", "factor": "1"}, '
+        '{"symbol": "kPa", "name": "kilopascal", "factor": "1000"}]}]}, {'
+        '"name": "Voltage", "base_unit": {"symbol": "V", "name": "volt"}, '
+        '"families": [{"name": "Voltage", "units": ['
+        '{"symbol": "V", "name": "volt", "factor": "1"}]}]}]}';
+    await tester.tap(find.text('Import'));
+    await tester.pumpAndSettle();
+    expect(find.text('Import Pressure (pressure.json)'), findsOneWidget);
+    expect(find.textContaining('Pressure › Pascals'), findsWidgets);
+    expect(find.textContaining('Pa, kPa'), findsOneWidget);
+    expect(find.textContaining('there already'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Import'));
+    await tester.pumpAndSettle();
+    // The file goes as it was chosen, factors as written.
+    expect(fake.unitImports.last, (file, false));
+    expect(
+      find.text('Imported 2 units, 1 unit family and 1 quantity.'),
+      findsOneWidget,
+    );
+    // The screen shows the new quantity at once.
+    expect(find.text('Pressure'), findsOneWidget);
   });
 
   testWidgets('the appearance is kept on the device', (tester) async {
