@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wtf/app.dart';
+import 'package:wtf/screens/search_screen.dart';
 import 'package:wtf/session.dart';
 
 import 'fake_server.dart';
@@ -22,9 +23,14 @@ Future<void> startApp(WidgetTester tester, FakeServer fake) async {
 }
 
 /// Types into the search field and waits for the results.
+/// Searches from the Items form, going back to it from results first.
 Future<void> search(WidgetTester tester, String text) async {
+  if (find.byType(FoundItemsScreen).evaluate().isNotEmpty) {
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+  }
   await tester.enterText(find.byType(TextField).first, text);
-  await tester.pump(const Duration(milliseconds: 400));
+  await tester.tap(find.widgetWithText(FilledButton, 'Search'));
   await tester.pumpAndSettle();
 }
 
@@ -211,7 +217,7 @@ void main() {
   });
 
   testWidgets('find an item, see where it is, move part of it', (tester) async {
-    setSize(tester, 1000);
+    setSize(tester, 700); // compact results, not the table
     final fake = FakeServer();
     await startApp(tester, fake);
 
@@ -258,6 +264,65 @@ void main() {
     // The row at the destination.
     expect(find.text('Garage/Shelf 2'), findsOneWidget);
     expect(find.text('1'), findsOneWidget);
+  });
+
+  testWidgets('search by attributes; results as a table, and back', (
+    tester,
+  ) async {
+    setSize(tester, 1200);
+    final fake = FakeServer();
+    await startApp(tester, fake);
+
+    // Nothing is searched while typing.
+    await tester.enterText(find.byType(TextField).first, 'drill');
+    await tester.pumpAndSettle();
+    expect(find.byType(FoundItemsScreen), findsNothing);
+    await tester.enterText(find.byType(TextField).first, '');
+
+    // A class brings its attributes.
+    await tester.tap(find.text('Any class'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Tools/Drills'));
+    await tester.pumpAndSettle();
+    expect(field('Voltage'), findsOneWidget);
+
+    // A condition that doesn't parse stays on the form.
+    await tester.enterText(field('Voltage'), '>= 3 kg');
+    await tester.tap(find.widgetWithText(FilledButton, 'Search'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('unknown unit "kg"'), findsOneWidget);
+    expect(find.byType(FoundItemsScreen), findsNothing);
+
+    // In any unit of the quantity: 12000 mV is 12 V.
+    await tester.enterText(field('Voltage'), '>= 12000mV');
+    await tester.tap(find.widgetWithText(FilledButton, 'Search'));
+    await tester.pumpAndSettle();
+    expect(fake.lastWhere, '[{"attribute":"a-volt","op":">=","value":12}]');
+    expect(find.text('1 item found'), findsOneWidget);
+    // A table, with a column for each attribute the items show.
+    expect(find.text('Where'), findsOneWidget);
+    expect(find.text('Voltage'), findsOneWidget);
+    expect(find.text('Cordless drill'), findsOneWidget);
+    expect(find.text('18 V'), findsOneWidget);
+    expect(find.text('Garage/Shelf 1'), findsOneWidget);
+
+    // Back to the form, as it was filled in.
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextFormField>(field('Voltage')).controller!.text,
+      '>= 12000mV',
+    );
+    expect(find.text('Tools/Drills'), findsOneWidget);
+
+    await tester.enterText(field('Voltage'), '20..24');
+    await tester.tap(find.widgetWithText(FilledButton, 'Search'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.lastWhere,
+      '[{"attribute":"a-volt","op":"between","value":[20,24]}]',
+    );
+    expect(find.text('Nothing found.'), findsOneWidget);
   });
 
   testWidgets('a label code finds its object', (tester) async {

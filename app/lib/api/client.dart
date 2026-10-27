@@ -11,7 +11,7 @@ import 'units.dart';
 /// The API version and revision this app was built for.
 const apiPath = '/api/v1';
 const apiVersion = 1;
-const apiRevision = 2;
+const apiRevision = 4;
 
 const sessionCookie = 'wtf_session';
 
@@ -241,9 +241,11 @@ class ApiClient {
 
   /// GET /items: items whose name, class path, text or choice values contain
   /// every word of [search].
+  /// [where]: attribute filters as JSON, as [encodeWhere] writes them.
   Future<ResultPage<ItemListed>> items({
     String? search,
     String? classId,
+    String? where,
     int limit = 50,
     int offset = 0,
   }) async {
@@ -253,12 +255,17 @@ class ApiClient {
       query: {
         if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
         'class': ?classId,
+        if (where != null && where != '[]') 'where': where,
         'limit': '$limit',
         'offset': '$offset',
       },
     );
     return ResultPage.fromJson(json as Json, ItemListed.fromJson);
   }
+
+  /// Attribute filters for [items], with numbers written exactly.
+  static String encodeWhere(List<Map<String, Object>> filters) =>
+      encodeBody(filters);
 
   Future<ItemDetail> item(String id) async =>
       ItemDetail.fromJson(await _call('GET', '/items/$id') as Json);

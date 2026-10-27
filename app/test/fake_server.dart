@@ -252,6 +252,25 @@ class FakeServer {
     'history_privilege': 'read_only',
   };
 
+  /// The where filters of the last GET /items, as sent.
+  String? lastWhere;
+
+  /// A number filter on an item's own value, as the server compares them.
+  bool _matches(Map<String, dynamic> item, Map<String, dynamic> f) {
+    final v = (item['values'] as Map)[f['attribute']];
+    final x = f['value'];
+    if (v is! num) return false;
+    return switch (f['op']) {
+      '=' => v == x,
+      '>' => v > (x as num),
+      '>=' => v >= (x as num),
+      '<' => v < (x as num),
+      '<=' => v <= (x as num),
+      'between' => v >= (x as List)[0] && v <= x[1],
+      _ => false,
+    };
+  }
+
   // --- Requests ---
 
   http.Response _json(Object? body, [int status = 200]) =>
@@ -319,6 +338,10 @@ class FakeServer {
       case ('GET', ['locations', final id]):
         return _json(locationJson(id));
       case ('GET', ['items']):
+        lastWhere = q['where'];
+        final where = q['where'] == null
+            ? const <Map<String, dynamic>>[]
+            : (jsonDecode(q['where']!) as List).cast<Map<String, dynamic>>();
         final words = (q['search'] ?? '')
             .toLowerCase()
             .split(' ')
@@ -330,7 +353,8 @@ class FakeServer {
           ).map((p) => p['name']).join(' ');
           final text = '${i['name']} $classPath'.toLowerCase();
           return words.every(text.contains) &&
-              (q['class'] == null || i['class'] == q['class']);
+              (q['class'] == null || i['class'] == q['class']) &&
+              where.every((f) => _matches(i, f));
         }).toList();
         return _json({
           'total': found.length,

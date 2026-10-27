@@ -91,7 +91,22 @@ GoRouter buildRouter(Session session) => GoRouter(
           AppShell(location: state.matchedLocation, child: child),
       // Fixed paths ("new") come before the ones with a code or id.
       routes: [
-        GoRoute(path: '/', builder: (context, state) => const SearchScreen()),
+        GoRoute(
+          path: '/',
+          builder: (context, state) => const ItemSearchScreen(),
+        ),
+        GoRoute(
+          path: '/found',
+          builder: (context, state) {
+            final q = state.uri.queryParameters;
+            return FoundItemsScreen(
+              key: ValueKey(state.uri.toString()),
+              search: q['search'],
+              classId: q['class'],
+              where: q['where'],
+            );
+          },
+        ),
         GoRoute(path: '/me', builder: (context, state) => const MeScreen()),
         GoRoute(
           path: '/manage',

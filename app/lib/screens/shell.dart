@@ -14,7 +14,7 @@ class _Destination {
 }
 
 const _destinations = [
-  _Destination('/', 'Search', Icons.search_outlined, Icons.search),
+  _Destination('/', 'Items', Icons.inventory_2_outlined, Icons.inventory_2),
   _Destination('/locations', 'Locations', Icons.place_outlined, Icons.place),
   _Destination('/classes', 'Classes', Icons.category_outlined, Icons.category),
   _Destination('/manage', 'Manage', Icons.tune_outlined, Icons.tune),
@@ -32,7 +32,7 @@ class AppShell extends StatelessWidget {
 
   /// The destination a screen belongs to: locations and classes (and their
   /// history) to their trees, attributes, units and accounts to Manage,
-  /// everything else (items, stock) to search.
+  /// everything else (items, stock, search results) to Items.
   int get _selected {
     var path = location.startsWith('/history/')
         ? location.substring('/history'.length)

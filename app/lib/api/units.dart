@@ -300,6 +300,42 @@ Object parseValue(
   return input;
 }
 
+final _condition = RegExp(r'^\s*(>=|<=|>|<|=)?\s*(.*?)\s*$');
+
+/// Reads a condition on a number or date attribute, as typed in the search
+/// form: "32k" (exactly), "> 32kohm", ">= 32 kohm", "<= today", or a range
+/// "10k..47k" with both ends included. Numbers take units as [parseMeasure]
+/// does ([plainIn]: the unit picked for plain numbers). Returns the filter
+/// for GET /items?where= (see api/item.md), or null when [input] is empty.
+Map<String, Object>? parseCondition(
+  Attribute a,
+  String input, [
+  UnitChoice? units,
+  Unit? plainIn,
+]) {
+  if (input.trim().isEmpty) return null;
+  final m = _condition.firstMatch(input)!;
+  final op = m[1] ?? '=';
+  final text = m[2]!;
+  Object one(String s) {
+    if (s.trim().isEmpty) throw InputError('${a.name}: a value is missing');
+    return parseValue(a, s, units, plainIn);
+  }
+
+  final range = text.indexOf('..');
+  if (range >= 0) {
+    if (m[1] != null && op != '=') {
+      throw InputError('${a.name}: a range LOW..HIGH goes without < or >');
+    }
+    return {
+      'attribute': a.id,
+      'op': 'between',
+      'value': [one(text.substring(0, range)), one(text.substring(range + 2))],
+    };
+  }
+  return {'attribute': a.id, 'op': op, 'value': one(text)};
+}
+
 /// Reads yes/no, true/false, y/n, 1/0 and on/off.
 bool? parseYesNo(String input) => switch (input.trim().toLowerCase()) {
   'true' || 'yes' || 'y' || '1' || 'on' => true,

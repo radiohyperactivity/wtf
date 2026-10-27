@@ -71,7 +71,8 @@ Every screen has a URL. In the web app it shows in the address bar, and it works
 | URL | Screen |
 |-----|--------|
 | `/login` | Log in. The native apps also ask for the server address. |
-| `/` | Search: one search field, with the found items and where they are, like `wtf find`. The start screen. |
+| `/` | Items: the search form (words, a class, and its attributes), like `wtf find`. The start screen. |
+| `/found?search=&class=&where=` | The items found, and where they are. Opened by the form, on top of it. |
 | `/locations` | The location tree. Containers are marked, and grids show their compartments. |
 | `/locations/1A7K` | A location: its path, what's below it, the stock at it and further in, and its photos. Edit, add a location inside, delete (with everything below it). |
 | `/locations/new?parent=…` | Add a location, optionally with a compartment grid (`8 × 5`). |
@@ -101,7 +102,7 @@ Flutter has standard size classes, measured in logical pixels, which are indepen
 
 | Width | Typical device | Navigation | Content |
 |-------|----------------|------------|---------|
-| under 600 | phone | bar at the bottom: Search, Locations, Classes, Manage, Me | one screen at a time |
+| under 600 | phone | bar at the bottom: Items, Locations, Classes, Manage, Me | one screen at a time |
 | 600–840 | small tablet, phone sideways | rail on the left | list and details side by side where it fits |
 | over 840 | tablet, desktop, browser | rail on the left | list and details side by side, the tree always visible |
 
@@ -153,9 +154,9 @@ These are decisions I made without you, recorded for review. You asked me to cop
 
 7. **Search works like `wtf find`.**
    - **What it shows:** each found item with its class and where each of its stock rows is. As in the CLI, that takes one request per item, so results come 20 at a time, and more load as you scroll.
-   - **Typing:** the search starts 0.3 seconds after you stop typing, or at once with Enter.
+   - **Typing:** the search starts with the Search button or Enter (decision 29).
    - **Label codes:** a single word that could be a label code is also looked up as one (`wtf code`). If it exists, its item, stock row or location is shown above the results.
-   - **Class filter:** a chip narrows the search to a class (`--class`).
+   - **Class filter:** a field next to the search narrows it to a class (`--class`).
 8. **Pickers replace Tab completion.**
    - **How they work:** a list with a search field. Every word you type must occur in the path, ignoring case, and Enter takes the first match.
    - **Containers:** where a location for stock or a class for an item is chosen, they show greyed out. So the tree stays recognisable, but they can't be picked, as with the CLI's completion.
@@ -244,3 +245,22 @@ Built for API revision 3, with the server's change to units (CLI.md decision 48)
 26. **Choosing a unit** (attributes and items) lists every unit, filtered by symbol, name, family or quantity: "mm, millimetre · Metric length · Length". For a new attribute, choosing a unit sets the type to its quantity's (float, or integer for pieces), as `wtf attribute add --unit` does.
 27. **Unit lock** is a switch under the unit, off by default. Its line says what it does with that unit: "Always shown in mm", or "Shown in the unit of Metric length that fits best". Units are shown as "mm (Metric length)", with ", locked" when it is set.
 28. **No tenants:** Me shows the server instead of the tenant.
+
+### The Items tab
+
+Built for API revision 4, with `where` on `GET /items` and `--where` in the CLI (CLI.md decision 49). Your design.
+
+29. **Items replaces Search.** The first tab is called Items. It is a search form, and nothing is searched until you press Search (or Enter).
+    - **Layout:** on wide screens the search field, the class and the Search button share a row; on narrow ones the class and the button share a row under the search field.
+    - **An empty search** lists every item.
+30. **With a class, its attributes are searched too:** its own and inherited ones, as `wtf class get` lists them.
+    - **Numbers and dates** take `32k` (exactly), `> 32kohm`, `>= 32 kohm`, `<= today` or a range `10k..47k`, both ends included. A number field has the unit menu, as in the item form; a typed unit wins, and any unit of the quantity is accepted.
+    - **Choices** are chips; any of the chosen options matches.
+    - **Yes/no** is Any, Yes or No.
+    - **Text** is "contains", ignoring case.
+    - **Per-unit attributes** are marked "(per unit)", and match when any stock row does.
+    - **A condition that doesn't parse** is shown at its field, and the search doesn't start.
+31. **Results replace the form.** They open on top of it at `/found`, so Back returns to the form with everything still filled in. The URL holds the search, so it can be reloaded or bookmarked; the form itself isn't restored from it.
+32. **Results in two shapes.**
+    - **Narrow (under 720 points):** compact rows, as before: name, code, class, stock, and where each stock row is.
+    - **Wide:** a table with the item, its class, stock and locations, and a column for every attribute the found items show, per-unit ones included (their values from all stock rows). Columns appear in the order they are first seen, so they don't move as more rows load. Class defaults are shown in grey italics. The table scrolls sideways when it doesn't fit.
