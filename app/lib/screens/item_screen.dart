@@ -1,0 +1,188 @@
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
+
+import '../api/client.dart';
+import '../api/models.dart';
+import '../api/units.dart';
+import '../session.dart';
+import '../widgets/attachments.dart';
+import '../widgets/common.dart';
+
+/// The values of an item or a stock row; class defaults are marked.
+List<Widget> valueFields(List<Value> values) => [
+  for (final v in values)
+    Field(v.attribute.name, v.text, note: v.isDefault ? '(default)' : null),
+];
+
+/// An item, like `wtf item get`: class, values, stock rows with their
+/// locations, photos. The code may also be one of its stock rows' (as in
+/// the CLI's references).
+class ItemScreen extends StatelessWidget {
+  const ItemScreen({super.key, required this.code});
+
+  final String code;
+
+  @override
+  Widget build(BuildContext context) {
+    final session = context.watch<Session>();
+    final client = session.client;
+    return Loader<(ItemDetail, Tree)>(
+      key: ValueKey(code),
+      title: 'Item $code',
+      refreshOn: client.treeChanges,
+      load: () async {
+        final target = await client.code(code);
+        final ItemDetail item = switch (target) {
+          CodeItem(:final item) => item,
+          CodeStock(:final stock) => await client.item(stock.item.id),
+          _ => throw InputError('There is no item with the code $code.'),
+        };
+        return (item, await client.tree(TreeKind.locations));
+      },
+      builder: (context, data, reload) {
+        final (item, locations) = data;
+        Future<void> open(String path) async {
+          await context.push(path);
+          reload();
+        }
+
+        Future<void> delete() async {
+          final ok = await confirm(
+            context,
+            title: 'Delete item ${item.name}?',
+            message: item.stock.isEmpty ? null : 'It still has stock, which must be deleted or moved away first.',
+          );
+          if (!ok || !context.mounted) return;
+          try {
+            await client.deleteItem(item.id);
+            if (context.mounted) {
+              showMessage(context, 'Deleted ${item.name}.');
+              leave(context, '/');
+            }
+          } catch (e) {
+            if (context.mounted) showError(context, e);
+          }
+        }
+
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(item.name),
+            actions: [
+              if (session.canReadHistory)
+                IconButton(
+                  icon: const Icon(Icons.history),
+                  tooltip: 'History',
+                  onPressed: () => context.push(
+                    '/history/items/${item.id}?title=${Uri.encodeComponent(item.name)}',
+                  ),
+                ),
+              if (session.canWriteData) ...[
+                IconButton(
+                  icon: const Icon(Icons.edit_outlined),
+                  tooltip: 'Edit',
+                  onPressed: () async {
+                    if (await context.push('/items/${item.code}/edit') ==
+                        true) {
+                      reload();
+                    }
+                  },
+                ),
+                PopupMenuButton<String>(
+                  onSelected: (action) {
+                    if (action == 'delete') delete();
+                  },
+                  itemBuilder: (context) => const [
+                    PopupMenuItem(value: 'delete', child: Text('Delete…')),
+                  ],
+                ),
+              ],
+            ],
+          ),
+          floatingActionButton: session.canWriteData
+              ? FloatingActionButton.extended(
+                  onPressed: () => open('/stock/new?item=${item.id}'),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add stock'),
+                )
+              : null,
+          body: Readable(
+            child: RefreshIndicator(
+              onRefresh: reload,
+              child: ListView(
+                padding: const EdgeInsets.only(bottom: 88),
+                children: [
+                  if (item.photo != null)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: InkWell(
+                          onTap: () => showPhoto(context, item.photo!),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: AttachmentImage(item.photo!, size: 160),
+                          ),
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 8),
+                  Field('Code', item.code),
+                  Field(
+                    'Class',
+                    item.cls.pathText,
+                    onTap: () => open('/classes/${item.cls.id}'),
+                  ),
+                  Field('Stock in', item.unitGroup?.name ?? 'pieces'),
+                  if (item.values.isNotEmpty) ...[
+                    const SectionTitle('Values'),
+                    ...valueFields(item.values),
+                  ],
+                  MissingNote(item.missing.map((m) => m.name).toList()),
+                  SectionTitle(
+                    'Stock',
+                    trailing: session.canWriteData
+                        ? TextButton.icon(
+                            onPressed: () => open('/stock/new?item=${item.id}'),
+                            icon: const Icon(Icons.add),
+                            label: const Text('Add'),
+                          )
+                        : null,
+                  ),
+                  if (item.stock.isEmpty) const EmptyNote('No stock.'),
+                  for (final s in item.stock) ...[
+                    ListTile(
+                      leading: const Icon(Icons.place_outlined),
+                      title: Text(locations.pathOf(s.location)),
+                      subtitle: Text(s.code),
+                      trailing: Text(
+                        s.quantityText,
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      onTap: () => open('/stock/${s.code}'),
+                    ),
+                    if (s.values.isNotEmpty || s.missing.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 56),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            ...valueFields(s.values),
+                            MissingNote(s.missing.map((m) => m.name).toList()),
+                          ],
+                        ),
+                      ),
+                  ],
+                  AttachmentList(
+                    item.attachments,
+                    onChanged: session.canWriteData ? reload : null,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}

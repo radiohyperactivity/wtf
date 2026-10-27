@@ -219,6 +219,63 @@ void main() {
     );
   });
 
+  test('a tree this client changes is fetched again at once', () async {
+    final seen = <String>[];
+    var version = 1;
+    final client = ApiClient(
+      server,
+      httpClient: MockClient((req) async {
+        seen.add('${req.method} ${req.url.path}');
+        return switch ((req.method, req.url.path)) {
+          ('GET', '/api/v1/locations') => json(
+            {
+              'version': version,
+              'tree': [
+                for (var i = 1; i < version; i++)
+                  {'id': 'l$i', 'name': 'Box $i', 'children': []},
+              ],
+            },
+            headers: {'etag': '"$version"'},
+          ),
+          ('POST', '/api/v1/locations') => json({
+            'id': 'l${version++}',
+            'name': 'Box',
+            'parent': null,
+          }, status: 201),
+          _ => json({'id': 'c1', 'name': 'Tools', 'attributes': []}),
+        };
+      }),
+    );
+    final changes = <TreeKind>[];
+    client.treeChanges.listen(changes.add);
+
+    expect((await client.tree(TreeKind.locations)).all, isEmpty);
+    seen.clear();
+    await client.createLocation(name: 'Box');
+    expect(seen, ['POST /api/v1/locations', 'GET /api/v1/locations']);
+    await pumpEventQueue();
+    expect(changes, [TreeKind.locations]);
+    expect((await client.tree(TreeKind.locations)).all.single.name, 'Box 1');
+
+    // Assigning an attribute leaves the class tree alone.
+    seen.clear();
+    await client.unassignAttribute('c1', 'a1');
+    expect(seen, ['DELETE /api/v1/classes/c1/attributes/a1']);
+    await pumpEventQueue();
+    expect(changes, [TreeKind.locations]);
+  });
+
+  test('history can only be read', () {
+    final a = Account.fromJson({...account, 'history_privilege': 'read_write'});
+    expect(a.privileges['history_privilege'], Privilege.readOnly);
+    expect(a.privileges['data_privilege'], Privilege.readWrite);
+    final me = Me.fromJson({
+      ...account,
+      'history_privilege': 'read_write',
+    }, tenant);
+    expect(me.historyPrivilege, Privilege.readOnly);
+  });
+
   test('server addresses', () {
     expect(
       serverFromInput('wtf.example.com').toString(),
@@ -238,16 +295,43 @@ void main() {
 
   // The client's paths must exist in the API description, like the server's
   // route test.
-  test('the paths are in openapi.yaml', () {
-    final spec = File('../openapi/openapi.yaml').readAsStringSync();
+  test('the calls are in openapi.yaml', () {
+    // The spec's paths and their methods, with parameters as {}.
+    final spec = <String, Set<String>>{};
+    String? current;
+    for (final line in File('../openapi/openapi.yaml').readAsLinesSync()) {
+      final path = RegExp(r'^  (/\S*):$').firstMatch(line);
+      if (path != null) {
+        current = path[1]!.replaceAll(RegExp(r'\{[^}]+\}'), '{}');
+        spec[current] = {};
+      } else if (line.startsWith('components:')) {
+        current = null;
+      } else if (current != null) {
+        final method = RegExp(r'^    (get|post|put|patch|delete):')
+            .firstMatch(line);
+        if (method != null) spec[current]!.add(method[1]!.toUpperCase());
+      }
+    }
+
+    // The client's calls, with interpolations ($id) as {}.
     final source = File('lib/api/client.dart').readAsStringSync();
-    final paths = RegExp(r"_send\('[A-Z]+', '([^']+)'")
-        .allMatches(source)
-        .map((m) => m[1]!)
-        .toSet();
-    expect(paths, isNotEmpty);
-    for (final path in paths) {
-      expect(spec, contains('\n  $path:\n'), reason: path);
+    final calls = <(String, String)>{
+      for (final m in RegExp(
+        r"_call\(\s*'([A-Z]+)',\s*'([^']+)'",
+      ).allMatches(source))
+        (m[1]!, m[2]!.replaceAll(RegExp(r'\$\{[^}]+\}|\$\w+'), '{}')),
+      // The trees, through TreeKind.
+      for (final kind in TreeKind.values) ('GET', kind.path),
+    };
+    expect(calls.length, greaterThan(30));
+    for (final (method, path) in calls) {
+      // History: /{kind}/{id}/history for each kind the client allows.
+      final paths = path == '/{}/{}/history'
+          ? ApiClient.historyKinds.map((k) => '/$k/{}/history')
+          : [path];
+      for (final p in paths) {
+        expect(spec[p], contains(method), reason: '$method $p');
+      }
     }
   });
 }

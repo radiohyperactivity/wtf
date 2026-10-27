@@ -1,20 +1,23 @@
 # WtF apps – design
 
-**Status: agreed, not built yet.** The decisions taken in review are listed at the end.
+**Status: the first version is built for web and Windows, not yet reviewed.** The decisions taken in review, and the ones I took while building, are listed at the end.
 
 The apps are one Flutter program for every platform: web, Windows, macOS, Linux, Android (phones, tablets and Chromebooks) and iOS/iPadOS. Flutter is Google's toolkit for building apps from one codebase. Its programs are written in Dart, a typed language that resembles Go, Java and JavaScript.
 
 ## The first version
 
-It covers what you do every day. The CLI covers the rest until the apps catch up.
+It was planned to cover what you do every day. While building it, it grew to cover almost all of the CLI (decision 5). The CLI covers the rest.
 
 | In the first version | Later |
 |----------------------|-------|
-| Log in and out, change your password | Managing classes, attributes, options and accounts |
-| Search, and browse the location and class trees | History |
-| Look at an item: values, stock and where it is, photos | Uploading photos and attachments |
-| Add items (with their values), stock and locations (also with a compartment grid) | Label scanning |
-| Move stock, and edit items and stock rows | |
+| Log in and out, change your password | Uploading photos and attachments |
+| Search, and browse the location and class trees | Opening or downloading attachments that aren't images |
+| Look at an item: values, stock and where it is, photos | Label scanning |
+| Add items (with their values), stock and locations (also with a compartment grid) | |
+| Move stock, and edit and delete items and stock rows | |
+| Manage classes (with their attributes), locations, attributes and their options, and accounts | |
+| History, and the units | |
+| Captions, file names and the primary photo of attachments | |
 
 **Platforms, in this order:**
 1. **Web and Windows:** on your PC, where everything is installed.
@@ -70,15 +73,24 @@ Every screen has a URL. In the web app it shows in the address bar, and it works
 | `/login` | Log in. The native apps also ask for the server address. |
 | `/` | Search: one search field, with the found items and where they are, like `wtf find`. The start screen. |
 | `/locations` | The location tree. Containers are marked, and grids show their compartments. |
-| `/locations/1A7K` | A location: its path, what's below it, the stock at it, and its photos. |
+| `/locations/1A7K` | A location: its path, what's below it, the stock at it and further in, and its photos. Edit, add a location inside, delete (with everything below it). |
 | `/locations/new?parent=…` | Add a location, optionally with a compartment grid (`8 × 5`). |
+| `/locations/1A7K/edit` | Edit a location: name, parent, container. |
 | `/classes` | The class tree. |
-| `/classes/<id>` | A class: its attributes and its items. |
-| `/items/1B2C` | An item: values, stock rows with their locations, photos. |
+| `/classes/<id>` | A class: its attributes (assign, change, remove), the classes below it and its items. Edit, add a class below, delete. |
+| `/classes/new?parent=…`, `/classes/<id>/edit` | Add or edit a class: name, parent, container. |
+| `/items/1B2C` | An item: values, stock rows with their locations, photos. A stock row's code shows its item too, as in the CLI. |
 | `/items/new?class=…` | Add an item: class, name, then its attributes (required ones first). Afterwards it offers to add stock, like the CLI. |
-| `/items/1B2C/edit` | Edit an item: name, class, values. |
-| `/stock/1C3D` | A stock row: quantity, location, per-unit values; move it (all or part), or edit it. |
-| `/me` | Your account: email, privileges, change password, log out. |
+| `/items/1B2C/edit` | Edit an item: name, class, unit group, values. |
+| `/stock/1C3D` | A stock row: quantity, location, per-unit values; move it (all or part), edit or delete it. |
+| `/stock/new?item=…&location=…` | Add stock: item, location, quantity, per-unit values. |
+| `/stock/1C3D/edit` | Edit a stock row: location, quantity, per-unit values. |
+| `/history/<kind>/<id>` | The history of an item, stock row, location, class, attribute or account, as raw as in the CLI. |
+| `/me` | Your account: email, privileges, appearance (light, dark or as the system), change password, log out. |
+| `/manage` | Links to attributes, units and accounts. |
+| `/attributes`, `/attributes/<id>` | The attributes; one attribute with its options (add, rename, delete). |
+| `/accounts`, `/accounts/<id>` | The tenant's accounts: email, privileges, password (keep, set or remove). |
+| `/units` | The unit groups and their units, for reference. |
 
 **Choosing things:** wherever a location or class must be chosen, a picker with search and the tree replaces the CLI's typing with Tab. Units work as in the CLI: you can type `12mm` or `2.5 m` into a number field, and the app converts and checks it as you type, with the same rules as the CLI (decision 1).
 
@@ -88,11 +100,11 @@ Flutter has standard size classes, measured in logical pixels, which are indepen
 
 | Width | Typical device | Navigation | Content |
 |-------|----------------|------------|---------|
-| under 600 | phone | bar at the bottom: Search, Locations, Classes, Me | one screen at a time |
+| under 600 | phone | bar at the bottom: Search, Locations, Classes, Manage, Me | one screen at a time |
 | 600–840 | small tablet, phone sideways | rail on the left | list and details side by side where it fits |
 | over 840 | tablet, desktop, browser | rail on the left | list and details side by side, the tree always visible |
 
-- **Look:** Material 3, Google's current design system, which Flutter has built in. Light and dark follow the system setting.
+- **Look:** Material 3, Google's current design system, which Flutter has built in. Light and dark follow the system setting, unless you choose one on the Me screen (decision 6).
 - **Desktop and web:** keyboard shortcuts, such as `/` to search and `Ctrl+N` for a new item. Mouse hover and right-click menus come where they help.
 
 ## Packages
@@ -122,3 +134,80 @@ Testing uses `flutter_test`, which is built into Flutter.
 2. **No `--dev-origin` for now.** Development uses the Windows app, which needs nothing on the server, and the web app is tested through `--web-root`. The switch can come later if web development without hot reload becomes a nuisance.
 3. **The start screen is search.**
 4. **The name under the icon is "WtF".** If the stores object to "Where the Fxxx", WtF can also stand for "Where to Find".
+
+## Decisions made while building
+
+These are decisions I made without you, recorded for review. You asked me to copy as much of the CLI as possible, and to use my own judgement.
+
+### What it covers
+
+5. **Almost all of the CLI.** Everything except:
+   - **What needs new packages:** uploading photos and files, and opening or downloading attachments that aren't images. That needs `file_picker` or `image_picker`, and `url_launcher`. I didn't add packages without asking.
+   - **What only makes sense in a terminal:** `--json`, the pager, shell completion, profiles. The native apps remember one server, and the web app uses its own.
+   - **Creating by path** (`class add MCU/AVR/Old`, with missing parents): the app has a parent picker instead, and names can't contain `/` anyway.
+   - **Moving a stock row to another item** (`stock set --item`): rare, and easy to get wrong with a tap.
+6. **Attributes, units and accounts live under Manage** (your choice, replacing my first version, which had them under Me). Manage is a fifth destination, between Classes and Me, and shows Accounts only to accounts that may read them. Me keeps what is about you, plus the **appearance**: Follow system (the default), Light or Dark. That is kept on the device, not with the account, so your PC and your phone can differ. In a browser it is kept by that browser. When more destinations come, narrow screens will get a "More" entry listing the rest (your plan).
+
+### Finding and choosing
+
+7. **Search works like `wtf find`.**
+   - **What it shows:** each found item with its class and where each of its stock rows is. As in the CLI, that takes one request per item, so results come 20 at a time, and more load as you scroll.
+   - **Typing:** the search starts 0.3 seconds after you stop typing, or at once with Enter.
+   - **Label codes:** a single word that could be a label code is also looked up as one (`wtf code`). If it exists, its item, stock row or location is shown above the results.
+   - **Class filter:** a chip narrows the search to a class (`--class`).
+8. **Pickers replace Tab completion.**
+   - **How they work:** a list with a search field. Every word you type must occur in the path, ignoring case, and Enter takes the first match.
+   - **Containers:** where a location for stock or a class for an item is chosen, they show greyed out. So the tree stays recognisable, but they can't be picked, as with the CLI's completion.
+   - **What can't be chosen:** a node's own subtree isn't offered as its new parent, and a stock row's current location isn't offered as where to move it.
+9. **URLs.**
+   - **Items, stock rows and locations:** by label code. The screen looks the code up (`/codes/…`), as the CLI does with references.
+   - **Classes, attributes and accounts:** by id.
+   - **The address bar:** in the web app it follows every screen, including ones opened on top of another, so each one can be bookmarked.
+
+### Changing things
+
+10. **Deleting always asks first.** That differs from the CLI's decision 14, where single deletes don't ask. A tap goes astray more easily than a typed command.
+    - **Locations and classes:** deleting one shows the server's preview of everything below it, like `delete --recursive`. If stock or items are in them, Delete only becomes possible once "Delete that stock too" (`--force`) is ticked. Everything happens in one transaction on the server.
+11. **Forms save at the end, as the CLI's edit forms do.**
+    - **What is sent:** only what changed, in several requests if needed (the item, then each value).
+    - **When a request fails:** the message lists what was already saved ("Already saved: name").
+    - **Values:** clearing one removes it, so the class default applies again. A required value without a default can't be cleared.
+    - **Existing values:** they appear as shown elsewhere (`18 V`, `32 KiB`), which reads back to the same number. So saving without changes sends nothing.
+12. **New items.**
+    - **Stock afterwards:** as in the CLI (decision 43), the app asks once "Add stock for …?". Yes opens the stock form, and the item's screen follows.
+    - **Unit groups:** a new item can have any unit group, or pieces. An existing item can only change to another group of the same quantity, and only if it has one (CLI decision 41).
+13. **Moving stock.**
+    - **How much:** an empty quantity moves all of it. Uncounted rows can only move whole, so they get no quantity field.
+    - **What you see afterwards:** the server answers with the row at the destination, which may be the same row, a new one split off, or one it was merged into. The app shows that row.
+14. **Grids.**
+    - **The form:** two fields, columns and rows, with a preview ("40 compartments, A1 … H5").
+    - **Big grids:** over 1000 locations, the app asks first and then sends `confirm`, as the server requires.
+    - **Parents:** missing parents aren't created (decision 5).
+15. **Privileges.** Buttons for changes the account may not make are hidden: data write for items and stock, model write for classes, locations and attributes, account write for accounts. The server checks anyway.
+16. **An ended session sends you to the login.** A 401 means the session has ended. The native apps also notice the deleted cookie, while the web app notices the 401.
+
+17. **What this app adds or changes shows at once** (your rule, not a decision of mine). The client keeps the class and location trees for the session, and revalidates them on every use. After a change to a tree (adding, renaming, moving or deleting a class or location, grids included), it fetches that tree again before the change counts as done. It then tells every screen still showing that tree, including the screens underneath, which load again. Unit groups and units are kept for the session as well, but they can't be changed through the API.
+
+### Numbers
+
+18. **Exact, as in the CLI.**
+    - **Arithmetic:** the conversion uses exact fractions, with the CLI's tests ported to Dart.
+    - **Sending:** numbers go into the JSON exactly as decimals, even ones a Dart `double` can't hold, such as `0.333…` to 30 places.
+    - **Reading unit factors:** they are taken as the exact text the server wrote. Dart's JSON decoder would round them to a `double`, and some factors in the dev database have more digits than that holds: °F's factor is `0.55555555555555555556`, and its offset is `255.37222222222222222`. A test checks that 100 °F becomes exactly the CLI's `310.927777777777777776`.
+
+### Not done yet
+
+19. **Not built:**
+    - **Wide screens:** the plan has lists and details side by side, and the tree always visible. For now wide screens get the narrow layout, centred, with the rail.
+    - **Keyboard shortcuts:** `/` to search and `Ctrl+N` for a new item.
+    - **CI:** the job that runs `flutter analyze`, the tests and the web build. GitHub's runners need Flutter installed, either by a ready-made action such as `subosito/flutter-action` or by a script of ours. That is your choice.
+
+### Tests
+
+20. **Automated:** 32 tests in total.
+    - **Unit tests:** units, dates, codes and grids, with the CLI's cases.
+    - **The API client:** cookies, error messages, version checks, exact numbers in request bodies, and a changed tree being fetched again at once.
+    - **Against `openapi.yaml`:** every method and path the client uses must be in the spec.
+    - **Widget tests:** they run the whole app against a pretend `wtfd` (`test/fake_server.dart`). They cover logging in and out, search, label codes, moving part of a stock row, adding an item with a value in other units (`18000mV` is sent as `18`), adding its stock, editing and clearing values, the location tree, a compartment grid (and the tree underneath showing it at once), deleting a location with stock, a read-only account, the Manage destination, and the appearance being kept.
+21. **Against the dev server:** every reading call of the client ran against `wtf` (as Development Tenant, reads only). The test that did this isn't kept, because it depends on your data. Nothing was changed in the database.
+22. **Not tested by hand:** I can't click through the app myself. The Windows and web builds succeed, but nobody has looked at the screens yet.

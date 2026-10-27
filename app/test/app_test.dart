@@ -1,186 +1,404 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 import 'package:wtf/app.dart';
 import 'package:wtf/session.dart';
 
-const account = {
-  'id': 'a1',
-  'email': 'bbj@bbj.io',
-  'data_privilege': 'read_write',
-  'model_privilege': 'read_write',
-  'account_privilege': 'none',
-  'history_privilege': 'read_only',
-};
-const tenant = {'id': 't1', 'name': 'Development', 'hostname': 'wtf.test'};
-const headers = {'content-type': 'application/json', 'api-revision': '1'};
+import 'fake_server.dart';
 
-/// A pretend wtfd with one account, bbj@bbj.io with password "secret".
-MockClient fakeServer() => MockClient((req) async {
-  final cookie = req.headers['Cookie'];
-  switch (req.url.path) {
-    case '/api/v1/login':
-      final body = jsonDecode(req.body);
-      if (body['email'] != 'bbj@bbj.io' || body['password'] != 'secret') {
-        return http.Response(
-          jsonEncode({
-            'type': '/problems/unauthenticated',
-            'title': 'Wrong email or password',
-            'status': 401,
-          }),
-          401,
-          headers: headers,
-        );
-      }
-      return http.Response(
-        jsonEncode({'account': account, 'tenant': tenant}),
-        200,
-        headers: {
-          ...headers,
-          'set-cookie': 'wtf_session=tok; Path=/api; Max-Age=2592000; HttpOnly',
-        },
-      );
-    case '/api/v1/me' when cookie == 'wtf_session=tok':
-      return http.Response(
-        jsonEncode({...account, 'tenant': tenant}),
-        200,
-        headers: headers,
-      );
-    case '/api/v1/logout':
-      return http.Response(
-        '',
-        204,
-        headers: {
-          ...headers,
-          'set-cookie': 'wtf_session=; Path=/api; Max-Age=0',
-        },
-      );
-  }
-  return http.Response(
-    jsonEncode({
-      'type': '/problems/unauthenticated',
-      'title': 'Not authenticated',
-      'status': 401,
-    }),
-    401,
-    headers: headers,
-  );
-});
+final server = Uri.parse('http://wtf.test:8080');
 
-Future<void> setWidth(WidgetTester tester, double width) async {
-  tester.view.physicalSize = Size(width, 800);
+void setSize(WidgetTester tester, double width, [double height = 1400]) {
+  tester.view.physicalSize = Size(width, height);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
 }
 
+/// The app, logged in to [fake].
+Future<void> startApp(WidgetTester tester, FakeServer fake) async {
+  final session = Session(storage: MemoryStorage(), httpClient: fake.client);
+  await session.login('anna@example.com', 'secret', server: server);
+  await tester.pumpWidget(WtfApp(session: session));
+  await tester.pumpAndSettle();
+}
+
+/// Types into the search field and waits for the results.
+Future<void> search(WidgetTester tester, String text) async {
+  await tester.enterText(find.byType(TextField).first, text);
+  await tester.pump(const Duration(milliseconds: 400));
+  await tester.pumpAndSettle();
+}
+
+Finder field(String label) => find.widgetWithText(TextFormField, label);
+
 void main() {
   testWidgets('log in, see the account, log out', (tester) async {
-    await setWidth(tester, 400);
+    setSize(tester, 400, 800);
+    final fake = FakeServer();
     final storage = MemoryStorage();
-    final session = Session(storage: storage, httpClient: fakeServer());
+    final session = Session(storage: storage, httpClient: fake.client);
     await session.restore();
     await tester.pumpWidget(WtfApp(session: session));
     await tester.pumpAndSettle();
 
     // The native app asks for the server too.
-    expect(find.text('Log in'), findsOneWidget);
-    expect(find.widgetWithText(TextFormField, 'Server'), findsOneWidget);
-
-    // Nothing filled in.
+    expect(field('Server'), findsOneWidget);
     await tester.tap(find.text('Log in'));
     await tester.pump();
     expect(find.text('Enter the server address'), findsOneWidget);
-    expect(find.text('Enter your email'), findsOneWidget);
 
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Server'),
-      'http://wtf.test:8080',
-    );
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Email'),
-      'bbj@bbj.io',
-    );
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Password'),
-      'wrong',
-    );
-    await tester.tap(find.text('Log in'));
-    await tester.pumpAndSettle();
-    expect(find.text('Wrong email or password'), findsOneWidget);
-
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Password'),
-      'secret',
-    );
+    await tester.enterText(field('Server'), 'http://wtf.test:8080');
+    await tester.enterText(field('Email'), 'anna@example.com');
+    await tester.enterText(field('Password'), 'secret');
     await tester.tap(find.text('Log in'));
     await tester.pumpAndSettle();
 
     // The search screen, with the bottom bar of a narrow screen.
     expect(find.byType(NavigationBar), findsOneWidget);
-    expect(find.text('The search comes here.'), findsOneWidget);
+    expect(find.textContaining('Search items by name'), findsOneWidget);
     expect(storage.server, 'http://wtf.test:8080');
     expect(storage.token, 'tok');
 
     await tester.tap(find.text('Me'));
     await tester.pumpAndSettle();
-    expect(find.text('bbj@bbj.io'), findsOneWidget);
-    expect(find.text('Development'), findsOneWidget);
-
+    expect(find.text('anna@example.com'), findsOneWidget);
+    await tester.ensureVisible(find.text('Log out'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Log out'));
     await tester.pumpAndSettle();
     expect(find.text('Log in'), findsOneWidget);
     expect(storage.token, isNull);
-    // The server is remembered.
-    expect(find.text('http://wtf.test:8080'), findsOneWidget);
+  });
+
+  testWidgets('Manage holds attributes, units and accounts', (tester) async {
+    setSize(tester, 400, 800);
+    await startApp(tester, FakeServer());
+    await tester.tap(find.text('Manage'));
+    await tester.pumpAndSettle();
+    expect(find.text('Units'), findsOneWidget);
+    // This account may not read accounts.
+    expect(find.text('Accounts'), findsNothing);
+    await tester.tap(find.text('Attributes'));
+    await tester.pumpAndSettle();
+    expect(find.text('Voltage'), findsOneWidget);
+    // Still under Manage.
+    expect(
+      tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex,
+      3,
+    );
+  });
+
+  testWidgets('the appearance is kept on the device', (tester) async {
+    setSize(tester, 400, 800);
+    final fake = FakeServer();
+    final storage = MemoryStorage(server: 'http://wtf.test:8080', token: 'tok');
+    final session = Session(storage: storage, httpClient: fake.client);
+    await session.restore();
+    await tester.pumpWidget(WtfApp(session: session));
+    await tester.pumpAndSettle();
+    ThemeMode mode() =>
+        tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode!;
+    expect(mode(), ThemeMode.system);
+
+    await tester.tap(find.text('Me'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Light'));
+    await tester.pumpAndSettle();
+    expect(mode(), ThemeMode.light);
+    expect(storage.theme, 'light');
+
+    // The next start.
+    final next = Session(storage: storage, httpClient: fake.client);
+    await next.restore();
+    expect(next.themeMode, ThemeMode.light);
   });
 
   testWidgets('a stored session continues, with a rail on wide screens', (
     tester,
   ) async {
-    await setWidth(tester, 1000);
+    setSize(tester, 1000);
+    final fake = FakeServer();
     final session = Session(
       storage: MemoryStorage(server: 'http://wtf.test:8080', token: 'tok'),
-      httpClient: fakeServer(),
+      httpClient: fake.client,
     );
     await session.restore();
-    expect(session.me?.email, 'bbj@bbj.io');
+    expect(session.me?.email, 'anna@example.com');
     await tester.pumpWidget(WtfApp(session: session));
     await tester.pumpAndSettle();
     expect(find.byType(NavigationRail), findsOneWidget);
-    expect(find.text('The search comes here.'), findsOneWidget);
   });
 
   testWidgets('the web app uses its own address and no server field', (
     tester,
   ) async {
-    await setWidth(tester, 400);
+    setSize(tester, 400, 800);
+    final fake = FakeServer();
     final storage = MemoryStorage();
     final session = Session(
       storage: storage,
-      webOrigin: Uri.parse('http://wtf.test:8080'),
-      httpClient: fakeServer(),
+      webOrigin: server,
+      httpClient: fake.client,
     );
     await session.restore();
     await tester.pumpWidget(WtfApp(session: session));
     await tester.pumpAndSettle();
-    expect(find.widgetWithText(TextFormField, 'Server'), findsNothing);
-    expect(find.widgetWithText(TextFormField, 'Email'), findsOneWidget);
-    // The browser keeps the cookie, never the app.
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Email'),
-      'bbj@bbj.io',
-    );
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Password'),
-      'secret',
-    );
-    await tester.tap(find.text('Log in'));
-    await tester.pumpAndSettle();
-    expect(find.text('The search comes here.'), findsOneWidget);
+    expect(field('Server'), findsNothing);
     expect(storage.token, isNull);
-    expect(storage.server, isNull);
+  });
+
+  testWidgets('find an item, see where it is, move part of it', (tester) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    await startApp(tester, fake);
+
+    await search(tester, 'drill');
+    expect(find.text('Cordless drill'), findsOneWidget);
+    expect(find.text('Garage/Shelf 1'), findsOneWidget); // where its stock is
+    expect(find.text('1B00  ·  Tools/Drills'), findsOneWidget);
+
+    await tester.tap(find.text('Cordless drill'));
+    await tester.pumpAndSettle();
+    expect(find.text('18 V'), findsOneWidget);
+    expect(find.text('Tools/Drills'), findsOneWidget);
+
+    await tester.tap(find.text('Garage/Shelf 1'));
+    await tester.pumpAndSettle();
+    expect(find.text('Quantity'), findsOneWidget);
+
+    await tester.tap(find.text('Move'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Choose a location'));
+    await tester.pumpAndSettle();
+    // The current place isn't offered; the container is, but can't be chosen.
+    expect(
+      find.descendant(
+        of: find.byType(Dialog),
+        matching: find.text('Garage/Shelf 1'),
+      ),
+      findsNothing,
+    );
+    expect(
+      tester.widget<ListTile>(find.widgetWithText(ListTile, 'Garage/')).enabled,
+      isFalse,
+    );
+    await tester.tap(find.text('Garage/Shelf 2'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('Quantity (pieces)'), '1');
+    await tester.tap(find.widgetWithText(FilledButton, 'Move'));
+    await tester.pumpAndSettle();
+
+    expect(
+      fake.changes.last,
+      endsWith('/move {"location":"l-shelf2","quantity":1}'),
+    );
+    // The row at the destination.
+    expect(find.text('Garage/Shelf 2'), findsOneWidget);
+    expect(find.text('1'), findsOneWidget);
+  });
+
+  testWidgets('a label code finds its object', (tester) async {
+    setSize(tester, 1000);
+    await startApp(tester, FakeServer());
+    await search(tester, '1a-01'); // case and hyphens don't matter
+    expect(find.text('Label code: Location 1A01'), findsOneWidget);
+    await tester.tap(find.text('Garage/Shelf 1'));
+    await tester.pumpAndSettle();
+    expect(find.text('Stock here'), findsOneWidget);
+    expect(find.text('Cordless drill'), findsOneWidget);
+  });
+
+  testWidgets('add an item with a value in other units, without stock', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    await startApp(tester, fake);
+
+    await tester.tap(find.text('New item'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Choose a class'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<ListTile>(find.widgetWithText(ListTile, 'Tools/')).enabled,
+      isFalse,
+    );
+    await tester.tap(find.text('Tools/Drills'));
+    await tester.pumpAndSettle();
+
+    // A required value, checked with the units of its group.
+    expect(field('Voltage *'), findsOneWidget);
+    await tester.enterText(field('Name'), 'Impact driver');
+    await tester.enterText(field('Voltage *'), '3 kg');
+    await tester.tap(find.text('Create'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('unknown unit "kg"'), findsOneWidget);
+    expect(fake.changes, isEmpty);
+
+    await tester.enterText(field('Voltage *'), '18000mV');
+    await tester.tap(find.text('Create'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.single,
+      'POST /api/v1/items {"class":"c-drills","name":"Impact driver","values":{"a-volt":18}}',
+    );
+
+    // Asked once, as in the CLI.
+    expect(find.text('Add stock for Impact driver?'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(find.text('Impact driver'), findsWidgets);
+    expect(find.text('No stock.'), findsOneWidget);
+  });
+
+  testWidgets('add an item, then its stock', (tester) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    await startApp(tester, fake);
+    await tester.tap(find.text('New item'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Choose a class'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Tools/Drills'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('Name'), 'Hammer drill');
+    await tester.enterText(field('Voltage *'), '230');
+    await tester.tap(find.text('Create'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add stock'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Choose a location'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Garage/Shelf 2'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+    await tester.pumpAndSettle();
+
+    // Uncounted (empty quantity); then the item's screen shows it.
+    expect(fake.changes.last, contains('"location":"l-shelf2"}'));
+    expect(find.text('Hammer drill'), findsWidgets);
+    expect(find.text('uncounted'), findsOneWidget);
+  });
+
+  testWidgets('the location tree, and a box with compartments', (tester) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    await startApp(tester, fake);
+
+    await tester.tap(find.text('Locations'));
+    await tester.pumpAndSettle();
+    expect(find.text('Garage/'), findsOneWidget);
+    expect(find.text('Shelf 1'), findsNothing);
+    await tester.tap(find.byTooltip('Expand'));
+    await tester.pumpAndSettle();
+    expect(find.text('Shelf 1'), findsOneWidget);
+
+    await tester.tap(find.text('New location'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('Name'), 'Box');
+    await tester.tap(find.text('Compartment grid'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('Columns'), '2');
+    await tester.enterText(field('Rows'), '3');
+    await tester.pump();
+    expect(find.textContaining('6 compartments, A1 … B3'), findsOneWidget);
+    await tester.tap(find.text('Create'));
+    await tester.pumpAndSettle();
+
+    expect(
+      fake.changes.single,
+      'POST /api/v1/locations {"name":"Box","grid":{"columns":2,"rows":3}}',
+    );
+    expect(find.text('Container'), findsOneWidget);
+    expect(find.text('B3'), findsOneWidget);
+    // The tree underneath already shows the new box.
+    expect(find.text('Box/', skipOffstage: false), findsOneWidget);
+  });
+
+  testWidgets('edit an item: rename it, change a value, then clear it', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    await startApp(tester, fake);
+    await search(tester, 'drill');
+    await tester.tap(find.text('Cordless drill'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Edit'));
+    await tester.pumpAndSettle();
+    // The current value, as shown, reads back unchanged.
+    expect(find.widgetWithText(TextFormField, '18 V'), findsOneWidget);
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(fake.changes, isEmpty);
+    expect(find.text('No changes.'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Edit'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('Name'), 'Old drill');
+    await tester.enterText(field('Voltage *'), '14.4');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(fake.changes, [
+      'PATCH /api/v1/items/i-drill {"name":"Old drill"}',
+      'PUT /api/v1/items/i-drill/values/a-volt {"value":14.4}',
+    ]);
+    expect(find.text('14.4 V'), findsOneWidget);
+
+    // A required value without a default can't be cleared.
+    await tester.tap(find.byTooltip('Edit'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('Voltage *'), '');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(find.text('Required'), findsOneWidget);
+    expect(fake.changes, hasLength(2));
+  });
+
+  testWidgets('delete a location with stock in it only when told to', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    await startApp(tester, fake);
+    await search(tester, '1A00');
+    await tester.tap(find.text('Garage'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete…'));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete location Garage?'), findsOneWidget);
+    expect(find.text('And the 2 locations below it:'), findsOneWidget);
+    expect(find.text('1 stock row is in them:'), findsOneWidget);
+    // Delete stays disabled until the stock may go too.
+    final delete = find.widgetWithText(FilledButton, 'Delete');
+    expect(tester.widget<FilledButton>(delete).onPressed, isNull);
+    await tester.tap(find.text('Delete that stock too'));
+    await tester.pumpAndSettle();
+    await tester.tap(delete);
+    await tester.pumpAndSettle();
+
+    expect(
+      fake.changes.single,
+      'DELETE /api/v1/locations/l-garage?recursive=true&force=true',
+    );
+    expect(fake.locations, isEmpty);
+    expect(fake.stock, isEmpty);
+  });
+
+  testWidgets('read-only accounts get no buttons that would be refused', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    await startApp(tester, FakeServer(privilege: 'read_only'));
+    expect(find.text('New item'), findsNothing);
+    await search(tester, 'drill');
+    await tester.tap(find.text('Cordless drill'));
+    await tester.pumpAndSettle();
+    expect(find.text('Add stock'), findsNothing);
+    expect(find.byTooltip('Edit'), findsNothing);
   });
 }

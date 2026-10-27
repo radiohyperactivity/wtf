@@ -1,6 +1,7 @@
 // Who is logged in, where, and the API client for it.
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8,20 +9,33 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'api/client.dart';
 import 'api/models.dart';
 
-/// Where the native apps keep the server address and the session token.
+/// Where the native apps keep the server address and the session token, and
+/// every app (the web app too) the appearance.
 abstract class SessionStorage {
   Future<String?> readServer();
   Future<void> writeServer(String server);
   Future<String?> readToken();
   Future<void> writeToken(String? token);
+  Future<String?> readTheme();
+  Future<void> writeTheme(String theme);
 }
 
-/// The server address in the settings, the token in the system's protected
-/// storage (Keychain, Keystore, Credential Manager, Secret Service).
+/// The server address and appearance in the settings (in a browser, its
+/// local storage), the token in the system's protected storage (Keychain,
+/// Keystore, Credential Manager, Secret Service).
 class DeviceStorage implements SessionStorage {
   static const _serverKey = 'server';
   static const _tokenKey = 'session';
+  static const _themeKey = 'theme';
   final _secure = const FlutterSecureStorage();
+
+  @override
+  Future<String?> readTheme() async =>
+      (await SharedPreferences.getInstance()).getString(_themeKey);
+
+  @override
+  Future<void> writeTheme(String theme) async =>
+      (await SharedPreferences.getInstance()).setString(_themeKey, theme);
 
   @override
   Future<String?> readServer() async =>
@@ -42,10 +56,17 @@ class DeviceStorage implements SessionStorage {
 
 /// Storage for tests.
 class MemoryStorage implements SessionStorage {
-  MemoryStorage({this.server, this.token});
+  MemoryStorage({this.server, this.token, this.theme});
 
   String? server;
   String? token;
+  String? theme;
+
+  @override
+  Future<String?> readTheme() async => theme;
+
+  @override
+  Future<void> writeTheme(String theme) async => this.theme = theme;
 
   @override
   Future<String?> readServer() async => server;
@@ -81,11 +102,24 @@ class Session extends ChangeNotifier {
 
   ApiClient? _client;
 
+  /// Light, dark, or as the system is set (the default); kept per device,
+  /// not with the account.
+  ThemeMode themeMode = ThemeMode.system;
+
+  Future<void> setThemeMode(ThemeMode mode) async {
+    themeMode = mode;
+    notifyListeners();
+    await storage.writeTheme(mode.name);
+  }
+
   /// The client of the session. Only valid while someone is logged in.
   ApiClient get client => _client!;
 
   /// Continues the session of the last start, if it's still valid.
   Future<void> restore() async {
+    themeMode =
+        ThemeMode.values.asNameMap()[await storage.readTheme()] ??
+        ThemeMode.system;
     String? token;
     if (isWeb) {
       server = webOrigin;
@@ -137,6 +171,24 @@ class Session extends ChangeNotifier {
     if (!isWeb) await storage.writeToken(null);
     notifyListeners();
   }
+
+  /// The server answered 401: the session ended (expired, or the password
+  /// was changed elsewhere). The native apps notice that by the deleted
+  /// cookie; the web app, which never sees the cookie, by this.
+  void ended() {
+    if (me == null) return;
+    me = null;
+    if (!isWeb) storage.writeToken(null);
+    notifyListeners();
+  }
+
+  // What the account may do; the server checks it anyway, the app only
+  // hides what would be refused.
+  bool get canWriteData => me?.dataPrivilege.canWrite ?? false;
+  bool get canWriteModel => me?.modelPrivilege.canWrite ?? false;
+  bool get canReadHistory => me?.historyPrivilege.canRead ?? false;
+  bool get canReadAccounts => me?.accountPrivilege.canRead ?? false;
+  bool get canWriteAccounts => me?.accountPrivilege.canWrite ?? false;
 
   ApiClient _newClient(Uri server, String? token) {
     late final ApiClient client;
