@@ -237,6 +237,9 @@ Suggested REST routes are only there to show intent. The REST design comes later
 | `class_history(p_id, p_limit, p_offset)` | page of history entries | `GET /classes/{id}/history` |
 | `attribute_history(p_id, p_limit, p_offset)` | page of history entries | `GET /attributes/{id}/history` |
 | `account_history(p_id, p_limit, p_offset)` | page of history entries | `GET /accounts/{id}/history` |
+| `location_list_history(p_limit, p_offset)` | page of history entries | `GET /locations/history` |
+| `class_list_history(p_limit, p_offset)` | page of history entries | `GET /classes/history` |
+| `attribute_list_history(p_limit, p_offset)` | page of history entries | `GET /attributes/history` |
 | `code_resolve(p_code)` | `{type, object}` | `GET /codes/{code}` |
 | `schema_version()` | `{version, repeatables}` | – (used by `wtfd serve` at startup) |
 

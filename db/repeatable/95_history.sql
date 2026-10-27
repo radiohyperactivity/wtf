@@ -146,6 +146,44 @@ BEGIN
 END;
 $$;
 
+-- The top level of the locations: the top-level locations being added,
+-- moved to or from the top, deleted, restored or purged (so a deleted one
+-- can be found from here, as from a location for what is inside it).
+CREATE FUNCTION location_list_history(p_limit integer DEFAULT 100, p_offset integer DEFAULT 0)
+RETURNS jsonb
+LANGUAGE plpgsql STABLE
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_tenant uuid := util.require('history', 'read');
+BEGIN
+    RETURN util.history_page(v_tenant, $q$
+        h.table_name = 'location'
+        AND (h.data ->> 'parent' IS NULL
+             OR (h.changes ? 'parent' AND h.changes -> 'parent' ->> 'old' IS NULL))
+        AND (h.operation <> 'update' OR h.changes ?| ARRAY['parent', 'deleted'])
+    $q$, p_limit, p_offset);
+END;
+$$;
+
+-- The top level of the classes, as for the locations.
+CREATE FUNCTION class_list_history(p_limit integer DEFAULT 100, p_offset integer DEFAULT 0)
+RETURNS jsonb
+LANGUAGE plpgsql STABLE
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_tenant uuid := util.require('history', 'read');
+BEGIN
+    RETURN util.history_page(v_tenant, $q$
+        h.table_name = 'class'
+        AND (h.data ->> 'parent' IS NULL
+             OR (h.changes ? 'parent' AND h.changes -> 'parent' ->> 'old' IS NULL))
+        AND (h.operation <> 'update' OR h.changes ?| ARRAY['parent', 'deleted'])
+    $q$, p_limit, p_offset);
+END;
+$$;
+
 -- An attribute: the attribute itself and its options.
 CREATE FUNCTION attribute_history(p_id uuid, p_limit integer DEFAULT 100, p_offset integer DEFAULT 0)
 RETURNS jsonb
@@ -159,6 +197,21 @@ BEGIN
            (h.table_name = 'attribute'        AND h.data ->> 'id'        = %1$s)
         OR (h.table_name = 'attribute_option' AND h.data ->> 'attribute' = %1$s)
     $q$, quote_literal(p_id)), p_limit, p_offset);
+END;
+$$;
+
+-- The attributes: attributes being added, deleted, restored or purged.
+CREATE FUNCTION attribute_list_history(p_limit integer DEFAULT 100, p_offset integer DEFAULT 0)
+RETURNS jsonb
+LANGUAGE plpgsql STABLE
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_tenant uuid := util.require('history', 'read');
+BEGIN
+    RETURN util.history_page(v_tenant, $q$
+        h.table_name = 'attribute' AND (h.operation <> 'update' OR h.changes ? 'deleted')
+    $q$, p_limit, p_offset);
 END;
 $$;
 

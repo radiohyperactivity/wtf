@@ -372,7 +372,7 @@ func locationGroup() group {
 			editCommand("location", objectParam("location"), resolveLocationFn, (*env).editLocation),
 			treeDeleteCommand("location", "/locations/", resolveLocationFn),
 			restoreCommand(restoreKind{kind: "location", prefix: "/locations/", codeType: "location", place: "parent", placeKind: "location", named: true, show: show}),
-			historyCommand("location", "/locations/", resolveLocationFn),
+			historyCommand("location", "/locations/", "the top-level locations", resolveLocationFn),
 		},
 	}
 }
@@ -406,7 +406,7 @@ func classGroup() group {
 			editCommand("class", objectParam("class"), resolveClassFn, (*env).editClass),
 			treeDeleteCommand("class", "/classes/", resolveClassFn),
 			restoreCommand(restoreKind{kind: "class", prefix: "/classes/", place: "parent", placeKind: "class", named: true, show: show}),
-			historyCommand("class", "/classes/", resolveClassFn),
+			historyCommand("class", "/classes/", "the top-level classes", resolveClassFn),
 			{
 				name:    "assign",
 				args:    "<class> <attribute> [--default V] [--per-unit] [--required]",
@@ -646,7 +646,7 @@ func attributeGroup() group {
 			editCommand("attribute", objectParam("attribute"), resolveAttrIDFn, (*env).editAttribute),
 			deleteCommand("attribute", "/attributes/", resolveAttrIDFn),
 			restoreCommand(restoreKind{kind: "attribute", prefix: "/attributes/", named: true, show: show}),
-			historyCommand("attribute", "/attributes/", resolveAttrIDFn),
+			historyCommand("attribute", "/attributes/", "the list of attributes", resolveAttrIDFn),
 		},
 	}
 }

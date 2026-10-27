@@ -1030,7 +1030,7 @@ paths:
     parameters: [{ $ref: "#/components/parameters/Id" }]
     get:
       summary: History of a location
-      description: The location, stock rows that were there (including arrivals and departures) and its attachments. Newest first; also for deleted objects. Needs the history privilege.
+      description: The location, stock rows that were there (including arrivals and departures), its attachments, and the locations directly inside it being added, moved in or out, deleted, restored or purged. Newest first; also for deleted objects. Needs the history privilege.
       operationId: locationHistory
       parameters:
         - { $ref: "#/components/parameters/Limit" }
@@ -1043,7 +1043,7 @@ paths:
     parameters: [{ $ref: "#/components/parameters/Id" }]
     get:
       summary: History of a class
-      description: The class, its attribute assignments and its attachments. Newest first; also for deleted objects. Needs the history privilege.
+      description: The class, its attribute assignments, its attachments, and the classes directly below it and its items being added, moved in or out, deleted, restored or purged. Newest first; also for deleted objects. Needs the history privilege.
       operationId: classHistory
       parameters:
         - { $ref: "#/components/parameters/Limit" }
@@ -1071,6 +1071,42 @@ paths:
       summary: History of an account
       description: Changes to the account itself. Newest first; also for deleted objects. Needs the history privilege.
       operationId: accountHistory
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Offset" }
+      responses:
+        "200": { $ref: "#/components/responses/History" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /locations/history:
+    get:
+      summary: History of the top-level locations
+      description: Top-level locations being added, moved to or from the top level, deleted, restored or purged, so that a deleted one can be found. Newest first. Needs the history privilege.
+      operationId: locationListHistory
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Offset" }
+      responses:
+        "200": { $ref: "#/components/responses/History" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /classes/history:
+    get:
+      summary: History of the top-level classes
+      description: Top-level classes being added, moved to or from the top level, deleted, restored or purged, so that a deleted one can be found. Newest first. Needs the history privilege.
+      operationId: classListHistory
+      parameters:
+        - { $ref: "#/components/parameters/Limit" }
+        - { $ref: "#/components/parameters/Offset" }
+      responses:
+        "200": { $ref: "#/components/responses/History" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /attributes/history:
+    get:
+      summary: History of the attributes
+      description: Attributes being added, deleted, restored or purged, so that a deleted one can be found. Newest first. Needs the history privilege.
+      operationId: attributeListHistory
       parameters:
         - { $ref: "#/components/parameters/Limit" }
         - { $ref: "#/components/parameters/Offset" }

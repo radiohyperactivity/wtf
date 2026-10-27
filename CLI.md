@@ -66,9 +66,9 @@ wtf item add            # asks for everything, with Tab completion
 | `wtf item value-set <item> <attribute> <value…>` / `value-delete <item> <attribute>` | `/items/{id}/values/{attribute}` |
 | `wtf stock list [--item I] [--location L]` / `get` / `add <item> <location> [quantity] [--value A=V]…` / `move <stock> <location> [quantity]` / `set` / `edit` / `delete` / `restore` / `history` | `/stock` |
 | `wtf stock value-set` / `value-delete` | `/stock/{id}/values/{attribute}` |
-| `wtf location tree` / `get` / `add <name or path> [--parent P] [--create-parents] [--container \| --grid COLUMNSxROWS] [--edit]` / `set [--name N] [--parent P\|none] [--container yes\|no]` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` / `restore` / `history` | `/locations` |
-| `wtf class tree` / `get` / `add` / `set` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` / `restore` / `history` / `assign <class> <attribute> [--default V] [--per-unit] [--required]` / `unassign` | `/classes`, `/classes/{id}/attributes/{attribute}` |
-| `wtf attribute list` / `get` / `add <name> --type T [--unit-group G] [--edit]` / `set` / `edit` / `delete` / `restore` / `history` | `/attributes` |
+| `wtf location tree` / `get` / `add <name or path> [--parent P] [--create-parents] [--container \| --grid COLUMNSxROWS] [--edit]` / `set [--name N] [--parent P\|none] [--container yes\|no]` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` / `restore` / `history [location]` | `/locations` |
+| `wtf class tree` / `get` / `add` / `set` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` / `restore` / `history [class]` / `assign <class> <attribute> [--default V] [--per-unit] [--required]` / `unassign` | `/classes`, `/classes/{id}/attributes/{attribute}` |
+| `wtf attribute list` / `get` / `add <name> --type T [--unit-group G] [--edit]` / `set` / `edit` / `delete` / `restore` / `history [attribute]` | `/attributes` |
 | `wtf option list <attribute>` / `get` / `add <attribute> <name>…` / `set --name N` / `delete` / `restore` | `/attributes/{id}/options`, `/options/{id}` |
 | `wtf attachment list <type> <ref>` / `add <type> <ref> <file> [--caption C] [--primary]` / `get` / `download [-o FILE\ / `restore`|-]` / `set` / `edit` / `delete` | attachments |
 | `wtf quantity list` / `get`, `wtf unit list [--quantity Q]` / `get`, `wtf unit-group list [--quantity Q]` / `get` | system data |

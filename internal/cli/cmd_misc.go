@@ -693,7 +693,7 @@ func accountGroup() group {
 			},
 			editCommand("account", objectParam("account"), resolveAccountFn, (*env).editAccount),
 			deleteCommand("account", "/accounts/", resolveAccountFn),
-			historyCommand("account", "/accounts/", resolveAccountFn),
+			historyCommand("account", "/accounts/", "", resolveAccountFn),
 		},
 	}
 }

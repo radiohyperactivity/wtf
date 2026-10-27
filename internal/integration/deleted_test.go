@@ -325,3 +325,48 @@ func TestDeletedRules(t *testing.T) {
 		t.Errorf("restored next to a new photo: %v", a)
 	}
 }
+
+// The top level of the trees and the list of attributes have a history of
+// their own, so that a deleted top-level location, top-level class or
+// attribute can be found.
+func TestListHistory(t *testing.T) {
+	e := setup(t)
+	e.reset(t)
+	ids := func(rows []any) string {
+		var s []string
+		for _, r := range rows {
+			s = append(s, str(t, r, "data", "name"))
+		}
+		return strings.Join(s, ",")
+	}
+
+	garage := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Garage")).body, "id")
+	shed := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Shed")).body, "id")
+	box := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Box", "parent", garage)).body, "id")
+	e.expect(t, 200, "PATCH", "/locations/"+garage, obj("name", "Car port")) // not a change of the top level
+	e.expect(t, 200, "PATCH", "/locations/"+box, obj("parent", nil))         // to the top
+	e.expect(t, 200, "PATCH", "/locations/"+box, obj("parent", shed))        // and away again
+	e.expect(t, 200, "DELETE", "/locations/"+shed+"?recursive=true", nil)    // Box goes with it, inside
+	kinds, rows := historyOf(t, e, "/locations/history")
+	if got := strings.Join(kinds, ","); got != "location.update,location.update,location.update,location.insert,location.insert" ||
+		ids(rows) != "Shed,Box,Box,Shed,Garage" || get(t, rows[0], "changes", "deleted", "new") != true {
+		t.Errorf("top-level locations: %s %s", got, ids(rows))
+	}
+
+	tools := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Tools")).body, "id")
+	e.expect(t, 201, "POST", "/classes", obj("name", "Drills", "parent", tools))
+	e.expect(t, 200, "DELETE", "/classes/"+tools+"?recursive=true", nil)
+	e.expect(t, 200, "POST", "/classes/"+tools+"/restore", nil)
+	if kinds, rows := historyOf(t, e, "/classes/history"); strings.Join(kinds, ",") != "class.update,class.update,class.insert" ||
+		ids(rows) != "Tools,Tools,Tools" {
+		t.Errorf("top-level classes: %v %s", kinds, ids(rows))
+	}
+
+	size := str(t, e.expect(t, 201, "POST", "/attributes", obj("name", "Size", "datatype", "text")).body, "id")
+	e.expect(t, 200, "PATCH", "/attributes/"+size, obj("name", "Length"))
+	e.expect(t, 204, "DELETE", "/attributes/"+size, nil)
+	if kinds, rows := historyOf(t, e, "/attributes/history"); strings.Join(kinds, ",") != "attribute.update,attribute.insert" ||
+		ids(rows) != "Length,Size" {
+		t.Errorf("attributes: %v %s", kinds, ids(rows))
+	}
+}

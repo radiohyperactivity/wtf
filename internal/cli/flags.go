@@ -103,25 +103,38 @@ func deleteCommand(kind, prefix string, resolve func(*env, string) (string, erro
 }
 
 // historyCommand shows the history of the object named by the argument.
-func historyCommand(kind, prefix string, resolve func(*env, string) (string, error)) command {
+// With list set (e.g. "the top-level locations"), the argument may be left
+// out to show the history of that list: what was added to it, deleted or
+// restored, so that deleted things can be found.
+func historyCommand(kind, prefix, list string, resolve func(*env, string) (string, error)) command {
+	usage, summary, params := "<"+kind+">", "Show the changes to "+article(kind), []param{objectParam(kind)}
+	minArgs := 1
+	if list != "" {
+		usage, summary, minArgs = "["+kind+"]", summary+" (or to "+list+")", 0
+		params[0].optional = true
+	}
 	return command{
 		name:    "history",
-		args:    "<" + kind + "> [--limit N] [--offset N]",
-		summary: "Show the changes to " + article(kind) + ", newest first (history privilege).",
-		params:  []param{objectParam(kind)},
+		args:    usage + " [--limit N] [--offset N]",
+		summary: summary + ", newest first (history privilege).",
+		params:  params,
 		setup: func(fs *flag.FlagSet) func(*env, []string) error {
 			var p paging
 			p.register(fs)
 			return func(e *env, args []string) error {
-				if err := wantArgs(args, 1, 1); err != nil {
+				if err := wantArgs(args, minArgs, 1); err != nil {
 					return err
 				}
-				id, err := resolve(e, args[0])
-				if err != nil {
-					return err
+				path := prefix + "history"
+				if len(args) == 1 {
+					id, err := resolve(e, args[0])
+					if err != nil {
+						return err
+					}
+					path = prefix + id + "/history"
 				}
 				return e.list(p, listing{
-					path:  prefix + id + "/history",
+					path:  path,
 					empty: "No history.",
 					render: func(data json.RawMessage, _ bool) ([]string, error) {
 						var pg page[historyEntry]

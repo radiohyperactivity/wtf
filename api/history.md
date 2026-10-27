@@ -33,6 +33,11 @@ Each function needs the **history privilege**: `none` or `read_only`, where `rea
 | `class_history(p_id, …)` | `GET /classes/{id}/history` | the class, its attribute assignments, its attachments, and the classes directly below it and its items being added, moved in or out, deleted, restored or purged |
 | `attribute_history(p_id, …)` | `GET /attributes/{id}/history` | the attribute and its options |
 | `account_history(p_id, …)` | `GET /accounts/{id}/history` | changes to the account itself |
+| `location_list_history(…)` | `GET /locations/history` | top-level locations being added, moved to or from the top level, deleted, restored or purged |
+| `class_list_history(…)` | `GET /classes/history` | top-level classes, the same way |
+| `attribute_list_history(…)` | `GET /attributes/history` | attributes being added, deleted, restored or purged |
+
+The last three are the histories of the lists themselves, so that a deleted top-level location or class, or a deleted attribute, which has no parent whose history would show it, can still be found.
 
 ## Deleted accounts
 

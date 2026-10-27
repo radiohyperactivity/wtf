@@ -27,6 +27,10 @@ func TestCLIRestore(t *testing.T) {
 	if out := c.ok("code", row.Code); !strings.Contains(out, "Deleted:") || !strings.Contains(out, "wtf stock restore "+row.Code) {
 		t.Errorf("code of a deleted row:\n%s", out)
 	}
+	// A deleted top-level location is found in the top level's history.
+	if out := c.ok("location", "history"); !strings.Contains(out, `update location "Shed"`) || strings.Contains(out, "Box") {
+		t.Errorf("history of the top level:\n%s", out)
+	}
 
 	// Without a terminal, restoring into something deleted names both ways out.
 	_, stderr := c.run(1, "", "location", "restore", box.Code)

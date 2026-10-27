@@ -169,6 +169,9 @@ func (s *server) routes() []route {
 		{"GET /classes/{id}/history", s.read("class_history", id, limit, offset)},
 		{"GET /attributes/{id}/history", s.read("attribute_history", id, limit, offset)},
 		{"GET /accounts/{id}/history", s.read("account_history", id, limit, offset)},
+		{"GET /locations/history", s.read("location_list_history", limit, offset)},
+		{"GET /classes/history", s.read("class_list_history", limit, offset)},
+		{"GET /attributes/history", s.read("attribute_list_history", limit, offset)},
 
 		{"GET /codes/{code}", s.read("code_resolve", pathText("p_code", "code"))},
 	}
