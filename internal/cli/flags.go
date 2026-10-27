@@ -190,3 +190,42 @@ var kindCompleters = map[string]completer{
 func objectParam(kind string) param {
 	return arg(strings.ToUpper(kind[:1])+kind[1:], kindCompleters[kind])
 }
+
+// setUnit puts a new attribute's or item's unit (by unitRef) and Unit lock
+// into body. Without a unit, Unit lock is refused.
+func (e *env) setUnit(body object, unitRef string, lock bool) error {
+	if unitRef == "" {
+		if lock {
+			return usagef("--unit-lock needs --unit")
+		}
+		return nil
+	}
+	u, err := e.resolveUnit(unitRef)
+	if err != nil {
+		return err
+	}
+	body["unit"] = u.ID
+	if lock {
+		body["unit_lock"] = true
+	}
+	return nil
+}
+
+// patchUnit puts a changed unit and Unit lock (yes or no) into a patch.
+func (e *env) patchUnit(body object, unitRef, lock optString) error {
+	if unitRef.set {
+		u, err := e.resolveUnit(unitRef.value)
+		if err != nil {
+			return err
+		}
+		body["unit"] = u.ID
+	}
+	if lock.set {
+		b, ok := parseYesNo(lock.value)
+		if !ok {
+			return usagef("--unit-lock takes yes or no, not %q", lock.value)
+		}
+		body["unit_lock"] = b
+	}
+	return nil
+}

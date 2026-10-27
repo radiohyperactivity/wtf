@@ -222,7 +222,7 @@ func completeValueOf(i int) completer {
 }
 
 // valueCandidates are option names, yes/no, date words, or the typed number
-// with each unit of the attribute's unit group.
+// with each unit of the attribute's unit family.
 func (e *env) valueCandidates(a *attribute, cur string) []string {
 	switch a.Datatype {
 	case "choice":
@@ -232,14 +232,14 @@ func (e *env) valueCandidates(a *attribute, cur string) []string {
 	case "date":
 		return []string{"today", "yesterday", "tomorrow"}
 	case "integer", "float":
-		if a.UnitGroup == nil {
+		if a.Unit == nil {
 			return nil
 		}
 		m := numberPattern.FindStringSubmatch(cur)
 		if m == nil || m[2] != "" {
 			return nil
 		}
-		units, err := e.groupUnits(a.UnitGroup.ID)
+		units, err := e.familyUnits(a.Unit)
 		if err != nil {
 			return nil
 		}
@@ -273,14 +273,14 @@ func completeAssignment(e *env, _ []string, cur string, _ bool) []string {
 	return out
 }
 
-func completeUnitGroups(e *env, _ []string, _ string, _ bool) []string {
-	list, err := e.unitGroups()
+func completeFamilies(e *env, _ []string, _ string, _ bool) []string {
+	list, err := e.unitFamilies()
 	if err != nil {
 		return nil
 	}
 	var out []string
-	for _, g := range list {
-		out = append(out, g.Name)
+	for _, f := range list {
+		out = append(out, f.Name)
 	}
 	return out
 }
@@ -296,14 +296,33 @@ func completeQuantities(e *env, _ []string, _ string, _ bool) []string {
 	return out
 }
 
+// completeUnits completes units as resolveUnit takes them: by symbol, with
+// the family where several families share it ("B (Binary bytes)").
 func completeUnits(e *env, _ []string, _ string, _ bool) []string {
-	var all []unit
-	if e.cachedGet("/units", "units", &all) != nil {
+	return e.unitRefs(0)
+}
+
+// completeQuantityUnits completes the units of one quantity, for changing an
+// attribute's or item's unit.
+func completeQuantityUnits(quantityID int) completer {
+	return func(e *env, _ []string, _ string, _ bool) []string { return e.unitRefs(quantityID) }
+}
+
+// unitRefs are the units of a quantity (0: of all), named as unitRef does.
+func (e *env) unitRefs(quantityID int) []string {
+	families, err := e.unitFamilies()
+	if err != nil {
 		return nil
 	}
+	var all []unit
+	for _, f := range families {
+		all = append(all, f.Units...)
+	}
 	var out []string
-	for _, u := range all {
-		out = append(out, u.Symbol)
+	for i := range all {
+		if quantityID == 0 || all[i].Quantity.ID == quantityID {
+			out = append(out, unitRef(all, &all[i]))
+		}
 	}
 	return out
 }

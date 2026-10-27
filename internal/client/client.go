@@ -31,7 +31,7 @@ const (
 // SessionCookie is the cookie the API keeps the session in.
 const SessionCookie = "wtf_session"
 
-// Client is an API client. The server URL's hostname selects the tenant.
+// Client is an API client.
 type Client struct {
 	Server string // e.g. "http://localhost:8080"
 	Token  string // session token, sent as the session cookie; empty for anonymous requests

@@ -159,11 +159,17 @@ func pathNames(p []ref) string {
 	return strings.Join(names, "/")
 }
 
-func unitGroupName(g *unitGroup) string {
-	if g == nil {
+// unitName is an attribute's or item's unit with its family, and whether it
+// is locked: "mm (Metric length), locked".
+func unitName(u *unit, lock bool) string {
+	if u == nil {
 		return ""
 	}
-	return g.Name
+	s := u.Symbol + " (" + u.Family.Name + ")"
+	if lock {
+		s += ", locked"
+	}
+	return s
 }
 
 func yesNo(b bool) string {

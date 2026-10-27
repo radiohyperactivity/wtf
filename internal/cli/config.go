@@ -10,7 +10,7 @@ import (
 	"sort"
 )
 
-// Profile is one server/tenant login.
+// Profile is one server login.
 type Profile struct {
 	Server string `json:"server"`
 	Email  string `json:"email,omitempty"`

@@ -8,21 +8,22 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tenant uuid   := util.require('data', 'read');
-    v_code   bigint := util.code_value(p_code);
-    v_id     uuid;
+    v_code bigint;
+    v_id   uuid;
 BEGIN
-    SELECT id INTO v_id FROM location WHERE code = v_code AND tenant = v_tenant;
+    PERFORM util.require('data', 'read');
+    v_code := util.code_value(p_code);
+    SELECT id INTO v_id FROM location WHERE code = v_code;
     IF FOUND THEN
         RETURN jsonb_build_object('type', 'location', 'object', location_get(v_id));
     END IF;
 
-    SELECT id INTO v_id FROM item WHERE code = v_code AND tenant = v_tenant;
+    SELECT id INTO v_id FROM item WHERE code = v_code;
     IF FOUND THEN
         RETURN jsonb_build_object('type', 'item', 'object', item_get(v_id));
     END IF;
 
-    SELECT id INTO v_id FROM stock WHERE code = v_code AND tenant = v_tenant;
+    SELECT id INTO v_id FROM stock WHERE code = v_code;
     IF FOUND THEN
         RETURN jsonb_build_object('type', 'stock', 'object', stock_get(v_id));
     END IF;

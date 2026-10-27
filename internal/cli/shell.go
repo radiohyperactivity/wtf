@@ -4,6 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"strings"
+
+	"github.com/radiohyperactivity/wtf/internal/client"
 )
 
 // Shell completion: "wtf completion SHELL" prints a script that makes the
@@ -53,7 +55,7 @@ func (e *env) complete(args []string) int {
 	e.completing = true
 	_ = e.init()
 	if e.api == nil {
-		e.api = newClient("", "")
+		e.api = client.New("", "")
 	}
 	shell, args := args[0], args[1:]
 

@@ -7,9 +7,9 @@ All access to the data goes through the PL/pgSQL functions described here. They 
 | Documentation                            | SQL                                                        | Contents |
 |------------------------------------------|------------------------------------------------------------|----------|
 | [SCHEMA.md](SCHEMA.md)                   | [db/migrations/0001_schema.sql](db/migrations/0001_schema.sql) | Types, tables, views, integrity triggers |
-| [seed/units.md](seed/units.md)           | [db/migrations/0002_units.sql](db/migrations/0002_units.sql)   | System data: quantities, units and unit groups |
+| [seed/units.md](seed/units.md)           | [db/migrations/0002_units.sql](db/migrations/0002_units.sql)   | System data: quantities, unit families and units |
 | [api/helpers.md](api/helpers.md)         | [db/repeatable/10_util.sql](db/repeatable/10_util.sql)         | Schema `util`: internal helpers for errors, paging, paths, typed values, JSON builders |
-| [api/attribute.md](api/attribute.md)     | [db/repeatable/20_attribute.sql](db/repeatable/20_attribute.sql) | `quantity_*`, `unit_*`, `unit_group_*`, `attribute_*`, `attribute_option_*` |
+| [api/attribute.md](api/attribute.md)     | [db/repeatable/20_attribute.sql](db/repeatable/20_attribute.sql) | `quantity_*`, `unit_family_*`, `unit_*`, `attribute_*`, `attribute_option_*` |
 | [api/class.md](api/class.md)             | [db/repeatable/30_class.sql](db/repeatable/30_class.sql)       | `class_*`, `class_attribute_*` |
 | [api/item.md](api/item.md)               | [db/repeatable/40_item.sql](db/repeatable/40_item.sql)         | `item_*`, `value_*` |
 | [api/location.md](api/location.md)       | [db/repeatable/50_location.sql](db/repeatable/50_location.sql) | `location_*`, `stock_*` |
@@ -17,7 +17,7 @@ All access to the data goes through the PL/pgSQL functions described here. They 
 | [api/attachment.md](api/attachment.md)   | [db/repeatable/80_attachment.sql](db/repeatable/80_attachment.sql) | `attachment_*` |
 | [api/account.md](api/account.md)         | [db/repeatable/90_account.sql](db/repeatable/90_account.sql)   | `login`, `session_use`, `logout`, `me`, `password_change`, `account_*` |
 | [api/history.md](api/history.md)         | [db/repeatable/95_history.sql](db/repeatable/95_history.sql)   | `*_history` |
-| [api/deleting.md](api/deleting.md)       | [db/migrations/0010_deleted.sql](db/migrations/0010_deleted.sql) | Marking deleted, `*_restore`, purging |
+| [api/deleting.md](api/deleting.md)       | [db/migrations/0001_schema.sql](db/migrations/0001_schema.sql) | Marking deleted, `*_restore`, purging |
 | [api/meta.md](api/meta.md)               | [db/repeatable/60_meta.sql](db/repeatable/60_meta.sql)         | `schema_version()` |
 
 The files are applied by `wtfd schema` (see [WTFD.md](WTFD.md)). Migrations run once, in order; the repeatable scripts are rebuilt as a whole whenever one of them changes.
@@ -25,12 +25,11 @@ The files are applied by `wtfd schema` (see [WTFD.md](WTFD.md)). Migrations run 
 ## Conventions
 
 - **Functions, not procedures.** Every API entry point is a `FUNCTION` returning `jsonb` (or `void` for deletes, which mark objects deleted).
-- **History.** Every change to tenant data is logged by a trigger: who, when, what changed. It can be read per object with the history privilege; see [api/history.md](api/history.md).
+- **History.** Every change to the data is logged by a trigger: who, when, what changed. It can be read per object with the history privilege; see [api/history.md](api/history.md).
 - **Deleting marks objects** instead of removing them; see [api/deleting.md](api/deleting.md). Lists and trees leave deleted objects out; `_get` and `code_resolve` still return them, with `deleted: true`. A deleted object can't be changed, only restored (`<entity>_restore(p_id, p_options)`) or purged by the operator.
-- **Tenants and logins.** Every API function works on behalf of a logged-in account, within its tenant (see [TENANTS.md](TENANTS.md) and [api/account.md](api/account.md)).
-  - `wtfd` calls `session_use(token, hostname)` first in each transaction.
-  - The function checks the account's privilege (`data`, `model` or `account`; read or write) and only sees the tenant's objects.
-  - Objects of other tenants answer "not found".
+- **Logins.** Every API function works on behalf of a logged-in account (see [ACCOUNTS.md](ACCOUNTS.md) and [api/account.md](api/account.md)).
+  - `wtfd` calls `session_use(token)` first in each transaction.
+  - The function checks the account's privilege (`data`, `model`, `account` or `history`; read or write).
 - **Access.**
   - API functions are `SECURITY DEFINER`: they run with the privileges of their owner, `wtf_dba`, not those of the caller.
   - Each one pins `search_path = public, pg_temp`, so a caller can't redirect table or function names to objects of its own.
@@ -49,7 +48,7 @@ The files are applied by `wtfd schema` (see [WTFD.md](WTFD.md)). Migrations run 
 - **Lists.**
   - The class and location trees sort numbers inside names by their value (`A2` before `A10`, `Shelf 2` before `Shelf 10`), ignoring case (`util.natural_key`).
   - Lists are sorted alphabetically by name, case-insensitively, with `id` as a tie-breaker.
-  - Lists of system data and of things defined once (quantities, units, unit groups, attributes, options) are small, and return a plain JSON array of everything.
+  - Lists of system data and of things defined once (quantities, unit families, units, attributes, options) are small, and return a plain JSON array of everything.
   - Only the lists that grow with the inventory, `item_list` and `stock_list`, are paged, with `p_limit` (1–1000, default 100) and `p_offset` (default 0). They return this envelope:
 
     ```json
@@ -90,16 +89,17 @@ The files are applied by `wtfd schema` (see [WTFD.md](WTFD.md)). Migrations run 
   | `choice`  | option id or option name (case-insensitive)  | `{"id": …, "name": …}`   |
 
 - **Units.**
-  - **System data:** quantities, units and unit groups are seeded and read-only.
-  - **Unit groups:** an attribute (for values and defaults) or an item (for stock quantities) may name a unit group. That makes its numbers measurements of the group's quantity.
-  - **Storage and input:** such numbers are stored, and must be given, in the SI base unit of the quantity (metres, kilograms, ohms, kelvin, …). Counts use the integer datatype; every other quantity uses float.
-  - **Output:** the number is returned in the base unit together with that unit, plus a `display` version in the group's unit that scales best:
+  - **System data:** quantities, unit families and units are seeded and read-only (see [seed/units.md](seed/units.md)). They have integer ids; everything else has UUIDs.
+  - **Units:** an attribute (for values and defaults) or an item (for stock quantities) may have a unit. That makes its numbers measurements of the unit's quantity. Each unit belongs to one family, such as Metric length.
+  - **Unit lock:** with `unit_lock`, numbers are always shown in the unit itself. Without it (the default), they are scaled within the unit's family.
+  - **Storage and input:** such numbers are stored, and must be given, in the base unit of the quantity (metres, kilograms, ohms, kelvin, …). Counts use the integer datatype; every other quantity uses float.
+  - **Output:** the number is returned in the base unit, plus a `display` version:
 
     ```json
-    { "value": 0.0012, "unit": { "symbol": "m", … }, "display": { "value": 1.2, "unit": { "symbol": "mm", … } } }
+    { "value": 0.0012, "display": { "value": 1.2, "unit": { "symbol": "mm", … } } }
     ```
 
-    The best unit is the largest unit of the group in which |value| ≥ 1. If there is none, the smallest unit is used. Zero is always shown in the base unit. `unit` and `display` are `null` when there is no unit group.
+    Without Unit lock, the display unit is the largest unit of the family in which |value| ≥ 1. If there is none, the smallest unit is used. Zero is always shown in the unit itself. `display` is `null` when there is no unit.
   - **Client conversion:** every unit includes its `base_factor` and `base_offset`, so the client can convert input to the base unit, and output to any unit, by itself:
 
     ```text
@@ -129,16 +129,14 @@ Functions raise standard SQLSTATEs. Suggested HTTP mapping for the REST layer:
 ## JSON shapes
 
 ```text
-display    { value, unit: unit }    -- a base-unit number in the best-scaling unit of a group
+display    { value, unit: unit }    -- a base-unit number as shown: scaled within the family, or in the unit with unit_lock
 tree       { version, unchanged: false, tree: [ node ] }  or  { version, unchanged: true }
 node       { id, name, parent, container, children: [ node ] }   (location nodes also have code)
 quantity   { id, name, datatype }
-           quantity_list adds  base_unit: unit
-           quantity_get adds   base_unit: unit, units: [ unit ], unit_groups: [ { id, name } ]
-unit       { id, name, symbol, quantity: quantity, base_factor, base_offset, is_base }
-unit_group { id, name, quantity: quantity, base_unit: unit }
-           unit_group_get adds  units: [ unit ]  (smallest to largest)
-attribute  { id, name, datatype, unit_group: unit_group | null, deleted }
+           quantity_get adds   families: [ { id, name, units: [ unit ] } ]
+unit       { id, name, symbol, family: { id, name }, quantity: quantity, base_factor, base_offset }
+unit_family { id, name, quantity: quantity, units: [ unit ] }  (units smallest to largest)
+attribute  { id, name, datatype, unit: unit | null, unit_lock, deleted }
            attribute_get adds  options: [ { id, name } ]  for choice attributes
 option     { id, attribute, name, deleted }
 class      { id, name, parent, container, path: [ { id, name } ], deleted }
@@ -146,15 +144,15 @@ class      { id, name, parent, container, path: [ { id, name } ], deleted }
 location   { id, code, name, parent, container, path: [ { id, name } ], deleted }
            location_get adds  attachments: [ attachment ]
 attachment { id, file_name, content_type, size, sha256, caption, primary_photo, deleted }
-item       (list)  { id, code, name, class: <class id>, unit_group: unit_group | null, deleted,
-                     stock: { total, unit: unit | null, display: display | null, uncounted }, incomplete }
-           (get)   { id, code, name, deleted, class: class, unit_group: unit_group | null,
+item       (list)  { id, code, name, class: <class id>, unit: unit | null, unit_lock, deleted,
+                     stock: { total, display: display | null, uncounted }, incomplete }
+           (get)   { id, code, name, deleted, class: class, unit: unit | null, unit_lock,
                      values: [ value ], missing: [ { id, name } ],
                      stock: [ { id, code, location: <location id>, quantity, display: display | null,
                                 values: [ value ], missing: [ { id, name } ] } ] }
-value      { attribute, value, unit: unit | null, display: display | null, is_default }
+value      { attribute, value, display: display | null, is_default }
 stock      { id, code, item: item (list form, without stock total), location: <location id>,
-             quantity: number | null, unit: unit | null, display: display | null,
+             quantity: number | null, display: display | null,
              deleted, merged_into: { id, code } | null,
              values: [ value ], missing: [ { id, name } ] }   (values and missing not in stock_list rows)
 ```
@@ -165,15 +163,15 @@ Suggested REST routes are only there to show intent. The REST design comes later
 
 | Function | Returns | Suggested route |
 |----------|---------|-----------------|
-| `quantity_list()` | [quantity (+ base unit)] | `GET /quantities` |
-| `quantity_get(p_id)` | quantity (+ base unit, units, unit groups) | `GET /quantities/{id}` |
-| `unit_list(p_quantity)` | [unit] | `GET /units?quantity=` |
+| `quantity_list()` | [quantity] | `GET /quantities` |
+| `quantity_get(p_id)` | quantity (+ families with their units) | `GET /quantities/{id}` |
+| `unit_family_list(p_quantity)` | [unit family (+ units)] | `GET /unit-families?quantity=` |
+| `unit_family_get(p_id)` | unit family (+ units) | `GET /unit-families/{id}` |
+| `unit_list(p_quantity, p_family)` | [unit] | `GET /units?quantity=&family=` |
 | `unit_get(p_id)` | unit | `GET /units/{id}` |
-| `unit_group_list(p_quantity)` | [unit group] | `GET /unit-groups?quantity=` |
-| `unit_group_get(p_id)` | unit group (+ units) | `GET /unit-groups/{id}` |
 | `attribute_list()` | [attribute] | `GET /attributes` |
 | `attribute_get(p_id)` | attribute (+ options) | `GET /attributes/{id}` |
-| `attribute_create(p_name, p_datatype, p_unit_group)` | attribute | `POST /attributes` |
+| `attribute_create(p_name, p_datatype, p_unit, p_unit_lock)` | attribute | `POST /attributes` |
 | `attribute_patch(p_id, p_patch)` | attribute | `PATCH /attributes/{id}` |
 | `attribute_delete(p_id)` | void | `DELETE /attributes/{id}` |
 | `attribute_restore(p_id, p_options)` | attribute (+ options) | `POST /attributes/{id}/restore` |
@@ -194,7 +192,7 @@ Suggested REST routes are only there to show intent. The REST design comes later
 | `class_attribute_remove(p_class, p_attribute)` | class (+ attributes) | `DELETE /classes/{id}/attributes/{attribute}` |
 | `item_list(p_class, p_search, p_limit, p_offset)` | page of item (list form, with stock total) | `GET /items?class=&search=` |
 | `item_get(p_id)` | item | `GET /items/{id}` |
-| `item_create(p_class, p_name, p_unit_group, p_values)` | item | `POST /items` |
+| `item_create(p_class, p_name, p_unit, p_unit_lock, p_values)` | item | `POST /items` |
 | `item_patch(p_id, p_patch)` | item | `PATCH /items/{id}` |
 | `item_delete(p_id)` | void | `DELETE /items/{id}` |
 | `item_restore(p_id, p_options)` | item | `POST /items/{id}/restore` |
@@ -221,14 +219,14 @@ Suggested REST routes are only there to show intent. The REST design comes later
 | `attachment_patch(p_id, p_patch)` | attachment | `PATCH /attachments/{id}` |
 | `attachment_delete(p_id)` | void | `DELETE /attachments/{id}` |
 | `attachment_restore(p_id, p_options)` | attachment | `POST /attachments/{id}/restore` |
-| `login(p_hostname, p_email, p_password)` | `{ok, token, account, tenant}` or `{ok: false, reason}` | `POST /api/v1/login` (the token becomes the session cookie) |
-| `session_use(p_token, p_hostname)` | void | – (called by wtfd before every function) |
+| `login(p_email, p_password)` | `{ok, token, account}` or `{ok: false, reason}` | `POST /api/v1/login` (the token becomes the session cookie) |
+| `session_use(p_token)` | void | – (called by wtfd before every function) |
 | `logout()` | void | `POST /logout` |
-| `me()` | account + tenant | `GET /me` |
+| `me()` | account | `GET /me` |
 | `password_change(p_current, p_new)` | void | `PUT /me/password` |
 | `account_list()` | [account] | `GET /accounts` |
 | `account_get(p_id)` | account | `GET /accounts/{id}` |
-| `account_create(p_email, p_password, p_data_privilege, p_model_privilege, p_account_privilege)` | account | `POST /accounts` |
+| `account_create(p_email, p_password, p_data_privilege, p_model_privilege, p_account_privilege, p_history_privilege)` | account | `POST /accounts` |
 | `account_patch(p_id, p_patch)` | account | `PATCH /accounts/{id}` |
 | `account_delete(p_id)` | void | `DELETE /accounts/{id}` |
 | `item_history(p_id, p_limit, p_offset)` | page of history entries | `GET /items/{id}/history` |

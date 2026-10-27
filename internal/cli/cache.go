@@ -12,16 +12,16 @@ import (
 	"time"
 )
 
-// The client keeps a cache per server (and so per tenant), in the user's cache
-// directory or $WTF_CACHE_DIR:
+// The client keeps a cache per server, in the user's cache directory or
+// $WTF_CACHE_DIR:
 //
 //   - the class and location trees, revalidated on every use with their
 //     version (ETag), which costs the server one row lookup;
 //   - while completing on the command line, the lists of attributes, unit
-//     groups, quantities and units, for a minute.
+//     families, quantities and units, for a minute.
 //
 // A change made by this client refreshes what it makes outdated at once (see
-// wrote). Unit groups, quantities and units can't be changed through the API.
+// wrote). Quantities, unit families and units can't be changed through the API.
 
 const listTTL = time.Minute
 

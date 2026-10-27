@@ -6,7 +6,7 @@ Keeping your shit organised: a database of the things you own (from tiny electro
 |------------------------------|--------------------------------------------------------------|
 | [SCHEMA.md](SCHEMA.md)       | Tables, types, integrity rules and triggers                   |
 | [SCHEMA.html](SCHEMA.html)   | Entity-relationship diagram                                   |
-| [seed/units.md](seed/units.md) | System data: quantities, units and unit groups              |
+| [seed/units.md](seed/units.md) | System data: quantities, unit families and units            |
 | [API.md](API.md)             | The PL/pgSQL functions all data access goes through           |
 | [CLI.md](CLI.md)             | `wtf`, the command-line client                                |
 
@@ -177,24 +177,24 @@ export WTFD_API_DATABASE_PASSWORD='…'
 
 By default it listens on `127.0.0.1:8080`, for a reverse proxy on the same machine. It refuses to start if the database schema doesn't match the binary; run `wtfd schema` first. Run `./wtfd serve -h` for all flags, and see [WTFD.md](WTFD.md) and `GET /api/v1/openapi.yaml` for the API itself. With `--web-root DIR` it also serves the web app.
 
-Each tenant is reached through its own hostname, and the reverse proxy must pass the `Host` header on: Caddy does by default, while nginx needs `proxy_set_header Host $host;`. **TLS is recommended but not required:** passwords travel to `wtfd` and on to PostgreSQL, which hashes them. Whether to use HTTPS at the proxy and `hostssl` / `--database-sslmode require` for the database connection is the administrator's decision.
+**TLS is recommended but not required:** passwords travel to `wtfd` and on to PostgreSQL, which hashes them. Whether to use HTTPS at the proxy and `hostssl` / `--database-sslmode require` for the database connection is the administrator's decision.
 
-### 8. Create a tenant
+### 8. Create the first account
 
 ```sh
 export WTFD_DBA_DATABASE_PASSWORD='…'
-./wtfd tenant create --name smith-home --hostname smith.wtf.example --email anna@example.com
+./wtfd account create --email anna@example.com
 ```
 
 This prints the first account's password once. Log in and change it, with `wtf login` and `wtf password` (see [CLI.md](CLI.md)), or by hand. The session comes back as the cookie `wtf_session`, which curl keeps in a file:
 
 ```sh
-curl -s -c cookies -H 'Host: smith.wtf.example' -H 'Content-Type: application/json' \
+curl -s -c cookies -H 'Content-Type: application/json' \
      -d '{"email": "anna@example.com", "password": "…"}' http://127.0.0.1:8080/api/v1/login
-curl -s -b cookies -H 'Host: smith.wtf.example' http://127.0.0.1:8080/api/v1/me
+curl -s -b cookies http://127.0.0.1:8080/api/v1/me
 ```
 
-The first account has every privilege and can create more accounts (`POST /accounts`). See [TENANTS.md](TENANTS.md).
+The first account has every privilege and can create more accounts (`POST /accounts`). A lost password is replaced with `./wtfd account password --email …`. See [ACCOUNTS.md](ACCOUNTS.md).
 
 ### 9. Check
 
@@ -331,7 +331,7 @@ go test ./internal/integration/ -v
 
 `WTFD_TEST_DATABASE_PORT` and `WTFD_TEST_DATABASE_SSLMODE` are optional. The roles default to `wtf_dba` and `wtf_api` and can be overridden with `WTFD_DBA_DATABASE_USER` and `WTFD_API_DATABASE_USER`.
 
-Each run first empties the test database, then brings its schema up to date with the same code as `wtfd schema`. It creates two tenants, `test.wtf.local` and `other.wtf.local`, and logs their first accounts in. Each test then empties the user data, leaving the units, quantities, unit groups, tenants and accounts.
+Each run first empties the test database, then brings its schema up to date with the same code as `wtfd schema`. It creates the first account, `admin@test.local`, and logs it in. Each test then empties the user data, leaving the quantities, unit families, units and accounts.
 
 ### The same checks as CI
 

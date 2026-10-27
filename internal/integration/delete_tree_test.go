@@ -62,8 +62,8 @@ func TestDeleteTree(t *testing.T) {
 	email := fmt.Sprintf("modeller-%d@test.local", time.Now().UnixNano())
 	e.expect(t, 201, "POST", "/accounts", obj("email", email, "password", "secret-password",
 		"model_privilege", "read_write", "data_privilege", "read_only"))
-	token := session(t, e.loginAs(t, 200, e.host, email, "secret-password"))
-	e.expect(t, 403, "DELETE", "/classes/"+a+"?recursive=true&force=true", nil, as(e.host, token)...)
+	token := session(t, e.loginAs(t, 200, email, "secret-password"))
+	e.expect(t, 403, "DELETE", "/classes/"+a+"?recursive=true&force=true", nil, as(token)...)
 	e.expect(t, 200, "GET", "/classes/"+a, nil)
 
 	// Stock blocks a location delete; forced, the stock goes, the item stays.

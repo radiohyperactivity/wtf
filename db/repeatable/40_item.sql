@@ -19,12 +19,11 @@ CREATE FUNCTION item_list(
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('data', 'read');
 BEGIN
+    PERFORM util.require('data', 'read');
     PERFORM util.check_paging(p_limit, p_offset);
 
-    IF p_class IS NOT NULL AND NOT EXISTS (SELECT 1 FROM class WHERE id = p_class AND tenant = v_tenant) THEN
+    IF p_class IS NOT NULL AND NOT EXISTS (SELECT 1 FROM class WHERE id = p_class) THEN
         PERFORM util.raise_not_found('class', p_class);
     END IF;
 
@@ -37,8 +36,7 @@ BEGIN
         matching AS (
             SELECT i.id, i.name
             FROM item i
-            WHERE i.tenant = v_tenant
-              AND NOT i.deleted
+            WHERE NOT i.deleted
               AND (p_class IS NULL OR i.class IN (SELECT util.class_subtree(p_class)))
               -- every word occurs in at least one of the item's search texts
               AND NOT EXISTS (
@@ -79,10 +77,9 @@ CREATE FUNCTION item_get(p_id uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('data', 'read');
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM item WHERE id = p_id AND tenant = v_tenant) THEN
+    PERFORM util.require('data', 'read');
+    IF NOT EXISTS (SELECT 1 FROM item WHERE id = p_id) THEN
         PERFORM util.raise_not_found('item', p_id);
     END IF;
     RETURN util.item_json(p_id);
@@ -90,27 +87,29 @@ END;
 $$;
 
 -- Creates an item, optionally with values: {"<attribute id>": <value>, ...}.
--- Numbers of attributes with a unit group are given in the base unit.
+-- Numbers of attributes with a unit are given in the base unit.
 -- Only per-kind attributes; per-unit values go on stock rows. An attribute
 -- given as JSON null gets no value. Class defaults are never stored on the
 -- item; item_get shows them for attributes without a value. Required
 -- attributes without a default must be given (checked at commit).
--- p_unit_group is the unit group stock is measured in; NULL = pieces.
+-- p_unit is the unit stock is measured in (NULL = pieces); with
+-- p_unit_lock, stock is always shown in it, as for attributes.
 CREATE FUNCTION item_create(
-    p_class      uuid,
-    p_name       text,
-    p_unit_group uuid  DEFAULT NULL,
-    p_values     jsonb DEFAULT NULL
+    p_class     uuid,
+    p_name      text,
+    p_unit      integer DEFAULT NULL,
+    p_unit_lock boolean DEFAULT false,
+    p_values    jsonb   DEFAULT NULL
 ) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tenant uuid := util.require('data', 'write');
     v_id     uuid;
 BEGIN
-    INSERT INTO item (tenant, class, name, unit_group)
-    VALUES (v_tenant, p_class, util.clean_name(p_name), p_unit_group)
+    PERFORM util.require('data', 'write');
+    INSERT INTO item (class, name, unit, unit_lock)
+    VALUES (p_class, util.clean_name(p_name), p_unit, COALESCE(p_unit_lock, false))
     RETURNING id INTO v_id;
 
     PERFORM util.values_upsert(false, v_id, p_values);
@@ -119,29 +118,29 @@ BEGIN
 END;
 $$;
 
--- Changes the fields present in p_patch: class, name, unit_group.
+-- Changes the fields present in p_patch: class, name, unit, unit_lock.
 -- Changing the class is rejected if existing values would no longer have a
--- matching attribute. The unit group can only change to another group of the
--- same quantity; nothing is converted. A group can't be added or removed
--- (see SCHEMA.md).
+-- matching attribute. The unit can only change to another unit of the same
+-- quantity; nothing is converted. A unit can't be added or removed (see
+-- SCHEMA.md).
 CREATE FUNCTION item_patch(p_id uuid, p_patch jsonb) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('data', 'write');
 BEGIN
-    PERFORM util.check_patch(p_patch, ARRAY['class', 'name', 'unit_group'], ARRAY['class', 'name']);
+    PERFORM util.require('data', 'write');
+    PERFORM util.check_patch(p_patch, ARRAY['class', 'name', 'unit', 'unit_lock'], ARRAY['class', 'name', 'unit_lock']);
 
     UPDATE item
-    SET class      = CASE WHEN p_patch ? 'class'
-                          THEN (p_patch ->> 'class')::uuid ELSE class END,
-        name       = CASE WHEN p_patch ? 'name'
-                          THEN util.clean_name(p_patch ->> 'name') ELSE name END,
-        unit_group = CASE WHEN p_patch ? 'unit_group'
-                          THEN (p_patch ->> 'unit_group')::uuid ELSE unit_group END
-    WHERE id = p_id
-      AND tenant = v_tenant;
+    SET class     = CASE WHEN p_patch ? 'class'
+                         THEN (p_patch ->> 'class')::uuid ELSE class END,
+        name      = CASE WHEN p_patch ? 'name'
+                         THEN util.clean_name(p_patch ->> 'name') ELSE name END,
+        unit      = CASE WHEN p_patch ? 'unit'
+                         THEN (p_patch ->> 'unit')::integer ELSE unit END,
+        unit_lock = CASE WHEN p_patch ? 'unit_lock'
+                         THEN (p_patch ->> 'unit_lock')::boolean ELSE unit_lock END
+    WHERE id = p_id;
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('item', p_id);
@@ -156,10 +155,9 @@ CREATE FUNCTION item_delete(p_id uuid) RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('data', 'write');
 BEGIN
-    UPDATE item SET deleted = true WHERE id = p_id AND tenant = v_tenant;
+    PERFORM util.require('data', 'write');
+    UPDATE item SET deleted = true WHERE id = p_id;
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('item', p_id);
@@ -180,13 +178,13 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tenant uuid := util.require('data', 'write');
     v_item   item;
     v_class  uuid;
     v_stock  uuid[];
 BEGIN
+    PERFORM util.require('data', 'write');
     PERFORM util.check_patch(p_options, ARRAY['name', 'class', 'with_parents'], ARRAY['name', 'class', 'with_parents']);
-    SELECT * INTO v_item FROM item WHERE id = p_id AND tenant = v_tenant FOR UPDATE;
+    SELECT * INTO v_item FROM item WHERE id = p_id FOR UPDATE;
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('item', p_id);
     END IF;
@@ -229,15 +227,14 @@ $$;
 -- ---------------------------------------------------------------------------
 
 -- Sets (inserts or replaces) one value of an item. Numbers of attributes with
--- a unit group are given in the base unit. Returns the item.
+-- a unit are given in the base unit. Returns the item.
 CREATE FUNCTION value_set(p_item uuid, p_attribute uuid, p_value jsonb) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('data', 'write');
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM item WHERE id = p_item AND tenant = v_tenant) THEN
+    PERFORM util.require('data', 'write');
+    IF NOT EXISTS (SELECT 1 FROM item WHERE id = p_item) THEN
         PERFORM util.raise_not_found('item', p_item);
     END IF;
 
@@ -251,14 +248,12 @@ CREATE FUNCTION value_delete(p_item uuid, p_attribute uuid) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('data', 'write');
 BEGIN
+    PERFORM util.require('data', 'write');
     PERFORM check_live('item', p_item);
     DELETE FROM value
     WHERE item = p_item
-      AND attribute = p_attribute
-      AND tenant = v_tenant;
+      AND attribute = p_attribute;
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Item % has no value for attribute %', p_item, p_attribute

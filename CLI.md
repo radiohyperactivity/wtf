@@ -25,7 +25,7 @@ wtf item add            # asks for everything, with Tab completion
   - **Exit codes:** 0 for success, 1 for an error, 2 for wrong usage.
 - **Configuration:**
   - **File:** `wtf login` stores the server and the token in `wtf/config.json` in the user's config directory, with mode 600. That is `~/.config` on Linux, `%AppData%` on Windows and `~/Library/Application Support` on macOS.
-  - **Profiles:** named profiles (`--profile dev`) cover several servers or tenants. `wtf profile list|use|delete` manages them.
+  - **Profiles:** named profiles (`--profile dev`) cover several servers. `wtf profile list|use|delete` manages them.
   - **Environment:** `WTF_PROFILE`, `WTF_SERVER` and `WTF_TOKEN` override the file, and `WTF_CONFIG` points to another file.
 - **Passwords:**
   - **Login:** `wtf login` prompts without echo, or reads `WTF_PASSWORD` in scripts.
@@ -33,8 +33,9 @@ wtf item add            # asks for everything, with Tab completion
   - **Scripts:** when stdin is not a terminal, prompts read a line from stdin, so passwords can be piped in. Passwords are never taken as command-line arguments.
 - **Units:**
   - **Input:** numbers may carry a unit symbol (`12mm`, `2.5 m`, `10kohm`, `-40 °C`). `wtf` converts them to the base unit with the unit's factor and offset from the API, exactly in decimal, and checks that the unit measures the right quantity.
-  - **Plain numbers:** a number without a unit is in the unit group's base unit if the group has it (Metric length: `12` is 12 m). Otherwise it is in the group's only unit (Celsius: `20` is 20 °C). A group with several units that lacks the base unit (inches, feet, yards) needs a unit.
-  - **Output:** numbers are shown in their display unit (`1.2 cm`, `10 kΩ`).
+  - **Plain numbers:** a number without a unit is in the attribute's or item's unit (with `--unit mm`, `12` is 12 mm).
+  - **Other units:** any unit of the same quantity is accepted, also from another family (`1in` for a metric length). A symbol is looked up in the unit's own family first.
+  - **Output:** numbers are shown in their display unit (`1.2 cm`, `10 kΩ`): scaled within the unit's family, or always in the unit itself with Unit lock (`--unit-lock`).
 - **Dates:** `YYYY-MM-DD`, `today`, `yesterday`, `tomorrow`, or relative to today: `+3` or `+3d` (days), `-2w` (weeks), `+1m` (months), `-1y` (years). A month step stops at the end of a shorter month (31 January `+1m` is 28 February).
 - **Interactive prompts:** on a terminal, `wtf` asks for whatever a command is missing, with Tab completion and a picker (see below).
 - **Shell completion:** `wtf completion bash|zsh|powershell` prints the code for Tab completion of commands, flags and objects.
@@ -48,9 +49,9 @@ wtf item add            # asks for everything, with Tab completion
 | class | id or path: `Screws`, `Hardware/Screws` |
 | item | id, label code (of the item or of one of its stock rows), or exact name (any case) |
 | stock row | id, label code, `ITEM@LOCATION` (`"Drill@Garage/Shelf 2"`), or an item that has exactly one stock row |
-| attribute, unit group, quantity | id or name |
+| attribute, unit family, quantity | id or name |
 | option | `<attribute> <option name>`, or the option's id alone |
-| unit | id, symbol or name |
+| unit | id, symbol or name; a symbol that several families share names its family: `B (Binary bytes)` |
 | account | id or email |
 | attachment | id (`wtf attachment list TYPE REF` shows them) |
 
@@ -62,16 +63,16 @@ wtf item add            # asks for everything, with Tab completion
 | `wtf profile list` / `use <name>` / `delete <name>` | (local configuration) |
 | `wtf find <words…> [--class C]` | `GET /items?search=`, plus each item's stock locations |
 | `wtf code <code>` | `/codes/{code}` |
-| `wtf item list [--class C] [--search S]` / `get` / `add <name> --class C [--unit-group G] [--value A=V]… [--edit]` / `set` / `edit` / `delete` / `restore` / `history` | `/items` |
+| `wtf item list [--class C] [--search S]` / `get` / `add <name> --class C [--unit U [--unit-lock]] [--value A=V]… [--edit]` / `set` / `edit` / `delete` / `restore` / `history` | `/items` |
 | `wtf item value-set <item> <attribute> <value…>` / `value-delete <item> <attribute>` | `/items/{id}/values/{attribute}` |
 | `wtf stock list [--item I] [--location L]` / `get` / `add <item> <location> [quantity] [--value A=V]…` / `move <stock> <location> [quantity]` / `set` / `edit` / `delete` / `restore` / `history` | `/stock` |
 | `wtf stock value-set` / `value-delete` | `/stock/{id}/values/{attribute}` |
 | `wtf location tree` / `get` / `add <name or path> [--parent P] [--create-parents] [--container \| --grid COLUMNSxROWS] [--edit]` / `set [--name N] [--parent P\|none] [--container yes\|no]` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` / `restore` / `history [location]` | `/locations` |
 | `wtf class tree` / `get` / `add` / `set` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` / `restore` / `history [class]` / `assign <class> <attribute> [--default V] [--per-unit] [--required]` / `unassign` | `/classes`, `/classes/{id}/attributes/{attribute}` |
-| `wtf attribute list` / `get` / `add <name> --type T [--unit-group G] [--edit]` / `set` / `edit` / `delete` / `restore` / `history [attribute]` | `/attributes` |
+| `wtf attribute list` / `get` / `add <name> [--type T] [--unit U [--unit-lock]] [--edit]` (with a unit, the type follows from it) / `set` / `edit` / `delete` / `restore` / `history [attribute]` | `/attributes` |
 | `wtf option list <attribute>` / `get` / `add <attribute> <name>…` / `set --name N` / `delete` / `restore` | `/attributes/{id}/options`, `/options/{id}` |
 | `wtf attachment list <type> <ref>` / `add <type> <ref> <file> [--caption C] [--primary]` / `get` / `download [-o FILE\ / `restore`|-]` / `set` / `edit` / `delete` | attachments |
-| `wtf quantity list` / `get`, `wtf unit list [--quantity Q]` / `get`, `wtf unit-group list [--quantity Q]` / `get` | system data |
+| `wtf quantity list` / `get`, `wtf unit-family list [--quantity Q]` / `get`, `wtf unit list [--quantity Q] [--family F]` / `get` | system data |
 | `wtf account list` / `get` / `add <email> [--password] [--data P] [--model P] [--account P] [--history P] [--edit]` / `set` / `edit` / `delete` / `history` | `/accounts` |
 
 ## Interactive use
@@ -84,10 +85,10 @@ When stdin and stderr are a terminal, `wtf` asks for missing arguments instead o
   - missing required arguments and flags (`--class` of `item add`, `--type` of `attribute add`, …);
   - required attribute values that have no value or default, even when the command line was otherwise complete.
 - **What is offered:** once `wtf` has asked for something, the session counts as interactive, and optional data is offered too. Enter skips it.
-  - `item add`: the unit group, then every attribute of the class, required ones first, with defaults shown as `Colour [red]`.
+  - `item add`: the unit, then every attribute of the class, required ones first, with defaults shown as `Colour [red]`.
   - `stock add`: the quantity (Enter: uncounted) and the per-unit attributes.
   - `stock move`: the quantity (Enter: all of it).
-  - `attribute add`: a unit group for integer and float attributes.
+  - `attribute add`: a unit for integer and float attributes.
 - **Stock for a new item:** after `item add` (not with `--edit`), `wtf` asks once `Add stock for M3? [y/N]` on every terminal, also when the command line was complete. Yes asks for a location, a quantity and the per-unit values, and adds that one stock row.
 - **Bad values:** a value that doesn't parse (`3kg` for a length) is reported, and the prompt asks again.
 - **Cancelling:** Ctrl-C, or Ctrl-D on an empty line, cancels the command without changing anything (exit code 130).
@@ -127,7 +128,7 @@ Tab then completes commands, verbs, flags, and objects from the server, such as 
   - `internal/cli` covers code normalisation, number, unit and date parsing, path lookup and completion, flag parsing, shell word splitting and quoting, and the config file.
   - `internal/prompt` covers key decoding, line editing, Tab and the picker, with scripted keys.
 - **Integration tests:** they run the client against the real API handler and the test database. See README.md, "Tests".
-  - `TestCLI` works as one tenant's admin and as a second, read-only account.
+  - `TestCLI` works as the first account and as a second, read-only account.
   - `TestCLIInteractive` covers prompts, shell completion and paging, with scripted keys on a fake terminal.
 
 ## Decisions made while building
@@ -153,7 +154,7 @@ These are decisions I made without you, recorded for review.
 
 ### Input
 
-7. **Any unit of the quantity.** Units are accepted from the attribute's quantity, not only from its unit group. So `--value Length=1in` works for a metric attribute, and the value is shown in the group's units.
+7. **Any unit of the quantity.** Units are accepted from the attribute's quantity, not only from its unit's family. So `--value Length=1in` works for a metric attribute, and the value is shown in the family's units.
 8. **ASCII spellings.** `u` stands for `µ` (`um`, `uF`), `ohm` for `Ω` (`kohm`), and `deg` for `°` (`degC`). Case is ignored only when that is unique, so `mohm` is mΩ and `Mohm` is MΩ, while `mω` is ambiguous.
 9. **Exact arithmetic.** The conversion uses exact fractions (`math/big`). Results that aren't finite decimals, such as °F, are sent with 30 decimal places.
 10. **Other datatypes.**
@@ -180,11 +181,11 @@ These are decisions I made without you, recorded for review.
 19. **Profile commands.** `profile list|use|delete` were added for managing profiles, and `WTF_CONFIG` for tests.
 20. **Safe config writes.** The config file is written to a temporary file and renamed. On Windows, the mode 600 means little; the file relies on the user's profile directory being private.
 21. **Long timeout.** The HTTP timeout is 15 minutes, for large uploads.
-22. **Test hook.** `cli.Transport` lets the integration test reach the in-process server under the tenant's hostname.
+22. **Test hook.** `cli.Transport` let the integration test reach the in-process server under the tenant's hostname. It was removed with the tenants (decision 48).
 
 ### Settled after review
 
-23. **Plain numbers follow the unit group** (changed after review). A plain number meant the quantity's base unit, so for a Celsius attribute `20` meant 20 K. Now it means the group's base unit if the group has it, else the group's only unit, else a unit is required. The display unit couldn't be used, because it changes with the value.
+23. **Plain numbers follow the unit group** (changed after review; superseded by decision 48). A plain number meant the quantity's base unit, so for a Celsius attribute `20` meant 20 K. Now it means the group's base unit if the group has it, else the group's only unit, else a unit is required. The display unit couldn't be used, because it changes with the value.
 24. **API error messages** are left as they are until they turn out to be a problem. Two kinds could be friendlier on the server side:
     - "Still in use" passes PostgreSQL's foreign-key message through, with UUIDs.
     - Some rule violations name attributes by id ("Attribute 8774… is not a per-kind attribute…"), and the word "per-kind" doesn't match `per_unit` anywhere else.
@@ -199,7 +200,7 @@ These are decisions I made without you, recorded for review.
 These follow your answers: all attributes offered, a picker on Tab Tab, bash, zsh and PowerShell, cached trees, all pages when piped, and our own pager and line editor on `x/term`.
 
 26. **When prompts appear.** Only when stdin and stderr are both a terminal. Prompts and the picker draw on stderr, so `--json` output on stdout stays clean.
-27. **Optional data is offered only in an interactive session.** Optional data (unit group, optional attributes, quantity) is offered once `wtf` has asked for something. When the command line was complete, only required attribute values without a value or default are asked for, so scripts typed by hand don't turn into questionnaires.
+27. **Optional data is offered only in an interactive session.** Optional data (unit, optional attributes, quantity) is offered once `wtf` has asked for something. When the command line was complete, only required attribute values without a value or default are asked for, so scripts typed by hand don't turn into questionnaires.
 28. **Prompts don't check references as you type.** A wrong name in a prompt (`Location: Nowhere`) fails the command the same way as on the command line. Attribute values are checked, and asked for again.
 29. **Tab in a prompt.** Tab completes by prefix, ignoring case, and otherwise to a single candidate that contains the text (`scr` → `Hardware/Screws`). A second Tab opens the picker, which shows up to 10 rows and filters by substring. For items, the picker searches the server on each key press.
 30. **Shell protocol.** The scripts call a hidden `wtf __complete SHELL …`, which prints one candidate per line, or `:files` for the shell's own file name completion.
@@ -207,7 +208,7 @@ These follow your answers: all attributes offered, a picker on Tab Tab, bash, zs
     - **zsh and PowerShell:** get the words, and quote the candidates themselves.
 31. **Paths, the same in every shell** (changed after review). Paths complete one segment at a time from the roots (`Garage/` → its children). A bare name below the root (`Shelf 2`) still works when typed, but isn't offered. PowerShell puts quotes around a path with spaces (`'Garage/Shelf 2/'`), and completing on from there works.
 32. **Matching, the same in every shell.** Matches ignore case, plus a single substring match (`drill` → `Cordless drill`). zsh itself matches case-sensitively unless your `matcher-list` says otherwise.
-33. **Cache.** The class and location trees are kept in the user's cache directory per server (`$WTF_CACHE_DIR` overrides it) and revalidated with their version on every use. That also speeds up ordinary commands. Attributes, unit groups, quantities and units are cached for a minute, only while completing. Adding, changing or deleting an attribute or option drops the cached attributes at once, so a new one completes straight away. A change to a class or location likewise drops the run's copy of that tree. Unit groups, quantities and units can't be changed through the API. A database recreated from scratch could reuse a tree version and show a stale tree; deleting the cache directory fixes that.
+33. **Cache.** The class and location trees are kept in the user's cache directory per server (`$WTF_CACHE_DIR` overrides it) and revalidated with their version on every use. That also speeds up ordinary commands. Attributes, unit families, quantities and units are cached for a minute, only while completing. Adding, changing or deleting an attribute or option drops the cached attributes at once, so a new one completes straight away. A change to a class or location likewise drops the run's copy of that tree. Quantities, unit families and units can't be changed through the API. A database recreated from scratch could reuse a tree version and show a stale tree; deleting the cache directory fixes that.
 34. **Pager.**
     - **Fetching:** it fetches 100 rows at a time (20 for `find`, which makes one request per item).
     - **Columns:** they are aligned within each batch of 100, so widths may shift between batches.
@@ -250,7 +251,7 @@ These follow your answers: all attributes offered, a picker on Tab Tab, bash, zs
       - **Choice options:** `NAME` adds, `-NAME` removes, and `OLD=NEW` renames.
       - **Item and stock values:** one line per attribute of the class (per-unit ones for stock), and clearing a line removes the value, so the default applies again. Required values without a default can't be cleared.
     - **When changes are made:** only at the end, so Ctrl-C at any point changes nothing (exit code 130). They can take several requests. If one fails, the message says what was already saved (`Already saved: assigned Colour`). Then `Saved: …` or `No changes.`, and the object is shown.
-    - **Fixed fields:** an item's unit group can only change to another group of the same quantity, so it is only asked for when the item has one. A stock row's item isn't in its form; use `stock set --item`.
+    - **Fixed fields:** an item's or attribute's unit can only change to another unit of the same quantity, so it is only asked for when there is one, with Unit lock right after it. A stock row's item isn't in its form; use `stock set --item`.
     - **Accounts:** the form asks for the email, the four privileges (none, read, write) and the password (keep, set or remove).
     - **`--edit` on `add`:** creates the object (class, location, item, stock row, attribute, account or attachment), then opens its form. Without a terminal, `edit` and `--edit` fail before anything is created. Scripts use `set` and the other commands.
 
@@ -301,3 +302,13 @@ These follow your answers: all attributes offered, a picker on Tab Tab, bash, zs
     - **`--name N`** restores it under a new name, for when the old one has been taken since.
     - **Errors** now show the server's `hint` on a second line, e.g. how to delete a location that still has stock.
     - **Deleting doesn't ask** (decision 14) and doesn't mention restoring; showing the deleted thing does.
+
+### Unit families, and no tenants
+
+48. **Units instead of unit groups** (agreed before building). An attribute or item names one unit, such as mm, and that unit's family (Metric length) is what numbers are scaled between on output.
+    - **Plain numbers** are in that unit. This replaces decision 23: there is no longer any guessing between a group's base unit and its only unit.
+    - **`--unit-lock`** shows numbers always in the unit itself. It is off by default, and `set --unit-lock yes|no` changes it.
+    - **`attribute add Length --unit mm`** needs no `--type`: with a unit, the type follows from the unit's quantity.
+    - **A symbol that several families share** (`B` in decimal and binary bytes) means the same unit wherever it is typed, but `--unit B` must name the family, `--unit "B (Binary bytes)"`, because the family decides the display.
+    - **`wtf unit-family`** replaces `wtf unit-group`. Units, families and quantities have integer ids.
+    - **No tenants:** a profile is one server, and the `Transport` test hook is gone, since the tests no longer need a tenant's hostname.

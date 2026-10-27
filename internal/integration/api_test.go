@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"regexp"
@@ -79,8 +80,12 @@ func TestUnitsAndDefaults(t *testing.T) {
 		t.Errorf("Location = %q", loc)
 	}
 	attr := e.expect(t, 201, "POST", "/attributes",
-		obj("name", "Length", "datatype", "float", "unit_group", e.unitGroup(t, "Metric length"))).body
+		obj("name", "Length", "datatype", "float", "unit", e.unit(t, "Metric length", "mm"))).body
 	attrID := str(t, attr, "id")
+	if str(t, attr, "unit", "family", "name") != "Metric length" || str(t, attr, "unit", "quantity", "name") != "Length" ||
+		get(t, attr, "unit_lock") != false {
+		t.Errorf("attribute: %v", attr)
+	}
 
 	c := e.expect(t, 200, "PUT", "/classes/"+classID+"/attributes/"+attrID, obj("default", 0.025)).body
 	if v, u := num(t, c, "attributes", 0, "default_display", "value"), str(t, c, "attributes", 0, "default_display", "unit", "symbol"); v != 2.5 || u != "cm" {
@@ -109,10 +114,27 @@ func TestUnitsAndDefaults(t *testing.T) {
 		t.Errorf("after changing the default: %v %s, want 50 cm", v, u)
 	}
 
-	// Zero is shown in the base unit.
+	// Zero is shown in the attribute's unit.
 	drill = e.expect(t, 200, "PUT", "/items/"+str(t, drill, "id")+"/values/"+attrID, obj("value", 0)).body
-	if u := str(t, drill, "values", 0, "display", "unit", "symbol"); u != "m" {
-		t.Errorf("zero displays in %s, want m", u)
+	if u := str(t, drill, "values", 0, "display", "unit", "symbol"); u != "mm" {
+		t.Errorf("zero displays in %s, want mm", u)
+	}
+
+	// With the unit locked, every number is shown in it.
+	e.expect(t, 200, "PATCH", "/attributes/"+attrID, obj("unit_lock", true))
+	saw = e.expect(t, 200, "GET", "/items/"+sawID, nil).body
+	if v, u := num(t, saw, "values", 0, "display", "value"), str(t, saw, "values", 0, "display", "unit", "symbol"); v != 500 || u != "mm" {
+		t.Errorf("locked to mm: %v %s, want 500 mm", v, u)
+	}
+
+	// The same for stock: an item counted in grams, locked.
+	parts := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Parts")).body, "id")
+	solder := e.expect(t, 201, "POST", "/items", obj("class", parts, "name", "Solder",
+		"unit", e.unit(t, "Metric weight", "g"), "unit_lock", true)).body
+	shelf := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Shelf")).body, "id")
+	row := e.expect(t, 201, "POST", "/stock", obj("item", str(t, solder, "id"), "location", shelf, "quantity", 2.5)).body
+	if v, u := num(t, row, "display", "value"), str(t, row, "display", "unit", "symbol"); v != 2500 || u != "g" {
+		t.Errorf("2.5 kg of solder locked to g: %v %s", v, u)
 	}
 }
 
@@ -121,7 +143,7 @@ func TestWholeNumbers(t *testing.T) {
 	e.reset(t)
 
 	r := e.expect(t, 422, "POST", "/attributes",
-		obj("name", "Bad count", "datatype", "float", "unit_group", e.unitGroup(t, "Pieces")))
+		obj("name", "Bad count", "datatype", "float", "unit", e.unit(t, "Pieces", "pcs")))
 	if str(t, r.body, "type") != "/problems/rule-violation" {
 		t.Errorf("type = %v", get(t, r.body, "type"))
 	}
@@ -235,15 +257,78 @@ func TestPatch(t *testing.T) {
 	e.expect(t, 400, "PATCH", "/classes/"+b, obj("colour", "red"))
 }
 
-func TestUnitGroupChange(t *testing.T) {
+func TestUnitChange(t *testing.T) {
 	e := setup(t)
 	e.reset(t)
 
 	attr := str(t, e.expect(t, 201, "POST", "/attributes",
-		obj("name", "Length", "datatype", "float", "unit_group", e.unitGroup(t, "Metric length"))).body, "id")
-	e.expect(t, 200, "PATCH", "/attributes/"+attr, obj("unit_group", e.unitGroup(t, "Imperial length")))
-	e.expect(t, 422, "PATCH", "/attributes/"+attr, obj("unit_group", e.unitGroup(t, "Metric mass")))
-	e.expect(t, 422, "PATCH", "/attributes/"+attr, obj("unit_group", nil))
+		obj("name", "Length", "datatype", "float", "unit", e.unit(t, "Metric length", "mm"))).body, "id")
+	// Another unit of the same quantity, in another family too.
+	e.expect(t, 200, "PATCH", "/attributes/"+attr, obj("unit", e.unit(t, "Metric length", "cm")))
+	if f := str(t, e.expect(t, 200, "PATCH", "/attributes/"+attr, obj("unit", e.unit(t, "Imperial length", "in"))).body,
+		"unit", "family", "name"); f != "Imperial length" {
+		t.Errorf("family after the change: %s", f)
+	}
+	e.expect(t, 422, "PATCH", "/attributes/"+attr, obj("unit", e.unit(t, "Metric weight", "g")))
+	e.expect(t, 422, "PATCH", "/attributes/"+attr, obj("unit", nil))
+	e.expect(t, 400, "PATCH", "/attributes/"+attr, obj("unit", "in"))
+	// Unit lock needs a unit.
+	e.expect(t, 422, "POST", "/attributes", obj("name", "Colour", "datatype", "text", "unit_lock", true))
+}
+
+func TestUnitFamilies(t *testing.T) {
+	e := setup(t)
+
+	// The bootstrap set, with integer ids from 1000.
+	families := e.expect(t, 200, "GET", "/unit-families", nil).body.([]any)
+	byName := map[string]any{}
+	for _, f := range families {
+		byName[str(t, f, "name")] = f
+	}
+	binary := byName["Binary bytes"]
+	if binary == nil || str(t, binary, "quantity", "name") != "Bytes" || num(t, binary, "id") < 1000 {
+		t.Fatalf("Binary bytes: %v", binary)
+	}
+	var symbols []string
+	for _, u := range get(t, binary, "units").([]any) {
+		symbols = append(symbols, str(t, u, "symbol"))
+	}
+	if strings.Join(symbols, " ") != "B KiB MiB GiB TiB PiB" {
+		t.Errorf("binary bytes, smallest first: %v", symbols)
+	}
+	// B is in both byte families, with the same conversion.
+	if e.unit(t, "Decimal bytes", "B") == e.unit(t, "Binary bytes", "B") {
+		t.Error("each family has its own B")
+	}
+	if byName["Bits"] == nil || str(t, byName["Bits"], "quantity", "name") != "Bits" {
+		t.Errorf("bits are a quantity of their own: %v", byName["Bits"])
+	}
+
+	length := int(num(t, byName["Metric length"], "quantity", "id"))
+	q := e.expect(t, 200, "GET", fmt.Sprintf("/quantities/%d", length), nil).body
+	if n := len(get(t, q, "families").([]any)); n != 2 || str(t, q, "families", 0, "name") != "Metric length" {
+		t.Errorf("Length families: %v", get(t, q, "families"))
+	}
+	units := e.expect(t, 200, "GET", fmt.Sprintf("/units?quantity=%d", length), nil).body.([]any)
+	if len(units) != 10 || str(t, units[0], "symbol") != "nm" {
+		t.Errorf("length units: %d, first %v", len(units), units[0])
+	}
+	mm := e.expect(t, 200, "GET", fmt.Sprintf("/units/%d", e.unit(t, "Metric length", "mm")), nil).body
+	if str(t, mm, "family", "name") != "Metric length" || num(t, mm, "base_factor") != 0.001 {
+		t.Errorf("mm: %v", mm)
+	}
+	e.expect(t, 404, "GET", "/units/1", nil)
+	e.expect(t, 400, "GET", "/units/mm", nil)
+	e.expect(t, 404, "GET", "/unit-families?quantity=1", nil)
+
+	// Within a quantity, a symbol means one unit.
+	_, err := e.dba.Exec(context.Background(),
+		"INSERT INTO unit (family, name, symbol, base_factor) VALUES ($1, 'bit', 'B', 0.125)",
+		int(num(t, binary, "id")))
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		t.Errorf("a second meaning of B: %v", err)
+	}
 }
 
 func TestErrors(t *testing.T) {
@@ -391,7 +476,7 @@ func TestUnitValuesAndRequired(t *testing.T) {
 
 	tools := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Power tools")).body, "id")
 	voltage := str(t, e.expect(t, 201, "POST", "/attributes",
-		obj("name", "Voltage", "datatype", "float", "unit_group", e.unitGroup(t, "Voltage"))).body, "id")
+		obj("name", "Voltage", "datatype", "float", "unit", e.unit(t, "Voltage", "V"))).body, "id")
 	serial := str(t, e.expect(t, 201, "POST", "/attributes", obj("name", "Serial number", "datatype", "text")).body, "id")
 	bought := str(t, e.expect(t, 201, "POST", "/attributes", obj("name", "Purchase date", "datatype", "date")).body, "id")
 	condition := str(t, e.expect(t, 201, "POST", "/attributes", obj("name", "Condition", "datatype", "choice")).body, "id")

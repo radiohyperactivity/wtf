@@ -8,17 +8,15 @@
 -- Attachments of classes belong to the model (model privilege); all others
 -- belong to the data (data privilege).
 
--- Checks access to an existing attachment of the session's tenant, at
--- p_level ('read' or 'write'). Unknown attachments and those of other
--- tenants are "not found".
+-- Checks access to an existing attachment at p_level ('read' or 'write').
 CREATE FUNCTION util.attachment_access(p_id uuid, p_level text) RETURNS void
 LANGUAGE plpgsql STABLE AS $$
 DECLARE
-    v_tenant   uuid;
     v_is_class boolean;
 BEGIN
-    SELECT tenant, class IS NOT NULL INTO v_tenant, v_is_class FROM attachment WHERE id = p_id;
-    IF NOT FOUND OR v_tenant IS DISTINCT FROM util.require_login() THEN
+    PERFORM util.require_login();
+    SELECT class IS NOT NULL INTO v_is_class FROM attachment WHERE id = p_id;
+    IF NOT FOUND THEN
         PERFORM util.raise_not_found('attachment', p_id);
     END IF;
     IF NOT v_is_class THEN
@@ -59,19 +57,18 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tenant uuid;
     v_hash   bytea := decode(p_sha256, 'hex');
     v_id     uuid;
 BEGIN
     IF p_target_type NOT IN ('item', 'stock', 'location', 'class') THEN
         PERFORM util.raise_invalid(format('%L is not something attachments can be attached to', p_target_type));
     END IF;
-    v_tenant := util.require(CASE WHEN p_target_type = 'class' THEN 'model' ELSE 'data' END, 'write');
+    PERFORM util.require(CASE WHEN p_target_type = 'class' THEN 'model' ELSE 'data' END, 'write');
 
-    IF (p_target_type = 'item'     AND NOT EXISTS (SELECT 1 FROM item     WHERE id = p_target AND tenant = v_tenant))
-       OR (p_target_type = 'stock'    AND NOT EXISTS (SELECT 1 FROM stock    WHERE id = p_target AND tenant = v_tenant))
-       OR (p_target_type = 'location' AND NOT EXISTS (SELECT 1 FROM location WHERE id = p_target AND tenant = v_tenant))
-       OR (p_target_type = 'class'    AND NOT EXISTS (SELECT 1 FROM class    WHERE id = p_target AND tenant = v_tenant))
+    IF (p_target_type = 'item'     AND NOT EXISTS (SELECT 1 FROM item     WHERE id = p_target))
+       OR (p_target_type = 'stock'    AND NOT EXISTS (SELECT 1 FROM stock    WHERE id = p_target))
+       OR (p_target_type = 'location' AND NOT EXISTS (SELECT 1 FROM location WHERE id = p_target))
+       OR (p_target_type = 'class'    AND NOT EXISTS (SELECT 1 FROM class    WHERE id = p_target))
     THEN
         PERFORM util.raise_not_found(p_target_type, p_target);
     END IF;
@@ -80,9 +77,9 @@ BEGIN
     VALUES (v_hash, p_size)
     ON CONFLICT (sha256) DO NOTHING;
 
-    INSERT INTO attachment (tenant, file, file_name, content_type, caption, primary_photo,
+    INSERT INTO attachment (file, file_name, content_type, caption, primary_photo,
                             item, stock, location, class)
-    VALUES (v_tenant, v_hash, util.clean_name(p_file_name), p_content_type, NULLIF(btrim(p_caption), ''), false,
+    VALUES (v_hash, util.clean_name(p_file_name), p_content_type, NULLIF(btrim(p_caption), ''), false,
             CASE WHEN p_target_type = 'item'     THEN p_target END,
             CASE WHEN p_target_type = 'stock'    THEN p_target END,
             CASE WHEN p_target_type = 'location' THEN p_target END,

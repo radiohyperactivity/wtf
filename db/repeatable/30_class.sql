@@ -13,9 +13,9 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tenant  uuid   := util.require_model_read();
-    v_version bigint := util.data_version(v_tenant, 'class');
+    v_version bigint := util.data_version('class');
 BEGIN
+    PERFORM util.require_model_read();
     IF p_known_version IS NOT DISTINCT FROM v_version THEN
         RETURN jsonb_build_object('version', v_version, 'unchanged', true);
     END IF;
@@ -23,7 +23,7 @@ BEGIN
     RETURN jsonb_build_object(
         'version',   v_version,
         'unchanged', false,
-        'tree',      util.class_tree(v_tenant, NULL)
+        'tree',      util.class_tree(NULL)
     );
 END;
 $$;
@@ -34,10 +34,9 @@ CREATE FUNCTION class_get(p_id uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require_model_read();
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM class WHERE id = p_id AND tenant = v_tenant) THEN
+    PERFORM util.require_model_read();
+    IF NOT EXISTS (SELECT 1 FROM class WHERE id = p_id) THEN
         PERFORM util.raise_not_found('class', p_id);
     END IF;
     RETURN util.class_json(p_id) || jsonb_build_object(
@@ -52,11 +51,11 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tenant uuid := util.require('model', 'write');
     v_id     uuid;
 BEGIN
-    INSERT INTO class (tenant, name, parent, container)
-    VALUES (v_tenant, util.clean_path_name(p_name, 'class'), p_parent, COALESCE(p_container, false))
+    PERFORM util.require('model', 'write');
+    INSERT INTO class (name, parent, container)
+    VALUES (util.clean_path_name(p_name, 'class'), p_parent, COALESCE(p_container, false))
     RETURNING id INTO v_id;
 
     RETURN class_get(v_id);
@@ -71,9 +70,8 @@ CREATE FUNCTION class_patch(p_id uuid, p_patch jsonb) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('model', 'write');
 BEGIN
+    PERFORM util.require('model', 'write');
     PERFORM util.check_patch(p_patch, ARRAY['name', 'parent', 'container'], ARRAY['name', 'container']);
 
     UPDATE class
@@ -83,8 +81,7 @@ BEGIN
                          THEN (p_patch ->> 'parent')::uuid ELSE parent END,
         container = CASE WHEN p_patch ? 'container'
                          THEN (p_patch ->> 'container')::boolean ELSE container END
-    WHERE id = p_id
-      AND tenant = v_tenant;
+    WHERE id = p_id;
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('class', p_id);
@@ -99,10 +96,9 @@ CREATE FUNCTION class_delete(p_id uuid) RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('model', 'write');
 BEGIN
-    UPDATE class SET deleted = true WHERE id = p_id AND tenant = v_tenant;
+    PERFORM util.require('model', 'write');
+    UPDATE class SET deleted = true WHERE id = p_id;
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('class', p_id);
@@ -125,14 +121,14 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tenant  uuid := util.require('model', 'write');
     v_classes uuid[];
     v_items   uuid[];
     v_class   uuid;
     v_in_use  text;
     v_result  jsonb;
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM class WHERE id = p_id AND tenant = v_tenant) THEN
+    PERFORM util.require('model', 'write');
+    IF NOT EXISTS (SELECT 1 FROM class WHERE id = p_id) THEN
         PERFORM util.raise_not_found('class', p_id);
     END IF;
     PERFORM check_live('class', p_id);
@@ -207,7 +203,6 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tenant      uuid := util.require('model', 'write');
     v_class       class;
     v_parent      uuid;
     v_transaction xid8;
@@ -216,8 +211,9 @@ DECLARE
     v_stock       uuid[];
     v_child       uuid;
 BEGIN
+    PERFORM util.require('model', 'write');
     PERFORM util.check_patch(p_options, ARRAY['name', 'parent', 'with_parents'], ARRAY['name', 'with_parents']);
-    SELECT * INTO v_class FROM class WHERE id = p_id AND tenant = v_tenant FOR UPDATE;
+    SELECT * INTO v_class FROM class WHERE id = p_id FOR UPDATE;
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('class', p_id);
     END IF;
@@ -295,7 +291,6 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tenant  uuid := util.require('model', 'write');
     v_text    text;
     v_integer bigint;
     v_float   double precision;
@@ -303,10 +298,11 @@ DECLARE
     v_boolean boolean;
     v_option  uuid;
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM class WHERE id = p_class AND tenant = v_tenant) THEN
+    PERFORM util.require('model', 'write');
+    IF NOT EXISTS (SELECT 1 FROM class WHERE id = p_class) THEN
         PERFORM util.raise_not_found('class', p_class);
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_attribute AND tenant = v_tenant) THEN
+    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_attribute) THEN
         PERFORM util.raise_not_found('attribute', p_attribute);
     END IF;
 
@@ -316,11 +312,11 @@ BEGIN
         FROM util.parse_typed_value(p_attribute, p_default);
     END IF;
 
-    INSERT INTO class_attribute (tenant, class, attribute,
+    INSERT INTO class_attribute (class, attribute,
                                  text_default, integer_default, float_default,
                                  date_default, boolean_default, option_default,
                                  per_unit, required)
-    VALUES (v_tenant, p_class, p_attribute,
+    VALUES (p_class, p_attribute,
             v_text, v_integer, v_float,
             v_date, v_boolean, v_option,
             p_per_unit, p_required)
@@ -344,14 +340,12 @@ CREATE FUNCTION class_attribute_remove(p_class uuid, p_attribute uuid) RETURNS j
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('model', 'write');
 BEGIN
+    PERFORM util.require('model', 'write');
     PERFORM check_live('class', p_class);
     DELETE FROM class_attribute
     WHERE class = p_class
-      AND attribute = p_attribute
-      AND tenant = v_tenant;
+      AND attribute = p_attribute;
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Attribute % is not assigned to class %', p_attribute, p_class

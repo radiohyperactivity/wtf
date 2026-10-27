@@ -11,7 +11,7 @@ wtfd <action> [flags]
 | `schema` | Create or upgrade the database schema, and bring function grants up to date | implemented |
 | `serve`  | Run the REST API                                                     | implemented |
 | `gc`     | Remove attachment files that nothing references any more             | implemented |
-| `tenant` | Create, list or change tenants (`create`, `list`, `update`)          | implemented |
+| `account`| Create an account, or set a lost password (`create`, `password`)     | implemented |
 | `history`| Delete old history entries (`purge`)                                 | implemented |
 | `deleted`| Remove what was deleted long ago (`purge`)                           | implemented |
 
@@ -59,16 +59,11 @@ internal/config/               flags + environment variables
 internal/schema/               the schema action (migration runner)
 internal/serve/                the serve action (REST API)
 internal/files/                attachment file store and the gc action
-internal/tenant/               the tenant action
+internal/admin/                the account, history and deleted actions
 openapi/openapi.yaml           OpenAPI description, embedded and served at /api/v1/openapi.yaml
 db/embed.go                    //go:embed migrations/*.sql repeatable/*.sql
 db/migrations/0001_schema.sql  versioned migrations
 db/migrations/0002_units.sql
-db/migrations/0003_codes.sql
-db/migrations/0004_unit_values.sql
-db/migrations/0005_attachments.sql
-db/migrations/0006_tenants.sql
-db/migrations/0007_history.sql
 db/repeatable/10_util.sql      repeatable scripts
 db/repeatable/20_attribute.sql
 db/repeatable/30_class.sql
@@ -191,8 +186,7 @@ There are no Go structs per entity. It uses the standard library's `net/http` (m
 
 ### Deployment assumptions
 
-- **Tenants by hostname.** Each tenant has its own hostname, and the request's `Host` header selects it. The proxy must preserve that header: Caddy does by default, while nginx needs `proxy_set_header Host $host;`.
-- **Logins** (see "Logins" below). Every request except `/api/health`, `/api/v1/openapi.yaml` and `/api/v1/login` needs the session cookie. Without it, `wtfd` answers 401 before touching the database. See [TENANTS.md](TENANTS.md).
+- **Logins** (see "Logins" below). Every request except `/api/health`, `/api/v1/openapi.yaml` and `/api/v1/login` needs the session cookie. Without it, `wtfd` answers 401 before touching the database. See [ACCOUNTS.md](ACCOUNTS.md).
 - **The proxy handles TLS.** `wtfd` speaks plain HTTP. HTTPS is recommended, but not required, and the web app needs it in practice: browsers keep a secure cookie, and later the camera, only over HTTPS (localhost excepted). Tell `wtfd` about HTTPS with `X-Forwarded-Proto: https`, so the session cookie is marked Secure.
 - **No CORS.** The web app is served by `wtfd` itself (`--web-root`), on the API's own hostname, so it needs none, and `wtfd` sends no CORS headers. The native apps and the CLI don't need CORS.
 - **Localhost by default.** `wtfd` listens on `127.0.0.1:8080`, so only a local proxy can reach it unless you change `--listen`.
@@ -305,7 +299,7 @@ The session travels in a cookie, for every client: browsers keep it themselves, 
 
 ### The web app
 
-With `--web-root DIR`, `wtfd` serves the web app (a Flutter web build) on every tenant hostname, outside `/api`:
+With `--web-root DIR`, `wtfd` serves the web app (a Flutter web build) outside `/api`:
 
 - **Files** are served as they are, with `Cache-Control: no-cache`: a new build is picked up at once, and unchanged files cost a 304. That includes Flutter's `version.json`, which the app compares with its own version to reload itself after an update.
 - **The app's own URLs** (`/locations/1A7K`) get `index.html` when they aren't a file, so links, bookmarks and reloads work. A missing file name with an extension (`/missing.js`) is a 404.
@@ -321,12 +315,12 @@ With `--web-root DIR`, `wtfd` serves the web app (a Flutter web build) on every 
 | `GET /openapi.yaml` | – | – (the embedded OpenAPI description) |
 | `GET /quantities` | `quantity_list()` | |
 | `GET /quantities/{id}` | `quantity_get` | |
-| `GET /units` | `unit_list` | `?quantity=` |
+| `GET /unit-families` | `unit_family_list` | `?quantity=` |
+| `GET /unit-families/{id}` | `unit_family_get` | |
+| `GET /units` | `unit_list` | `?quantity=&family=` |
 | `GET /units/{id}` | `unit_get` | |
-| `GET /unit-groups` | `unit_group_list` | `?quantity=` |
-| `GET /unit-groups/{id}` | `unit_group_get` | |
 | `GET /attributes` | `attribute_list()` | |
-| `POST /attributes` | `attribute_create` | `{name, datatype, unit_group?}` |
+| `POST /attributes` | `attribute_create` | `{name, datatype, unit?, unit_lock?}` |
 | `GET /attributes/{id}` | `attribute_get` | |
 | `PATCH /attributes/{id}` | `attribute_patch` | patch object |
 | `DELETE /attributes/{id}` | `attribute_delete` | |
@@ -347,7 +341,7 @@ With `--web-root DIR`, `wtfd` serves the web app (a Flutter web build) on every 
 | `PUT /classes/{id}/attributes/{attribute}` | `class_attribute_set` | `{default?, per_unit?, required?}` |
 | `DELETE /classes/{id}/attributes/{attribute}` | `class_attribute_remove` | |
 | `GET /items` | `item_list` | `?class=&search=&limit=&offset=` |
-| `POST /items` | `item_create` | `{class, name, unit_group?, values?}` |
+| `POST /items` | `item_create` | `{class, name, unit?, unit_lock?, values?}` |
 | `GET /items/{id}` | `item_get` | |
 | `PATCH /items/{id}` | `item_patch` | patch object |
 | `DELETE /items/{id}` | `item_delete` | |
@@ -395,32 +389,31 @@ An `openapi.yaml` (OpenAPI 3.1) describes every route, body and response shape. 
 ### Logging and timeouts
 
 - **Access log:** one `slog` line per request, with method, path, status and duration. Request bodies are never logged.
-- **Login log:** every login attempt gets a line of its own, with the email, the tenant's hostname and the client's address (`remote`).
+- **Login log:** every login attempt gets a line of its own, with the email and the client's address (`remote`).
   - **Success:** `level=INFO msg=login`, with the account id.
   - **Failure:** `level=WARN msg="login failed"`, with `reason=invalid` (unknown email or wrong password) or `reason=locked` (lockout).
   - Passwords are never logged. Behind a reverse proxy, `remote` is the proxy's address.
 - **HTTP server timeouts:** 10 s to read the request header, 30 s to read the whole request, 60 s to write the response, and 120 s for idle keep-alive connections.
 - **Database:** each call is limited by the role's `statement_timeout` (30 s in the README).
 
-## The `tenant` action
+## The `account` action
 
-Tenants are managed by the operator, as the DBA role, not through the REST API:
+The operator creates the first account, and recovers a lost password, as the DBA role:
 
 ```sh
-wtfd tenant create --name smith-home --hostname smith.wtf.example --email anna@example.com
-wtfd tenant list
-wtfd tenant update --name smith-home --new-name smiths --hostname wtf.smith.example
+wtfd account create --email anna@example.com
+wtfd account password --email anna@example.com
 ```
 
-`create` makes the tenant and its first account, which gets every privilege. It prints a generated password once; the account should change it after logging in (`PUT /me/password`). See [TENANTS.md](TENANTS.md).
+`create` makes an account with every privilege. `password` gives an existing account a new password, lifts a lockout and ends its sessions. Both print the generated password once; the account should change it after logging in (`PUT /me/password`). Further accounts are made through the API (`POST /accounts`). See [ACCOUNTS.md](ACCOUNTS.md).
 
 ## The `history` action
 
 History is kept until the operator deletes old entries (see [api/history.md](api/history.md)):
 
 ```sh
-wtfd history purge --older-than 730d                       # all tenants
-wtfd history purge --older-than 365d --tenant smith-home --dry-run
+wtfd history purge --older-than 730d
+wtfd history purge --older-than 365d --dry-run
 ```
 
 `--older-than` takes days (`730d`) or a Go duration (`36h`). `--dry-run` only counts the entries. It connects as the DBA role.
@@ -430,8 +423,8 @@ wtfd history purge --older-than 365d --tenant smith-home --dry-run
 Deleted objects stay in the database until the operator purges them (see [api/deleting.md](api/deleting.md)):
 
 ```sh
-wtfd deleted purge --older-than 730d                       # all tenants
-wtfd deleted purge --older-than 365d --tenant smith-home --dry-run
+wtfd deleted purge --older-than 730d
+wtfd deleted purge --older-than 365d --dry-run
 ```
 
 It removes what was deleted longer ago than `--older-than` (days or a Go duration), with what belongs to it, and reports how many of each kind. An object something else still refers to stays until that is purged too. `--dry-run` runs the purge in a transaction and rolls it back. It connects as the DBA role. Run `wtfd gc` afterwards to remove the files of purged attachments.

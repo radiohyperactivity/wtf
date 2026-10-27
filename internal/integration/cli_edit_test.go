@@ -21,7 +21,7 @@ func TestCLIEdit(t *testing.T) {
 	c := e.cli(t)
 	cli.OpenTerminal = func(io.Reader, io.Writer) *prompt.Terminal { return nil }
 
-	c.ok("attribute", "add", "Length", "--type", "float", "--unit-group", "Metric length")
+	c.ok("attribute", "add", "Length", "--unit", "m")
 	c.ok("attribute", "add", "Colour", "--type", "choice")
 	c.ok("option", "add", "Colour", "red", "blue")
 	c.ok("class", "add", "Hardware", "--container")
@@ -65,7 +65,7 @@ func TestCLIEdit(t *testing.T) {
 
 	// Item form: rename, keep the class, set Colour, change Length.
 	out, prompts := c.interact([]string{clear + "M3x10\r", "\r", "blue\r", clear + "15mm\r"}, false, "item", "edit", "M3")
-	contains(t, prompts, "Class: Hardware/Screws", "Colour [default red]", "Length (required) (Metric length): 1.2 cm",
+	contains(t, prompts, "Class: Hardware/Screws", "Colour [default red]", "Length (required) (m, or another unit of Metric length): 1.2 cm",
 		"Saved: changed name, set Colour, set Length.")
 	contains(t, out, "Name:   M3x10", "blue", "1.5 cm")
 

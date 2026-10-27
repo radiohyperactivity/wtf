@@ -1,8 +1,8 @@
 # Deleting and restoring
 
-The schema is in [`db/migrations/0010_deleted.sql`](../db/migrations/0010_deleted.sql). The functions are in the repeatable scripts of each kind, with the shared helpers in [`10_util.sql`](../db/repeatable/10_util.sql).
+The `deleted` columns are in [`db/migrations/0001_schema.sql`](../db/migrations/0001_schema.sql). The functions are in the repeatable scripts of each kind, with the shared helpers in [`10_util.sql`](../db/repeatable/10_util.sql).
 
-Deleting an item, stock row, location, class, attribute, option or attachment doesn't remove its row; it sets `deleted`. Accounts have worked this way since migration 0007 (see [account.md](account.md)). A deleted object can still be fetched, scanned and restored. Only an operator's purge removes it for good.
+Deleting an item, stock row, location, class, attribute, option or attachment doesn't remove its row; it sets `deleted`. Accounts work the same way (see [account.md](account.md)). A deleted object can still be fetched, scanned and restored. Only an operator's purge removes it for good.
 
 ## What is marked, and what is removed
 
@@ -11,8 +11,8 @@ Deleting an item, stock row, location, class, attribute, option or attachment do
 | `item`, `stock`, `location`, `class`, `attribute`, `attribute_option`, `attachment` | **marked deleted** | They have an identity: a label code, a name in a tree, a photo. They can be scanned, linked to and restored. |
 | `account` | marked deleted | See [account.md](account.md). |
 | `value`, `stock_value`, `class_attribute` | **removed** | They belong to their owner. Clearing a value or unassigning an attribute is a change to the owner, recorded in history. When the owner is marked deleted, they stay as they are, so a restore brings them back. The options of a deleted attribute and the attachments of a deleted object stay unmarked in the same way. |
-| `quantity`, `unit`, `unit_group`, `unit_group_unit` | not deletable | Seeded system data. |
-| `session` | removed | Not tenant data. |
+| `quantity`, `unit_family`, `unit` | not deletable | Seeded system data. |
+| `session` | removed | Not inventory data. |
 | `history` | only purged by age | See [history.md](history.md). |
 | `file` | removed by `wtfd gc` once no attachment refers to it | A deleted attachment still refers to its file, so the file stays until the attachment is purged. |
 
@@ -87,7 +87,7 @@ An option of a deleted attribute, an attachment of a deleted object and a stock 
 ## Purging
 
 ```sh
-wtfd deleted purge --older-than 730d [--tenant NAME] [--dry-run]
+wtfd deleted purge --older-than 730d [--dry-run]
 ```
 
 Removes for good what was deleted longer ago than that, by the date of the history entry that marked it. An object whose deletion is no longer in history counts as deleted long ago.

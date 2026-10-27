@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/radiohyperactivity/wtf/internal/tenant"
+	"github.com/radiohyperactivity/wtf/internal/admin"
 )
 
 // isDeleted checks that the object at path is still there, marked deleted.
@@ -19,12 +19,12 @@ func isDeleted(t *testing.T, e *environment, path string) {
 // purgeDeleted removes everything deleted, however recently.
 func purgeDeleted(t *testing.T, e *environment) map[string]int64 {
 	t.Helper()
-	conn, err := tenant.Connect(context.Background(), e.dbaConfig)
+	conn, err := admin.Connect(context.Background(), e.dbaConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close(context.Background())
-	counts, err := tenant.PurgeDeleted(context.Background(), conn, 0, "", false)
+	counts, err := admin.PurgeDeleted(context.Background(), conn, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}

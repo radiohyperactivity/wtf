@@ -12,7 +12,7 @@ import (
 //
 // Missing required arguments and flags are asked for. Once the user has been
 // asked for something, the session counts as interactive and optional data
-// is offered too (the item's unit group, the attributes of its class, a
+// is offered too (the item's unit, the attributes of its class, a
 // stock quantity), where Enter skips it.
 
 // ask reads one value with completion from p. Required values are asked for
@@ -153,8 +153,8 @@ func (e *env) askValue(ca classAttribute, must bool) (any, error) {
 // valueHint tells what kind of value is expected.
 func valueHint(a attribute) string {
 	switch {
-	case a.UnitGroup != nil:
-		return "(" + a.UnitGroup.Name + ")"
+	case a.Unit != nil:
+		return "(" + a.Unit.Symbol + ", or another unit of " + a.Unit.Family.Name + ")"
 	case a.Datatype == "date":
 		return "(YYYY-MM-DD, today, +N[d|w|m|y])"
 	case a.Datatype == "boolean":

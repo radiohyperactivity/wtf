@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/radiohyperactivity/wtf/internal/client"
 )
 
 // run runs wtf against a fake server.
@@ -35,7 +37,7 @@ func TestNewAttributeRefreshesCache(t *testing.T) {
 		w.Header().Set("API-Revision", "1")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(`{"id": "11111111-1111-1111-1111-111111111111", "name": "Colour", "datatype": "text", "unit_group": null}`))
+		w.Write([]byte(`{"id": "11111111-1111-1111-1111-111111111111", "name": "Colour", "datatype": "text", "unit": null}`))
 	}))
 	defer server.Close()
 	dir := t.TempDir()
@@ -45,7 +47,7 @@ func TestNewAttributeRefreshesCache(t *testing.T) {
 		"WTF_CONFIG":    filepath.Join(dir, "config.json"),
 		"WTF_CACHE_DIR": dir,
 	}
-	e := &env{api: newClient(server.URL, "token"), getenv: func(k string) string { return vars[k] }}
+	e := &env{api: client.New(server.URL, "token"), getenv: func(k string) string { return vars[k] }}
 	e.writeCache("attributes", []attribute{})
 	cached := filepath.Join(e.cacheDir(), "attributes.json")
 	if _, err := os.Stat(cached); err != nil {

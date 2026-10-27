@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -15,17 +14,6 @@ import (
 
 	"github.com/radiohyperactivity/wtf/internal/cli"
 )
-
-// redirect sends every request to one test server, keeping the Host header
-// (and so the tenant) of the URL.
-type redirect struct{ addr string }
-
-func (r redirect) RoundTrip(req *http.Request) (*http.Response, error) {
-	req = req.Clone(req.Context())
-	req.Host = req.URL.Host
-	req.URL.Host = r.addr
-	return http.DefaultTransport.RoundTrip(req)
-}
 
 // cliEnv runs the wtf client against the API handler.
 type cliEnv struct {
@@ -38,10 +26,8 @@ func (e *environment) cli(t *testing.T) *cliEnv {
 	t.Helper()
 	server := httptest.NewServer(e.handler)
 	t.Cleanup(server.Close)
-	cli.Transport = redirect{strings.TrimPrefix(server.URL, "http://")}
-	t.Cleanup(func() { cli.Transport = nil })
 	return &cliEnv{t: t, config: filepath.Join(t.TempDir(), "config.json"), vars: map[string]string{
-		"WTF_SERVER":    "http://" + e.host,
+		"WTF_SERVER":    server.URL,
 		"WTF_TOKEN":     e.token,
 		"WTF_CACHE_DIR": t.TempDir(),
 	}}
@@ -105,7 +91,7 @@ func TestCLI(t *testing.T) {
 	_, stderr := c.run(1, "", "location", "get", "Shelf 2")
 	contains(t, stderr, "ambiguous", "Garage/Shelf 2", "Attic/Shelf 2")
 
-	c.ok("attribute", "add", "Length", "--type", "float", "--unit-group", "Metric length")
+	c.ok("attribute", "add", "Length", "--unit", "m")
 	c.ok("attribute", "add", "Colour", "--type", "choice")
 	c.ok("option", "add", "Colour", "red", "blue")
 	contains(t, c.ok("option", "list", "colour"), "blue", "red")
@@ -139,9 +125,9 @@ func TestCLI(t *testing.T) {
 	_, stderr = c.run(1, "", "item", "value-set", "M4 screw", "Length", "3", "kg")
 	contains(t, stderr, "unknown unit", "mm")
 
-	// A plain number is in the group's base unit if it has it, else in its
-	// only unit: 20 in a Celsius group is 20 °C, stored as 293.15 K.
-	c.ok("attribute", "add", "Max temperature", "--type", "float", "--unit-group", "Celsius")
+	// A plain number is in the attribute's unit: 20 is 20 °C, stored as
+	// 293.15 K. The type follows from the unit.
+	c.ok("attribute", "add", "Max temperature", "--unit", "degC")
 	c.ok("class", "assign", "Hardware", "Max temperature")
 	contains(t, c.ok("item", "value-set", "M4 screw", "Max temperature", "20"), "20 °C")
 	c.json(&it, "item", "get", "M4 screw")

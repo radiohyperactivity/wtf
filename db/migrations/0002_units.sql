@@ -1,468 +1,180 @@
--- System data: quantities, units and unit groups. Explained in seed/units.md.
+-- System data: the bootstrap set of quantities, unit families and units.
+-- Explained in seed/units.md. Ids are given in order from 1000, so every
+-- installation has the same ids for the same units.
 
 INSERT INTO quantity (name, datatype) VALUES
-    -- Mechanical
-    ('Length', 'float'),
-    ('Area', 'float'),
-    ('Volume', 'float'),
-    ('Mass', 'float'),
-    ('Time', 'float'),
-    ('Speed', 'float'),
-    ('Acceleration', 'float'),
-    ('Force', 'float'),
-    ('Pressure', 'float'),
-    ('Torque', 'float'),
-    ('Angle', 'float'),
-    ('Angular velocity', 'float'),
-    ('Density', 'float'),
-    -- Electrical
-    ('Voltage', 'float'),
-    ('Electric current', 'float'),
-    ('Resistance', 'float'),
+    ('Length',      'float'),
+    ('Weight',      'float'),
+    ('Volume',      'float'),
+    ('Voltage',     'float'),
+    ('Current',     'float'),
+    ('Resistance',  'float'),
     ('Capacitance', 'float'),
-    ('Inductance', 'float'),
-    ('Electric charge', 'float'),
-    ('Power', 'float'),
-    ('Frequency', 'float'),
-    ('Conductance', 'float'),
-    -- Thermal / energy
+    ('Inductance',  'float'),
+    ('Frequency',   'float'),
+    ('Power',       'float'),
+    ('Energy',      'float'),
+    ('Charge',      'float'),
     ('Temperature', 'float'),
-    ('Energy', 'float'),
-    -- Other
-    ('Data size', 'float'),
-    ('Luminous intensity', 'float'),
-    ('Luminous flux', 'float'),
-    ('Illuminance', 'float'),
-    ('Amount of substance', 'float'),
-    ('Ratio', 'float'),
-    ('Count', 'integer');
+    ('Bytes',       'float'),
+    ('Bits',        'float'),
+    ('Count',       'integer');
 
-INSERT INTO unit (quantity, name, symbol, base_factor, base_offset)
-SELECT q.id, u.name, u.symbol, u.base_factor, u.base_offset
+INSERT INTO unit_family (quantity, name)
+SELECT q.id, f.name
 FROM (VALUES
-    -- Length (base: metre)
-    ('Length', 'metre',                 'm',           1::numeric,                0::numeric),
-    ('Length', 'kilometre',             'km',          1000,                      0),
-    ('Length', 'centimetre',            'cm',          0.01,                      0),
-    ('Length', 'millimetre',            'mm',          0.001,                     0),
-    ('Length', 'micrometre',            'µm',          0.000001,                  0),
-    ('Length', 'nanometre',             'nm',          0.000000001,               0),
-    ('Length', 'inch',                  'in',          0.0254,                    0),
-    ('Length', 'thou',                  'mil',         0.0000254,                 0),
-    ('Length', 'foot',                  'ft',          0.3048,                    0),
-    ('Length', 'yard',                  'yd',          0.9144,                    0),
-    ('Length', 'mile',                  'mi',          1609.344,                  0),
-    ('Length', 'nautical mile',         'nmi',         1852,                      0),
+    (1,  'Length',      'Metric length'),
+    (2,  'Length',      'Imperial length'),
+    (3,  'Weight',      'Metric weight'),
+    (4,  'Weight',      'Imperial weight'),
+    (5,  'Volume',      'Metric volume'),
+    (6,  'Volume',      'US volume'),
+    (7,  'Volume',      'Imperial volume'),
+    (8,  'Voltage',     'Voltage'),
+    (9,  'Current',     'Current'),
+    (10, 'Resistance',  'Resistance'),
+    (11, 'Capacitance', 'Capacitance'),
+    (12, 'Inductance',  'Inductance'),
+    (13, 'Frequency',   'Frequency'),
+    (14, 'Power',       'Power'),
+    (15, 'Energy',      'Joules'),
+    (16, 'Energy',      'Watt hours'),
+    (17, 'Energy',      'Calories'),
+    (18, 'Charge',      'Battery capacity'),
+    (19, 'Temperature', 'Celsius'),
+    (20, 'Temperature', 'Fahrenheit'),
+    (21, 'Temperature', 'Kelvin'),
+    (22, 'Bytes',       'Decimal bytes'),
+    (23, 'Bytes',       'Binary bytes'),
+    (24, 'Bits',        'Bits'),
+    (25, 'Count',       'Pieces')
+) AS f (ord, quantity, name)
+JOIN quantity q ON q.name = f.quantity
+ORDER BY f.ord;
 
-    -- Area (base: square metre)
-    ('Area', 'square metre',            'm²',          1,                         0),
-    ('Area', 'square millimetre',       'mm²',         0.000001,                  0),
-    ('Area', 'square centimetre',       'cm²',         0.0001,                    0),
-    ('Area', 'square kilometre',        'km²',         1000000,                   0),
-    ('Area', 'hectare',                 'ha',          10000,                     0),
-    ('Area', 'square inch',             'in²',         0.00064516,                0),
-    ('Area', 'square foot',             'ft²',         0.09290304,                0),
-    ('Area', 'acre',                    'ac',          4046.8564224,              0),
-    ('Area', 'square mile',             'mi²',         2589988.110336,            0),
-
-    -- Volume (base: cubic metre)
-    ('Volume', 'cubic metre',           'm³',          1,                         0),
-    ('Volume', 'litre',                 'L',           0.001,                     0),
-    ('Volume', 'centilitre',            'cL',          0.00001,                   0),
-    ('Volume', 'millilitre',            'mL',          0.000001,                  0),
-    ('Volume', 'cubic centimetre',      'cm³',         0.000001,                  0),
-    ('Volume', 'cubic millimetre',      'mm³',         0.000000001,               0),
-    ('Volume', 'cubic inch',            'in³',         0.000016387064,            0),
-    ('Volume', 'cubic foot',            'ft³',         0.028316846592,            0),
-    ('Volume', 'US fluid ounce',        'fl oz (US)',  0.0000295735295625,        0),
-    ('Volume', 'US pint',               'pt (US)',     0.000473176473,            0),
-    ('Volume', 'US quart',              'qt (US)',     0.000946352946,            0),
-    ('Volume', 'US gallon',             'gal (US)',    0.003785411784,            0),
-    ('Volume', 'imperial fluid ounce',  'fl oz (imp)', 0.0000284130625,           0),
-    ('Volume', 'imperial pint',         'pt (imp)',    0.00056826125,             0),
-    ('Volume', 'imperial gallon',       'gal (imp)',   0.00454609,                0),
-
-    -- Mass (base: kilogram)
-    ('Mass', 'kilogram',                'kg',          1,                         0),
-    ('Mass', 'gram',                    'g',           0.001,                     0),
-    ('Mass', 'milligram',               'mg',          0.000001,                  0),
-    ('Mass', 'microgram',               'µg',          0.000000001,               0),
-    ('Mass', 'tonne',                   't',           1000,                      0),
-    ('Mass', 'carat',                   'ct',          0.0002,                    0),
-    ('Mass', 'grain',                   'gr',          0.00006479891,             0),
-    ('Mass', 'ounce',                   'oz',          0.028349523125,            0),
-    ('Mass', 'pound',                   'lb',          0.45359237,                0),
-    ('Mass', 'stone',                   'st',          6.35029318,                0),
-
-    -- Time (base: second)
-    ('Time', 'second',                  's',           1,                         0),
-    ('Time', 'millisecond',             'ms',          0.001,                     0),
-    ('Time', 'microsecond',             'µs',          0.000001,                  0),
-    ('Time', 'nanosecond',              'ns',          0.000000001,               0),
-    ('Time', 'minute',                  'min',         60,                        0),
-    ('Time', 'hour',                    'h',           3600,                      0),
-    ('Time', 'day',                     'd',           86400,                     0),
-    ('Time', 'week',                    'wk',          604800,                    0),
-    ('Time', 'year (365.25 days)',      'yr',          31557600,                  0),
-
-    -- Speed (base: metre per second)
-    ('Speed', 'metre per second',       'm/s',         1,                         0),
-    ('Speed', 'kilometre per hour',     'km/h',        0.27777777777777777778,    0),
-    ('Speed', 'mile per hour',          'mph',         0.44704,                   0),
-    ('Speed', 'knot',                   'kn',          0.51444444444444444444,    0),
-    ('Speed', 'foot per second',        'ft/s',        0.3048,                    0),
-
-    -- Acceleration (base: metre per second squared)
-    ('Acceleration', 'metre per second squared', 'm/s²', 1,                       0),
-    ('Acceleration', 'standard gravity',         'gₙ',   9.80665,                 0),
-    ('Acceleration', 'foot per second squared',  'ft/s²', 0.3048,                 0),
-
-    -- Force (base: newton)
-    ('Force', 'newton',                 'N',           1,                         0),
-    ('Force', 'millinewton',            'mN',          0.001,                     0),
-    ('Force', 'kilonewton',             'kN',          1000,                      0),
-    ('Force', 'kilogram-force',         'kgf',         9.80665,                   0),
-    ('Force', 'pound-force',            'lbf',         4.4482216152605,           0),
-    ('Force', 'ounce-force',            'ozf',         0.27801385095378125,       0),
-
-    -- Pressure (base: pascal)
-    ('Pressure', 'pascal',              'Pa',          1,                         0),
-    ('Pressure', 'hectopascal',         'hPa',         100,                       0),
-    ('Pressure', 'kilopascal',          'kPa',         1000,                      0),
-    ('Pressure', 'megapascal',          'MPa',         1000000,                   0),
-    ('Pressure', 'millibar',            'mbar',        100,                       0),
-    ('Pressure', 'bar',                 'bar',         100000,                    0),
-    ('Pressure', 'standard atmosphere', 'atm',         101325,                    0),
-    ('Pressure', 'torr',                'Torr',        133.32236842105263158,     0),
-    ('Pressure', 'millimetre of mercury', 'mmHg',      133.322387415,             0),
-    ('Pressure', 'inch of mercury',     'inHg',        3386.389,                  0),
-    ('Pressure', 'pound per square inch', 'psi',       6894.7572931683613367,     0),
-
-    -- Torque (base: newton metre)
-    ('Torque', 'newton metre',          'N·m',         1,                         0),
-    ('Torque', 'newton centimetre',     'N·cm',        0.01,                      0),
-    ('Torque', 'millinewton metre',     'mN·m',        0.001,                     0),
-    ('Torque', 'pound-force foot',      'lbf·ft',      1.3558179483314004,        0),
-    ('Torque', 'pound-force inch',      'lbf·in',      0.1129848290276167,        0),
-    ('Torque', 'ounce-force inch',      'ozf·in',      0.0070615518142261,        0),
-
-    -- Angle (base: radian)
-    ('Angle', 'radian',                 'rad',         1,                         0),
-    ('Angle', 'degree',                 '°',           0.017453292519943295769,   0),
-    ('Angle', 'arcminute',              '′',           0.00029088820866572159615, 0),
-    ('Angle', 'arcsecond',              '″',           0.0000048481368110953599359, 0),
-    ('Angle', 'turn',                   'rev',         6.2831853071795864769,     0),
-
-    -- Angular velocity (base: radian per second)
-    ('Angular velocity', 'radian per second',    'rad/s', 1,                      0),
-    ('Angular velocity', 'degree per second',    '°/s',   0.017453292519943295769, 0),
-    ('Angular velocity', 'revolution per second', 'rps',  6.2831853071795864769,  0),
-    ('Angular velocity', 'revolution per minute', 'rpm',  0.10471975511965977462, 0),
-
-    -- Density (base: kilogram per cubic metre)
-    ('Density', 'kilogram per cubic metre',  'kg/m³',  1,                         0),
-    ('Density', 'gram per cubic centimetre', 'g/cm³',  1000,                      0),
-    ('Density', 'kilogram per litre',        'kg/L',   1000,                      0),
-    ('Density', 'pound per cubic foot',      'lb/ft³', 16.018463373960138,        0),
-    ('Density', 'pound per cubic inch',      'lb/in³', 27679.904710203122,        0),
-
-    -- Voltage (base: volt)
-    ('Voltage', 'volt',                 'V',           1,                         0),
-    ('Voltage', 'microvolt',            'µV',          0.000001,                  0),
-    ('Voltage', 'millivolt',            'mV',          0.001,                     0),
-    ('Voltage', 'kilovolt',             'kV',          1000,                      0),
-
-    -- Electric current (base: ampere)
-    ('Electric current', 'ampere',      'A',           1,                         0),
-    ('Electric current', 'nanoampere',  'nA',          0.000000001,               0),
-    ('Electric current', 'microampere', 'µA',          0.000001,                  0),
-    ('Electric current', 'milliampere', 'mA',          0.001,                     0),
-    ('Electric current', 'kiloampere',  'kA',          1000,                      0),
-
-    -- Resistance (base: ohm)
-    ('Resistance', 'ohm',               'Ω',           1,                         0),
-    ('Resistance', 'milliohm',          'mΩ',          0.001,                     0),
-    ('Resistance', 'kiloohm',           'kΩ',          1000,                      0),
-    ('Resistance', 'megaohm',           'MΩ',          1000000,                   0),
-    ('Resistance', 'gigaohm',           'GΩ',          1000000000,                0),
-
-    -- Capacitance (base: farad)
-    ('Capacitance', 'farad',            'F',           1,                         0),
-    ('Capacitance', 'millifarad',       'mF',          0.001,                     0),
-    ('Capacitance', 'microfarad',       'µF',          0.000001,                  0),
-    ('Capacitance', 'nanofarad',        'nF',          0.000000001,               0),
-    ('Capacitance', 'picofarad',        'pF',          0.000000000001,            0),
-
-    -- Inductance (base: henry)
-    ('Inductance', 'henry',             'H',           1,                         0),
-    ('Inductance', 'millihenry',        'mH',          0.001,                     0),
-    ('Inductance', 'microhenry',        'µH',          0.000001,                  0),
-    ('Inductance', 'nanohenry',         'nH',          0.000000001,               0),
-
-    -- Electric charge (base: coulomb)
-    ('Electric charge', 'coulomb',          'C',       1,                         0),
-    ('Electric charge', 'ampere hour',      'Ah',      3600,                      0),
-    ('Electric charge', 'milliampere hour', 'mAh',     3.6,                       0),
-
-    -- Power (base: watt); also used for heat flow
-    ('Power', 'watt',                   'W',           1,                         0),
-    ('Power', 'microwatt',              'µW',          0.000001,                  0),
-    ('Power', 'milliwatt',              'mW',          0.001,                     0),
-    ('Power', 'kilowatt',               'kW',          1000,                      0),
-    ('Power', 'megawatt',               'MW',          1000000,                   0),
-    ('Power', 'horsepower',             'hp',          745.69987158227022,        0),
-    ('Power', 'BTU per hour',           'BTU/h',       0.29307107017222222222,    0),
-
-    -- Frequency (base: hertz)
-    ('Frequency', 'hertz',              'Hz',          1,                         0),
-    ('Frequency', 'kilohertz',          'kHz',         1000,                      0),
-    ('Frequency', 'megahertz',          'MHz',         1000000,                   0),
-    ('Frequency', 'gigahertz',          'GHz',         1000000000,                0),
-
-    -- Conductance (base: siemens)
-    ('Conductance', 'siemens',          'S',           1,                         0),
-    ('Conductance', 'millisiemens',     'mS',          0.001,                     0),
-    ('Conductance', 'microsiemens',     'µS',          0.000001,                  0),
-
-    -- Temperature (base: kelvin)
-    ('Temperature', 'kelvin',            'K',          1,                         0),
-    ('Temperature', 'degree Celsius',    '°C',         1,                         273.15),
-    ('Temperature', 'degree Fahrenheit', '°F',         0.55555555555555555556,    255.37222222222222222),
-
-    -- Energy (base: joule)
-    ('Energy', 'joule',                 'J',           1,                         0),
-    ('Energy', 'millijoule',            'mJ',          0.001,                     0),
-    ('Energy', 'kilojoule',             'kJ',          1000,                      0),
-    ('Energy', 'megajoule',             'MJ',          1000000,                   0),
-    ('Energy', 'milliwatt hour',        'mWh',         3.6,                       0),
-    ('Energy', 'watt hour',             'Wh',          3600,                      0),
-    ('Energy', 'kilowatt hour',         'kWh',         3600000,                   0),
-    ('Energy', 'calorie',               'cal',         4.184,                     0),
-    ('Energy', 'kilocalorie',           'kcal',        4184,                      0),
-    ('Energy', 'British thermal unit',  'BTU',         1055.05585262,             0),
-    ('Energy', 'electronvolt',          'eV',          0.0000000000000000001602176634, 0),
-
-    -- Data size (base: byte)
-    ('Data size', 'byte',               'B',           1,                         0),
-    ('Data size', 'bit',                'bit',         0.125,                     0),
-    ('Data size', 'kilobyte',           'kB',          1000,                      0),
-    ('Data size', 'megabyte',           'MB',          1000000,                   0),
-    ('Data size', 'gigabyte',           'GB',          1000000000,                0),
-    ('Data size', 'terabyte',           'TB',          1000000000000,             0),
-    ('Data size', 'kibibyte',           'KiB',         1024,                      0),
-    ('Data size', 'mebibyte',           'MiB',         1048576,                   0),
-    ('Data size', 'gibibyte',           'GiB',         1073741824,                0),
-    ('Data size', 'tebibyte',           'TiB',         1099511627776,             0),
-
-    -- Luminous intensity (base: candela)
-    ('Luminous intensity', 'candela',      'cd',       1,                         0),
-    ('Luminous intensity', 'millicandela', 'mcd',      0.001,                     0),
-
-    -- Luminous flux (base: lumen)
-    ('Luminous flux', 'lumen',          'lm',          1,                         0),
-
-    -- Illuminance (base: lux)
-    ('Illuminance', 'lux',              'lx',          1,                         0),
-    ('Illuminance', 'foot-candle',      'fc',          10.763910416709722,        0),
-
-    -- Amount of substance (base: mole)
-    ('Amount of substance', 'mole',      'mol',        1,                         0),
-    ('Amount of substance', 'millimole', 'mmol',       0.001,                     0),
-
-    -- Ratio (base: one, i.e. a plain fraction)
-    ('Ratio', 'one',                    '1',           1,                         0),
-    ('Ratio', 'percent',                '%',           0.01,                      0),
-    ('Ratio', 'per mille',              '‰',           0.001,                     0),
-    ('Ratio', 'part per million',       'ppm',         0.000001,                  0),
-    ('Ratio', 'part per billion',       'ppb',         0.000000001,               0),
-
-    -- Count (base: piece)
-    ('Count', 'piece',                  'pcs',         1,                         0),
-    ('Count', 'pair',                   'pair',        2,                         0),
-    ('Count', 'dozen',                  'doz',         12,                        0)
-) AS u (quantity, name, symbol, base_factor, base_offset)
-JOIN quantity q ON q.name = u.quantity;
-
-INSERT INTO unit_group (quantity, name)
-SELECT q.id, g.name
+-- Base units: metre, kilogram, cubic metre, volt, ampere, ohm, farad, henry,
+-- hertz, watt, joule, coulomb, kelvin, byte, bit, piece. Factors are exact
+-- where the unit is defined exactly (inch = 0.0254 m, pound = 0.45359237 kg).
+INSERT INTO unit (family, name, symbol, base_factor, base_offset)
+SELECT f.id, u.name, u.symbol, u.base_factor, u.base_offset
 FROM (VALUES
-    ('Length',              'Metric length'),
-    ('Length',              'Imperial length'),
-    ('Length',              'Nautical miles'),
-    ('Area',                'Metric area'),
-    ('Area',                'Imperial area'),
-    ('Volume',              'Litres'),
-    ('Volume',              'Cubic metres'),
-    ('Volume',              'Cubic imperial'),
-    ('Volume',              'US liquid volume'),
-    ('Volume',              'Imperial liquid volume'),
-    ('Mass',                'Metric mass'),
-    ('Mass',                'Imperial mass'),
-    ('Mass',                'Stones'),
-    ('Mass',                'Carats'),
-    ('Time',                'SI time'),
-    ('Time',                'Clock time'),
-    ('Speed',               'Metres per second'),
-    ('Speed',               'Kilometres per hour'),
-    ('Speed',               'Miles per hour'),
-    ('Speed',               'Knots'),
-    ('Speed',               'Feet per second'),
-    ('Acceleration',        'Metres per second squared'),
-    ('Acceleration',        'Standard gravity'),
-    ('Acceleration',        'Feet per second squared'),
-    ('Force',               'Metric force'),
-    ('Force',               'Kilogram-force'),
-    ('Force',               'Imperial force'),
-    ('Pressure',            'Metric pressure'),
-    ('Pressure',            'Hectopascals'),
-    ('Pressure',            'Bar'),
-    ('Pressure',            'Atmospheres'),
-    ('Pressure',            'Torr'),
-    ('Pressure',            'Millimetres of mercury'),
-    ('Pressure',            'Inches of mercury'),
-    ('Pressure',            'Pounds per square inch'),
-    ('Torque',              'Metric torque'),
-    ('Torque',              'Newton centimetres'),
-    ('Torque',              'Imperial torque'),
-    ('Angle',               'Degrees'),
-    ('Angle',               'Radians'),
-    ('Angle',               'Turns'),
-    ('Angular velocity',    'Radians per second'),
-    ('Angular velocity',    'Degrees per second'),
-    ('Angular velocity',    'Revolutions per second'),
-    ('Angular velocity',    'Revolutions per minute'),
-    ('Density',             'Kilograms per cubic metre'),
-    ('Density',             'Grams per cubic centimetre'),
-    ('Density',             'Kilograms per litre'),
-    ('Density',             'Pounds per cubic foot'),
-    ('Density',             'Pounds per cubic inch'),
-    ('Voltage',             'Voltage'),
-    ('Electric current',    'Electric current'),
-    ('Resistance',          'Resistance'),
-    ('Capacitance',         'Capacitance'),
-    ('Inductance',          'Inductance'),
-    ('Electric charge',     'Coulombs'),
-    ('Electric charge',     'Battery capacity'),
-    ('Power',               'Metric power'),
-    ('Power',               'Horsepower'),
-    ('Power',               'BTU per hour'),
-    ('Frequency',           'Frequency'),
-    ('Conductance',         'Conductance'),
-    ('Temperature',         'Kelvin'),
-    ('Temperature',         'Celsius'),
-    ('Temperature',         'Fahrenheit'),
-    ('Energy',              'Joules'),
-    ('Energy',              'Watt hours'),
-    ('Energy',              'Calories'),
-    ('Energy',              'British thermal units'),
-    ('Energy',              'Electronvolts'),
-    ('Data size',           'Decimal data size'),
-    ('Data size',           'Binary data size'),
-    ('Data size',           'Bits'),
-    ('Luminous intensity',  'Luminous intensity'),
-    ('Luminous flux',       'Lumens'),
-    ('Illuminance',         'Lux'),
-    ('Illuminance',         'Foot-candles'),
-    ('Amount of substance', 'Amount of substance'),
-    ('Ratio',               'Fraction'),
-    ('Ratio',               'Percent'),
-    ('Ratio',               'Per mille'),
-    ('Ratio',               'Parts per million'),
-    ('Count',               'Pieces'),
-    ('Count',               'Pairs'),
-    ('Count',               'Dozens')
-) AS g (quantity, name)
-JOIN quantity q ON q.name = g.quantity;
+    (1,  'Metric length',    'nanometre',            'nm',          0.000000001::numeric,     0::numeric),
+    (2,  'Metric length',    'micrometre',           'µm',          0.000001,                 0),
+    (3,  'Metric length',    'millimetre',           'mm',          0.001,                    0),
+    (4,  'Metric length',    'centimetre',           'cm',          0.01,                     0),
+    (5,  'Metric length',    'metre',                'm',           1,                        0),
+    (6,  'Metric length',    'kilometre',            'km',          1000,                     0),
 
-INSERT INTO unit_group_unit (unit_group, unit)
-SELECT g.id, u.id
-FROM (VALUES
-    ('Metric length',              ARRAY['nm', 'µm', 'mm', 'cm', 'm', 'km']),
-    ('Imperial length',            ARRAY['mil', 'in', 'ft', 'mi']),
-    ('Nautical miles',             ARRAY['nmi']),
-    ('Metric area',                ARRAY['mm²', 'cm²', 'm²', 'ha', 'km²']),
-    ('Imperial area',              ARRAY['in²', 'ft²', 'ac', 'mi²']),
-    ('Litres',                     ARRAY['mL', 'cL', 'L']),
-    ('Cubic metres',               ARRAY['mm³', 'cm³', 'm³']),
-    ('Cubic imperial',             ARRAY['in³', 'ft³']),
-    ('US liquid volume',           ARRAY['fl oz (US)', 'pt (US)', 'qt (US)', 'gal (US)']),
-    ('Imperial liquid volume',     ARRAY['fl oz (imp)', 'pt (imp)', 'gal (imp)']),
-    ('Metric mass',                ARRAY['µg', 'mg', 'g', 'kg', 't']),
-    ('Imperial mass',              ARRAY['gr', 'oz', 'lb']),
-    ('Stones',                     ARRAY['st']),
-    ('Carats',                     ARRAY['ct']),
-    ('SI time',                    ARRAY['ns', 'µs', 'ms', 's']),
-    ('Clock time',                 ARRAY['s', 'min', 'h', 'd', 'yr']),
-    ('Metres per second',          ARRAY['m/s']),
-    ('Kilometres per hour',        ARRAY['km/h']),
-    ('Miles per hour',             ARRAY['mph']),
-    ('Knots',                      ARRAY['kn']),
-    ('Feet per second',            ARRAY['ft/s']),
-    ('Metres per second squared',  ARRAY['m/s²']),
-    ('Standard gravity',           ARRAY['gₙ']),
-    ('Feet per second squared',    ARRAY['ft/s²']),
-    ('Metric force',               ARRAY['mN', 'N', 'kN']),
-    ('Kilogram-force',             ARRAY['kgf']),
-    ('Imperial force',             ARRAY['ozf', 'lbf']),
-    ('Metric pressure',            ARRAY['Pa', 'kPa', 'MPa']),
-    ('Hectopascals',               ARRAY['hPa']),
-    ('Bar',                        ARRAY['mbar', 'bar']),
-    ('Atmospheres',                ARRAY['atm']),
-    ('Torr',                       ARRAY['Torr']),
-    ('Millimetres of mercury',     ARRAY['mmHg']),
-    ('Inches of mercury',          ARRAY['inHg']),
-    ('Pounds per square inch',     ARRAY['psi']),
-    ('Metric torque',              ARRAY['mN·m', 'N·m']),
-    ('Newton centimetres',         ARRAY['N·cm']),
-    ('Imperial torque',            ARRAY['ozf·in', 'lbf·in', 'lbf·ft']),
-    ('Degrees',                    ARRAY['″', '′', '°']),
-    ('Radians',                    ARRAY['rad']),
-    ('Turns',                      ARRAY['rev']),
-    ('Radians per second',         ARRAY['rad/s']),
-    ('Degrees per second',         ARRAY['°/s']),
-    ('Revolutions per second',     ARRAY['rps']),
-    ('Revolutions per minute',     ARRAY['rpm']),
-    ('Kilograms per cubic metre',  ARRAY['kg/m³']),
-    ('Grams per cubic centimetre', ARRAY['g/cm³']),
-    ('Kilograms per litre',        ARRAY['kg/L']),
-    ('Pounds per cubic foot',      ARRAY['lb/ft³']),
-    ('Pounds per cubic inch',      ARRAY['lb/in³']),
-    ('Voltage',                    ARRAY['µV', 'mV', 'V', 'kV']),
-    ('Electric current',           ARRAY['nA', 'µA', 'mA', 'A', 'kA']),
-    ('Resistance',                 ARRAY['mΩ', 'Ω', 'kΩ', 'MΩ', 'GΩ']),
-    ('Capacitance',                ARRAY['pF', 'nF', 'µF', 'mF', 'F']),
-    ('Inductance',                 ARRAY['nH', 'µH', 'mH', 'H']),
-    ('Coulombs',                   ARRAY['C']),
-    ('Battery capacity',           ARRAY['mAh', 'Ah']),
-    ('Metric power',               ARRAY['µW', 'mW', 'W', 'kW', 'MW']),
-    ('Horsepower',                 ARRAY['hp']),
-    ('BTU per hour',               ARRAY['BTU/h']),
-    ('Frequency',                  ARRAY['Hz', 'kHz', 'MHz', 'GHz']),
-    ('Conductance',                ARRAY['µS', 'mS', 'S']),
-    ('Kelvin',                     ARRAY['K']),
-    ('Celsius',                    ARRAY['°C']),
-    ('Fahrenheit',                 ARRAY['°F']),
-    ('Joules',                     ARRAY['mJ', 'J', 'kJ', 'MJ']),
-    ('Watt hours',                 ARRAY['mWh', 'Wh', 'kWh']),
-    ('Calories',                   ARRAY['cal', 'kcal']),
-    ('British thermal units',      ARRAY['BTU']),
-    ('Electronvolts',              ARRAY['eV']),
-    ('Decimal data size',          ARRAY['B', 'kB', 'MB', 'GB', 'TB']),
-    ('Binary data size',           ARRAY['B', 'KiB', 'MiB', 'GiB', 'TiB']),
-    ('Bits',                       ARRAY['bit']),
-    ('Luminous intensity',         ARRAY['mcd', 'cd']),
-    ('Lumens',                     ARRAY['lm']),
-    ('Lux',                        ARRAY['lx']),
-    ('Foot-candles',               ARRAY['fc']),
-    ('Amount of substance',        ARRAY['mmol', 'mol']),
-    ('Fraction',                   ARRAY['1']),
-    ('Percent',                    ARRAY['%']),
-    ('Per mille',                  ARRAY['‰']),
-    ('Parts per million',          ARRAY['ppb', 'ppm']),
-    ('Pieces',                     ARRAY['pcs']),
-    ('Pairs',                      ARRAY['pair']),
-    ('Dozens',                     ARRAY['doz'])
-) AS m (unit_group, symbols)
-CROSS JOIN LATERAL unnest(m.symbols) AS s (symbol)
-JOIN unit_group g ON g.name = m.unit_group
-JOIN unit u       ON u.symbol = s.symbol;
+    (7,  'Imperial length',  'thou',                 'mil',         0.0000254,                0),
+    (8,  'Imperial length',  'inch',                 'in',          0.0254,                   0),
+    (9,  'Imperial length',  'foot',                 'ft',          0.3048,                   0),
+    (10, 'Imperial length',  'mile',                 'mi',          1609.344,                 0),
+
+    (11, 'Metric weight',    'microgram',            'µg',          0.000000001,              0),
+    (12, 'Metric weight',    'milligram',            'mg',          0.000001,                 0),
+    (13, 'Metric weight',    'gram',                 'g',           0.001,                    0),
+    (14, 'Metric weight',    'kilogram',             'kg',          1,                        0),
+    (15, 'Metric weight',    'tonne',                't',           1000,                     0),
+
+    (16, 'Imperial weight',  'grain',                'gr',          0.00006479891,            0),
+    (17, 'Imperial weight',  'ounce',                'oz',          0.028349523125,           0),
+    (18, 'Imperial weight',  'pound',                'lb',          0.45359237,               0),
+
+    (19, 'Metric volume',    'microlitre',           'µL',          0.000000001,              0),
+    (20, 'Metric volume',    'millilitre',           'mL',          0.000001,                 0),
+    (21, 'Metric volume',    'litre',                'L',           0.001,                    0),
+    (22, 'Metric volume',    'cubic metre',          'm³',          1,                        0),
+
+    (23, 'US volume',        'US fluid ounce',       'fl oz (US)',  0.0000295735295625,       0),
+    (24, 'US volume',        'US pint',              'pt (US)',     0.000473176473,           0),
+    (25, 'US volume',        'US quart',             'qt (US)',     0.000946352946,           0),
+    (26, 'US volume',        'US gallon',            'gal (US)',    0.003785411784,           0),
+
+    (27, 'Imperial volume',  'imperial fluid ounce', 'fl oz (imp)', 0.0000284130625,          0),
+    (28, 'Imperial volume',  'imperial pint',        'pt (imp)',    0.00056826125,            0),
+    (29, 'Imperial volume',  'imperial quart',       'qt (imp)',    0.0011365225,             0),
+    (30, 'Imperial volume',  'imperial gallon',      'gal (imp)',   0.00454609,               0),
+
+    (31, 'Voltage',          'microvolt',            'µV',          0.000001,                 0),
+    (32, 'Voltage',          'millivolt',            'mV',          0.001,                    0),
+    (33, 'Voltage',          'volt',                 'V',           1,                        0),
+    (34, 'Voltage',          'kilovolt',             'kV',          1000,                     0),
+
+    (35, 'Current',          'nanoampere',           'nA',          0.000000001,              0),
+    (36, 'Current',          'microampere',          'µA',          0.000001,                 0),
+    (37, 'Current',          'milliampere',          'mA',          0.001,                    0),
+    (38, 'Current',          'ampere',               'A',           1,                        0),
+    (39, 'Current',          'kiloampere',           'kA',          1000,                     0),
+
+    (40, 'Resistance',       'milliohm',             'mΩ',          0.001,                    0),
+    (41, 'Resistance',       'ohm',                  'Ω',           1,                        0),
+    (42, 'Resistance',       'kilohm',               'kΩ',          1000,                     0),
+    (43, 'Resistance',       'megohm',               'MΩ',          1000000,                  0),
+    (44, 'Resistance',       'gigohm',               'GΩ',          1000000000,               0),
+
+    (45, 'Capacitance',      'picofarad',            'pF',          0.000000000001,           0),
+    (46, 'Capacitance',      'nanofarad',            'nF',          0.000000001,              0),
+    (47, 'Capacitance',      'microfarad',           'µF',          0.000001,                 0),
+    (48, 'Capacitance',      'millifarad',           'mF',          0.001,                    0),
+    (49, 'Capacitance',      'farad',                'F',           1,                        0),
+
+    (50, 'Inductance',       'nanohenry',            'nH',          0.000000001,              0),
+    (51, 'Inductance',       'microhenry',           'µH',          0.000001,                 0),
+    (52, 'Inductance',       'millihenry',           'mH',          0.001,                    0),
+    (53, 'Inductance',       'henry',                'H',           1,                        0),
+
+    (54, 'Frequency',        'hertz',                'Hz',          1,                        0),
+    (55, 'Frequency',        'kilohertz',            'kHz',         1000,                     0),
+    (56, 'Frequency',        'megahertz',            'MHz',         1000000,                  0),
+    (57, 'Frequency',        'gigahertz',            'GHz',         1000000000,               0),
+
+    (58, 'Power',            'microwatt',            'µW',          0.000001,                 0),
+    (59, 'Power',            'milliwatt',            'mW',          0.001,                    0),
+    (60, 'Power',            'watt',                 'W',           1,                        0),
+    (61, 'Power',            'kilowatt',             'kW',          1000,                     0),
+    (62, 'Power',            'megawatt',             'MW',          1000000,                  0),
+
+    (63, 'Joules',           'millijoule',           'mJ',          0.001,                    0),
+    (64, 'Joules',           'joule',                'J',           1,                        0),
+    (65, 'Joules',           'kilojoule',            'kJ',          1000,                     0),
+    (66, 'Joules',           'megajoule',            'MJ',          1000000,                  0),
+    (67, 'Joules',           'gigajoule',            'GJ',          1000000000,               0),
+
+    (68, 'Watt hours',       'milliwatt hour',       'mWh',         3.6,                      0),
+    (69, 'Watt hours',       'watt hour',            'Wh',          3600,                     0),
+    (70, 'Watt hours',       'kilowatt hour',        'kWh',         3600000,                  0),
+    (71, 'Watt hours',       'megawatt hour',        'MWh',         3600000000,               0),
+
+    (72, 'Calories',         'calorie',              'cal',         4.184,                    0),
+    (73, 'Calories',         'kilocalorie',          'kcal',        4184,                     0),
+
+    (74, 'Battery capacity', 'milliampere hour',     'mAh',         3.6,                      0),
+    (75, 'Battery capacity', 'ampere hour',          'Ah',          3600,                     0),
+
+    (76, 'Celsius',          'degree Celsius',       '°C',          1,                        273.15),
+    (77, 'Fahrenheit',       'degree Fahrenheit',    '°F',          0.55555555555555555556,   255.37222222222222222),
+    (78, 'Kelvin',           'kelvin',               'K',           1,                        0),
+
+    (79, 'Decimal bytes',    'byte',                 'B',           1,                        0),
+    (80, 'Decimal bytes',    'kilobyte',             'kB',          1000,                     0),
+    (81, 'Decimal bytes',    'megabyte',             'MB',          1000000,                  0),
+    (82, 'Decimal bytes',    'gigabyte',             'GB',          1000000000,               0),
+    (83, 'Decimal bytes',    'terabyte',             'TB',          1000000000000,            0),
+    (84, 'Decimal bytes',    'petabyte',             'PB',          1000000000000000,         0),
+
+    (85, 'Binary bytes',     'byte',                 'B',           1,                        0),
+    (86, 'Binary bytes',     'kibibyte',             'KiB',         1024,                     0),
+    (87, 'Binary bytes',     'mebibyte',             'MiB',         1048576,                  0),
+    (88, 'Binary bytes',     'gibibyte',             'GiB',         1073741824,               0),
+    (89, 'Binary bytes',     'tebibyte',             'TiB',         1099511627776,            0),
+    (90, 'Binary bytes',     'pebibyte',             'PiB',         1125899906842624,         0),
+
+    (91, 'Bits',             'bit',                  'bit',         1,                        0),
+    (92, 'Bits',             'kilobit',              'kbit',        1000,                     0),
+    (93, 'Bits',             'megabit',              'Mbit',        1000000,                  0),
+    (94, 'Bits',             'gigabit',              'Gbit',        1000000000,               0),
+
+    (95, 'Pieces',           'piece',                'pcs',         1,                        0)
+) AS u (ord, family, name, symbol, base_factor, base_offset)
+JOIN unit_family f ON f.name = u.family
+ORDER BY u.ord;

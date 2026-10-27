@@ -22,7 +22,7 @@ var groups = []group{
 	attachmentGroup(),
 	quantityGroup(),
 	unitsGroup(),
-	unitGroupGroup(),
+	unitFamilyGroup(),
 	accountGroup(),
 	profileGroup(),
 }

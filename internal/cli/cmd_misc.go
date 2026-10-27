@@ -309,13 +309,9 @@ func quantityGroup() group {
 						if err := decode(data, &list); err != nil {
 							return err
 						}
-						t := newTable(e.stdout, "NAME", "TYPE", "BASE UNIT")
+						t := newTable(e.stdout, "NAME", "TYPE")
 						for _, q := range list {
-							base := ""
-							if q.BaseUnit != nil {
-								base = q.BaseUnit.Symbol
-							}
-							t.row(q.Name, q.Datatype, base)
+							t.row(q.Name, q.Datatype)
 						}
 						t.flush()
 						return nil
@@ -325,7 +321,7 @@ func quantityGroup() group {
 			{
 				name:    "get",
 				args:    "<quantity>",
-				summary: "Show a quantity with its units and unit groups.",
+				summary: "Show a quantity with its unit families and their units.",
 				params:  []param{arg("Quantity", completeQuantities)},
 				setup: simple(func(e *env, args []string) error {
 					if err := wantArgs(args, 1, 1); err != nil {
@@ -335,7 +331,7 @@ func quantityGroup() group {
 					if err != nil {
 						return err
 					}
-					data, err := e.api.Get(e.ctx, "/quantities/"+id, nil)
+					data, err := e.api.Get(e.ctx, "/quantities/"+strconv.Itoa(id), nil)
 					if err != nil {
 						return err
 					}
@@ -344,12 +340,12 @@ func quantityGroup() group {
 						if err := decode(data, &q); err != nil {
 							return err
 						}
-						var groups []string
-						for _, g := range q.UnitGroups {
-							groups = append(groups, g.Name)
+						fields(e.stdout, "Name", q.Name, "Type", q.Datatype)
+						var units []unit
+						for _, f := range q.Families {
+							units = append(units, f.Units...)
 						}
-						fields(e.stdout, "Name", q.Name, "Type", q.Datatype, "Unit groups", strings.Join(groups, ", "))
-						printUnits(e, q.Units)
+						printUnits(e, units)
 						return nil
 					})
 				}),
@@ -359,49 +355,51 @@ func quantityGroup() group {
 }
 
 func printUnits(e *env, units []unit) {
-	t := newTable(e.stdout, "SYMBOL", "NAME", "QUANTITY", "FACTOR", "OFFSET")
+	t := newTable(e.stdout, "SYMBOL", "NAME", "FAMILY", "QUANTITY", "FACTOR", "OFFSET")
 	for _, u := range units {
 		offset := u.BaseOffset.String()
 		if offset == "0" {
 			offset = ""
 		}
-		t.row(u.Symbol, u.Name, u.Quantity.Name, u.BaseFactor.String(), offset)
+		t.row(u.Symbol, u.Name, u.Family.Name, u.Quantity.Name, u.BaseFactor.String(), offset)
 	}
 	t.flush()
 }
 
 func unitsGroup() group {
-	quantityFilter := func(fs *flag.FlagSet) *string {
-		return fs.String("quantity", "", "only units of this quantity")
-	}
-	query := func(e *env, quantityRef string) (url.Values, error) {
-		if quantityRef == "" {
-			return nil, nil
-		}
-		id, err := e.resolveQuantity(quantityRef)
-		if err != nil {
-			return nil, err
-		}
-		return url.Values{"quantity": {id}}, nil
-	}
 	return group{
 		name:    "unit",
 		summary: "Units of measurement (system data)",
 		commands: []command{
 			{
 				name:    "list",
-				args:    "[--quantity Q]",
+				args:    "[--quantity Q] [--family F]",
 				summary: "List units: base = value × factor + offset.",
-				flags:   map[string]param{"quantity": arg("Quantity", completeQuantities)},
+				flags: map[string]param{
+					"quantity": arg("Quantity", completeQuantities),
+					"family":   arg("Unit family", completeFamilies),
+				},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					q := quantityFilter(fs)
+					q := fs.String("quantity", "", "only units of this quantity")
+					f := fs.String("family", "", "only units of this unit family")
 					return func(e *env, args []string) error {
 						if err := wantArgs(args, 0, 0); err != nil {
 							return err
 						}
-						v, err := query(e, *q)
-						if err != nil {
-							return err
+						v := url.Values{}
+						if *q != "" {
+							id, err := e.resolveQuantity(*q)
+							if err != nil {
+								return err
+							}
+							v.Set("quantity", strconv.Itoa(id))
+						}
+						if *f != "" {
+							id, err := e.resolveFamily(*f)
+							if err != nil {
+								return err
+							}
+							v.Set("family", strconv.Itoa(id))
 						}
 						data, err := e.api.Get(e.ctx, "/units", v)
 						if err != nil {
@@ -421,17 +419,17 @@ func unitsGroup() group {
 			{
 				name:    "get",
 				args:    "<unit>",
-				summary: "Show a unit, named by symbol, name or id.",
+				summary: "Show a unit, named by symbol, name or id; \"B (Binary bytes)\" where families share a symbol.",
 				params:  []param{arg("Unit", completeUnits)},
 				setup: simple(func(e *env, args []string) error {
 					if err := wantArgs(args, 1, 1); err != nil {
 						return err
 					}
-					id, err := e.resolveUnit(args[0])
+					u, err := e.resolveUnit(args[0])
 					if err != nil {
 						return err
 					}
-					data, err := e.api.Get(e.ctx, "/units/"+id, nil)
+					data, err := e.api.Get(e.ctx, "/units/"+strconv.Itoa(u.ID), nil)
 					if err != nil {
 						return err
 					}
@@ -449,18 +447,18 @@ func unitsGroup() group {
 	}
 }
 
-func unitGroupGroup() group {
+func unitFamilyGroup() group {
 	return group{
-		name:    "unit-group",
-		summary: "Unit groups: the units an attribute or item is shown in (system data)",
+		name:    "unit-family",
+		summary: "Unit families: units used together, such as mm, cm and m (system data)",
 		commands: []command{
 			{
 				name:    "list",
 				args:    "[--quantity Q]",
-				summary: "List unit groups.",
+				summary: "List unit families with their units.",
 				flags:   map[string]param{"quantity": arg("Quantity", completeQuantities)},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					q := fs.String("quantity", "", "only groups of this quantity")
+					q := fs.String("quantity", "", "only families of this quantity")
 					return func(e *env, args []string) error {
 						if err := wantArgs(args, 0, 0); err != nil {
 							return err
@@ -471,24 +469,20 @@ func unitGroupGroup() group {
 							if err != nil {
 								return err
 							}
-							v = url.Values{"quantity": {id}}
+							v = url.Values{"quantity": {strconv.Itoa(id)}}
 						}
-						data, err := e.api.Get(e.ctx, "/unit-groups", v)
+						data, err := e.api.Get(e.ctx, "/unit-families", v)
 						if err != nil {
 							return err
 						}
 						return e.emit(data, func() error {
-							var list []unitGroup
+							var list []unitFamily
 							if err := decode(data, &list); err != nil {
 								return err
 							}
-							t := newTable(e.stdout, "NAME", "QUANTITY", "BASE UNIT")
-							for _, g := range list {
-								base := ""
-								if g.BaseUnit != nil {
-									base = g.BaseUnit.Symbol
-								}
-								t.row(g.Name, g.Quantity.Name, base)
+							t := newTable(e.stdout, "NAME", "QUANTITY", "UNITS")
+							for _, f := range list {
+								t.row(f.Name, f.Quantity.Name, unitSymbols(f.Units))
 							}
 							t.flush()
 							return nil
@@ -498,28 +492,28 @@ func unitGroupGroup() group {
 			},
 			{
 				name:    "get",
-				args:    "<unit-group>",
-				summary: "Show a unit group with its units.",
-				params:  []param{arg("Unit group", completeUnitGroups)},
+				args:    "<unit-family>",
+				summary: "Show a unit family with its units.",
+				params:  []param{arg("Unit family", completeFamilies)},
 				setup: simple(func(e *env, args []string) error {
 					if err := wantArgs(args, 1, 1); err != nil {
 						return err
 					}
-					id, err := e.resolveUnitGroup(args[0])
+					id, err := e.resolveFamily(args[0])
 					if err != nil {
 						return err
 					}
-					data, err := e.api.Get(e.ctx, "/unit-groups/"+id, nil)
+					data, err := e.api.Get(e.ctx, "/unit-families/"+strconv.Itoa(id), nil)
 					if err != nil {
 						return err
 					}
 					return e.emit(data, func() error {
-						var g unitGroup
-						if err := decode(data, &g); err != nil {
+						var f unitFamily
+						if err := decode(data, &f); err != nil {
 							return err
 						}
-						fields(e.stdout, "Name", g.Name, "Quantity", g.Quantity.Name)
-						printUnits(e, g.Units)
+						fields(e.stdout, "Name", f.Name, "Quantity", f.Quantity.Name)
+						printUnits(e, f.Units)
 						return nil
 					})
 				}),
@@ -571,7 +565,7 @@ func accountGroup() group {
 	}
 	return group{
 		name:    "account",
-		summary: "Accounts of the tenant (account privilege)",
+		summary: "Accounts (account privilege)",
 		commands: []command{
 			{
 				name:    "list",

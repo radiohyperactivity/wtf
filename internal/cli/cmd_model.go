@@ -507,10 +507,10 @@ func (e *env) printClassJSON(data json.RawMessage) error {
 	return nil
 }
 
-// datatypeName is the datatype, with the unit group if there is one.
+// datatypeName is the datatype, with the unit if there is one.
 func datatypeName(a attribute) string {
-	if a.UnitGroup != nil {
-		return a.Datatype + " (" + a.UnitGroup.Name + ")"
+	if a.Unit != nil {
+		return a.Datatype + " (" + unitName(a.Unit, a.UnitLock) + ")"
 	}
 	return a.Datatype
 }
@@ -537,9 +537,9 @@ func attributeGroup() group {
 						if err := decode(data, &list); err != nil {
 							return err
 						}
-						t := newTable(e.stdout, "NAME", "TYPE", "UNIT GROUP")
+						t := newTable(e.stdout, "NAME", "TYPE", "UNIT")
 						for _, a := range list {
-							t.row(a.Name, a.Datatype, unitGroupName(a.UnitGroup))
+							t.row(a.Name, a.Datatype, unitName(a.Unit, a.UnitLock))
 						}
 						t.flush()
 						return nil
@@ -549,16 +549,17 @@ func attributeGroup() group {
 			getCommand("attribute", "/attributes/", resolveAttrIDFn, show),
 			{
 				name:    "add",
-				args:    "<name> --type T [--unit-group G] [--edit]",
-				summary: "Create an attribute. Types: text, integer, float, date, boolean, url, choice.",
+				args:    "<name> --type T [--unit U [--unit-lock]] [--edit]",
+				summary: "Create an attribute. Types: text, integer, float, date, boolean, url, choice; with a unit, the type follows from it.",
 				params:  []param{arg("Name", nil)},
 				flags: map[string]param{
-					"type":       arg("Type", datatypes),
-					"unit-group": arg("Unit group", completeUnitGroups),
+					"type": arg("Type", datatypes),
+					"unit": arg("Unit", completeUnits),
 				},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					datatype := fs.String("type", "", "datatype (required)")
-					group := fs.String("unit-group", "", "unit group for integer and float values (e.g. 'Metric length')")
+					datatype := fs.String("type", "", "datatype (required without --unit)")
+					unitRef := fs.String("unit", "", "unit of integer and float values, e.g. mm; any unit of its family is accepted")
+					unitLock := fs.Bool("unit-lock", false, "always show values in that unit, instead of scaling within the unit's family")
 					editAfter := fs.Bool("edit", false, "open the new attribute in the edit form")
 					return func(e *env, args []string) error {
 						if *editAfter {
@@ -569,20 +570,25 @@ func attributeGroup() group {
 						if err := wantArgs(args, 1, 1); err != nil {
 							return err
 						}
+						if *datatype == "" && *unitRef != "" {
+							u, err := e.resolveUnit(*unitRef)
+							if err != nil {
+								return err
+							}
+							*datatype = u.Quantity.Datatype
+						}
 						if err := e.need(datatype, "type", arg("Type (text, integer, float, date, boolean, url, choice)", datatypes), args); err != nil {
 							return err
 						}
 						body := object{"name": args[0], "datatype": *datatype}
 						var err error
-						if *group == "" && (*datatype == "integer" || *datatype == "float") {
-							if *group, err = e.offer("Unit group (Enter: none)", arg("", completeUnitGroups), args); err != nil {
+						if *unitRef == "" && (*datatype == "integer" || *datatype == "float") {
+							if *unitRef, err = e.offer("Unit (Enter: none)", arg("", completeUnits), args); err != nil {
 								return err
 							}
 						}
-						if *group != "" {
-							if body["unit_group"], err = e.resolveUnitGroup(*group); err != nil {
-								return err
-							}
+						if err := e.setUnit(body, *unitRef, *unitLock); err != nil {
+							return err
 						}
 						data, err := e.do(http.MethodPost, "/attributes", body)
 						if err != nil {
@@ -597,18 +603,20 @@ func attributeGroup() group {
 			},
 			{
 				name:    "set",
-				args:    "<attribute> [--name N] [--type T] [--unit-group G|none]",
-				summary: "Change an attribute.",
+				args:    "<attribute> [--name N] [--type T] [--unit U] [--unit-lock yes|no]",
+				summary: "Change an attribute. Its unit can change to another of the same quantity.",
 				params:  []param{arg("Attribute", completeAttributes)},
 				flags: map[string]param{
-					"type":       arg("Type", datatypes),
-					"unit-group": arg("Unit group", completeUnitGroups),
+					"type":      arg("Type", datatypes),
+					"unit":      arg("Unit", completeUnits),
+					"unit-lock": arg("Unit lock", words("yes", "no")),
 				},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					var name, datatype, group optString
+					var name, datatype, unitRef, unitLock optString
 					fs.Var(&name, "name", "new name")
 					fs.Var(&datatype, "type", "new datatype")
-					fs.Var(&group, "unit-group", "new unit group, or none")
+					fs.Var(&unitRef, "unit", "new unit, of the same quantity")
+					fs.Var(&unitLock, "unit-lock", "yes: always show values in the unit; no: scale within its family")
 					return func(e *env, args []string) error {
 						if err := wantArgs(args, 1, 1); err != nil {
 							return err
@@ -624,13 +632,8 @@ func attributeGroup() group {
 						if datatype.set {
 							body["datatype"] = datatype.value
 						}
-						if group.set {
-							body["unit_group"] = nil
-							if !isNone(group.value) {
-								if body["unit_group"], err = e.resolveUnitGroup(group.value); err != nil {
-									return err
-								}
-							}
+						if err := e.patchUnit(body, unitRef, unitLock); err != nil {
+							return err
 						}
 						if len(body) == 0 {
 							return usagef("nothing to change")
@@ -657,17 +660,16 @@ func (e *env) printAttributeJSON(data json.RawMessage) error {
 		return err
 	}
 	units := ""
-	if a.UnitGroup != nil {
-		var g unitGroup
-		if err := e.get("/unit-groups/"+a.UnitGroup.ID, nil, &g); err == nil {
-			units = unitSymbols(g.Units)
+	if a.Unit != nil {
+		if family, err := e.familyUnits(a.Unit); err == nil {
+			units = unitSymbols(family)
 		}
 	}
 	fields(e.stdout,
 		"Name", a.Name,
 		"Deleted", deletedNote(a.Deleted, "attribute", a.ID),
 		"Type", a.Datatype,
-		"Unit group", unitGroupName(a.UnitGroup),
+		"Unit", unitName(a.Unit, a.UnitLock),
 		"Units", units,
 		"Id", a.ID)
 	if len(a.Options) > 0 {

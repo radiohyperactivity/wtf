@@ -109,24 +109,20 @@ code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-siz
 <path class="rel" d="M245,190 V330" marker-start="url(#one)" marker-end="url(#zero-many)"/>
 <path class="halo" d="M410,377 H475 V449 H540"/>
 <path class="rel" d="M410,377 H475 V449 H540" marker-start="url(#one)" marker-end="url(#zero-many)"/>
-<path class="halo" d="M245,484 V640"/>
-<path class="rel" d="M245,484 V640" marker-start="url(#one)" marker-end="url(#zero-many)"/>
+<path class="halo" d="M245,506 V640"/>
+<path class="rel" d="M245,506 V640" marker-start="url(#one)" marker-end="url(#zero-many)"/>
 <path class="halo" d="M540,753 H410"/>
 <path class="rel" d="M540,753 H410" marker-start="url(#one)" marker-end="url(#zero-many)"/>
-<path class="halo" d="M1460,127 H1395 V363 H1330"/>
-<path class="rel" d="M1460,127 H1395 V363 H1330" marker-start="url(#zero-one)" marker-end="url(#zero-many)"/>
-<path class="halo" d="M1460,171 H1415 V635 H450 V465 H410"/>
-<path class="rel" d="M1460,171 H1415 V635 H450 V465 H410" marker-start="url(#zero-one)" marker-end="url(#zero-many)"/>
-<path class="halo" d="M1560,190 V250"/>
-<path class="rel" d="M1560,190 V250" marker-start="url(#one)" marker-end="url(#zero-many)"/>
-<path class="halo" d="M1920,297 H1855 V319 H1790"/>
-<path class="rel" d="M1920,297 H1855 V319 H1790" marker-start="url(#one)" marker-end="url(#zero-many)"/>
-<path class="halo" d="M2085,190 V250"/>
-<path class="rel" d="M2085,190 V250" marker-start="url(#one)" marker-end="url(#zero-many)"/>
+<path class="halo" d="M1920,363 H1330"/>
+<path class="rel" d="M1920,363 H1330" marker-start="url(#zero-one)" marker-end="url(#zero-many)"/>
+<path class="halo" d="M1920,407 H1415 V635 H450 V465 H410"/>
+<path class="rel" d="M1920,407 H1415 V635 H450 V465 H410" marker-start="url(#zero-one)" marker-end="url(#zero-many)"/>
+<path class="halo" d="M1625,190 V323 H1920"/>
+<path class="rel" d="M1625,190 V323 H1920" marker-start="url(#one)" marker-end="url(#zero-many)"/>
 <path class="halo" d="M1920,127 H1855 V149 H1790"/>
 <path class="rel" d="M1920,127 H1855 V149 H1790" marker-start="url(#one)" marker-end="url(#zero-many)"/>
-<path class="halo" d="M1165,382 V520"/>
-<path class="rel" d="M1165,382 V520" marker-start="url(#one)" marker-end="url(#zero-many)"/>
+<path class="halo" d="M1165,404 V520"/>
+<path class="rel" d="M1165,404 V520" marker-start="url(#one)" marker-end="url(#zero-many)"/>
 <path class="halo" d="M245,794 V860"/>
 <path class="rel" d="M245,794 V860" marker-start="url(#one)" marker-end="url(#zero-many)"/>
 <path class="halo" d="M1330,300 H1350 V929 H410"/>
@@ -143,10 +139,6 @@ code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-siz
 <path class="rel" d="M705,772 V1200" marker-start="url(#zero-one)" marker-end="url(#zero-many)"/>
 <path class="halo" d="M80,160 H20 V1445 H540"/>
 <path class="rel" d="M80,160 H20 V1445 H540" marker-start="url(#zero-one)" marker-end="url(#zero-many)"/>
-<path class="halo" d="M1460,687 H1330"/>
-<path class="rel" d="M1460,687 H1330" marker-start="url(#one)" marker-end="url(#zero-many)"/>
-<path class="halo" d="M1790,687 H1855 V709 H1920"/>
-<path class="rel" d="M1790,687 H1855 V709 H1920" marker-start="url(#one)" marker-end="url(#zero-many)"/>
 <path class="halo" d="M2085,926 V1000"/>
 <path class="rel" d="M2085,926 V1000" marker-start="url(#one)" marker-end="url(#zero-many)"/>
 <path class="halo" d="M1625,750 V860"/>
@@ -168,7 +160,7 @@ code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-siz
 <text class="type" x="215" y="175">text</text>
 </g>
 <g class="table">
-<rect class="box" x="80" y="330" width="330" height="154" rx="8"/>
+<rect class="box" x="80" y="330" width="330" height="176" rx="8"/>
 <path class="head" d="M80,338 a8,8 0 0 1 8,-8 h314 a8,8 0 0 1 8,8 v20 h-330 z"/>
 <text class="title" x="92" y="349">item</text>
 <text class="col pk" x="92" y="381">id</text>
@@ -183,9 +175,12 @@ code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-siz
 <rect class="stripe" x="81" y="432" width="328" height="22"/>
 <text class="col" x="92" y="447">name</text>
 <text class="type" x="215" y="447">text</text>
-<text class="col" x="92" y="469">unit_group</text>
-<text class="type" x="215" y="469">uuid <tspan class="null">NULL</tspan></text>
+<text class="col" x="92" y="469">unit</text>
+<text class="type" x="215" y="469">integer <tspan class="null">NULL</tspan></text>
 <text class="keys" x="398" y="469" text-anchor="end">FK</text>
+<rect class="stripe" x="81" y="476" width="328" height="22"/>
+<text class="col" x="92" y="491">unit_lock</text>
+<text class="type" x="215" y="491">boolean</text>
 </g>
 <g class="table">
 <rect class="box" x="80" y="640" width="330" height="154" rx="8"/>
@@ -364,124 +359,98 @@ code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-siz
 <text class="type" x="675" y="757">text</text>
 </g>
 <g class="table">
-<rect class="box" x="1000" y="640" width="330" height="110" rx="8"/>
+<rect class="box" x="1000" y="640" width="330" height="88" rx="8"/>
 <path class="head" d="M1000,648 a8,8 0 0 1 8,-8 h314 a8,8 0 0 1 8,8 v20 h-330 z"/>
 <text class="title" x="1012" y="659">data_version</text>
-<text class="col pk" x="1012" y="691">tenant</text>
-<text class="type" x="1135" y="691">uuid</text>
-<text class="keys" x="1318" y="691" text-anchor="end">PK FK</text>
+<text class="col pk" x="1012" y="691">name</text>
+<text class="type" x="1135" y="691">text</text>
+<text class="keys" x="1318" y="691" text-anchor="end">PK</text>
 <rect class="stripe" x="1001" y="698" width="328" height="22"/>
-<text class="col pk" x="1012" y="713">name</text>
-<text class="type" x="1135" y="713">text</text>
-<text class="keys" x="1318" y="713" text-anchor="end">PK</text>
-<text class="col" x="1012" y="735">version</text>
-<text class="type" x="1135" y="735">bigint</text>
+<text class="col" x="1012" y="713">version</text>
+<text class="type" x="1135" y="713">bigint</text>
 </g>
 <g class="table">
-<rect class="box" x="1460" y="640" width="330" height="110" rx="8"/>
-<path class="head" d="M1460,648 a8,8 0 0 1 8,-8 h314 a8,8 0 0 1 8,8 v20 h-330 z"/>
-<text class="title" x="1472" y="659">tenant</text>
-<text class="col pk" x="1472" y="691">id</text>
-<text class="type" x="1595" y="691">uuid</text>
-<text class="keys" x="1778" y="691" text-anchor="end">PK</text>
-<rect class="stripe" x="1461" y="698" width="328" height="22"/>
-<text class="col" x="1472" y="713">name</text>
-<text class="type" x="1595" y="713">text</text>
-<text class="col" x="1472" y="735">hostname</text>
-<text class="type" x="1595" y="735">text</text>
-</g>
-<g class="table">
-<rect class="box" x="1920" y="640" width="330" height="286" rx="8"/>
+<rect class="box" x="1920" y="640" width="330" height="264" rx="8"/>
 <path class="head" d="M1920,648 a8,8 0 0 1 8,-8 h314 a8,8 0 0 1 8,8 v20 h-330 z"/>
 <text class="title" x="1932" y="659">account</text>
 <text class="col pk" x="1932" y="691">id</text>
 <text class="type" x="2055" y="691">uuid</text>
 <text class="keys" x="2238" y="691" text-anchor="end">PK</text>
 <rect class="stripe" x="1921" y="698" width="328" height="22"/>
-<text class="col" x="1932" y="713">tenant</text>
-<text class="type" x="2055" y="713">uuid</text>
-<text class="keys" x="2238" y="713" text-anchor="end">FK</text>
-<text class="col" x="1932" y="735">email</text>
-<text class="type" x="2055" y="735">text</text>
+<text class="col" x="1932" y="713">email</text>
+<text class="type" x="2055" y="713">text</text>
+<text class="col" x="1932" y="735">password_hash</text>
+<text class="type" x="2055" y="735">text <tspan class="null">NULL</tspan></text>
 <rect class="stripe" x="1921" y="742" width="328" height="22"/>
-<text class="col" x="1932" y="757">password_hash</text>
-<text class="type" x="2055" y="757">text <tspan class="null">NULL</tspan></text>
-<text class="col" x="1932" y="779">data_privilege</text>
+<text class="col" x="1932" y="757">data_privilege</text>
+<text class="type" x="2055" y="757">privilege</text>
+<text class="col" x="1932" y="779">model_privilege</text>
 <text class="type" x="2055" y="779">privilege</text>
 <rect class="stripe" x="1921" y="786" width="328" height="22"/>
-<text class="col" x="1932" y="801">model_privilege</text>
+<text class="col" x="1932" y="801">account_privilege</text>
 <text class="type" x="2055" y="801">privilege</text>
-<text class="col" x="1932" y="823">account_privilege</text>
-<text class="type" x="2055" y="823">privilege</text>
+<text class="col" x="1932" y="823">failed_logins</text>
+<text class="type" x="2055" y="823">integer</text>
 <rect class="stripe" x="1921" y="830" width="328" height="22"/>
-<text class="col" x="1932" y="845">failed_logins</text>
-<text class="type" x="2055" y="845">integer</text>
-<text class="col" x="1932" y="867">last_failed_login</text>
-<text class="type" x="2055" y="867">timestamptz <tspan class="null">NULL</tspan></text>
+<text class="col" x="1932" y="845">last_failed_login</text>
+<text class="type" x="2055" y="845">timestamptz <tspan class="null">NULL</tspan></text>
+<text class="col" x="1932" y="867">history_privilege</text>
+<text class="type" x="2055" y="867">privilege</text>
 <rect class="stripe" x="1921" y="874" width="328" height="22"/>
-<text class="col" x="1932" y="889">history_privilege</text>
-<text class="type" x="2055" y="889">privilege</text>
-<text class="col" x="1932" y="911">deleted</text>
-<text class="type" x="2055" y="911">boolean</text>
+<text class="col" x="1932" y="889">deleted</text>
+<text class="type" x="2055" y="889">boolean</text>
 </g>
 <g class="table">
-<rect class="box" x="1460" y="860" width="330" height="242" rx="8"/>
+<rect class="box" x="1460" y="860" width="330" height="220" rx="8"/>
 <path class="head" d="M1460,868 a8,8 0 0 1 8,-8 h314 a8,8 0 0 1 8,8 v20 h-330 z"/>
 <text class="title" x="1472" y="879">history</text>
 <text class="col pk" x="1472" y="911">id</text>
 <text class="type" x="1595" y="911">bigint</text>
 <text class="keys" x="1778" y="911" text-anchor="end">PK</text>
 <rect class="stripe" x="1461" y="918" width="328" height="22"/>
-<text class="col" x="1472" y="933">tenant</text>
-<text class="type" x="1595" y="933">uuid</text>
-<text class="keys" x="1778" y="933" text-anchor="end">FK</text>
-<text class="col" x="1472" y="955">happened_at</text>
-<text class="type" x="1595" y="955">timestamptz</text>
+<text class="col" x="1472" y="933">happened_at</text>
+<text class="type" x="1595" y="933">timestamptz</text>
+<text class="col" x="1472" y="955">transaction</text>
+<text class="type" x="1595" y="955">xid8</text>
 <rect class="stripe" x="1461" y="962" width="328" height="22"/>
-<text class="col" x="1472" y="977">transaction</text>
-<text class="type" x="1595" y="977">xid8</text>
-<text class="col" x="1472" y="999">account</text>
-<text class="type" x="1595" y="999">uuid <tspan class="null">NULL</tspan></text>
-<text class="keys" x="1778" y="999" text-anchor="end">FK</text>
+<text class="col" x="1472" y="977">account</text>
+<text class="type" x="1595" y="977">uuid <tspan class="null">NULL</tspan></text>
+<text class="keys" x="1778" y="977" text-anchor="end">FK</text>
+<text class="col" x="1472" y="999">table_name</text>
+<text class="type" x="1595" y="999">text</text>
 <rect class="stripe" x="1461" y="1006" width="328" height="22"/>
-<text class="col" x="1472" y="1021">table_name</text>
-<text class="type" x="1595" y="1021">text</text>
-<text class="col" x="1472" y="1043">operation</text>
-<text class="type" x="1595" y="1043">history_operation</text>
+<text class="col" x="1472" y="1021">operation</text>
+<text class="type" x="1595" y="1021">history_operation</text>
+<text class="col" x="1472" y="1043">data</text>
+<text class="type" x="1595" y="1043">jsonb</text>
 <rect class="stripe" x="1461" y="1050" width="328" height="22"/>
-<text class="col" x="1472" y="1065">data</text>
-<text class="type" x="1595" y="1065">jsonb</text>
-<text class="col" x="1472" y="1087">changes</text>
-<text class="type" x="1595" y="1087">jsonb <tspan class="null">NULL</tspan></text>
+<text class="col" x="1472" y="1065">changes</text>
+<text class="type" x="1595" y="1065">jsonb <tspan class="null">NULL</tspan></text>
 </g>
 <g class="table">
-<rect class="box" x="1920" y="1000" width="330" height="132" rx="8"/>
+<rect class="box" x="1920" y="1000" width="330" height="110" rx="8"/>
 <path class="head" d="M1920,1008 a8,8 0 0 1 8,-8 h314 a8,8 0 0 1 8,8 v20 h-330 z"/>
 <text class="title" x="1932" y="1019">session</text>
 <text class="col pk" x="1932" y="1051">token_hash</text>
 <text class="type" x="2055" y="1051">bytea</text>
 <text class="keys" x="2238" y="1051" text-anchor="end">PK</text>
 <rect class="stripe" x="1921" y="1058" width="328" height="22"/>
-<text class="col" x="1932" y="1073">tenant</text>
+<text class="col" x="1932" y="1073">account</text>
 <text class="type" x="2055" y="1073">uuid</text>
 <text class="keys" x="2238" y="1073" text-anchor="end">FK</text>
-<text class="col" x="1932" y="1095">account</text>
-<text class="type" x="2055" y="1095">uuid</text>
-<text class="keys" x="2238" y="1095" text-anchor="end">FK</text>
-<rect class="stripe" x="1921" y="1102" width="328" height="22"/>
-<text class="col" x="1932" y="1117">last_used</text>
-<text class="type" x="2055" y="1117">timestamptz</text>
+<text class="col" x="1932" y="1095">last_used</text>
+<text class="type" x="2055" y="1095">timestamptz</text>
 </g>
 <g class="table">
 <rect class="box" x="1460" y="80" width="330" height="110" rx="8"/>
 <path class="head" d="M1460,88 a8,8 0 0 1 8,-8 h314 a8,8 0 0 1 8,8 v20 h-330 z"/>
-<text class="title" x="1472" y="99">unit_group</text>
+<text class="title" x="1472" y="99">unit_family</text>
 <text class="col pk" x="1472" y="131">id</text>
-<text class="type" x="1595" y="131">uuid</text>
+<text class="type" x="1595" y="131">integer</text>
 <text class="keys" x="1778" y="131" text-anchor="end">PK</text>
 <rect class="stripe" x="1461" y="138" width="328" height="22"/>
 <text class="col" x="1472" y="153">quantity</text>
-<text class="type" x="1595" y="153">uuid</text>
+<text class="type" x="1595" y="153">integer</text>
 <text class="keys" x="1778" y="153" text-anchor="end">FK</text>
 <text class="col" x="1472" y="175">name</text>
 <text class="type" x="1595" y="175">text</text>
@@ -491,7 +460,7 @@ code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-siz
 <path class="head" d="M1920,88 a8,8 0 0 1 8,-8 h314 a8,8 0 0 1 8,8 v20 h-330 z"/>
 <text class="title" x="1932" y="99">quantity</text>
 <text class="col pk" x="1932" y="131">id</text>
-<text class="type" x="2055" y="131">uuid</text>
+<text class="type" x="2055" y="131">integer</text>
 <text class="keys" x="2238" y="131" text-anchor="end">PK</text>
 <rect class="stripe" x="1921" y="138" width="328" height="22"/>
 <text class="col" x="1932" y="153">name</text>
@@ -500,27 +469,15 @@ code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-siz
 <text class="type" x="2055" y="175">datatype</text>
 </g>
 <g class="table">
-<rect class="box" x="1460" y="250" width="330" height="88" rx="8"/>
-<path class="head" d="M1460,258 a8,8 0 0 1 8,-8 h314 a8,8 0 0 1 8,8 v20 h-330 z"/>
-<text class="title" x="1472" y="269">unit_group_unit</text>
-<text class="col pk" x="1472" y="301">unit_group</text>
-<text class="type" x="1595" y="301">uuid</text>
-<text class="keys" x="1778" y="301" text-anchor="end">PK FK</text>
-<rect class="stripe" x="1461" y="308" width="328" height="22"/>
-<text class="col pk" x="1472" y="323">unit</text>
-<text class="type" x="1595" y="323">uuid</text>
-<text class="keys" x="1778" y="323" text-anchor="end">PK FK</text>
-</g>
-<g class="table">
 <rect class="box" x="1920" y="250" width="330" height="176" rx="8"/>
 <path class="head" d="M1920,258 a8,8 0 0 1 8,-8 h314 a8,8 0 0 1 8,8 v20 h-330 z"/>
 <text class="title" x="1932" y="269">unit</text>
 <text class="col pk" x="1932" y="301">id</text>
-<text class="type" x="2055" y="301">uuid</text>
+<text class="type" x="2055" y="301">integer</text>
 <text class="keys" x="2238" y="301" text-anchor="end">PK</text>
 <rect class="stripe" x="1921" y="308" width="328" height="22"/>
-<text class="col" x="1932" y="323">quantity</text>
-<text class="type" x="2055" y="323">uuid</text>
+<text class="col" x="1932" y="323">family</text>
+<text class="type" x="2055" y="323">integer</text>
 <text class="keys" x="2238" y="323" text-anchor="end">FK</text>
 <text class="col" x="1932" y="345">name</text>
 <text class="type" x="2055" y="345">text</text>
@@ -534,7 +491,7 @@ code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-siz
 <text class="type" x="2055" y="411">numeric</text>
 </g>
 <g class="table">
-<rect class="box" x="1000" y="250" width="330" height="132" rx="8"/>
+<rect class="box" x="1000" y="250" width="330" height="154" rx="8"/>
 <path class="head" d="M1000,258 a8,8 0 0 1 8,-8 h314 a8,8 0 0 1 8,8 v20 h-330 z"/>
 <text class="title" x="1012" y="269">attribute</text>
 <text class="col pk" x="1012" y="301">id</text>
@@ -546,9 +503,11 @@ code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-siz
 <text class="col" x="1012" y="345">datatype</text>
 <text class="type" x="1135" y="345">datatype</text>
 <rect class="stripe" x="1001" y="352" width="328" height="22"/>
-<text class="col" x="1012" y="367">unit_group</text>
-<text class="type" x="1135" y="367">uuid <tspan class="null">NULL</tspan></text>
+<text class="col" x="1012" y="367">unit</text>
+<text class="type" x="1135" y="367">integer <tspan class="null">NULL</tspan></text>
 <text class="keys" x="1318" y="367" text-anchor="end">FK</text>
+<text class="col" x="1012" y="389">unit_lock</text>
+<text class="type" x="1135" y="389">boolean</text>
 </g>
 <g class="table">
 <rect class="box" x="1000" y="520" width="330" height="110" rx="8"/>
@@ -579,14 +538,13 @@ code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-siz
   <li><code>class_attribute (attribute, option_default)</code> and <code>value (attribute, option_value)</code> are composite foreign keys to <code>attribute_option (attribute, id)</code>, so an option always belongs to the same attribute.</li>
   <li><code>class.parent</code> and <code>location.parent</code> form trees; triggers prevent cycles.</li>
   <li>The datatype of a value or default is checked against <code>attribute.datatype</code> by triggers; <code>url</code> is stored in the text column.</li>
-  <li>Each unit converts to its quantity's SI base unit as <code>value × base_factor + base_offset</code>; the base unit is the one with factor 1 and offset 0.</li>
+  <li>Each unit belongs to one <code>unit_family</code> of a quantity, and converts to the quantity's base unit as <code>value × base_factor + base_offset</code>. Quantities, families and units have integer ids.</li>
   <li><code>item.code</code>, <code>location.code</code> and <code>stock.code</code> are label codes from one shared sequence (<code>code_sequence</code>), so they are unique across all three tables; the API shows them in Crockford Base32.</li>
   <li><code>class_attribute.per_unit</code> puts an attribute's values on stock rows (<code>stock_value</code>) instead of on the item (<code>value</code>); <code>required</code> makes new items or stock rows need a value unless there is a default.</li>
   <li>An <code>attachment</code> belongs to exactly one item, stock row, location or class (exactly one of the four foreign keys is set). <code>file</code> is the stored content, by SHA-256; the bytes live in <code>wtfd</code>'s files directory.</li>
-  <li><code>tenant</code>: every tenant-scoped table (class, attribute, attribute_option, class_attribute, item, value, location, stock, stock_value, attachment, session) also has a <code>tenant</code> column referencing it, and all references between those tables are composite foreign keys <code>(tenant, x) → (tenant, id)</code>. These tenant columns are not drawn, to keep the diagram readable.</li>
-  <li><code>history</code> is written by a trigger on every tenant data table and on <code>account</code>; accounts are never deleted, only marked <code>deleted</code>, so history can always refer to them.</li>
+  <li><code>history</code> is written by a trigger on every data table and on <code>account</code>; accounts are never deleted, only marked <code>deleted</code>, so history can always refer to them.</li>
   <li><code>data_version</code> holds a change counter for the <code>class</code> and <code>location</code> tables (one row each), maintained by statement-level triggers. It has no foreign keys.</li>
-  <li><code>attribute.unit_group</code> and <code>item.unit_group</code> name the group a number is scaled between on output. The numbers themselves (values, defaults, stock quantities) are stored in the base unit. An item without a unit group counts pieces.</li>
+  <li><code>attribute.unit</code> and <code>item.unit</code> are the unit numbers are entered in; on output they are scaled within its family, or shown in the unit itself with <code>unit_lock</code>. The numbers themselves (values, defaults, stock quantities) are stored in the base unit. An item without a unit counts pieces.</li>
 </ul>
 </main>
 </body>

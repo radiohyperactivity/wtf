@@ -13,31 +13,33 @@ type ref struct {
 	Name string `json:"name"`
 }
 
+// Quantities, unit families and units have integer ids.
+
 type quantity struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Datatype   string `json:"datatype"`
-	BaseUnit   *unit  `json:"base_unit"`
-	Units      []unit `json:"units"`
-	UnitGroups []ref  `json:"unit_groups"`
+	ID       int          `json:"id"`
+	Name     string       `json:"name"`
+	Datatype string       `json:"datatype"`
+	Families []unitFamily `json:"families"`
+}
+
+type unitFamily struct {
+	ID       int      `json:"id"`
+	Name     string   `json:"name"`
+	Quantity quantity `json:"quantity"`
+	Units    []unit   `json:"units"`
 }
 
 type unit struct {
-	ID         string      `json:"id"`
-	Name       string      `json:"name"`
-	Symbol     string      `json:"symbol"`
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+	Symbol string `json:"symbol"`
+	Family struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
+	} `json:"family"`
 	Quantity   quantity    `json:"quantity"`
 	BaseFactor json.Number `json:"base_factor"`
 	BaseOffset json.Number `json:"base_offset"`
-	IsBase     bool        `json:"is_base"`
-}
-
-type unitGroup struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Quantity quantity `json:"quantity"`
-	BaseUnit *unit    `json:"base_unit"`
-	Units    []unit   `json:"units"`
 }
 
 type display struct {
@@ -46,12 +48,13 @@ type display struct {
 }
 
 type attribute struct {
-	ID        string     `json:"id"`
-	Name      string     `json:"name"`
-	Datatype  string     `json:"datatype"`
-	UnitGroup *unitGroup `json:"unit_group"`
-	Options   []option   `json:"options"`
-	Deleted   bool       `json:"deleted"`
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Datatype string   `json:"datatype"`
+	Unit     *unit    `json:"unit"`
+	UnitLock bool     `json:"unit_lock"`
+	Options  []option `json:"options"`
+	Deleted  bool     `json:"deleted"`
 }
 
 type option struct {
@@ -121,7 +124,6 @@ type attachment struct {
 type value struct {
 	Attribute attribute       `json:"attribute"`
 	Value     json.RawMessage `json:"value"`
-	Unit      *unit           `json:"unit"`
 	Display   *display        `json:"display"`
 	IsDefault bool            `json:"is_default"`
 }
@@ -132,7 +134,8 @@ type itemRow struct {
 	Code       string      `json:"code"`
 	Name       string      `json:"name"`
 	Class      string      `json:"class"`
-	UnitGroup  *unitGroup  `json:"unit_group"`
+	Unit       *unit       `json:"unit"`
+	UnitLock   bool        `json:"unit_lock"`
 	Stock      *stockTotal `json:"stock"`
 	Incomplete bool        `json:"incomplete"`
 	Photo      *attachment `json:"photo"`
@@ -141,7 +144,6 @@ type itemRow struct {
 
 type stockTotal struct {
 	Total     json.Number `json:"total"`
-	Unit      *unit       `json:"unit"`
 	Display   *display    `json:"display"`
 	Uncounted bool        `json:"uncounted"`
 }
@@ -151,7 +153,8 @@ type item struct {
 	Code        string       `json:"code"`
 	Name        string       `json:"name"`
 	Class       class        `json:"class"`
-	UnitGroup   *unitGroup   `json:"unit_group"`
+	Unit        *unit        `json:"unit"`
+	UnitLock    bool         `json:"unit_lock"`
 	Values      []value      `json:"values"`
 	Missing     []ref        `json:"missing"`
 	Photo       *attachment  `json:"photo"`
@@ -177,7 +180,6 @@ type stock struct {
 	Item        itemRow      `json:"item"`
 	Location    string       `json:"location"`
 	Quantity    *json.Number `json:"quantity"`
-	Unit        *unit        `json:"unit"`
 	Display     *display     `json:"display"`
 	Values      []value      `json:"values"`
 	Missing     []ref        `json:"missing"`
@@ -196,22 +198,15 @@ type page[T any] struct {
 	Rows   []T `json:"rows"`
 }
 
-type tenant struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Hostname string `json:"hostname"`
-}
-
 type account struct {
-	ID               string  `json:"id"`
-	Email            string  `json:"email"`
-	HasPassword      bool    `json:"has_password"`
-	DataPrivilege    string  `json:"data_privilege"`
-	ModelPrivilege   string  `json:"model_privilege"`
-	AccountPrivilege string  `json:"account_privilege"`
-	HistoryPrivilege string  `json:"history_privilege"`
-	Deleted          bool    `json:"deleted"`
-	Tenant           *tenant `json:"tenant"`
+	ID               string `json:"id"`
+	Email            string `json:"email"`
+	HasPassword      bool   `json:"has_password"`
+	DataPrivilege    string `json:"data_privilege"`
+	ModelPrivilege   string `json:"model_privilege"`
+	AccountPrivilege string `json:"account_privilege"`
+	HistoryPrivilege string `json:"history_privilege"`
+	Deleted          bool   `json:"deleted"`
 }
 
 type historyEntry struct {

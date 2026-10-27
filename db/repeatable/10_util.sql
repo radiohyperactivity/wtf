@@ -15,6 +15,15 @@ BEGIN
 END;
 $$;
 
+-- The same for the integer ids of quantities, unit families and units.
+CREATE FUNCTION util.raise_not_found(p_entity text, p_id integer) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION '% % not found', p_entity, p_id
+        USING ERRCODE = 'no_data_found';
+END;
+$$;
+
 -- Raises the "invalid input" error (SQLSTATE 22023).
 CREATE FUNCTION util.raise_invalid(p_message text) RETURNS void
 LANGUAGE plpgsql AS $$
@@ -184,9 +193,9 @@ BEGIN
 END;
 $$;
 
--- The classes of p_tenant below p_parent (the roots when NULL) as a nested
--- tree: [{id, name, parent, children: [...]}, ...], alphabetically per level.
-CREATE FUNCTION util.class_tree(p_tenant uuid, p_parent uuid) RETURNS jsonb
+-- The classes below p_parent (the roots when NULL) as a nested tree:
+-- [{id, name, parent, children: [...]}, ...], alphabetically per level.
+CREATE FUNCTION util.class_tree(p_parent uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (
@@ -197,23 +206,21 @@ BEGIN
                     'name',      c.name,
                     'parent',    c.parent,
                     'container', c.container,
-                    'children',  util.class_tree(p_tenant, c.id)
+                    'children',  util.class_tree(c.id)
                 )
                 ORDER BY util.natural_key(c.name), c.id
             ),
             '[]'::jsonb
         )
         FROM class c
-        WHERE c.tenant = p_tenant
-          AND NOT c.deleted
+        WHERE NOT c.deleted
           AND ((p_parent IS NULL AND c.parent IS NULL) OR c.parent = p_parent)
     );
 END;
 $$;
 
--- The locations of p_tenant below p_parent (the roots when NULL) as a
--- nested tree.
-CREATE FUNCTION util.location_tree(p_tenant uuid, p_parent uuid) RETURNS jsonb
+-- The locations below p_parent (the roots when NULL) as a nested tree.
+CREATE FUNCTION util.location_tree(p_parent uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (
@@ -225,42 +232,37 @@ BEGIN
                     'name',      l.name,
                     'parent',    l.parent,
                     'container', l.container,
-                    'children',  util.location_tree(p_tenant, l.id)
+                    'children',  util.location_tree(l.id)
                 )
                 ORDER BY util.natural_key(l.name), l.id
             ),
             '[]'::jsonb
         )
         FROM location l
-        WHERE l.tenant = p_tenant
-          AND NOT l.deleted
+        WHERE NOT l.deleted
           AND ((p_parent IS NULL AND l.parent IS NULL) OR l.parent = p_parent)
     );
 END;
 $$;
 
--- Current change counter of a tracked table for a tenant (see data_version
--- in SCHEMA.md); 0 before the first change.
-CREATE FUNCTION util.data_version(p_tenant uuid, p_name text) RETURNS bigint
+-- Current change counter of a tracked table (see data_version in SCHEMA.md).
+CREATE FUNCTION util.data_version(p_name text) RETURNS bigint
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
-    RETURN COALESCE(
-        (SELECT version FROM data_version WHERE tenant = p_tenant AND name = p_name),
-        0
-    );
+    RETURN (SELECT version FROM data_version WHERE name = p_name);
 END;
 $$;
 
 -- Stock summary of an item for lists: the sum of its counted rows (in the
--- base unit, 0 when there are none), and whether any row is uncounted.
+-- base unit of the item's unit, 0 when there are none), the same as shown,
+-- and whether any row is uncounted.
 CREATE FUNCTION util.item_stock_total_json(p_item uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (
         SELECT jsonb_build_object(
             'total',     t.total,
-            'unit',      util.unit_json(util.unit_group_base_unit(i.unit_group)),
-            'display',   util.display_json(t.total, i.unit_group),
+            'display',   util.display_json(t.total, i.unit, i.unit_lock),
             'uncounted', t.uncounted
         )
         FROM item i
@@ -414,7 +416,7 @@ $$;
 -- ---------------------------------------------------------------------------
 
 -- Converts a JSON value to the typed column matching the attribute's datatype.
--- Numbers of attributes with a unit group are given in the base unit.
+-- Numbers of attributes with a unit are given in the base unit.
 -- Exactly one OUT column is set. Accepted JSON per datatype:
 --   text, url  string
 --   integer    whole number
@@ -538,7 +540,7 @@ $$;
 -- ---------------------------------------------------------------------------
 -- Each returns SQL NULL when the row does not exist.
 
-CREATE FUNCTION util.quantity_json(p_quantity uuid) RETURNS jsonb
+CREATE FUNCTION util.quantity_json(p_quantity integer) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (
@@ -549,8 +551,25 @@ BEGIN
 END;
 $$;
 
--- Includes the conversion to the base unit, so clients can convert themselves.
-CREATE FUNCTION util.unit_json(p_unit uuid) RETURNS jsonb
+-- Short form used inside other objects: {id, name, quantity}.
+CREATE FUNCTION util.unit_family_json(p_family integer) RETURNS jsonb
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+    RETURN (
+        SELECT jsonb_build_object(
+            'id',       f.id,
+            'name',     f.name,
+            'quantity', util.quantity_json(f.quantity)
+        )
+        FROM unit_family f
+        WHERE f.id = p_family
+    );
+END;
+$$;
+
+-- Includes the conversion to the base unit, so clients can convert
+-- themselves, and the unit's family and quantity.
+CREATE FUNCTION util.unit_json(p_unit integer) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (
@@ -558,76 +577,48 @@ BEGIN
             'id',          u.id,
             'name',        u.name,
             'symbol',      u.symbol,
-            'quantity',    util.quantity_json(u.quantity),
+            'family',      jsonb_build_object('id', f.id, 'name', f.name),
+            'quantity',    util.quantity_json(f.quantity),
             'base_factor', u.base_factor,
-            'base_offset', u.base_offset,
-            'is_base',     u.base_factor = 1 AND u.base_offset = 0
+            'base_offset', u.base_offset
         )
         FROM unit u
+        JOIN unit_family f ON f.id = u.family
         WHERE u.id = p_unit
     );
 END;
 $$;
 
--- The base unit of a quantity.
-CREATE FUNCTION util.base_unit(p_quantity uuid) RETURNS uuid
+-- The units of a family, from smallest to largest.
+CREATE FUNCTION util.family_units_json(p_family integer) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (
-        SELECT u.id
+        SELECT COALESCE(jsonb_agg(util.unit_json(u.id) ORDER BY u.base_factor, u.id), '[]'::jsonb)
         FROM unit u
-        WHERE u.quantity = p_quantity
-          AND u.base_factor = 1
-          AND u.base_offset = 0
+        WHERE u.family = p_family
     );
 END;
 $$;
 
--- The base unit of a unit group's quantity, in which its numbers are stored.
-CREATE FUNCTION util.unit_group_base_unit(p_unit_group uuid) RETURNS uuid
-LANGUAGE plpgsql STABLE AS $$
-BEGIN
-    RETURN (SELECT util.base_unit(g.quantity) FROM unit_group g WHERE g.id = p_unit_group);
-END;
-$$;
-
--- Short form used inside other objects: {id, name, quantity, base_unit}.
-CREATE FUNCTION util.unit_group_json(p_unit_group uuid) RETURNS jsonb
-LANGUAGE plpgsql STABLE AS $$
-BEGIN
-    RETURN (
-        SELECT jsonb_build_object(
-            'id',        g.id,
-            'name',      g.name,
-            'quantity',  util.quantity_json(g.quantity),
-            'base_unit', util.unit_json(util.base_unit(g.quantity))
-        )
-        FROM unit_group g
-        WHERE g.id = p_unit_group
-    );
-END;
-$$;
-
--- p_value (in the base unit) expressed in the unit of the group that scales
--- best: the largest unit in which |value| >= 1, otherwise the smallest unit.
--- Zero is always shown in the base unit.
--- Returns {value, unit}, or SQL NULL when there is no number or no group.
-CREATE FUNCTION util.display_json(p_value numeric, p_unit_group uuid) RETURNS jsonb
+-- p_value (in the base unit) as it is shown for an attribute or item with
+-- unit p_unit: in that unit with p_lock, otherwise in the unit of its family
+-- that scales best, i.e. the largest unit in which |value| >= 1, or else the
+-- smallest. Zero is shown in p_unit.
+-- Returns {value, unit}, or SQL NULL when there is no number or no unit.
+CREATE FUNCTION util.display_json(p_value numeric, p_unit integer, p_lock boolean) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 DECLARE
-    v_unit uuid;
+    v_unit integer := p_unit;
 BEGIN
-    IF p_value IS NULL OR p_unit_group IS NULL THEN
+    IF p_value IS NULL OR p_unit IS NULL THEN
         RETURN NULL;
     END IF;
 
-    IF p_value = 0 THEN
-        v_unit := util.unit_group_base_unit(p_unit_group);
-    ELSE
+    IF NOT p_lock AND p_value <> 0 THEN
         SELECT u.id INTO v_unit
-        FROM unit_group_unit gu
-        JOIN unit u ON u.id = gu.unit
-        WHERE gu.unit_group = p_unit_group
+        FROM unit u
+        WHERE u.family = (SELECT family FROM unit WHERE id = p_unit)
         ORDER BY
             (abs((p_value - u.base_offset) / u.base_factor) >= 1) DESC,
             CASE WHEN abs((p_value - u.base_offset) / u.base_factor) >= 1
@@ -656,7 +647,8 @@ BEGIN
             'id',         a.id,
             'name',       a.name,
             'datatype',   a.datatype,
-            'unit_group', util.unit_group_json(a.unit_group),
+            'unit',       util.unit_json(a.unit),
+            'unit_lock',  a.unit_lock,
             'deleted',    a.deleted
         )
         FROM attribute a
@@ -711,7 +703,7 @@ BEGIN
                                             e.date_default, e.boolean_default, e.option_default),
                     'default_display',  util.display_json(
                                             COALESCE(e.integer_default::numeric, e.float_default::numeric),
-                                            a.unit_group),
+                                            a.unit, a.unit_lock),
                     'per_unit',         e.per_unit,
                     'required',         e.required
                 )
@@ -756,7 +748,8 @@ BEGIN
             'code',       util.code_text(i.code),
             'name',       i.name,
             'class',      i.class,
-            'unit_group', util.unit_group_json(i.unit_group),
+            'unit',       util.unit_json(i.unit),
+            'unit_lock',  i.unit_lock,
             'deleted',    i.deleted
         )
         FROM item i
@@ -765,8 +758,8 @@ BEGIN
 END;
 $$;
 
--- quantity is in the base unit of the item's unit group (pieces if none);
--- display is the same quantity in the group's best-scaling unit.
+-- quantity is in the base unit of the item's unit (pieces if none); display
+-- is the same quantity as it is shown (see util.display_json).
 -- location is just the id: the client resolves it from its cached location
 -- tree.
 CREATE FUNCTION util.stock_json(p_stock uuid) RETURNS jsonb
@@ -779,8 +772,7 @@ BEGIN
             'item',     util.item_summary_json(s.item),
             'location', s.location,
             'quantity', s.quantity,
-            'unit',     util.unit_json(util.unit_group_base_unit(i.unit_group)),
-            'display',  util.display_json(s.quantity, i.unit_group),
+            'display',  util.display_json(s.quantity, i.unit, i.unit_lock),
             'deleted',  s.deleted,
             -- A row merged into another by a move: the row it went into.
             'merged_into', (SELECT jsonb_build_object('id', m.id, 'code', util.code_text(m.code))
@@ -834,10 +826,9 @@ BEGIN
                                       a.datatype,
                                       x.text_v, x.integer_v, x.float_v,
                                       x.date_v, x.boolean_v, x.option_v),
-                    'unit',       util.unit_json(util.unit_group_base_unit(a.unit_group)),
                     'display',    util.display_json(
                                       COALESCE(x.integer_v::numeric, x.float_v::numeric),
-                                      a.unit_group),
+                                      a.unit, a.unit_lock),
                     'is_default', x.is_default
                 )
                 ORDER BY lower(a.name), a.id
@@ -911,13 +902,14 @@ BEGIN
             'name',       i.name,
             'deleted',    i.deleted,
             'class',      util.class_json(i.class),
-            'unit_group', util.unit_group_json(i.unit_group),
+            'unit',       util.unit_json(i.unit),
+            'unit_lock',  i.unit_lock,
             'values',      util.values_json(i.class, false, i.id),
             'missing',     util.attribute_refs_json(ARRAY(SELECT item_missing_attributes(i.id))),
             'photo',       util.item_photo_json(i.id),
             'attachments', util.attachments_json(i.id, NULL, NULL, NULL),
             -- The client resolves location ids from its cached location tree.
-            -- quantity is in the base unit given by unit_group. A live item
+            -- quantity is in the base unit of the item's unit. A live item
             -- lists its live rows, a deleted one the rows deleted together
             -- with it, which restoring it brings back.
             'stock', (
@@ -928,7 +920,7 @@ BEGIN
                             'code',     util.code_text(s.code),
                             'location', s.location,
                             'quantity', s.quantity,
-                            'display',  util.display_json(s.quantity, i.unit_group),
+                            'display',  util.display_json(s.quantity, i.unit, i.unit_lock),
                             'values',      util.values_json(i.class, true, s.id),
                             'missing',     util.attribute_refs_json(ARRAY(SELECT stock_missing_attributes(s.id))),
                             'attachments', util.attachments_json(NULL, s.id, NULL, NULL)
@@ -961,18 +953,15 @@ LANGUAGE plpgsql AS $$
 DECLARE
     v_parsed record;
 BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM attribute a JOIN item i ON i.tenant = a.tenant
-        WHERE a.id = p_attribute AND i.id = p_item
-    ) THEN
+    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_attribute) THEN
         PERFORM util.raise_not_found('attribute', p_attribute);
     END IF;
     SELECT * INTO v_parsed FROM util.parse_typed_value(p_attribute, p_value);
 
-    INSERT INTO value (tenant, item, attribute,
+    INSERT INTO value (item, attribute,
                        text_value, integer_value, float_value,
                        date_value, boolean_value, option_value)
-    VALUES ((SELECT tenant FROM item WHERE id = p_item), p_item, p_attribute,
+    VALUES (p_item, p_attribute,
             v_parsed.text_v, v_parsed.integer_v, v_parsed.float_v,
             v_parsed.date_v, v_parsed.boolean_v, v_parsed.option_v)
     ON CONFLICT (item, attribute) DO UPDATE SET
@@ -991,18 +980,15 @@ LANGUAGE plpgsql AS $$
 DECLARE
     v_parsed record;
 BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM attribute a JOIN stock s ON s.tenant = a.tenant
-        WHERE a.id = p_attribute AND s.id = p_stock
-    ) THEN
+    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_attribute) THEN
         PERFORM util.raise_not_found('attribute', p_attribute);
     END IF;
     SELECT * INTO v_parsed FROM util.parse_typed_value(p_attribute, p_value);
 
-    INSERT INTO stock_value (tenant, stock, attribute,
+    INSERT INTO stock_value (stock, attribute,
                              text_value, integer_value, float_value,
                              date_value, boolean_value, option_value)
-    VALUES ((SELECT tenant FROM stock WHERE id = p_stock), p_stock, p_attribute,
+    VALUES (p_stock, p_attribute,
             v_parsed.text_v, v_parsed.integer_v, v_parsed.float_v,
             v_parsed.date_v, v_parsed.boolean_v, v_parsed.option_v)
     ON CONFLICT (stock, attribute) DO UPDATE SET
@@ -1270,7 +1256,7 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- Sessions and privileges (see TENANTS.md)
+-- Sessions and privileges (see ACCOUNTS.md)
 -- ---------------------------------------------------------------------------
 
 -- Raises the "not authenticated" error (SQLSTATE 28000) that the REST layer
@@ -1291,11 +1277,10 @@ BEGIN
 END;
 $$;
 
--- The session of the current transaction (set by session_use): account,
--- tenant and privileges. Raises 28000 without a valid session.
+-- The session of the current transaction (set by session_use): account and
+-- privileges. Raises 28000 without a valid session.
 CREATE FUNCTION util.current_session(
     OUT account           uuid,
-    OUT tenant            uuid,
     OUT data_privilege    privilege,
     OUT model_privilege   privilege,
     OUT account_privilege privilege,
@@ -1309,8 +1294,8 @@ BEGIN
         PERFORM util.raise_unauthenticated('Not logged in');
     END IF;
 
-    SELECT a.id, a.tenant, a.data_privilege, a.model_privilege, a.account_privilege, a.history_privilege
-    INTO account, tenant, data_privilege, model_privilege, account_privilege, history_privilege
+    SELECT a.id, a.data_privilege, a.model_privilege, a.account_privilege, a.history_privilege
+    INTO account, data_privilege, model_privilege, account_privilege, history_privilege
     FROM session s
     JOIN account a ON a.id = s.account
     WHERE s.token_hash = util.token_hash(v_token)
@@ -1325,9 +1310,9 @@ $$;
 
 -- Checks that the session's account has at least p_level ('read' or
 -- 'write') in privilege area p_area ('data', 'model', 'account' or
--- 'history'), and returns its tenant. Raises 42501 (403) otherwise.
+-- 'history'). Raises 42501 (403) otherwise.
 -- History is read-only: read_write counts as read_only there.
-CREATE FUNCTION util.require(p_area text, p_level text) RETURNS uuid
+CREATE FUNCTION util.require(p_area text, p_level text) RETURNS void
 LANGUAGE plpgsql STABLE AS $$
 DECLARE
     v_session   record;
@@ -1351,16 +1336,15 @@ BEGIN
             CASE p_level WHEN 'write' THEN 'read-write' ELSE 'read' END, p_area
             USING ERRCODE = 'insufficient_privilege';
     END IF;
-    RETURN v_session.tenant;
 END;
 $$;
 
--- Any logged-in account; returns its tenant. For system data (units, …) and
--- the account's own information.
-CREATE FUNCTION util.require_login() RETURNS uuid
+-- Any logged-in account. For system data (units, …) and the account's own
+-- information.
+CREATE FUNCTION util.require_login() RETURNS void
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
-    RETURN (SELECT tenant FROM util.current_session());
+    PERFORM util.current_session();
 END;
 $$;
 
@@ -1389,17 +1373,6 @@ BEGIN
 END;
 $$;
 
-CREATE FUNCTION util.tenant_json(p_tenant uuid) RETURNS jsonb
-LANGUAGE plpgsql STABLE AS $$
-BEGIN
-    RETURN (
-        SELECT jsonb_build_object('id', t.id, 'name', t.name, 'hostname', t.hostname)
-        FROM tenant t
-        WHERE t.id = p_tenant
-    );
-END;
-$$;
-
 CREATE FUNCTION util.account_json(p_account uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
@@ -1422,8 +1395,7 @@ $$;
 
 -- Reading the model (classes, attributes, options) is allowed with the model
 -- or the data read privilege: entering data needs to see the model.
--- Returns the tenant.
-CREATE FUNCTION util.require_model_read() RETURNS uuid
+CREATE FUNCTION util.require_model_read() RETURNS void
 LANGUAGE plpgsql STABLE AS $$
 DECLARE
     v_session record;
@@ -1433,6 +1405,5 @@ BEGIN
         RAISE EXCEPTION 'This needs read model or read data privilege'
             USING ERRCODE = 'insufficient_privilege';
     END IF;
-    RETURN v_session.tenant;
 END;
 $$;

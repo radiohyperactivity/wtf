@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -18,10 +19,9 @@ import (
 type cache struct {
 	locations, classes *treeIndex
 	attributes         []attribute
-	unitGroups         []unitGroup
+	families           []unitFamily
 	quantities         []quantity
-	units              map[string][]unit // by quantity id
-	groupUnits         map[string][]unit // by unit group id
+	units              map[int][]unit // by quantity id
 }
 
 // treeIndex is a class or location tree with lookups by id.
@@ -461,30 +461,28 @@ func (e *env) resolveOption(attributeID, ref string) (string, error) {
 	return "", fmt.Errorf("no option named %q", ref)
 }
 
-func (e *env) unitGroups() ([]unitGroup, error) {
-	if e.cache.unitGroups == nil {
-		if err := e.cachedGet("/unit-groups", "unit-groups", &e.cache.unitGroups); err != nil {
+// unitFamilies returns all unit families, each with its units.
+func (e *env) unitFamilies() ([]unitFamily, error) {
+	if e.cache.families == nil {
+		if err := e.cachedGet("/unit-families", "unit-families", &e.cache.families); err != nil {
 			return nil, err
 		}
 	}
-	return e.cache.unitGroups, nil
+	return e.cache.families, nil
 }
 
-// resolveUnitGroup returns the id of a unit group given by id or name.
-func (e *env) resolveUnitGroup(ref string) (string, error) {
-	if isUUID(ref) {
-		return strings.ToLower(ref), nil
-	}
-	list, err := e.unitGroups()
+// resolveFamily returns the id of a unit family given by id or name.
+func (e *env) resolveFamily(ref string) (int, error) {
+	list, err := e.unitFamilies()
 	if err != nil {
-		return "", err
+		return 0, err
 	}
-	for _, g := range list {
-		if strings.EqualFold(g.Name, strings.TrimSpace(ref)) {
-			return g.ID, nil
+	for _, f := range list {
+		if strings.EqualFold(f.Name, strings.TrimSpace(ref)) || strconv.Itoa(f.ID) == strings.TrimSpace(ref) {
+			return f.ID, nil
 		}
 	}
-	return "", fmt.Errorf("no unit group named %q (see 'wtf unit-group list')", ref)
+	return 0, fmt.Errorf("no unit family named %q (see 'wtf unit-family list')", ref)
 }
 
 func (e *env) loadQuantities() error {
@@ -495,35 +493,71 @@ func (e *env) loadQuantities() error {
 }
 
 // resolveQuantity returns the id of a quantity given by id or name.
-func (e *env) resolveQuantity(ref string) (string, error) {
-	if isUUID(ref) {
-		return strings.ToLower(ref), nil
-	}
+func (e *env) resolveQuantity(ref string) (int, error) {
 	if err := e.loadQuantities(); err != nil {
-		return "", err
+		return 0, err
 	}
 	for _, q := range e.cache.quantities {
-		if strings.EqualFold(q.Name, strings.TrimSpace(ref)) {
+		if strings.EqualFold(q.Name, strings.TrimSpace(ref)) || strconv.Itoa(q.ID) == strings.TrimSpace(ref) {
 			return q.ID, nil
 		}
 	}
-	return "", fmt.Errorf("no quantity named %q (see 'wtf quantity list')", ref)
+	return 0, fmt.Errorf("no quantity named %q (see 'wtf quantity list')", ref)
 }
 
-// resolveUnit returns the id of a unit given by id, symbol or name.
-func (e *env) resolveUnit(ref string) (string, error) {
-	if isUUID(ref) {
-		return strings.ToLower(ref), nil
+// resolveUnit returns a unit given by id, symbol or name. A symbol that
+// several families share is told apart by its family, as unitRef writes
+// it: "B (Binary bytes)".
+func (e *env) resolveUnit(ref string) (*unit, error) {
+	families, err := e.unitFamilies()
+	if err != nil {
+		return nil, err
 	}
 	var all []unit
-	if err := e.get("/units", nil, &all); err != nil {
-		return "", err
+	for _, f := range families {
+		all = append(all, f.Units...)
+	}
+	ref = strings.TrimSpace(ref)
+	for i := range all {
+		if strconv.Itoa(all[i].ID) == ref || unitRef(all, &all[i]) == ref {
+			return &all[i], nil
+		}
+	}
+	if symbol, family, ok := strings.Cut(strings.TrimSuffix(ref, ")"), " ("); ok {
+		var in []unit
+		for _, u := range all {
+			if strings.EqualFold(u.Family.Name, family) {
+				in = append(in, u)
+			}
+		}
+		return matchUnit(in, symbol)
 	}
 	u, err := matchUnit(all, ref)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return u.ID, nil
+	// The same unit in several families: the family must be named.
+	var refs []string
+	for i := range all {
+		if all[i].ID != u.ID && all[i].Symbol == u.Symbol {
+			refs = append(refs, unitRef(all, &all[i]))
+		}
+	}
+	if refs != nil {
+		return nil, ambiguous("unit", ref, append([]string{unitRef(all, u)}, refs...))
+	}
+	return u, nil
+}
+
+// unitRef names a unit for the command line: its symbol, followed by its
+// family when other families have the same symbol.
+func unitRef(all []unit, u *unit) string {
+	for _, v := range all {
+		if v.ID != u.ID && v.Symbol == u.Symbol {
+			return u.Symbol + " (" + u.Family.Name + ")"
+		}
+	}
+	return u.Symbol
 }
 
 // resolveAccount returns the id of an account given by id or email.
@@ -572,3 +606,16 @@ func (e *env) targetPath(typ, ref string) (string, error) {
 
 // object is a JSON request body.
 type object = map[string]any
+
+// unitLabel names a unit as resolveUnit takes it back (see unitRef).
+func (e *env) unitLabel(u *unit) (string, error) {
+	families, err := e.unitFamilies()
+	if err != nil {
+		return "", err
+	}
+	var all []unit
+	for _, f := range families {
+		all = append(all, f.Units...)
+	}
+	return unitRef(all, u), nil
+}

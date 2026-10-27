@@ -3,7 +3,6 @@ package serve
 import (
 	"context"
 	"encoding/json"
-	"net"
 	"net/http"
 	"strings"
 
@@ -18,10 +17,9 @@ var anonymousRoutes = map[string]bool{
 	"POST /login":       true,
 }
 
-// session is the login of a request: its session token and the hostname it
-// was sent to, which selects the tenant.
+// session is the login of a request: its session token.
 type session struct {
-	token, host string
+	token string
 }
 
 type sessionKey struct{}
@@ -49,7 +47,7 @@ func (s *server) inSession(ctx context.Context, fn func(q querier) error) error 
 }
 
 func useSession(ctx context.Context, tx pgx.Tx, sess session) error {
-	_, err := tx.Exec(ctx, "SELECT session_use($1, $2)", sess.token, sess.host)
+	_, err := tx.Exec(ctx, "SELECT session_use($1)", sess.token)
 	return err
 }
 
@@ -97,16 +95,6 @@ func (s *server) logout(w http.ResponseWriter, r *http.Request) error {
 	return s.remove("logout")(w, r)
 }
 
-// requestHost is the hostname the request was sent to (the Host header,
-// without port), which identifies the tenant.
-func requestHost(r *http.Request) string {
-	host := r.Host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	return strings.ToLower(strings.TrimSuffix(host, "."))
-}
-
 var unauthenticated = &problem{
 	Type:   "/problems/unauthenticated",
 	Title:  "Not authenticated",
@@ -114,7 +102,7 @@ var unauthenticated = &problem{
 	Detail: "Log in with POST " + apiPrefix + "/login, which sets the session cookie \"" + sessionCookie + "\", and send it with every request.",
 }
 
-// login: POST /login {email, password} on the tenant's hostname.
+// login: POST /login {email, password}.
 func (s *server) login(w http.ResponseWriter, r *http.Request) error {
 	args, err := collect(r, []param{body(
 		field{key: "email", name: "p_email", typ: "text"},
@@ -124,7 +112,6 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	email := args[0].value
-	args = append(args, arg{name: "p_hostname", typ: "text", value: requestHost(r)})
 	result, err := s.callJSON(r.Context(), "login", args)
 	if err != nil {
 		return err
@@ -134,9 +121,9 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) error {
 	if err := json.Unmarshal(result, &outcome); err != nil {
 		return err
 	}
-	// Every login attempt is logged: who, on which tenant, from where.
-	// Passwords never are.
-	attrs := []any{"email", email, "host", requestHost(r), "remote", r.RemoteAddr}
+	// Every login attempt is logged: who and from where. Passwords never
+	// are.
+	attrs := []any{"email", email, "remote", r.RemoteAddr}
 	if string(outcome["ok"]) != "true" {
 		var reason string
 		_ = json.Unmarshal(outcome["reason"], &reason)

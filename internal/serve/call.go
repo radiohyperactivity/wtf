@@ -75,6 +75,18 @@ func path(name, key string) param {
 	}
 }
 
+// pathInt passes the path segment {key} as an integer argument: the ids of
+// quantities, unit families and units.
+func pathInt(name, key string) param {
+	return func(r *http.Request) ([]arg, error) {
+		v := r.PathValue(key)
+		if _, err := strconv.ParseInt(v, 10, 32); err != nil {
+			return nil, invalidInput("%q in the path is not a whole number", v)
+		}
+		return []arg{{name: name, typ: "integer", value: v}}, nil
+	}
+}
+
 // pathText passes the path segment {key} as a text argument.
 func pathText(name, key string) param {
 	return func(r *http.Request) ([]arg, error) {
@@ -117,7 +129,7 @@ func constant(name, typ string, value any) param {
 
 // field maps a key of the JSON request body to a function argument.
 // typ is the SQL type: "uuid", "text" and "datatype" take a JSON string,
-// "numeric" a JSON number, "boolean" true or false, and "jsonb" any JSON
+// "numeric" a JSON number, "integer" a whole one, "boolean" true or false, and "jsonb" any JSON
 // value. A missing key or JSON null is passed as SQL NULL, or, for an
 // optional field, left out so the function's default applies.
 type field struct {
@@ -166,6 +178,12 @@ func fieldValue(f field, raw json.RawMessage) (any, error) {
 			return nil, invalidInput("field %q must be a number", f.key)
 		}
 		return string(raw), nil
+	case "integer":
+		var n int32
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, invalidInput("field %q must be a whole number", f.key)
+		}
+		return n, nil
 	case "boolean":
 		var b bool
 		if err := json.Unmarshal(raw, &b); err != nil {

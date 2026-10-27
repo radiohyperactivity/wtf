@@ -1,10 +1,11 @@
--- API: quantities, units, unit groups, attributes and options. Explained in api/attribute.md.
+-- API: quantities, unit families, units, attributes and options. Explained in
+-- api/attribute.md.
 
 -- ---------------------------------------------------------------------------
 -- quantity (read-only)
 -- ---------------------------------------------------------------------------
 
--- All quantities with their base units, alphabetically.
+-- All quantities, alphabetically.
 CREATE FUNCTION quantity_list() RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
@@ -12,50 +13,82 @@ AS $$
 BEGIN
     PERFORM util.require_login();
     RETURN (
-        SELECT COALESCE(
-            jsonb_agg(
-                util.quantity_json(q.id)
-                || jsonb_build_object('base_unit', util.unit_json(util.base_unit(q.id)))
-                ORDER BY lower(q.name), q.id
-            ),
-            '[]'::jsonb
-        )
+        SELECT COALESCE(jsonb_agg(util.quantity_json(q.id) ORDER BY lower(q.name), q.id), '[]'::jsonb)
         FROM quantity q
     );
 END;
 $$;
 
--- The quantity with its base unit, all its units and all its unit groups,
--- alphabetically.
-CREATE FUNCTION quantity_get(p_id uuid) RETURNS jsonb
+-- The quantity with its unit families, each with its units.
+CREATE FUNCTION quantity_get(p_id integer) RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_result jsonb := util.quantity_json(p_id);
+    v_result jsonb;
 BEGIN
     PERFORM util.require_login();
+    v_result := util.quantity_json(p_id);
     IF v_result IS NULL THEN
         PERFORM util.raise_not_found('quantity', p_id);
     END IF;
 
     RETURN v_result || jsonb_build_object(
-        'base_unit', util.unit_json(util.base_unit(p_id)),
-        'units', (
-            SELECT COALESCE(jsonb_agg(util.unit_json(u.id) ORDER BY lower(u.name), u.id), '[]'::jsonb)
-            FROM unit u
-            WHERE u.quantity = p_id
-        ),
-        'unit_groups', (
+        'families', (
             SELECT COALESCE(
-                jsonb_agg(jsonb_build_object('id', g.id, 'name', g.name)
-                          ORDER BY lower(g.name), g.id),
+                jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'units', util.family_units_json(f.id))
+                          ORDER BY f.id),
                 '[]'::jsonb
             )
-            FROM unit_group g
-            WHERE g.quantity = p_id
+            FROM unit_family f
+            WHERE f.quantity = p_id
         )
     );
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- unit_family (read-only)
+-- ---------------------------------------------------------------------------
+
+-- All unit families, by quantity, optionally only those of one quantity.
+-- Each comes with its units, from smallest to largest.
+CREATE FUNCTION unit_family_list(p_quantity integer DEFAULT NULL) RETURNS jsonb
+LANGUAGE plpgsql STABLE
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+    PERFORM util.require_login();
+    IF p_quantity IS NOT NULL AND NOT EXISTS (SELECT 1 FROM quantity WHERE id = p_quantity) THEN
+        PERFORM util.raise_not_found('quantity', p_quantity);
+    END IF;
+
+    RETURN (
+        SELECT COALESCE(
+            jsonb_agg(util.unit_family_json(f.id) || jsonb_build_object('units', util.family_units_json(f.id))
+                      ORDER BY lower(q.name), f.id),
+            '[]'::jsonb
+        )
+        FROM unit_family f
+        JOIN quantity q ON q.id = f.quantity
+        WHERE p_quantity IS NULL OR f.quantity = p_quantity
+    );
+END;
+$$;
+
+CREATE FUNCTION unit_family_get(p_id integer) RETURNS jsonb
+LANGUAGE plpgsql STABLE
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_result jsonb;
+BEGIN
+    PERFORM util.require_login();
+    v_result := util.unit_family_json(p_id);
+    IF v_result IS NULL THEN
+        PERFORM util.raise_not_found('unit family', p_id);
+    END IF;
+    RETURN v_result || jsonb_build_object('units', util.family_units_json(p_id));
 END;
 $$;
 
@@ -63,8 +96,9 @@ $$;
 -- unit (read-only)
 -- ---------------------------------------------------------------------------
 
--- All units alphabetically, optionally only those of one quantity.
-CREATE FUNCTION unit_list(p_quantity uuid DEFAULT NULL) RETURNS jsonb
+-- All units, by family and size, optionally only those of one quantity or
+-- one family.
+CREATE FUNCTION unit_list(p_quantity integer DEFAULT NULL, p_family integer DEFAULT NULL) RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
@@ -73,74 +107,33 @@ BEGIN
     IF p_quantity IS NOT NULL AND NOT EXISTS (SELECT 1 FROM quantity WHERE id = p_quantity) THEN
         PERFORM util.raise_not_found('quantity', p_quantity);
     END IF;
+    IF p_family IS NOT NULL AND NOT EXISTS (SELECT 1 FROM unit_family WHERE id = p_family) THEN
+        PERFORM util.raise_not_found('unit family', p_family);
+    END IF;
 
     RETURN (
-        SELECT COALESCE(jsonb_agg(util.unit_json(u.id) ORDER BY lower(u.name), u.id), '[]'::jsonb)
+        SELECT COALESCE(jsonb_agg(util.unit_json(u.id) ORDER BY f.id, u.base_factor, u.id), '[]'::jsonb)
         FROM unit u
-        WHERE p_quantity IS NULL OR u.quantity = p_quantity
+        JOIN unit_family f ON f.id = u.family
+        WHERE (p_quantity IS NULL OR f.quantity = p_quantity)
+          AND (p_family IS NULL OR u.family = p_family)
     );
 END;
 $$;
 
-CREATE FUNCTION unit_get(p_id uuid) RETURNS jsonb
+CREATE FUNCTION unit_get(p_id integer) RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_result jsonb := util.unit_json(p_id);
+    v_result jsonb;
 BEGIN
     PERFORM util.require_login();
+    v_result := util.unit_json(p_id);
     IF v_result IS NULL THEN
         PERFORM util.raise_not_found('unit', p_id);
     END IF;
     RETURN v_result;
-END;
-$$;
-
--- ---------------------------------------------------------------------------
--- unit_group (read-only)
--- ---------------------------------------------------------------------------
-
--- All unit groups alphabetically, optionally only those of one quantity.
-CREATE FUNCTION unit_group_list(p_quantity uuid DEFAULT NULL) RETURNS jsonb
-LANGUAGE plpgsql STABLE
-SECURITY DEFINER SET search_path = public, pg_temp
-AS $$
-BEGIN
-    PERFORM util.require_login();
-    IF p_quantity IS NOT NULL AND NOT EXISTS (SELECT 1 FROM quantity WHERE id = p_quantity) THEN
-        PERFORM util.raise_not_found('quantity', p_quantity);
-    END IF;
-
-    RETURN (
-        SELECT COALESCE(jsonb_agg(util.unit_group_json(g.id) ORDER BY lower(g.name), g.id), '[]'::jsonb)
-        FROM unit_group g
-        WHERE p_quantity IS NULL OR g.quantity = p_quantity
-    );
-END;
-$$;
-
--- The unit group with its units, from smallest to largest.
-CREATE FUNCTION unit_group_get(p_id uuid) RETURNS jsonb
-LANGUAGE plpgsql STABLE
-SECURITY DEFINER SET search_path = public, pg_temp
-AS $$
-DECLARE
-    v_result jsonb := util.unit_group_json(p_id);
-BEGIN
-    PERFORM util.require_login();
-    IF v_result IS NULL THEN
-        PERFORM util.raise_not_found('unit group', p_id);
-    END IF;
-
-    RETURN v_result || jsonb_build_object(
-        'units', (
-            SELECT COALESCE(jsonb_agg(util.unit_json(u.id) ORDER BY u.base_factor, u.id), '[]'::jsonb)
-            FROM unit_group_unit gu
-            JOIN unit u ON u.id = gu.unit
-            WHERE gu.unit_group = p_id
-        )
-    );
 END;
 $$;
 
@@ -153,14 +146,12 @@ CREATE FUNCTION attribute_list() RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require_model_read();
 BEGIN
+    PERFORM util.require_model_read();
     RETURN (
         SELECT COALESCE(jsonb_agg(util.attribute_json(a.id) ORDER BY lower(a.name), a.id), '[]'::jsonb)
         FROM attribute a
-        WHERE a.tenant = v_tenant
-          AND NOT a.deleted
+        WHERE NOT a.deleted
     );
 END;
 $$;
@@ -172,10 +163,10 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tenant uuid := util.require_model_read();
     v_result jsonb;
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_id AND tenant = v_tenant) THEN
+    PERFORM util.require_model_read();
+    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_id) THEN
         PERFORM util.raise_not_found('attribute', p_id);
     END IF;
     v_result := util.attribute_json(p_id);
@@ -199,49 +190,55 @@ BEGIN
 END;
 $$;
 
--- With a unit group, p_datatype must be the group's quantity's datatype
--- (integer for counts, float otherwise).
-CREATE FUNCTION attribute_create(p_name text, p_datatype datatype, p_unit_group uuid DEFAULT NULL)
+-- With a unit, p_datatype must be the unit's quantity's datatype (integer
+-- for counts, float otherwise). With p_unit_lock, values are always shown in
+-- that unit instead of being scaled within its family.
+CREATE FUNCTION attribute_create(
+    p_name      text,
+    p_datatype  datatype,
+    p_unit      integer DEFAULT NULL,
+    p_unit_lock boolean DEFAULT false
+)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tenant uuid := util.require('model', 'write');
     v_id     uuid;
 BEGIN
-    INSERT INTO attribute (tenant, name, datatype, unit_group)
-    VALUES (v_tenant, util.clean_name(p_name), p_datatype, p_unit_group)
+    PERFORM util.require('model', 'write');
+    INSERT INTO attribute (name, datatype, unit, unit_lock)
+    VALUES (util.clean_name(p_name), p_datatype, p_unit, COALESCE(p_unit_lock, false))
     RETURNING id INTO v_id;
 
     RETURN attribute_get(v_id);
 END;
 $$;
 
--- Changes the fields present in p_patch: name, datatype, unit_group.
--- The unit group can only change to another group of the same quantity;
--- numbers are stored in the base unit, so nothing is converted. A group
--- can't be added or removed (see SCHEMA.md).
+-- Changes the fields present in p_patch: name, datatype, unit, unit_lock.
+-- The unit can only change to another unit of the same quantity, in any of
+-- its families; numbers are stored in the base unit, so nothing is
+-- converted. A unit can't be added or removed (see SCHEMA.md).
 CREATE FUNCTION attribute_patch(p_id uuid, p_patch jsonb) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('model', 'write');
 BEGIN
+    PERFORM util.require('model', 'write');
     PERFORM util.check_patch(p_patch,
-                         ARRAY['name', 'datatype', 'unit_group'],
-                         ARRAY['name', 'datatype']);
+                         ARRAY['name', 'datatype', 'unit', 'unit_lock'],
+                         ARRAY['name', 'datatype', 'unit_lock']);
 
     UPDATE attribute
-    SET name       = CASE WHEN p_patch ? 'name'
-                          THEN util.clean_name(p_patch ->> 'name') ELSE name END,
-        datatype   = CASE WHEN p_patch ? 'datatype'
-                          THEN (p_patch ->> 'datatype')::datatype ELSE datatype END,
-        unit_group = CASE WHEN p_patch ? 'unit_group'
-                          THEN (p_patch ->> 'unit_group')::uuid ELSE unit_group END
-    WHERE id = p_id
-      AND tenant = v_tenant;
+    SET name      = CASE WHEN p_patch ? 'name'
+                         THEN util.clean_name(p_patch ->> 'name') ELSE name END,
+        datatype  = CASE WHEN p_patch ? 'datatype'
+                         THEN (p_patch ->> 'datatype')::datatype ELSE datatype END,
+        unit      = CASE WHEN p_patch ? 'unit'
+                         THEN (p_patch ->> 'unit')::integer ELSE unit END,
+        unit_lock = CASE WHEN p_patch ? 'unit_lock'
+                         THEN (p_patch ->> 'unit_lock')::boolean ELSE unit_lock END
+    WHERE id = p_id;
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('attribute', p_id);
@@ -256,10 +253,9 @@ CREATE FUNCTION attribute_delete(p_id uuid) RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('model', 'write');
 BEGIN
-    UPDATE attribute SET deleted = true WHERE id = p_id AND tenant = v_tenant;
+    PERFORM util.require('model', 'write');
+    UPDATE attribute SET deleted = true WHERE id = p_id;
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('attribute', p_id);
@@ -274,11 +270,11 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tenant  uuid := util.require('model', 'write');
     v_deleted boolean;
 BEGIN
+    PERFORM util.require('model', 'write');
     PERFORM util.check_patch(p_options, ARRAY['name'], ARRAY['name']);
-    SELECT deleted INTO v_deleted FROM attribute WHERE id = p_id AND tenant = v_tenant FOR UPDATE;
+    SELECT deleted INTO v_deleted FROM attribute WHERE id = p_id FOR UPDATE;
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('attribute', p_id);
     END IF;
@@ -303,10 +299,9 @@ CREATE FUNCTION attribute_option_list(p_attribute uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require_model_read();
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_attribute AND tenant = v_tenant) THEN
+    PERFORM util.require_model_read();
+    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_attribute) THEN
         PERFORM util.raise_not_found('attribute', p_attribute);
     END IF;
 
@@ -323,10 +318,9 @@ CREATE FUNCTION attribute_option_get(p_id uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require_model_read();
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM attribute_option WHERE id = p_id AND tenant = v_tenant) THEN
+    PERFORM util.require_model_read();
+    IF NOT EXISTS (SELECT 1 FROM attribute_option WHERE id = p_id) THEN
         PERFORM util.raise_not_found('attribute option', p_id);
     END IF;
     RETURN util.option_json(p_id);
@@ -338,15 +332,15 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tenant uuid := util.require('model', 'write');
     v_id     uuid;
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_attribute AND tenant = v_tenant) THEN
+    PERFORM util.require('model', 'write');
+    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_attribute) THEN
         PERFORM util.raise_not_found('attribute', p_attribute);
     END IF;
 
-    INSERT INTO attribute_option (tenant, attribute, name)
-    VALUES (v_tenant, p_attribute, util.clean_name(p_name))
+    INSERT INTO attribute_option (attribute, name)
+    VALUES (p_attribute, util.clean_name(p_name))
     RETURNING id INTO v_id;
 
     RETURN util.option_json(v_id);
@@ -359,16 +353,14 @@ CREATE FUNCTION attribute_option_patch(p_id uuid, p_patch jsonb) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('model', 'write');
 BEGIN
+    PERFORM util.require('model', 'write');
     PERFORM util.check_patch(p_patch, ARRAY['name'], ARRAY['name']);
 
     UPDATE attribute_option
     SET name = CASE WHEN p_patch ? 'name'
                     THEN util.clean_name(p_patch ->> 'name') ELSE name END
-    WHERE id = p_id
-      AND tenant = v_tenant;
+    WHERE id = p_id;
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('attribute option', p_id);
@@ -382,10 +374,9 @@ CREATE FUNCTION attribute_option_delete(p_id uuid) RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('model', 'write');
 BEGIN
-    UPDATE attribute_option SET deleted = true WHERE id = p_id AND tenant = v_tenant;
+    PERFORM util.require('model', 'write');
+    UPDATE attribute_option SET deleted = true WHERE id = p_id;
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('attribute option', p_id);
@@ -400,11 +391,11 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tenant  uuid := util.require('model', 'write');
     v_deleted boolean;
 BEGIN
+    PERFORM util.require('model', 'write');
     PERFORM util.check_patch(p_options, ARRAY['name'], ARRAY['name']);
-    SELECT deleted INTO v_deleted FROM attribute_option WHERE id = p_id AND tenant = v_tenant FOR UPDATE;
+    SELECT deleted INTO v_deleted FROM attribute_option WHERE id = p_id FOR UPDATE;
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('attribute option', p_id);
     END IF;

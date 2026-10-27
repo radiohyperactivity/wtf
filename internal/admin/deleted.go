@@ -1,4 +1,4 @@
-package tenant
+package admin
 
 import (
 	"context"
@@ -25,32 +25,19 @@ var PurgedKinds = []struct{ Table, Name string }{
 var errDryRun = errors.New("dry run")
 
 // PurgeDeleted removes for good the objects that were marked deleted longer
-// than olderThan ago, of one tenant (by name) or of all tenants (empty name).
-// What belongs to them goes with them: values, assignments, options,
+// than olderThan ago. What belongs to them goes with them: values, assignments, options,
 // attachments. An object whose deletion is no longer in history counts as
 // deleted long ago. An object something else still refers to stays until
 // that is purged too: an item while it has stock rows, a location or class
 // while something is in it, an attribute or option while values or classes
 // of deleted objects use it. With dryRun nothing is removed. It returns the
 // number of objects (that would be) removed per table.
-func PurgeDeleted(ctx context.Context, conn *pgx.Conn, olderThan time.Duration, tenantName string, dryRun bool) (map[string]int64, error) {
-	if tenantName != "" {
-		var exists bool
-		if err := conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM tenant WHERE lower(name) = lower(btrim($1)))",
-			tenantName).Scan(&exists); err != nil {
-			return nil, err
-		}
-		if !exists {
-			return nil, fmt.Errorf("tenant %q not found", tenantName)
-		}
-	}
-
+func PurgeDeleted(ctx context.Context, conn *pgx.Conn, olderThan time.Duration, dryRun bool) (map[string]int64, error) {
 	age := fmt.Sprintf("%d seconds", int64(olderThan.Seconds()))
-	// Deleted, of the tenant, and not deleted recently.
+	// Deleted, and not deleted recently.
 	old := func(table string) string {
 		return fmt.Sprintf(`
 			r.deleted
-			AND ($2 = '' OR r.tenant = (SELECT id FROM tenant WHERE lower(name) = lower(btrim($2))))
 			AND NOT EXISTS (
 				SELECT 1 FROM history h
 				WHERE (h.data ->> 'id') = r.id::text
@@ -88,7 +75,7 @@ func PurgeDeleted(ctx context.Context, conn *pgx.Conn, olderThan time.Duration, 
 	err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
 		for _, kind := range PurgedKinds {
 			for {
-				tag, err := tx.Exec(ctx, statements[kind.Table], age, tenantName)
+				tag, err := tx.Exec(ctx, statements[kind.Table], age)
 				if err != nil {
 					return fmt.Errorf("purge %s: %w", kind.Name, err)
 				}

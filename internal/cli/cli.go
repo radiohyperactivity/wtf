@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"regexp"
 	"sort"
@@ -230,20 +229,8 @@ func (e *env) init() error {
 	if v := e.getenv("WTF_TOKEN"); v != "" {
 		token = v
 	}
-	e.api = newClient(server, token)
+	e.api = client.New(server, token)
 	return nil
-}
-
-// Transport, when set, carries all requests; tests use it to reach an
-// in-process server under the tenant's hostname.
-var Transport http.RoundTripper
-
-func newClient(server, token string) *client.Client {
-	c := client.New(server, token)
-	if Transport != nil {
-		c.HTTP.Transport = Transport
-	}
-	return c
 }
 
 // parseInterspersed parses flags that may appear between positional

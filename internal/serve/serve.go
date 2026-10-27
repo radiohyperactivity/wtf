@@ -205,7 +205,7 @@ func (s *server) wrap(h handlerFunc, maxBody int64, anonymous bool) http.Handler
 			// The session lasts 30 days from its last use, and so does the
 			// cookie: each answer renews it.
 			setSessionCookie(w, r, token, sessionMaxAge)
-			r = r.WithContext(context.WithValue(r.Context(), sessionKey{}, session{token: token, host: requestHost(r)}))
+			r = r.WithContext(context.WithValue(r.Context(), sessionKey{}, session{token: token}))
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		err := h(w, r)

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/radiohyperactivity/wtf/internal/client"
 )
 
 func TestNormalizeCode(t *testing.T) {
@@ -70,12 +72,14 @@ func TestRatNumber(t *testing.T) {
 
 func TestMatchUnit(t *testing.T) {
 	units := []unit{
-		{Symbol: "Ω", Name: "ohm"},
-		{Symbol: "mΩ", Name: "milliohm"},
-		{Symbol: "kΩ", Name: "kiloohm"},
-		{Symbol: "MΩ", Name: "megaohm"},
-		{Symbol: "µm", Name: "micrometre"},
-		{Symbol: "°C", Name: "degree Celsius"},
+		{Symbol: "Ω", Name: "ohm", BaseFactor: "1"},
+		{Symbol: "mΩ", Name: "milliohm", BaseFactor: "0.001"},
+		{Symbol: "kΩ", Name: "kiloohm", BaseFactor: "1000"},
+		{Symbol: "MΩ", Name: "megaohm", BaseFactor: "1000000"},
+		{Symbol: "µm", Name: "micrometre", BaseFactor: "0.000001"},
+		{Symbol: "°C", Name: "degree Celsius", BaseFactor: "1", BaseOffset: "273.15"},
+		{Symbol: "B", Name: "byte", BaseFactor: "1"}, // decimal bytes
+		{Symbol: "B", Name: "byte", BaseFactor: "1"}, // binary bytes
 	}
 	for in, want := range map[string]string{
 		"kΩ":             "kΩ",
@@ -88,6 +92,7 @@ func TestMatchUnit(t *testing.T) {
 		"degree celsius": "°C",
 		"KILOOHM":        "kΩ",
 		"MOHM":           "MΩ", // the alias keeps the case of the prefix
+		"byte":           "B",  // two units, but they convert the same
 	} {
 		u, err := matchUnit(units, in)
 		if err != nil {
@@ -222,29 +227,6 @@ func TestParsePrivilege(t *testing.T) {
 	}
 }
 
-func TestPlainUnit(t *testing.T) {
-	m := unit{Symbol: "m", IsBase: true}
-	mm := unit{Symbol: "mm"}
-	degC := unit{Symbol: "°C"}
-	in, ft := unit{Symbol: "in"}, unit{Symbol: "ft"}
-	for _, c := range []struct {
-		units []unit
-		want  string
-	}{
-		{[]unit{mm, m}, "m"}, // the base unit, when the group has it
-		{[]unit{degC}, "°C"}, // else the only unit
-		{[]unit{in, ft}, ""}, // else a unit must be given
-	} {
-		u, err := plainUnit(c.units)
-		switch {
-		case c.want == "" && err == nil:
-			t.Errorf("%v: want an error, got %s", c.units, u.Symbol)
-		case c.want != "" && (err != nil || u.Symbol != c.want):
-			t.Errorf("%v: got %v, %v; want %s", c.units, u, err, c.want)
-		}
-	}
-}
-
 func TestParseDate(t *testing.T) {
 	now := time.Date(2026, 1, 31, 15, 4, 5, 0, time.Local)
 	for in, want := range map[string]string{
@@ -352,7 +334,7 @@ func TestTreeCandidates(t *testing.T) {
 
 // TestCandidates covers completion that needs no server.
 func TestCandidates(t *testing.T) {
-	e := &env{api: newClient("", "")}
+	e := &env{api: client.New("", "")}
 	for _, c := range []struct {
 		words []string
 		want  string // one expected candidate

@@ -14,13 +14,15 @@ info:
     Every endpoint calls one database function; see API.md for the semantics
     and WTFD.md for the HTTP conventions.
 
-    - Numbers of attributes and items with a unit group are given and stored in
-      the SI base unit of the group's quantity; responses add a `display` value
-      in the best-scaling unit of the group.
+    - Numbers of attributes and items with a unit are given and stored in the
+      base unit of the unit's quantity; responses add a `display` value in the
+      best-scaling unit of the unit's family, or in the unit itself when
+      `unit_lock` is set.
+    - Quantities, unit families and units have integer ids; everything else
+      has UUIDs.
     - Errors are RFC 9457 problem details (`application/problem+json`).
     - `GET /classes` and `GET /locations` support `ETag` / `If-None-Match`.
-    - Each tenant has its own hostname; the Host header selects the tenant.
-      POST /login sets the session cookie `wtf_session` (HttpOnly,
+    - POST /login sets the session cookie `wtf_session` (HttpOnly,
       SameSite=Strict, Path=/api); send it back with every request. Only
       /api/health, /openapi.yaml and /login work without it. Requests that
       change something are refused (403) when their Origin header names
@@ -64,27 +66,20 @@ paths:
 
   /quantities:
     get:
-      summary: All quantities with their base units
+      summary: All quantities
       operationId: quantityList
       responses:
         "200":
           description: Quantities, alphabetically.
           content:
             application/json:
-              schema:
-                type: array
-                items:
-                  allOf:
-                    - $ref: "#/components/schemas/Quantity"
-                    - type: object
-                      properties:
-                        base_unit: { $ref: "#/components/schemas/Unit" }
+              schema: { type: array, items: { $ref: "#/components/schemas/Quantity" } }
         default: { $ref: "#/components/responses/Problem" }
 
   /quantities/{id}:
-    parameters: [{ $ref: "#/components/parameters/Id" }]
+    parameters: [{ $ref: "#/components/parameters/IntId" }]
     get:
-      summary: One quantity with its units and unit groups
+      summary: One quantity with its unit families, each with its units
       operationId: quantityGet
       responses:
         "200":
@@ -96,11 +91,15 @@ paths:
                   - $ref: "#/components/schemas/Quantity"
                   - type: object
                     properties:
-                      base_unit: { $ref: "#/components/schemas/Unit" }
-                      units: { type: array, items: { $ref: "#/components/schemas/Unit" } }
-                      unit_groups:
+                      families:
                         type: array
-                        items: { $ref: "#/components/schemas/NamedRef" }
+                        description: In the order they were created.
+                        items:
+                          type: object
+                          properties:
+                            id: { type: integer }
+                            name: { type: string }
+                            units: { type: array, items: { $ref: "#/components/schemas/Unit" }, description: Smallest first. }
         default: { $ref: "#/components/responses/Problem" }
 
   /units:
@@ -108,17 +107,18 @@ paths:
       summary: All units
       operationId: unitList
       parameters:
-        - { name: quantity, in: query, schema: { $ref: "#/components/schemas/Uuid" }, description: Only units of this quantity. }
+        - { name: quantity, in: query, schema: { type: integer }, description: Only units of this quantity. }
+        - { name: family, in: query, schema: { type: integer }, description: Only units of this family. }
       responses:
         "200":
-          description: Units, alphabetically.
+          description: Units, by family, smallest first.
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/Unit" } }
         default: { $ref: "#/components/responses/Problem" }
 
   /units/{id}:
-    parameters: [{ $ref: "#/components/parameters/Id" }]
+    parameters: [{ $ref: "#/components/parameters/IntId" }]
     get:
       summary: One unit
       operationId: unitGet
@@ -130,36 +130,31 @@ paths:
               schema: { $ref: "#/components/schemas/Unit" }
         default: { $ref: "#/components/responses/Problem" }
 
-  /unit-groups:
+  /unit-families:
     get:
-      summary: All unit groups
-      operationId: unitGroupList
+      summary: All unit families with their units
+      operationId: unitFamilyList
       parameters:
-        - { name: quantity, in: query, schema: { $ref: "#/components/schemas/Uuid" }, description: Only groups of this quantity. }
+        - { name: quantity, in: query, schema: { type: integer }, description: Only families of this quantity. }
       responses:
         "200":
-          description: Unit groups, alphabetically.
+          description: Unit families, by quantity.
           content:
             application/json:
-              schema: { type: array, items: { $ref: "#/components/schemas/UnitGroup" } }
+              schema: { type: array, items: { $ref: "#/components/schemas/UnitFamilyDetail" } }
         default: { $ref: "#/components/responses/Problem" }
 
-  /unit-groups/{id}:
-    parameters: [{ $ref: "#/components/parameters/Id" }]
+  /unit-families/{id}:
+    parameters: [{ $ref: "#/components/parameters/IntId" }]
     get:
-      summary: One unit group with its units, smallest first
-      operationId: unitGroupGet
+      summary: One unit family with its units, smallest first
+      operationId: unitFamilyGet
       responses:
         "200":
-          description: The unit group.
+          description: The unit family.
           content:
             application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/UnitGroup"
-                  - type: object
-                    properties:
-                      units: { type: array, items: { $ref: "#/components/schemas/Unit" } }
+              schema: { $ref: "#/components/schemas/UnitFamilyDetail" }
         default: { $ref: "#/components/responses/Problem" }
 
   /attributes:
@@ -187,9 +182,10 @@ paths:
               properties:
                 name: { type: string }
                 datatype: { $ref: "#/components/schemas/Datatype" }
-                unit_group:
-                  oneOf: [{ $ref: "#/components/schemas/Uuid" }, { type: "null" }]
-                  description: With a unit group, the datatype must be the group's quantity's datatype.
+                unit:
+                  type: [integer, "null"]
+                  description: With a unit, the datatype must be the unit's quantity's datatype.
+                unit_lock: { type: boolean, default: false, description: Always show values in the unit, instead of scaling them within its family. }
       responses:
         "201": { $ref: "#/components/responses/AttributeCreated" }
         default: { $ref: "#/components/responses/Problem" }
@@ -215,7 +211,8 @@ paths:
               properties:
                 name: { type: string }
                 datatype: { $ref: "#/components/schemas/Datatype" }
-                unit_group: { $ref: "#/components/schemas/Uuid" }
+                unit: { type: integer, description: Another unit of the same quantity; a unit can't be added or removed. }
+                unit_lock: { type: boolean }
       responses:
         "200": { $ref: "#/components/responses/Attribute" }
         default: { $ref: "#/components/responses/Problem" }
@@ -446,9 +443,10 @@ paths:
               properties:
                 class: { $ref: "#/components/schemas/Uuid" }
                 name: { type: string }
-                unit_group:
-                  oneOf: [{ $ref: "#/components/schemas/Uuid" }, { type: "null" }]
-                  description: Unit group stock is measured in; none means pieces.
+                unit:
+                  type: [integer, "null"]
+                  description: Unit stock is measured in; none means pieces.
+                unit_lock: { type: boolean, default: false, description: Always show stock in the unit, instead of scaling it within its family. }
                 values:
                   type: object
                   description: Initial values, keyed by attribute id.
@@ -484,7 +482,8 @@ paths:
               properties:
                 class: { $ref: "#/components/schemas/Uuid" }
                 name: { type: string }
-                unit_group: { $ref: "#/components/schemas/Uuid" }
+                unit: { type: integer, description: Another unit of the same quantity; a unit can't be added or removed. }
+                unit_lock: { type: boolean }
       responses:
         "200": { $ref: "#/components/responses/Item" }
         default: { $ref: "#/components/responses/Problem" }
@@ -638,7 +637,7 @@ paths:
                 location: { $ref: "#/components/schemas/Uuid" }
                 quantity:
                   type: [number, "null"]
-                  description: In the base unit of the item's unit group (pieces if none); null = not counted.
+                  description: In the base unit of the item's unit (pieces if none); null = not counted.
                 values:
                   type: object
                   description: Per-unit values, keyed by attribute id.
@@ -830,7 +829,7 @@ paths:
 
   /login:
     post:
-      summary: Log in to the tenant of the request's hostname
+      summary: Log in
       operationId: login
       security: []
       requestBody:
@@ -859,7 +858,6 @@ paths:
                 type: object
                 properties:
                   account: { $ref: "#/components/schemas/Account" }
-                  tenant: { $ref: "#/components/schemas/Tenant" }
         "401": { $ref: "#/components/responses/Problem" }
         "429":
           description: Too many failed logins; one attempt per minute until a login succeeds.
@@ -882,19 +880,14 @@ paths:
 
   /me:
     get:
-      summary: The logged-in account and its tenant
+      summary: The logged-in account
       operationId: me
       responses:
         "200":
           description: The account.
           content:
             application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/Account"
-                  - type: object
-                    properties:
-                      tenant: { $ref: "#/components/schemas/Tenant" }
+              schema: { $ref: "#/components/schemas/Account" }
         default: { $ref: "#/components/responses/Problem" }
 
   /me/password:
@@ -918,7 +911,7 @@ paths:
 
   /accounts:
     get:
-      summary: The tenant's accounts (account read privilege)
+      summary: All accounts (account read privilege)
       operationId: accountList
       responses:
         "200":
@@ -1247,7 +1240,7 @@ components:
       type: apiKey
       in: cookie
       name: wtf_session
-      description: The session cookie set by POST /login, on the tenant's own hostname.
+      description: The session cookie set by POST /login.
 
   headers:
     API-Revision:
@@ -1260,6 +1253,11 @@ components:
       in: path
       required: true
       schema: { $ref: "#/components/schemas/Uuid" }
+    IntId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer }
     Attribute:
       name: attribute
       in: path
@@ -1543,7 +1541,7 @@ components:
     Quantity:
       type: object
       properties:
-        id: { $ref: "#/components/schemas/Uuid" }
+        id: { type: integer }
         name: { type: string }
         datatype: { type: string, enum: [integer, float] }
 
@@ -1551,21 +1549,25 @@ components:
       type: object
       description: base = value × base_factor + base_offset.
       properties:
-        id: { $ref: "#/components/schemas/Uuid" }
+        id: { type: integer }
         name: { type: string }
         symbol: { type: string }
+        family:
+          type: object
+          properties:
+            id: { type: integer }
+            name: { type: string }
         quantity: { $ref: "#/components/schemas/Quantity" }
         base_factor: { type: number }
         base_offset: { type: number }
-        is_base: { type: boolean }
 
-    UnitGroup:
+    UnitFamilyDetail:
       type: object
       properties:
-        id: { $ref: "#/components/schemas/Uuid" }
+        id: { type: integer }
         name: { type: string }
         quantity: { $ref: "#/components/schemas/Quantity" }
-        base_unit: { $ref: "#/components/schemas/Unit" }
+        units: { type: array, items: { $ref: "#/components/schemas/Unit" }, description: Smallest first. }
 
     HistoryEntry:
       type: object
@@ -1605,13 +1607,6 @@ components:
         history_privilege: { $ref: "#/components/schemas/Privilege", description: read_write counts as read_only. }
         deleted: { type: boolean, description: Deleted accounts can't log in; they stay visible because history refers to them. }
 
-    Tenant:
-      type: object
-      properties:
-        id: { $ref: "#/components/schemas/Uuid" }
-        name: { type: string }
-        hostname: { type: string }
-
     Attachment:
       type: object
       properties:
@@ -1636,8 +1631,7 @@ components:
         type: object
         properties:
           attribute: { $ref: "#/components/schemas/Attribute" }
-          value: { description: The value in the attribute's datatype; numbers in the base unit. }
-          unit: { oneOf: [{ $ref: "#/components/schemas/Unit" }, { type: "null" }] }
+          value: { description: The value in the attribute's datatype; numbers in the base unit of the attribute's unit. }
           display: { $ref: "#/components/schemas/Display" }
           is_default: { type: boolean, description: The class default, shown because there is no own value. }
 
@@ -1648,7 +1642,7 @@ components:
 
     Display:
       type: [object, "null"]
-      description: A base-unit number in the best-scaling unit of the group.
+      description: A base-unit number in the best-scaling unit of the family, or in the unit itself with unit_lock.
       properties:
         value: { type: number }
         unit: { $ref: "#/components/schemas/Unit" }
@@ -1659,8 +1653,9 @@ components:
         id: { $ref: "#/components/schemas/Uuid" }
         name: { type: string }
         datatype: { $ref: "#/components/schemas/Datatype" }
-        unit_group:
-          oneOf: [{ $ref: "#/components/schemas/UnitGroup" }, { type: "null" }]
+        unit:
+          oneOf: [{ $ref: "#/components/schemas/Unit" }, { type: "null" }]
+        unit_lock: { type: boolean }
         options:
           type: array
           description: Only for choice attributes in GET /attributes/{id}.
@@ -1736,8 +1731,9 @@ components:
         code: { type: string, description: Label code (Crockford Base32), e.g. 1A7K. }
         name: { type: string }
         class: { $ref: "#/components/schemas/Uuid" }
-        unit_group:
-          oneOf: [{ $ref: "#/components/schemas/UnitGroup" }, { type: "null" }]
+        unit:
+          oneOf: [{ $ref: "#/components/schemas/Unit" }, { type: "null" }]
+        unit_lock: { type: boolean }
         deleted: { $ref: "#/components/schemas/Deleted" }
 
     ItemListed:
@@ -1749,7 +1745,6 @@ components:
               type: object
               properties:
                 total: { type: number }
-                unit: { oneOf: [{ $ref: "#/components/schemas/Unit" }, { type: "null" }] }
                 display: { $ref: "#/components/schemas/Display" }
                 uncounted: { type: boolean }
             incomplete: { type: boolean, description: The item or one of its stock rows lacks a required value. }
@@ -1763,8 +1758,9 @@ components:
         name: { type: string }
         deleted: { $ref: "#/components/schemas/Deleted" }
         class: { $ref: "#/components/schemas/ClassDetail" }
-        unit_group:
-          oneOf: [{ $ref: "#/components/schemas/UnitGroup" }, { type: "null" }]
+        unit:
+          oneOf: [{ $ref: "#/components/schemas/Unit" }, { type: "null" }]
+        unit_lock: { type: boolean }
         values: { $ref: "#/components/schemas/Values" }
         missing: { $ref: "#/components/schemas/Missing" }
         photo: { oneOf: [{ $ref: "#/components/schemas/Attachment" }, { type: "null" }] }
@@ -1791,7 +1787,6 @@ components:
         item: { $ref: "#/components/schemas/ItemSummary" }
         location: { $ref: "#/components/schemas/Uuid" }
         quantity: { type: [number, "null"] }
-        unit: { oneOf: [{ $ref: "#/components/schemas/Unit" }, { type: "null" }] }
         display: { $ref: "#/components/schemas/Display" }
         deleted: { $ref: "#/components/schemas/Deleted" }
         merged_into:

@@ -442,16 +442,11 @@ func (e *env) editItem(id string) error {
 		}
 		p.patch["class"] = classID
 	}
-	// A unit group can only be changed to another of the same quantity,
-	// never added or removed, so it is only asked for when there is one.
-	if it.UnitGroup != nil {
-		if v, err = e.requiredField("Unit group", it.UnitGroup.Name, completeUnitGroups); err != nil {
+	// A unit can only be changed to another of the same quantity, never
+	// added or removed, so it is only asked for when there is one.
+	if it.Unit != nil {
+		if err := e.editUnit(p, it.Unit, it.UnitLock); err != nil {
 			return err
-		}
-		if v != it.UnitGroup.Name {
-			if p.patch["unit_group"], err = e.resolveUnitGroup(v); err != nil {
-				return err
-			}
 		}
 	}
 	if err := e.editValues(p, "/items/"+id, classID, false, it.Values); err != nil {
@@ -490,7 +485,7 @@ func (e *env) editStock(id string) error {
 			p.patch["quantity"] = nil
 			break
 		}
-		q, err := e.parseQuantity(v, s.Item.UnitGroup)
+		q, err := e.parseQuantity(v, s.Item.Unit)
 		if err == nil {
 			p.patch["quantity"] = q
 			break
@@ -546,18 +541,10 @@ func (e *env) editAttribute(id string) error {
 		p.patch["datatype"] = v
 	}
 	datatype = v
-	if datatype == "integer" || datatype == "float" {
-		group := unitGroupName(a.UnitGroup)
-		if v, err = e.field("Unit group (empty: none)", group, completeUnitGroups); err != nil {
+	// As for items, the unit is only asked for when there is one.
+	if a.Unit != nil && (datatype == "integer" || datatype == "float") {
+		if err := e.editUnit(p, a.Unit, a.UnitLock); err != nil {
 			return err
-		}
-		if v != group {
-			p.patch["unit_group"] = nil
-			if v != "" {
-				if p.patch["unit_group"], err = e.resolveUnitGroup(v); err != nil {
-					return err
-				}
-			}
 		}
 	}
 	if datatype == "choice" {
@@ -569,6 +556,44 @@ func (e *env) editAttribute(id string) error {
 		return err
 	}
 	return e.showAfterEdit("/attributes/"+id, func(e *env, d json.RawMessage) error { return e.printAttributeJSON(d) })
+}
+
+// editUnit asks for the unit of an attribute or item, which can change to
+// another unit of the same quantity, and for its Unit lock.
+func (e *env) editUnit(p *editPlan, u *unit, lock bool) error {
+	current, err := e.unitLabel(u)
+	if err != nil {
+		return err
+	}
+	for {
+		v, err := e.requiredField("Unit", current, completeQuantityUnits(u.Quantity.ID))
+		if err != nil {
+			return err
+		}
+		if v == current {
+			break
+		}
+		nu, err := e.resolveUnit(v)
+		if err == nil {
+			p.patch["unit"] = nu.ID
+			break
+		}
+		fmt.Fprintln(e.stderr, err)
+		current = v
+	}
+	for {
+		v, err := e.requiredField("Unit lock: always show in this unit (yes/no)", yesNo(lock), words("yes", "no"))
+		if err != nil {
+			return err
+		}
+		if b, ok := parseYesNo(v); ok {
+			if b != lock {
+				p.patch["unit_lock"] = b
+			}
+			return nil
+		}
+		fmt.Fprintf(e.stderr, "%q is not yes or no.\n", v)
+	}
 }
 
 // editOptions is a loop over the options of a choice attribute: NAME adds,

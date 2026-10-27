@@ -25,11 +25,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/radiohyperactivity/wtf/db"
+	"github.com/radiohyperactivity/wtf/internal/admin"
 	"github.com/radiohyperactivity/wtf/internal/config"
 	"github.com/radiohyperactivity/wtf/internal/files"
 	"github.com/radiohyperactivity/wtf/internal/schema"
 	"github.com/radiohyperactivity/wtf/internal/serve"
-	"github.com/radiohyperactivity/wtf/internal/tenant"
 )
 
 type environment struct {
@@ -40,17 +40,13 @@ type environment struct {
 	apiUser   string
 	files     *files.Store
 
-	// The tenant all requests go to by default, and its admin's token.
-	host, token string
-	// A second tenant, for isolation tests.
-	otherHost, otherToken string
+	// The session of the account all requests are sent as by default, which
+	// has every privilege.
+	token string
 }
 
-// The two tenants of every test run; each admin has every privilege.
-const (
-	testHost  = "test.wtf.local"
-	otherHost = "other.wtf.local"
-)
+// The account of every test run.
+const adminEmail = "admin@test.local"
 
 // Attachments in tests are limited to 1 MiB.
 const testMaxAttachment = 1 << 20
@@ -113,9 +109,9 @@ func connect() (*environment, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	// The test database's data is disposable. Empty it before migrating,
-	// because some migrations (0006) only run on a database without data.
-	if err := emptyTestData(ctx, dbaConfig); err != nil {
+	// The test database is disposable: every run builds its schema from
+	// nothing, as on a new installation.
+	if err := dropEverything(ctx, dbaConfig); err != nil {
 		return nil, "", err
 	}
 	if _, err := schema.Run(ctx, schema.Options{
@@ -160,46 +156,32 @@ func connect() (*environment, string, error) {
 		files:     store,
 	}
 
-	// Start from nothing: no tenants, accounts or data.
-	if _, err := dba.Exec(ctx, "TRUNCATE tenant, file CASCADE"); err != nil {
-		return nil, "", err
-	}
-	conn, err := tenant.Connect(ctx, dbaConfig)
+	// The first account, as "wtfd account create" makes it, logged in.
+	conn, err := admin.Connect(ctx, dbaConfig)
 	if err != nil {
 		return nil, "", err
 	}
 	defer conn.Close(ctx)
-	if e.host, e.token, err = e.newTenant(ctx, conn, "test", testHost, "admin@test.local"); err != nil {
+	password, err := admin.CreateAccount(ctx, conn, adminEmail)
+	if err != nil {
 		return nil, "", err
 	}
-	if e.otherHost, e.otherToken, err = e.newTenant(ctx, conn, "other", otherHost, "admin@other.local"); err != nil {
+	if e.token, err = e.login(adminEmail, password); err != nil {
 		return nil, "", err
 	}
 	return e, "", nil
 }
 
-// newTenant creates a tenant as "wtfd tenant create" does, and logs its
-// first account in.
-func (e *environment) newTenant(ctx context.Context, conn *pgx.Conn, name, host, email string) (string, string, error) {
-	password, err := tenant.Create(ctx, conn, name, host, email)
-	if err != nil {
-		return "", "", err
-	}
-	token, err := e.login(host, email, password)
-	return host, token, err
-}
-
 // login logs in through the API and returns the session token, which the
 // API sends as the session cookie.
-func (e *environment) login(host, email, password string) (string, error) {
+func (e *environment) login(email, password string) (string, error) {
 	data, _ := json.Marshal(map[string]string{"email": email, "password": password})
 	req := httptest.NewRequest("POST", "/api/v1/login", bytes.NewReader(data))
-	req.Host = host
 	rec := httptest.NewRecorder()
 	e.handler.ServeHTTP(rec, req)
 	token := sessionCookie(rec.Result())
 	if rec.Code != 200 || token == "" {
-		return "", fmt.Errorf("login %s at %s: %d %s", email, host, rec.Code, rec.Body.String())
+		return "", fmt.Errorf("login %s: %d %s", email, rec.Code, rec.Body.String())
 	}
 	return token, nil
 }
@@ -223,17 +205,14 @@ func apiPath(path string) string {
 	return "/api/v1" + path
 }
 
-// newRequest builds a request to the default tenant, logged in as its admin.
-// headers override that: "Host" picks another tenant, "Cookie" another login
-// ("" sends none). path is relative to /api/v1 unless it starts with /api/.
+// newRequest builds a request logged in as the admin. headers override that:
+// "Cookie" another login ("" sends none). path is relative to /api/v1 unless
+// it starts with /api/.
 func (e *environment) newRequest(method, path string, body io.Reader, headers ...string) *http.Request {
 	req := httptest.NewRequest(method, apiPath(path), body)
-	req.Host = e.host
 	req.Header.Set("Cookie", "wtf_session="+e.token)
 	for i := 0; i+1 < len(headers); i += 2 {
 		switch {
-		case headers[i] == "Host":
-			req.Host = headers[i+1]
 		case headers[i+1] == "":
 			req.Header.Del(headers[i])
 		default:
@@ -243,25 +222,20 @@ func (e *environment) newRequest(method, path string, body io.Reader, headers ..
 	return req
 }
 
-// as returns the headers for a request as another login: its tenant's host
-// and its session.
-func as(host, token string) []string {
-	return []string{"Host", host, "Cookie", "wtf_session=" + token}
+// as returns the headers for a request as another login.
+func as(token string) []string {
+	return []string{"Cookie", "wtf_session=" + token}
 }
 
-// emptyTestData deletes all data from a test database at any schema version
-// (or none yet).
-func emptyTestData(ctx context.Context, cfg *pgx.ConnConfig) error {
-	conn, err := tenant.Connect(ctx, cfg)
+// dropEverything drops all that the DBA role owns in the test database: the
+// schema, its data and wtfd's bookkeeping.
+func dropEverything(ctx context.Context, cfg *pgx.ConnConfig) error {
+	conn, err := admin.Connect(ctx, cfg)
 	if err != nil {
 		return err
 	}
 	defer conn.Close(ctx)
-	var hasData bool
-	if err := conn.QueryRow(ctx, "SELECT to_regclass('public.item') IS NOT NULL").Scan(&hasData); err != nil || !hasData {
-		return err
-	}
-	_, err = conn.Exec(ctx, "TRUNCATE item, class, attribute, location, stock, attachment CASCADE")
+	_, err = conn.Exec(ctx, "DROP OWNED BY CURRENT_USER CASCADE")
 	return err
 }
 
@@ -272,8 +246,8 @@ func getenv(name, fallback string) string {
 	return fallback
 }
 
-// reset deletes all user data. System data (quantities, units, unit groups)
-// stays.
+// reset deletes all user data. System data (quantities, unit families,
+// units) and accounts stay.
 func (e *environment) reset(t *testing.T) {
 	t.Helper()
 	_, err := e.dba.Exec(context.Background(),
@@ -369,15 +343,19 @@ func num(t *testing.T, v any, path ...any) float64 {
 	return n
 }
 
-// unitGroup returns the id of a seeded unit group by name.
-func (e *environment) unitGroup(t *testing.T, name string) string {
+// unit returns the id of a seeded unit by family name and symbol.
+func (e *environment) unit(t *testing.T, family, symbol string) int {
 	t.Helper()
-	r := e.expect(t, 200, "GET", "/unit-groups", nil)
-	for _, g := range r.body.([]any) {
-		if str(t, g, "name") == name {
-			return str(t, g, "id")
+	for _, f := range e.expect(t, 200, "GET", "/unit-families", nil).body.([]any) {
+		if str(t, f, "name") != family {
+			continue
+		}
+		for _, u := range get(t, f, "units").([]any) {
+			if str(t, u, "symbol") == symbol {
+				return int(num(t, u, "id"))
+			}
 		}
 	}
-	t.Fatalf("unit group %q not found", name)
-	return ""
+	t.Fatalf("unit %s of %s not found", symbol, family)
+	return 0
 }

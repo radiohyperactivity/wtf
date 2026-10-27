@@ -1,10 +1,10 @@
 # History
 
-The SQL is in [`db/repeatable/95_history.sql`](../db/repeatable/95_history.sql). The `history` table and its trigger are in [`db/migrations/0007_history.sql`](../db/migrations/0007_history.sql).
+The SQL is in [`db/repeatable/95_history.sql`](../db/repeatable/95_history.sql). The `history` table and its trigger are in [`db/migrations/0001_schema.sql`](../db/migrations/0001_schema.sql).
 
 ## What is recorded
 
-Every insert, update and delete of tenant data writes one entry: classes, attributes, options, class attributes, items, values, locations, stock rows, per-unit values, attachments and accounts. A trigger writes the entries, so nothing can bypass it, and no API function has to remember to log. Each entry has:
+Every insert, update and delete of the data writes one entry: classes, attributes, options, class attributes, items, values, locations, stock rows, per-unit values, attachments and accounts. A trigger writes the entries, so nothing can bypass it, and no API function has to remember to log. Each entry has:
 
 | Field         | Meaning |
 |---------------|---------|
@@ -23,7 +23,7 @@ Not recorded:
 
 ## Reading
 
-Each function needs the **history privilege**: `none` or `read_only`, where `read_write` counts as `read_only`. Entries come newest first, paged with `p_limit` and `p_offset`. They also work for deleted objects. Since migration 0010, deleting an item, stock row, location, class, attribute, option or attachment is an `update` that sets `deleted` (see [deleting.md](deleting.md)). A `delete` entry is a cleared value, a removed class assignment, or a purge.
+Each function needs the **history privilege**: `none` or `read_only`, where `read_write` counts as `read_only`. Entries come newest first, paged with `p_limit` and `p_offset`. They also work for deleted objects. Deleting an item, stock row, location, class, attribute, option or attachment is an `update` that sets `deleted` (see [deleting.md](deleting.md)). A `delete` entry is a cleared value, a removed class assignment, or a purge.
 
 | Function | Route | Includes |
 |----------|-------|----------|
@@ -52,5 +52,5 @@ Deleting an account doesn't remove it; it is marked `deleted`, so history can al
 History is kept until the operator purges it:
 
 ```sh
-wtfd history purge --older-than 730d [--tenant NAME] [--dry-run]
+wtfd history purge --older-than 730d [--dry-run]
 ```

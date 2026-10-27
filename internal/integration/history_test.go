@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/radiohyperactivity/wtf/internal/tenant"
+	"github.com/radiohyperactivity/wtf/internal/admin"
 )
 
 // historyOf returns the entries of a history endpoint as (table, operation)
@@ -74,11 +74,11 @@ func TestHistory(t *testing.T) {
 	// Deleted accounts: their history stays, they can't log in, and the email can be reused.
 	worker := str(t, e.expect(t, 201, "POST", "/accounts", obj("email", "worker@test.local",
 		"password", "worker-password", "data_privilege", "read_write")).body, "id")
-	workerToken := session(t, e.loginAs(t, 200, testHost, "worker@test.local", "worker-password"))
-	attic := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Attic"), as(testHost, workerToken)...).body, "id")
-	e.expect(t, 403, "GET", "/locations/"+attic+"/history", nil, as(testHost, workerToken)...) // no history privilege
+	workerToken := session(t, e.loginAs(t, 200, "worker@test.local", "worker-password"))
+	attic := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Attic"), as(workerToken)...).body, "id")
+	e.expect(t, 403, "GET", "/locations/"+attic+"/history", nil, as(workerToken)...) // no history privilege
 
-	e.loginAs(t, 401, testHost, "worker@test.local", "wrong-password") // lockout counter: not logged
+	e.loginAs(t, 401, "worker@test.local", "wrong-password") // lockout counter: not logged
 	before, _ := historyOf(t, e, "/accounts/"+worker+"/history")
 	e.expect(t, 200, "PATCH", "/accounts/"+worker, obj("password", "another-password"))
 	e.expect(t, 204, "DELETE", "/accounts/"+worker, nil)
@@ -94,8 +94,8 @@ func TestHistory(t *testing.T) {
 		t.Error("a password hash leaked into history")
 	}
 
-	e.expect(t, 401, "GET", "/me", nil, as(testHost, workerToken)...)
-	e.loginAs(t, 401, testHost, "worker@test.local", "another-password")
+	e.expect(t, 401, "GET", "/me", nil, as(workerToken)...)
+	e.loginAs(t, 401, "worker@test.local", "another-password")
 	if get(t, e.expect(t, 200, "GET", "/accounts/"+worker, nil).body, "deleted") != true {
 		t.Error("account_get should show the deleted account")
 	}
@@ -111,30 +111,27 @@ func TestHistory(t *testing.T) {
 	}
 
 	// Purge.
-	conn, err := tenant.Connect(context.Background(), e.dbaConfig)
+	conn, err := admin.Connect(context.Background(), e.dbaConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close(context.Background())
-	if n, err := tenant.PurgeHistory(context.Background(), conn, 0, "test", true); err != nil || n == 0 {
+	if n, err := admin.PurgeHistory(context.Background(), conn, 0, true); err != nil || n == 0 {
 		t.Errorf("dry-run purge: %d, %v", n, err)
 	}
-	if n, err := tenant.PurgeHistory(context.Background(), conn, 24*time.Hour, "test", false); err != nil || n != 0 {
+	if n, err := admin.PurgeHistory(context.Background(), conn, 24*time.Hour, false); err != nil || n != 0 {
 		t.Errorf("purge of entries older than a day: %d, %v", n, err)
-	}
-	if _, err := tenant.PurgeHistory(context.Background(), conn, 0, "no-such-tenant", true); err == nil {
-		t.Error("purge of an unknown tenant should fail")
 	}
 }
 
 func TestParseAge(t *testing.T) {
 	for in, want := range map[string]time.Duration{"730d": 730 * 24 * time.Hour, "36h": 36 * time.Hour, "0d": 0} {
-		if got, err := tenant.ParseAge(in); err != nil || got != want {
+		if got, err := admin.ParseAge(in); err != nil || got != want {
 			t.Errorf("ParseAge(%q) = %v, %v", in, got, err)
 		}
 	}
 	for _, in := range []string{"", "x", "-1d", "1y"} {
-		if _, err := tenant.ParseAge(in); err == nil {
+		if _, err := admin.ParseAge(in); err == nil {
 			t.Errorf("ParseAge(%q) should fail", in)
 		}
 	}

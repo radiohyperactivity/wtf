@@ -11,7 +11,7 @@ $env:WTFD_DATABASE_HOST = 'db.example.lan'     # default: localhost
 # $env:WTFD_DATABASE_SSLMODE = 'prefer'        # disable, allow, prefer, require, verify-ca, verify-full
 
 # --- Roles ---
-# $env:WTFD_DBA_DATABASE_USER = 'wtf_dba'      # schema owner (schema, tenant, history, gc)
+# $env:WTFD_DBA_DATABASE_USER = 'wtf_dba'      # schema owner (schema, account, history, gc)
 # $env:WTFD_API_DATABASE_USER = 'wtf_api'      # role the REST API connects as (serve)
 
 # --- Passwords: read from files outside the project, so they never sit in a script ---

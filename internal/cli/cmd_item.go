@@ -144,17 +144,18 @@ func itemGroup() group {
 			},
 			{
 				name:    "add",
-				args:    "<name> --class C [--unit-group G] [--value ATTRIBUTE=VALUE]… [--edit]",
+				args:    "<name> --class C [--unit U [--unit-lock]] [--value ATTRIBUTE=VALUE]… [--edit]",
 				summary: "Create an item. Values may carry units (--value Length=12mm).",
 				params:  []param{arg("Name", nil)},
 				flags: map[string]param{
-					"class":      arg("Class", completeItemClasses),
-					"unit-group": arg("Unit group", completeUnitGroups),
-					"value":      arg("Value", completeAssignment),
+					"class": arg("Class", completeItemClasses),
+					"unit":  arg("Unit", completeUnits),
+					"value": arg("Value", completeAssignment),
 				},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
 					classRef := fs.String("class", "", "the item's class (required)")
-					group := fs.String("unit-group", "", "unit group of its stock quantities (default: counted in pieces)")
+					unitRef := fs.String("unit", "", "unit of its stock quantities, e.g. m or g (default: counted in pieces)")
+					unitLock := fs.Bool("unit-lock", false, "always show its stock in that unit, instead of scaling within the unit's family")
 					editAfter := fs.Bool("edit", false, "open the new item in the edit form")
 					var values stringList
 					fs.Var(&values, "value", "an attribute value, ATTRIBUTE=VALUE (repeatable)")
@@ -176,15 +177,13 @@ func itemGroup() group {
 							return err
 						}
 						body["class"] = classID
-						if *group == "" {
-							if *group, err = e.offer("Unit group (Enter: counted in pieces)", arg("", completeUnitGroups), args); err != nil {
+						if *unitRef == "" {
+							if *unitRef, err = e.offer("Unit (Enter: counted in pieces)", arg("", completeUnits), args); err != nil {
 								return err
 							}
 						}
-						if *group != "" {
-							if body["unit_group"], err = e.resolveUnitGroup(*group); err != nil {
-								return err
-							}
+						if err := e.setUnit(body, *unitRef, *unitLock); err != nil {
+							return err
 						}
 						v, err := e.parseValues(values)
 						if err != nil {
@@ -221,18 +220,20 @@ func itemGroup() group {
 			},
 			{
 				name:    "set",
-				args:    "<item> [--name N] [--class C] [--unit-group G|none]",
-				summary: "Change an item's name, class or unit group.",
+				args:    "<item> [--name N] [--class C] [--unit U] [--unit-lock yes|no]",
+				summary: "Change an item's name, class, unit (to another of the same quantity) or Unit lock.",
 				params:  []param{itemParam},
 				flags: map[string]param{
-					"class":      arg("Class", completeItemClasses),
-					"unit-group": arg("Unit group", completeUnitGroups),
+					"class":     arg("Class", completeItemClasses),
+					"unit":      arg("Unit", completeUnits),
+					"unit-lock": arg("Unit lock", words("yes", "no")),
 				},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					var name, classRef, group optString
+					var name, classRef, unitRef, unitLock optString
 					fs.Var(&name, "name", "new name")
 					fs.Var(&classRef, "class", "new class")
-					fs.Var(&group, "unit-group", "new unit group, or none")
+					fs.Var(&unitRef, "unit", "new unit, of the same quantity")
+					fs.Var(&unitLock, "unit-lock", "yes: always show stock in the unit; no: scale within its family")
 					return func(e *env, args []string) error {
 						if err := wantArgs(args, 1, 1); err != nil {
 							return err
@@ -250,13 +251,8 @@ func itemGroup() group {
 								return err
 							}
 						}
-						if group.set {
-							body["unit_group"] = nil
-							if !isNone(group.value) {
-								if body["unit_group"], err = e.resolveUnitGroup(group.value); err != nil {
-									return err
-								}
-							}
+						if err := e.patchUnit(body, unitRef, unitLock); err != nil {
+							return err
 						}
 						if len(body) == 0 {
 							return usagef("nothing to change")
@@ -388,7 +384,7 @@ func (e *env) printItemJSON(data json.RawMessage) error {
 		"Name", it.Name,
 		"Deleted", deletedNote(it.Deleted, "item", it.Code),
 		"Class", pathNames(it.Class.Path),
-		"Unit group", unitGroupName(it.UnitGroup),
+		"Unit", unitName(it.Unit, it.UnitLock),
 		"Photo", photo,
 		"Id", it.ID)
 	if len(it.Values) > 0 {
@@ -558,7 +554,7 @@ func stockGroup() group {
 						if err := e.get("/stock/"+stockID, nil, &s); err != nil {
 							return err
 						}
-						if body["quantity"], err = e.parseQuantity(quantity, s.Item.UnitGroup); err != nil {
+						if body["quantity"], err = e.parseQuantity(quantity, s.Item.Unit); err != nil {
 							return err
 						}
 					}
@@ -605,7 +601,7 @@ func stockGroup() group {
 						if quantity.set {
 							body["quantity"] = nil
 							if !isNone(quantity.value) {
-								// The unit group is the (possibly new) item's.
+								// The unit is the (possibly new) item's.
 								itemID := ""
 								if v, ok := body["item"].(string); ok {
 									itemID = v
@@ -620,7 +616,7 @@ func stockGroup() group {
 								if err := e.get("/items/"+itemID, nil, &it); err != nil {
 									return err
 								}
-								if body["quantity"], err = e.parseQuantity(quantity.value, it.UnitGroup); err != nil {
+								if body["quantity"], err = e.parseQuantity(quantity.value, it.Unit); err != nil {
 									return err
 								}
 							}
@@ -700,7 +696,7 @@ func (e *env) printStockJSON(data json.RawMessage) error {
 func (e *env) createStock(it item, locationID, quantity string, values object) (json.RawMessage, error) {
 	body := object{"item": it.ID, "location": locationID}
 	if quantity != "" {
-		q, err := e.parseQuantity(quantity, it.UnitGroup)
+		q, err := e.parseQuantity(quantity, it.Unit)
 		if err != nil {
 			return nil, err
 		}

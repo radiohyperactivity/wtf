@@ -65,7 +65,7 @@ func loginCommand() command {
 	return command{
 		name:    "login",
 		args:    "[--server URL] [--email EMAIL] [--profile NAME]",
-		summary: "Log in; the server's hostname selects the tenant. Password: prompted, or WTF_PASSWORD.",
+		summary: "Log in. Password: prompted, or WTF_PASSWORD.",
 		setup: func(fs *flag.FlagSet) func(*env, []string) error {
 			email := fs.String("email", "", "account email (default: the profile's)")
 			return func(e *env, args []string) error {
@@ -97,14 +97,13 @@ func loginCommand() command {
 					}
 				}
 
-				anonymous := newClient(server, "")
+				anonymous := client.New(server, "")
 				data, header, err := anonymous.Do(e.ctx, http.MethodPost, "/login", nil, object{"email": *email, "password": password})
 				if err != nil {
 					return err
 				}
 				var result struct {
 					Account account `json:"account"`
-					Tenant  tenant  `json:"tenant"`
 				}
 				if err := decode(data, &result); err != nil {
 					return err
@@ -122,7 +121,7 @@ func loginCommand() command {
 					return err
 				}
 				return e.emit(data, func() error {
-					fmt.Fprintf(e.stdout, "Logged in to %s as %s (profile %q).\n", result.Tenant.Name, result.Account.Email, e.profile)
+					fmt.Fprintf(e.stdout, "Logged in to %s as %s (profile %q).\n", p.Server, result.Account.Email, e.profile)
 					return nil
 				})
 			}
@@ -165,7 +164,7 @@ func logoutCommand() command {
 func whoamiCommand() command {
 	return command{
 		name:    "whoami",
-		summary: "Show the logged-in account, its tenant and privileges.",
+		summary: "Show the logged-in account and its privileges.",
 		setup: func(fs *flag.FlagSet) func(*env, []string) error {
 			return func(e *env, args []string) error {
 				if err := wantArgs(args, 0, 0); err != nil {
@@ -180,13 +179,8 @@ func whoamiCommand() command {
 					if err := decode(data, &a); err != nil {
 						return err
 					}
-					tenantName := ""
-					if a.Tenant != nil {
-						tenantName = a.Tenant.Name + " (" + a.Tenant.Hostname + ")"
-					}
 					fields(e.stdout,
 						"Email", a.Email,
-						"Tenant", tenantName,
 						"Server", e.api.Server,
 						"Profile", e.profile,
 						"Privileges", privileges(a))

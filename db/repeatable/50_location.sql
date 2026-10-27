@@ -13,9 +13,9 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tenant  uuid   := util.require('data', 'read');
-    v_version bigint := util.data_version(v_tenant, 'location');
+    v_version bigint := util.data_version('location');
 BEGIN
+    PERFORM util.require('data', 'read');
     IF p_known_version IS NOT DISTINCT FROM v_version THEN
         RETURN jsonb_build_object('version', v_version, 'unchanged', true);
     END IF;
@@ -23,7 +23,7 @@ BEGIN
     RETURN jsonb_build_object(
         'version',   v_version,
         'unchanged', false,
-        'tree',      util.location_tree(v_tenant, NULL)
+        'tree',      util.location_tree(NULL)
     );
 END;
 $$;
@@ -33,10 +33,9 @@ CREATE FUNCTION location_get(p_id uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('data', 'read');
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM location WHERE id = p_id AND tenant = v_tenant) THEN
+    PERFORM util.require('data', 'read');
+    IF NOT EXISTS (SELECT 1 FROM location WHERE id = p_id) THEN
         PERFORM util.raise_not_found('location', p_id);
     END IF;
     RETURN util.location_json(p_id) || jsonb_build_object('attachments', util.attachments_json(NULL, NULL, p_id, NULL));
@@ -56,12 +55,12 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tenant  uuid := util.require('data', 'write');
     v_id      uuid;
     v_columns integer;
     v_rows    integer;
     v_total   bigint;
 BEGIN
+    PERFORM util.require('data', 'write');
     IF p_grid IS NOT NULL AND jsonb_typeof(p_grid) <> 'null' THEN
         IF jsonb_typeof(p_grid) <> 'object'
            OR NOT (p_grid ?& ARRAY['columns', 'rows'])
@@ -83,14 +82,14 @@ BEGIN
         END IF;
     END IF;
 
-    INSERT INTO location (tenant, name, parent, container)
-    VALUES (v_tenant, util.clean_path_name(p_name, 'location'), p_parent,
+    INSERT INTO location (name, parent, container)
+    VALUES (util.clean_path_name(p_name, 'location'), p_parent,
             COALESCE(p_container, false) OR v_columns IS NOT NULL)
     RETURNING id INTO v_id;
 
     IF v_columns IS NOT NULL THEN
-        INSERT INTO location (tenant, name, parent)
-        SELECT v_tenant, util.column_label(c) || r, v_id
+        INSERT INTO location (name, parent)
+        SELECT util.column_label(c) || r, v_id
         FROM generate_series(1, v_columns) AS c
         CROSS JOIN generate_series(1, v_rows) AS r
         ORDER BY c, r;
@@ -108,9 +107,8 @@ CREATE FUNCTION location_patch(p_id uuid, p_patch jsonb) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('data', 'write');
 BEGIN
+    PERFORM util.require('data', 'write');
     PERFORM util.check_patch(p_patch, ARRAY['name', 'parent', 'container'], ARRAY['name', 'container']);
 
     UPDATE location
@@ -120,8 +118,7 @@ BEGIN
                          THEN (p_patch ->> 'parent')::uuid ELSE parent END,
         container = CASE WHEN p_patch ? 'container'
                          THEN (p_patch ->> 'container')::boolean ELSE container END
-    WHERE id = p_id
-      AND tenant = v_tenant;
+    WHERE id = p_id;
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('location', p_id);
@@ -136,10 +133,9 @@ CREATE FUNCTION location_delete(p_id uuid) RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('data', 'write');
 BEGIN
-    UPDATE location SET deleted = true WHERE id = p_id AND tenant = v_tenant;
+    PERFORM util.require('data', 'write');
+    UPDATE location SET deleted = true WHERE id = p_id;
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('location', p_id);
@@ -163,14 +159,14 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tenant    uuid := util.require('data', 'write');
     v_locations uuid[];
     v_stock     uuid[];
     v_location  uuid;
     v_in_use    text;
     v_result    jsonb;
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM location WHERE id = p_id AND tenant = v_tenant) THEN
+    PERFORM util.require('data', 'write');
+    IF NOT EXISTS (SELECT 1 FROM location WHERE id = p_id) THEN
         PERFORM util.raise_not_found('location', p_id);
     END IF;
     PERFORM check_live('location', p_id);
@@ -245,7 +241,6 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tenant      uuid := util.require('data', 'write');
     v_location    location;
     v_parent      uuid;
     v_transaction xid8;
@@ -253,8 +248,9 @@ DECLARE
     v_stock       uuid[];
     v_child       uuid;
 BEGIN
+    PERFORM util.require('data', 'write');
     PERFORM util.check_patch(p_options, ARRAY['name', 'parent', 'with_parents'], ARRAY['name', 'with_parents']);
-    SELECT * INTO v_location FROM location WHERE id = p_id AND tenant = v_tenant FOR UPDATE;
+    SELECT * INTO v_location FROM location WHERE id = p_id FOR UPDATE;
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('location', p_id);
     END IF;
@@ -319,15 +315,14 @@ CREATE FUNCTION stock_list(
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('data', 'read');
 BEGIN
+    PERFORM util.require('data', 'read');
     PERFORM util.check_paging(p_limit, p_offset);
 
-    IF p_item IS NOT NULL AND NOT EXISTS (SELECT 1 FROM item WHERE id = p_item AND tenant = v_tenant) THEN
+    IF p_item IS NOT NULL AND NOT EXISTS (SELECT 1 FROM item WHERE id = p_item) THEN
         PERFORM util.raise_not_found('item', p_item);
     END IF;
-    IF p_location IS NOT NULL AND NOT EXISTS (SELECT 1 FROM location WHERE id = p_location AND tenant = v_tenant) THEN
+    IF p_location IS NOT NULL AND NOT EXISTS (SELECT 1 FROM location WHERE id = p_location) THEN
         PERFORM util.raise_not_found('location', p_location);
     END IF;
 
@@ -336,8 +331,7 @@ BEGIN
             SELECT s.id, i.name AS item_name
             FROM stock s
             JOIN item i ON i.id = s.item
-            WHERE s.tenant = v_tenant
-              AND NOT s.deleted
+            WHERE NOT s.deleted
               AND (p_item IS NULL OR s.item = p_item)
               AND (p_location IS NULL OR s.location IN (SELECT util.location_subtree(p_location)))
         )
@@ -365,17 +359,16 @@ CREATE FUNCTION stock_get(p_id uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('data', 'read');
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM stock WHERE id = p_id AND tenant = v_tenant) THEN
+    PERFORM util.require('data', 'read');
+    IF NOT EXISTS (SELECT 1 FROM stock WHERE id = p_id) THEN
         PERFORM util.raise_not_found('stock', p_id);
     END IF;
     RETURN util.stock_detail_json(p_id);
 END;
 $$;
 
--- p_quantity is in the base unit of the item's unit group (pieces if none);
+-- p_quantity is in the base unit of the item's unit (pieces if none);
 -- NULL = present but not counted. p_values sets per-unit values:
 -- {"<attribute id>": <value>, ...}. Required per-unit attributes without a
 -- default must be given (checked at commit).
@@ -389,11 +382,11 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tenant uuid := util.require('data', 'write');
     v_id     uuid;
 BEGIN
-    INSERT INTO stock (tenant, item, location, quantity)
-    VALUES (v_tenant, p_item, p_location, p_quantity)
+    PERFORM util.require('data', 'write');
+    INSERT INTO stock (item, location, quantity)
+    VALUES (p_item, p_location, p_quantity)
     RETURNING id INTO v_id;
 
     PERFORM util.values_upsert(true, v_id, p_values);
@@ -410,9 +403,8 @@ CREATE FUNCTION stock_patch(p_id uuid, p_patch jsonb) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('data', 'write');
 BEGIN
+    PERFORM util.require('data', 'write');
     PERFORM util.check_patch(p_patch, ARRAY['item', 'location', 'quantity'], ARRAY['item', 'location']);
 
     UPDATE stock
@@ -422,8 +414,7 @@ BEGIN
                         THEN (p_patch ->> 'location')::uuid ELSE location END,
         quantity = CASE WHEN p_patch ? 'quantity'
                         THEN (p_patch ->> 'quantity')::numeric ELSE quantity END
-    WHERE id = p_id
-      AND tenant = v_tenant;
+    WHERE id = p_id;
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('stock', p_id);
@@ -434,7 +425,7 @@ $$;
 
 -- Moves (part of) a stock row to another location.
 -- p_quantity NULL moves the whole row; otherwise it is the amount to move
--- (in the base unit of the item's unit group), and the row must be counted.
+-- (in the base unit of the item's unit), and the row must be counted.
 -- If the destination already holds exactly one counted row of the same item
 -- with exactly the same per-unit values, and the moved row has no
 -- attachments, the moved amount is added to that row (a whole row is then
@@ -448,14 +439,14 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tenant     uuid := util.require('data', 'write');
     v_stock      stock;
     v_amount     numeric;
     v_whole      boolean;
     v_candidates uuid[];
     v_target     uuid;
 BEGIN
-    SELECT * INTO v_stock FROM stock WHERE id = p_id AND tenant = v_tenant FOR UPDATE;
+    PERFORM util.require('data', 'write');
+    SELECT * INTO v_stock FROM stock WHERE id = p_id FOR UPDATE;
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('stock', p_id);
     END IF;
@@ -483,8 +474,7 @@ BEGIN
         v_candidates := ARRAY(
             SELECT id
             FROM stock
-            WHERE tenant = v_tenant
-              AND item = v_stock.item
+            WHERE item = v_stock.item
               AND location = p_location
               AND quantity IS NOT NULL
               AND NOT deleted
@@ -516,21 +506,21 @@ BEGIN
 
     UPDATE stock SET quantity = quantity - v_amount WHERE id = p_id;
 
-    INSERT INTO stock (tenant, item, location, quantity)
-    VALUES (v_tenant, v_stock.item, p_location, v_amount)
+    INSERT INTO stock (item, location, quantity)
+    VALUES (v_stock.item, p_location, v_amount)
     RETURNING id INTO v_target;
 
-    INSERT INTO stock_value (tenant, stock, attribute,
+    INSERT INTO stock_value (stock, attribute,
                              text_value, integer_value, float_value,
                              date_value, boolean_value, option_value)
-    SELECT tenant, v_target, attribute,
+    SELECT v_target, attribute,
            text_value, integer_value, float_value,
            date_value, boolean_value, option_value
     FROM stock_value
     WHERE stock = p_id;
 
-    INSERT INTO attachment (tenant, file, file_name, content_type, caption, primary_photo, stock)
-    SELECT tenant, file, file_name, content_type, caption, primary_photo, v_target
+    INSERT INTO attachment (file, file_name, content_type, caption, primary_photo, stock)
+    SELECT file, file_name, content_type, caption, primary_photo, v_target
     FROM attachment
     WHERE stock = p_id AND NOT deleted;
 
@@ -543,10 +533,9 @@ CREATE FUNCTION stock_delete(p_id uuid) RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('data', 'write');
 BEGIN
-    UPDATE stock SET deleted = true WHERE id = p_id AND tenant = v_tenant;
+    PERFORM util.require('data', 'write');
+    UPDATE stock SET deleted = true WHERE id = p_id;
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('stock', p_id);
@@ -566,12 +555,12 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tenant   uuid := util.require('data', 'write');
     v_stock    stock;
     v_location uuid;
 BEGIN
+    PERFORM util.require('data', 'write');
     PERFORM util.check_patch(p_options, ARRAY['location', 'with_parents'], ARRAY['location', 'with_parents']);
-    SELECT * INTO v_stock FROM stock WHERE id = p_id AND tenant = v_tenant FOR UPDATE;
+    SELECT * INTO v_stock FROM stock WHERE id = p_id FOR UPDATE;
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('stock', p_id);
     END IF;
@@ -613,15 +602,14 @@ $$;
 -- ---------------------------------------------------------------------------
 
 -- Sets (inserts or replaces) one per-unit value of a stock row. Numbers of
--- attributes with a unit group are given in the base unit. Returns the row.
+-- attributes with a unit are given in the base unit. Returns the row.
 CREATE FUNCTION stock_value_set(p_stock uuid, p_attribute uuid, p_value jsonb) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('data', 'write');
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM stock WHERE id = p_stock AND tenant = v_tenant) THEN
+    PERFORM util.require('data', 'write');
+    IF NOT EXISTS (SELECT 1 FROM stock WHERE id = p_stock) THEN
         PERFORM util.raise_not_found('stock', p_stock);
     END IF;
 
@@ -636,14 +624,12 @@ CREATE FUNCTION stock_value_delete(p_stock uuid, p_attribute uuid) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_tenant uuid := util.require('data', 'write');
 BEGIN
+    PERFORM util.require('data', 'write');
     PERFORM check_live('stock', p_stock);
     DELETE FROM stock_value
     WHERE stock = p_stock
-      AND attribute = p_attribute
-      AND tenant = v_tenant;
+      AND attribute = p_attribute;
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Stock row % has no value for attribute %', p_stock, p_attribute

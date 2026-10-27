@@ -3,7 +3,7 @@
 //	wtfd schema [flags]    create or upgrade the database schema
 //	wtfd serve [flags]     run the REST API
 //	wtfd gc [flags]        remove attachment files nothing refers to any more
-//	wtfd tenant <command> create, list or change tenants
+//	wtfd account <command> create an account, or set a lost password
 //	wtfd history purge     delete old history entries
 //	wtfd deleted purge     remove what was deleted long ago
 //
@@ -22,11 +22,11 @@ import (
 	"syscall"
 
 	"github.com/radiohyperactivity/wtf/db"
+	"github.com/radiohyperactivity/wtf/internal/admin"
 	"github.com/radiohyperactivity/wtf/internal/config"
 	"github.com/radiohyperactivity/wtf/internal/files"
 	"github.com/radiohyperactivity/wtf/internal/schema"
 	"github.com/radiohyperactivity/wtf/internal/serve"
-	"github.com/radiohyperactivity/wtf/internal/tenant"
 )
 
 const (
@@ -42,7 +42,7 @@ Actions:
   schema    create or upgrade the database schema and function grants
   serve     run the REST API
   gc        remove attachment files nothing refers to any more
-  tenant    create, list or change tenants
+  account   create an account, or set a lost password
   history   delete old history entries (purge)
   deleted   remove what was deleted long ago (purge)
 
@@ -65,8 +65,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runServe(args[1:], stderr)
 	case "gc":
 		return runGC(args[1:], stderr)
-	case "tenant":
-		return runTenant(args[1:], stdout, stderr)
+	case "account":
+		return runAccount(args[1:], stdout, stderr)
 	case "deleted":
 		return runDeleted(args[1:], stdout, stderr)
 	case "history":
@@ -250,113 +250,89 @@ func runGC(args []string, stderr io.Writer) int {
 	return exitOK
 }
 
-const tenantUsage = `Usage:
-  wtfd tenant create --name NAME --hostname HOST --email EMAIL [database flags]
-  wtfd tenant list [database flags]
-  wtfd tenant update --name NAME [--new-name NAME] [--hostname HOST] [database flags]
+const accountUsage = `Usage:
+  wtfd account create --email EMAIL [database flags]
+  wtfd account password --email EMAIL [database flags]
 
-Run "wtfd tenant <command> -h" for all flags.
+create makes an account with every privilege, such as the first one;
+password gives an account a new password, when it is lost. Both print a
+generated password once.
 `
 
-func runTenant(args []string, stdout, stderr io.Writer) int {
+func runAccount(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprint(stderr, tenantUsage)
+		fmt.Fprint(stderr, accountUsage)
 		return exitUsage
 	}
 	command := args[0]
-	fs := flag.NewFlagSet("wtfd tenant "+command, flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	database := config.RegisterDatabase(fs)
-	var name, hostname, email, newName *string
 	switch command {
-	case "create":
-		name = fs.String("name", "", "tenant name (required)")
-		hostname = fs.String("hostname", "", "hostname the tenant is reached at (required)")
-		email = fs.String("email", "", "email of the first account, which gets every privilege (required)")
-	case "list":
-	case "update":
-		name = fs.String("name", "", "current tenant name (required)")
-		newName = fs.String("new-name", "", "new tenant name")
-		hostname = fs.String("hostname", "", "new hostname")
+	case "create", "password":
 	case "help", "-h", "-help", "--help":
-		fmt.Fprint(stderr, tenantUsage)
+		fmt.Fprint(stderr, accountUsage)
 		return exitOK
 	default:
-		fmt.Fprintf(stderr, "wtfd tenant: unknown command %q\n\n%s", command, tenantUsage)
+		fmt.Fprintf(stderr, "wtfd account: unknown command %q\n\n%s", command, accountUsage)
 		return exitUsage
 	}
+	fs := flag.NewFlagSet("wtfd account "+command, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	database := config.RegisterDatabase(fs)
+	email := fs.String("email", "", "the account's email (required)")
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return exitOK
 		}
 		return exitUsage
 	}
-	missing := func(flags ...string) bool {
-		for _, f := range flags {
-			if fs.Lookup(f).Value.String() == "" {
-				fmt.Fprintf(stderr, "wtfd tenant %s: --%s is required\n", command, f)
-				return true
-			}
-		}
-		return false
-	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "wtfd tenant %s: unexpected argument %q\n", command, fs.Arg(0))
+		fmt.Fprintf(stderr, "wtfd account %s: unexpected argument %q\n", command, fs.Arg(0))
 		return exitUsage
 	}
-	if (command == "create" && missing("name", "hostname", "email")) || (command == "update" && missing("name")) {
+	if *email == "" {
+		fmt.Fprintf(stderr, "wtfd account %s: --email is required\n", command)
 		return exitUsage
 	}
 	if err := database.Validate(); err != nil {
-		fmt.Fprintf(stderr, "wtfd tenant: %v\n", err)
+		fmt.Fprintf(stderr, "wtfd account: %v\n", err)
 		return exitUsage
 	}
 
-	connConfig, err := database.ConnConfig(database.DBAUser, os.Getenv(config.DBAPasswordEnv), "wtfd tenant")
+	connConfig, err := database.ConnConfig(database.DBAUser, os.Getenv(config.DBAPasswordEnv), "wtfd account")
 	if err != nil {
-		fmt.Fprintf(stderr, "wtfd tenant: %v\n", err)
+		fmt.Fprintf(stderr, "wtfd account: %v\n", err)
 		return exitUsage
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	conn, err := tenant.Connect(ctx, connConfig)
+	conn, err := admin.Connect(ctx, connConfig)
 	if err != nil {
-		fmt.Fprintf(stderr, "wtfd tenant: %v\n", err)
+		fmt.Fprintf(stderr, "wtfd account: %v\n", err)
 		return exitFailure
 	}
 	defer conn.Close(context.Background())
 
-	switch command {
-	case "create":
-		password, err := tenant.Create(ctx, conn, *name, *hostname, *email)
-		if err != nil {
-			fmt.Fprintf(stderr, "wtfd tenant create: %v\n", err)
-			return exitFailure
-		}
-		fmt.Fprintf(stdout, "Tenant %q created at %s.\n", *name, *hostname)
-		fmt.Fprintf(stdout, "First account: %s\nPassword:      %s\n", *email, password)
-		fmt.Fprintln(stdout, "The password is shown only this once; change it after logging in (PUT /me/password).")
-	case "list":
-		tenants, err := tenant.List(ctx, conn)
-		if err != nil {
-			fmt.Fprintf(stderr, "wtfd tenant list: %v\n", err)
-			return exitFailure
-		}
-		for _, t := range tenants {
-			fmt.Fprintf(stdout, "%-24s %-32s %d account(s)\n", t.Name, t.Hostname, t.Accounts)
-		}
-	case "update":
-		if err := tenant.Update(ctx, conn, *name, *newName, *hostname); err != nil {
-			fmt.Fprintf(stderr, "wtfd tenant update: %v\n", err)
-			return exitFailure
-		}
-		fmt.Fprintln(stdout, "Tenant updated.")
+	var password string
+	if command == "create" {
+		password, err = admin.CreateAccount(ctx, conn, *email)
+	} else {
+		password, err = admin.SetPassword(ctx, conn, *email)
 	}
+	if err != nil {
+		fmt.Fprintf(stderr, "wtfd account %s: %v\n", command, err)
+		return exitFailure
+	}
+	if command == "create" {
+		fmt.Fprintf(stdout, "Account %s created, with every privilege.\n", *email)
+	} else {
+		fmt.Fprintf(stdout, "New password for %s; its sessions have ended.\n", *email)
+	}
+	fmt.Fprintf(stdout, "Password: %s\n", password)
+	fmt.Fprintln(stdout, "The password is shown only this once; change it after logging in (PUT /me/password).")
 	return exitOK
 }
 
 const historyUsage = `Usage:
-  wtfd history purge --older-than AGE [--tenant NAME] [--dry-run] [database flags]
+  wtfd history purge --older-than AGE [--dry-run] [database flags]
 
 AGE is a number of days (730d) or a Go duration (36h).
 `
@@ -374,7 +350,6 @@ func runHistory(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	database := config.RegisterDatabase(fs)
 	olderThan := fs.String("older-than", "", "delete entries older than this, e.g. 730d (required)")
-	tenantName := fs.String("tenant", "", "only this tenant (default: all tenants)")
 	dryRun := fs.Bool("dry-run", false, "count the entries, delete nothing")
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -390,7 +365,7 @@ func runHistory(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "wtfd history purge: --older-than is required")
 		return exitUsage
 	}
-	age, err := tenant.ParseAge(*olderThan)
+	age, err := admin.ParseAge(*olderThan)
 	if err != nil {
 		fmt.Fprintf(stderr, "wtfd history purge: --older-than: %v\n", err)
 		return exitUsage
@@ -407,14 +382,14 @@ func runHistory(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	conn, err := tenant.Connect(ctx, connConfig)
+	conn, err := admin.Connect(ctx, connConfig)
 	if err != nil {
 		fmt.Fprintf(stderr, "wtfd history purge: %v\n", err)
 		return exitFailure
 	}
 	defer conn.Close(context.Background())
 
-	n, err := tenant.PurgeHistory(ctx, conn, age, *tenantName, *dryRun)
+	n, err := admin.PurgeHistory(ctx, conn, age, *dryRun)
 	if err != nil {
 		fmt.Fprintf(stderr, "wtfd history purge: %v\n", err)
 		return exitFailure
@@ -428,7 +403,7 @@ func runHistory(args []string, stdout, stderr io.Writer) int {
 }
 
 const deletedUsage = `Usage:
-  wtfd deleted purge --older-than AGE [--tenant NAME] [--dry-run] [database flags]
+  wtfd deleted purge --older-than AGE [--dry-run] [database flags]
 
 Removes for good what was deleted longer ago than AGE: a number of days
 (730d) or a Go duration (36h).
@@ -446,7 +421,6 @@ func runDeleted(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	database := config.RegisterDatabase(fs)
 	olderThan := fs.String("older-than", "", "remove what was deleted longer ago than this, e.g. 730d (required)")
-	tenantName := fs.String("tenant", "", "only this tenant (default: all tenants)")
 	dryRun := fs.Bool("dry-run", false, "count what would be removed, remove nothing")
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -462,7 +436,7 @@ func runDeleted(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "wtfd deleted purge: --older-than is required")
 		return exitUsage
 	}
-	age, err := tenant.ParseAge(*olderThan)
+	age, err := admin.ParseAge(*olderThan)
 	if err != nil {
 		fmt.Fprintf(stderr, "wtfd deleted purge: --older-than: %v\n", err)
 		return exitUsage
@@ -479,14 +453,14 @@ func runDeleted(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	conn, err := tenant.Connect(ctx, connConfig)
+	conn, err := admin.Connect(ctx, connConfig)
 	if err != nil {
 		fmt.Fprintf(stderr, "wtfd deleted purge: %v\n", err)
 		return exitFailure
 	}
 	defer conn.Close(context.Background())
 
-	counts, err := tenant.PurgeDeleted(ctx, conn, age, *tenantName, *dryRun)
+	counts, err := admin.PurgeDeleted(ctx, conn, age, *dryRun)
 	if err != nil {
 		fmt.Fprintf(stderr, "wtfd deleted purge: %v\n", err)
 		return exitFailure
@@ -495,7 +469,7 @@ func runDeleted(args []string, stdout, stderr io.Writer) int {
 	if *dryRun {
 		verb = "Would remove"
 	}
-	for _, kind := range tenant.PurgedKinds {
+	for _, kind := range admin.PurgedKinds {
 		fmt.Fprintf(stdout, "%s %d %s.\n", verb, counts[kind.Table], kind.Name)
 	}
 	return exitOK
