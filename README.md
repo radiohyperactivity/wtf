@@ -9,6 +9,7 @@ Keeping your shit organised: a database of the things you own (from tiny electro
 | [seed/units.md](seed/units.md) | System data: quantities, unit families and units            |
 | [API.md](API.md)             | The PL/pgSQL functions all data access goes through           |
 | [CLI.md](CLI.md)             | `wtf`, the command-line client                                |
+| [TODO.md](TODO.md)           | Things to come back to later                                  |
 
 ## Database setup
 
