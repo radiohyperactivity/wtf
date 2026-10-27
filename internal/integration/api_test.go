@@ -163,12 +163,14 @@ func TestStock(t *testing.T) {
 		t.Fatalf("merge: %v", moved)
 	}
 
-	// Whole move into it: merged, and the source row disappears.
+	// Whole move into it: merged, and the source row is marked deleted, merged into the other.
 	moved = e.expect(t, 200, "POST", "/stock/"+source+"/move", obj("location", attic)).body
 	if str(t, moved, "id") != atticRow || num(t, moved, "quantity") != 10 {
 		t.Fatalf("whole merge: %v", moved)
 	}
-	e.expect(t, 404, "GET", "/stock/"+source, nil)
+	if gone := e.expect(t, 200, "GET", "/stock/"+source, nil).body; get(t, gone, "deleted") != true || str(t, gone, "merged_into", "id") != atticRow {
+		t.Errorf("merged row: %v", gone)
+	}
 
 	// Moving more than there is.
 	e.expect(t, 400, "POST", "/stock/"+atticRow+"/move", obj("location", garage, "quantity", 11))

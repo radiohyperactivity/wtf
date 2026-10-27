@@ -262,9 +262,11 @@ rsync -a /var/lib/wtf/files/ backup-host:/backups/wtf/files/
 
 Take the database dump first and copy the files afterwards. Then every file the dump refers to is in the copy. Files that arrive in between are harmless; `wtfd gc` removes any that nothing references.
 
-Run `wtfd gc` regularly (e.g. nightly) to remove files of deleted attachments (see [WTFD.md](WTFD.md)).
+Run `wtfd gc` regularly (e.g. nightly) to remove files that no attachment refers to any more (see [WTFD.md](WTFD.md)).
 
 History grows with every change. If it should not be kept forever, purge old entries regularly as well, e.g. `wtfd history purge --older-than 730d` (see [WTFD.md](WTFD.md)).
+
+Deleted things stay in the database, so they can be restored, until they are purged: e.g. `wtfd deleted purge --older-than 365d`, followed by `wtfd gc` for their files. When and whether to purge is your choice.
 
 ### Restoring
 

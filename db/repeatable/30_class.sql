@@ -29,6 +29,7 @@ END;
 $$;
 
 -- The class with its path and all effective (own + inherited) attributes.
+-- A deleted class is returned too, with deleted: true.
 CREATE FUNCTION class_get(p_id uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
@@ -92,7 +93,8 @@ BEGIN
 END;
 $$;
 
--- Fails (23001, restrict_violation) while the class has subclasses or items.
+-- Marks a class deleted. Fails (23001, restrict_violation) while it has live
+-- subclasses or items.
 CREATE FUNCTION class_delete(p_id uuid) RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
@@ -100,7 +102,7 @@ AS $$
 DECLARE
     v_tenant uuid := util.require('model', 'write');
 BEGIN
-    DELETE FROM class WHERE id = p_id AND tenant = v_tenant;
+    UPDATE class SET deleted = true WHERE id = p_id AND tenant = v_tenant;
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('class', p_id);
@@ -108,11 +110,11 @@ BEGIN
 END;
 $$;
 
--- Deletes a class and every class below it, in one transaction.
---   p_force    false: nothing is deleted while any of them has items
+-- Marks a class and every live class below it deleted, in one transaction.
+--   p_force    false: nothing is deleted while any of them has live items
 --              (23001, naming the classes and their item counts);
---              true:  those items are deleted too, with their values, stock
---              rows and attachments (this needs data write as well).
+--              true:  those items are deleted too, with their live stock
+--              rows (this needs data write as well).
 --   p_dry_run  deletes nothing, and only reports.
 -- Returns what is (or would be) deleted:
 --   {classes: [{id, path}], items: [{id, code, name, class}], stock: <count>}
@@ -133,16 +135,17 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM class WHERE id = p_id AND tenant = v_tenant) THEN
         PERFORM util.raise_not_found('class', p_id);
     END IF;
+    PERFORM check_live('class', p_id);
 
     WITH RECURSIVE below (id, depth) AS (
         SELECT p_id, 0
         UNION ALL
-        SELECT c.id, b.depth + 1 FROM class c JOIN below b ON c.parent = b.id
+        SELECT c.id, b.depth + 1 FROM class c JOIN below b ON c.parent = b.id WHERE NOT c.deleted
     )
     SELECT array_agg(id ORDER BY depth DESC, id) INTO v_classes FROM below;
 
     SELECT COALESCE(array_agg(i.id), '{}') INTO v_items
-    FROM item i WHERE i.class = ANY (v_classes);
+    FROM item i WHERE i.class = ANY (v_classes) AND NOT i.deleted;
 
     v_result := jsonb_build_object(
         'classes', (
@@ -156,7 +159,7 @@ BEGIN
                                       ORDER BY lower(i.name), i.id), '[]'::jsonb)
             FROM item i WHERE i.id = ANY (v_items)
         ),
-        'stock', (SELECT count(*) FROM stock s WHERE s.item = ANY (v_items))
+        'stock', (SELECT count(*) FROM stock s WHERE s.item = ANY (v_items) AND NOT s.deleted)
     );
 
     IF cardinality(v_items) > 0 THEN
@@ -180,14 +183,93 @@ BEGIN
     END IF;
 
     IF NOT p_dry_run THEN
-        DELETE FROM stock WHERE item = ANY (v_items);
-        DELETE FROM item WHERE id = ANY (v_items);
-        -- Deepest first, so no class is deleted while a child still refers to it.
+        UPDATE stock SET deleted = true WHERE item = ANY (v_items) AND NOT deleted;
+        UPDATE item SET deleted = true WHERE id = ANY (v_items);
+        -- Deepest first, so no class is deleted while a live child still refers to it.
         FOREACH v_class IN ARRAY v_classes LOOP
-            DELETE FROM class WHERE id = v_class;
+            UPDATE class SET deleted = true WHERE id = v_class;
         END LOOP;
     END IF;
     RETURN v_result;
+END;
+$$;
+
+-- Restores a deleted class, with the classes below it, the items and the
+-- stock rows that were deleted together with it (in the same transaction).
+-- p_options, all optional:
+--   name          a new name, for when the old one has been taken since
+--   parent        where to restore it instead (null: at the top)
+--   with_parents  true: also restore the deleted classes it is in
+-- Without parent or with_parents, a class whose parent is deleted can't be
+-- restored (55000). Restoring items needs data write as well.
+CREATE FUNCTION class_restore(p_id uuid, p_options jsonb DEFAULT '{}') RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_tenant      uuid := util.require('model', 'write');
+    v_class       class;
+    v_parent      uuid;
+    v_transaction xid8;
+    v_classes     uuid[];
+    v_items       uuid[];
+    v_stock       uuid[];
+    v_child       uuid;
+BEGIN
+    PERFORM util.check_patch(p_options, ARRAY['name', 'parent', 'with_parents'], ARRAY['name', 'with_parents']);
+    SELECT * INTO v_class FROM class WHERE id = p_id AND tenant = v_tenant FOR UPDATE;
+    IF NOT FOUND THEN
+        PERFORM util.raise_not_found('class', p_id);
+    END IF;
+    IF NOT v_class.deleted THEN
+        PERFORM util.raise_not_deleted('class', p_id);
+    END IF;
+
+    v_parent := CASE WHEN p_options ? 'parent' THEN (p_options ->> 'parent')::uuid ELSE v_class.parent END;
+    IF v_parent IS NOT NULL AND (SELECT deleted FROM class WHERE id = v_parent) THEN
+        IF p_options ? 'parent' THEN
+            PERFORM raise_deleted('class', v_parent);
+        ELSIF COALESCE((p_options ->> 'with_parents')::boolean, false) THEN
+            PERFORM util.restore_class_chain(v_parent);
+        ELSE
+            PERFORM util.raise_restore_into_deleted(row_label('class', p_id),
+                format('"%s"', util.path_text(util.class_path(v_parent))), 'parent');
+        END IF;
+    END IF;
+
+    -- What was deleted with it.
+    v_transaction := util.deletion_transaction('class', p_id);
+    WITH RECURSIVE below (id, depth) AS (
+        SELECT p_id, 0
+        UNION ALL
+        SELECT c.id, b.depth + 1
+        FROM class c JOIN below b ON c.parent = b.id
+        WHERE c.deleted AND c.id IN (SELECT util.deleted_in('class', v_transaction))
+    )
+    SELECT array_agg(id ORDER BY depth, id) INTO v_classes FROM below;
+    v_items := ARRAY(
+        SELECT id FROM item
+        WHERE class = ANY (v_classes) AND deleted AND id IN (SELECT util.deleted_in('item', v_transaction)));
+    v_stock := ARRAY(
+        SELECT id FROM stock
+        WHERE item = ANY (v_items) AND deleted AND id IN (SELECT util.deleted_in('stock', v_transaction)));
+    IF cardinality(v_items) > 0 THEN
+        PERFORM util.require('data', 'write');
+    END IF;
+
+    UPDATE class
+    SET deleted = false,
+        name    = CASE WHEN p_options ? 'name' THEN util.clean_path_name(p_options ->> 'name', 'class') ELSE name END,
+        parent  = v_parent
+    WHERE id = p_id;
+    UPDATE class_attribute SET attribute = attribute WHERE class = p_id;
+    FOREACH v_child IN ARRAY v_classes[2:] LOOP
+        PERFORM util.restore_class_row(v_child);
+    END LOOP;
+    PERFORM util.restore_item_rows(v_items);
+    PERFORM util.restore_stock_rows(v_stock);
+
+    RETURN class_get(p_id);
 END;
 $$;
 
@@ -265,6 +347,7 @@ AS $$
 DECLARE
     v_tenant uuid := util.require('model', 'write');
 BEGIN
+    PERFORM check_live('class', p_class);
     DELETE FROM class_attribute
     WHERE class = p_class
       AND attribute = p_attribute

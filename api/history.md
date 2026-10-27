@@ -23,7 +23,7 @@ Not recorded:
 
 ## Reading
 
-Each function needs the **history privilege**: `none` or `read_only`, where `read_write` counts as `read_only`. Entries come newest first, paged with `p_limit` and `p_offset`. They also work for deleted objects.
+Each function needs the **history privilege**: `none` or `read_only`, where `read_write` counts as `read_only`. Entries come newest first, paged with `p_limit` and `p_offset`. They also work for deleted objects. Since migration 0010, deleting an item, stock row, location, class, attribute, option or attachment is an `update` that sets `deleted` (see [deleting.md](deleting.md)). A `delete` entry is a cleared value, a removed class assignment, or a purge.
 
 | Function | Route | Includes |
 |----------|-------|----------|

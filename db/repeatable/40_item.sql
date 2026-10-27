@@ -38,6 +38,7 @@ BEGIN
             SELECT i.id, i.name
             FROM item i
             WHERE i.tenant = v_tenant
+              AND NOT i.deleted
               AND (p_class IS NULL OR i.class IN (SELECT util.class_subtree(p_class)))
               -- every word occurs in at least one of the item's search texts
               AND NOT EXISTS (
@@ -72,7 +73,8 @@ BEGIN
 END;
 $$;
 
--- The item with its class, values and stock rows (where it is).
+-- The item with its class, values and stock rows (where it is). A deleted
+-- item is returned too, with deleted: true.
 CREATE FUNCTION item_get(p_id uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
@@ -148,7 +150,8 @@ BEGIN
 END;
 $$;
 
--- Deletes an item and its values. Fails (23001, restrict_violation) while stock rows exist.
+-- Marks an item deleted; its values stay with it. Fails (23001,
+-- restrict_violation) while it has live stock rows.
 CREATE FUNCTION item_delete(p_id uuid) RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
@@ -156,11 +159,68 @@ AS $$
 DECLARE
     v_tenant uuid := util.require('data', 'write');
 BEGIN
-    DELETE FROM item WHERE id = p_id AND tenant = v_tenant;
+    UPDATE item SET deleted = true WHERE id = p_id AND tenant = v_tenant;
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('item', p_id);
     END IF;
+END;
+$$;
+
+-- Restores a deleted item, with the stock rows deleted together with it.
+-- p_options, all optional:
+--   name          a new name
+--   class         the class to restore it in instead
+--   with_parents  true: also restore its deleted class, and the deleted
+--                 classes that class is in (needs model write)
+-- Without class or with_parents, an item whose class is deleted can't be
+-- restored (55000).
+CREATE FUNCTION item_restore(p_id uuid, p_options jsonb DEFAULT '{}') RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_tenant uuid := util.require('data', 'write');
+    v_item   item;
+    v_class  uuid;
+    v_stock  uuid[];
+BEGIN
+    PERFORM util.check_patch(p_options, ARRAY['name', 'class', 'with_parents'], ARRAY['name', 'class', 'with_parents']);
+    SELECT * INTO v_item FROM item WHERE id = p_id AND tenant = v_tenant FOR UPDATE;
+    IF NOT FOUND THEN
+        PERFORM util.raise_not_found('item', p_id);
+    END IF;
+    IF NOT v_item.deleted THEN
+        PERFORM util.raise_not_deleted('item', p_id);
+    END IF;
+
+    v_class := COALESCE((p_options ->> 'class')::uuid, v_item.class);
+    IF (SELECT deleted FROM class WHERE id = v_class) THEN
+        IF p_options ? 'class' THEN
+            PERFORM raise_deleted('class', v_class);
+        ELSIF COALESCE((p_options ->> 'with_parents')::boolean, false) THEN
+            PERFORM util.require('model', 'write');
+            PERFORM util.restore_class_chain(v_class);
+        ELSE
+            PERFORM util.raise_restore_into_deleted(row_label('item', p_id),
+                format('class "%s"', util.path_text(util.class_path(v_class))), 'class');
+        END IF;
+    END IF;
+
+    v_stock := ARRAY(
+        SELECT id FROM stock
+        WHERE item = p_id AND deleted
+          AND id IN (SELECT util.deleted_in('stock', util.deletion_transaction('item', p_id))));
+
+    UPDATE item
+    SET deleted = false,
+        name    = CASE WHEN p_options ? 'name' THEN util.clean_name(p_options ->> 'name') ELSE name END,
+        class   = v_class
+    WHERE id = p_id;
+    UPDATE value SET item = item, attribute = attribute WHERE item = p_id;
+    PERFORM util.restore_stock_rows(v_stock);
+
+    RETURN util.item_json(p_id);
 END;
 $$;
 
@@ -194,6 +254,7 @@ AS $$
 DECLARE
     v_tenant uuid := util.require('data', 'write');
 BEGIN
+    PERFORM check_live('item', p_item);
     DELETE FROM value
     WHERE item = p_item
       AND attribute = p_attribute

@@ -28,6 +28,7 @@ BEGIN
 END;
 $$;
 
+-- A deleted location is returned too, with deleted: true.
 CREATE FUNCTION location_get(p_id uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
@@ -129,7 +130,8 @@ BEGIN
 END;
 $$;
 
--- Fails (23001, restrict_violation) while the location has sublocations or stock.
+-- Marks a location deleted. Fails (23001, restrict_violation) while it has
+-- live sublocations or stock.
 CREATE FUNCTION location_delete(p_id uuid) RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
@@ -137,7 +139,7 @@ AS $$
 DECLARE
     v_tenant uuid := util.require('data', 'write');
 BEGIN
-    DELETE FROM location WHERE id = p_id AND tenant = v_tenant;
+    UPDATE location SET deleted = true WHERE id = p_id AND tenant = v_tenant;
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('location', p_id);
@@ -145,11 +147,11 @@ BEGIN
 END;
 $$;
 
--- Deletes a location and every location below it, in one transaction.
---   p_force    false: nothing is deleted while there is stock in any of them
---              (23001, naming the locations and their stock row counts);
---              true:  those stock rows are deleted too, with their per-unit
---              values and attachments.
+-- Marks a location and every live location below it deleted, in one
+-- transaction.
+--   p_force    false: nothing is deleted while there is live stock in any of
+--              them (23001, naming the locations and their stock row counts);
+--              true:  those stock rows are deleted too.
 --   p_dry_run  deletes nothing, and only reports.
 -- Returns what is (or would be) deleted:
 --   {locations: [{id, code, path}],
@@ -171,16 +173,17 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM location WHERE id = p_id AND tenant = v_tenant) THEN
         PERFORM util.raise_not_found('location', p_id);
     END IF;
+    PERFORM check_live('location', p_id);
 
     WITH RECURSIVE below (id, depth) AS (
         SELECT p_id, 0
         UNION ALL
-        SELECT l.id, b.depth + 1 FROM location l JOIN below b ON l.parent = b.id
+        SELECT l.id, b.depth + 1 FROM location l JOIN below b ON l.parent = b.id WHERE NOT l.deleted
     )
     SELECT array_agg(id ORDER BY depth DESC, id) INTO v_locations FROM below;
 
     SELECT COALESCE(array_agg(s.id), '{}') INTO v_stock
-    FROM stock s WHERE s.location = ANY (v_locations);
+    FROM stock s WHERE s.location = ANY (v_locations) AND NOT s.deleted;
 
     v_result := jsonb_build_object(
         'locations', (
@@ -219,13 +222,84 @@ BEGIN
     END IF;
 
     IF NOT p_dry_run THEN
-        DELETE FROM stock WHERE id = ANY (v_stock);
-        -- Deepest first, so no location is deleted while a child still refers to it.
+        UPDATE stock SET deleted = true WHERE id = ANY (v_stock);
+        -- Deepest first, so no location is deleted while a live child still refers to it.
         FOREACH v_location IN ARRAY v_locations LOOP
-            DELETE FROM location WHERE id = v_location;
+            UPDATE location SET deleted = true WHERE id = v_location;
         END LOOP;
     END IF;
     RETURN v_result;
+END;
+$$;
+
+-- Restores a deleted location, with the locations below it and the stock
+-- rows that were deleted together with it (in the same transaction).
+-- p_options, all optional:
+--   name          a new name, for when the old one has been taken since
+--   parent        where to restore it instead (null: at the top)
+--   with_parents  true: also restore the deleted locations it is in
+-- Without parent or with_parents, a location inside a deleted one can't be
+-- restored (55000).
+CREATE FUNCTION location_restore(p_id uuid, p_options jsonb DEFAULT '{}') RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_tenant      uuid := util.require('data', 'write');
+    v_location    location;
+    v_parent      uuid;
+    v_transaction xid8;
+    v_locations   uuid[];
+    v_stock       uuid[];
+    v_child       uuid;
+BEGIN
+    PERFORM util.check_patch(p_options, ARRAY['name', 'parent', 'with_parents'], ARRAY['name', 'with_parents']);
+    SELECT * INTO v_location FROM location WHERE id = p_id AND tenant = v_tenant FOR UPDATE;
+    IF NOT FOUND THEN
+        PERFORM util.raise_not_found('location', p_id);
+    END IF;
+    IF NOT v_location.deleted THEN
+        PERFORM util.raise_not_deleted('location', p_id);
+    END IF;
+
+    v_parent := CASE WHEN p_options ? 'parent' THEN (p_options ->> 'parent')::uuid ELSE v_location.parent END;
+    IF v_parent IS NOT NULL AND (SELECT deleted FROM location WHERE id = v_parent) THEN
+        IF p_options ? 'parent' THEN
+            PERFORM raise_deleted('location', v_parent);
+        ELSIF COALESCE((p_options ->> 'with_parents')::boolean, false) THEN
+            PERFORM util.restore_location_chain(v_parent);
+        ELSE
+            PERFORM util.raise_restore_into_deleted(row_label('location', p_id),
+                format('"%s"', util.path_text(util.location_path(v_parent))), 'parent');
+        END IF;
+    END IF;
+
+    -- What was deleted with it.
+    v_transaction := util.deletion_transaction('location', p_id);
+    WITH RECURSIVE below (id, depth) AS (
+        SELECT p_id, 0
+        UNION ALL
+        SELECT l.id, b.depth + 1
+        FROM location l JOIN below b ON l.parent = b.id
+        WHERE l.deleted AND l.id IN (SELECT util.deleted_in('location', v_transaction))
+    )
+    SELECT array_agg(id ORDER BY depth, id) INTO v_locations FROM below;
+    v_stock := ARRAY(
+        SELECT id FROM stock
+        WHERE location = ANY (v_locations) AND deleted
+          AND id IN (SELECT util.deleted_in('stock', v_transaction)));
+
+    UPDATE location
+    SET deleted = false,
+        name    = CASE WHEN p_options ? 'name' THEN util.clean_path_name(p_options ->> 'name', 'location') ELSE name END,
+        parent  = v_parent
+    WHERE id = p_id;
+    FOREACH v_child IN ARRAY v_locations[2:] LOOP
+        UPDATE location SET deleted = false WHERE id = v_child;
+    END LOOP;
+    PERFORM util.restore_stock_rows(v_stock);
+
+    RETURN location_get(p_id);
 END;
 $$;
 
@@ -263,6 +337,7 @@ BEGIN
             FROM stock s
             JOIN item i ON i.id = s.item
             WHERE s.tenant = v_tenant
+              AND NOT s.deleted
               AND (p_item IS NULL OR s.item = p_item)
               AND (p_location IS NULL OR s.location IN (SELECT util.location_subtree(p_location)))
         )
@@ -284,6 +359,8 @@ END;
 $$;
 
 -- The stock row with its per-unit values and missing required attributes.
+-- A deleted row is returned too, with deleted: true (and merged_into, when a
+-- move merged it into another row).
 CREATE FUNCTION stock_get(p_id uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
@@ -361,7 +438,7 @@ $$;
 -- If the destination already holds exactly one counted row of the same item
 -- with exactly the same per-unit values, and the moved row has no
 -- attachments, the moved amount is added to that row (a whole row is then
--- removed). Otherwise a whole row simply changes location, and a partial
+-- marked deleted, merged_into that row). Otherwise a whole row simply changes location, and a partial
 -- amount is split off into a new row at the destination, with a copy of the
 -- per-unit values and attachments (the files themselves are not copied).
 -- Returns the stock row at the destination.
@@ -382,6 +459,10 @@ BEGIN
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('stock', p_id);
     END IF;
+    IF v_stock.deleted THEN
+        PERFORM raise_deleted('stock', p_id);
+    END IF;
+    PERFORM check_live('location', p_location);
 
     IF p_quantity IS NOT NULL THEN
         IF v_stock.quantity IS NULL THEN
@@ -406,12 +487,13 @@ BEGIN
               AND item = v_stock.item
               AND location = p_location
               AND quantity IS NOT NULL
+              AND NOT deleted
               AND id <> p_id
             FOR UPDATE
         );
         IF cardinality(v_candidates) = 1
            AND util.stock_values_equal(p_id, v_candidates[1])
-           AND NOT EXISTS (SELECT 1 FROM attachment WHERE stock = p_id)
+           AND NOT EXISTS (SELECT 1 FROM attachment WHERE stock = p_id AND NOT deleted)
         THEN
             v_target := v_candidates[1];
         END IF;
@@ -420,7 +502,7 @@ BEGIN
     IF v_target IS NOT NULL THEN
         UPDATE stock SET quantity = quantity + v_amount WHERE id = v_target;
         IF v_whole THEN
-            DELETE FROM stock WHERE id = p_id;
+            UPDATE stock SET deleted = true, merged_into = v_target WHERE id = p_id;
         ELSE
             UPDATE stock SET quantity = quantity - v_amount WHERE id = p_id;
         END IF;
@@ -450,12 +532,13 @@ BEGIN
     INSERT INTO attachment (tenant, file, file_name, content_type, caption, primary_photo, stock)
     SELECT tenant, file, file_name, content_type, caption, primary_photo, v_target
     FROM attachment
-    WHERE stock = p_id;
+    WHERE stock = p_id AND NOT deleted;
 
     RETURN util.stock_detail_json(v_target);
 END;
 $$;
 
+-- Marks a stock row deleted; its per-unit values and attachments stay with it.
 CREATE FUNCTION stock_delete(p_id uuid) RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
@@ -463,11 +546,65 @@ AS $$
 DECLARE
     v_tenant uuid := util.require('data', 'write');
 BEGIN
-    DELETE FROM stock WHERE id = p_id AND tenant = v_tenant;
+    UPDATE stock SET deleted = true WHERE id = p_id AND tenant = v_tenant;
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('stock', p_id);
     END IF;
+END;
+$$;
+
+-- Restores a deleted stock row. Its item must be live, and a row that a move
+-- merged into another can't be restored (55000). p_options, all optional:
+--   location      where to restore it instead
+--   with_parents  true: also restore its deleted location, and the deleted
+--                 locations that one is in
+-- Without location or with_parents, a row at a deleted location can't be
+-- restored (55000).
+CREATE FUNCTION stock_restore(p_id uuid, p_options jsonb DEFAULT '{}') RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_tenant   uuid := util.require('data', 'write');
+    v_stock    stock;
+    v_location uuid;
+BEGIN
+    PERFORM util.check_patch(p_options, ARRAY['location', 'with_parents'], ARRAY['location', 'with_parents']);
+    SELECT * INTO v_stock FROM stock WHERE id = p_id AND tenant = v_tenant FOR UPDATE;
+    IF NOT FOUND THEN
+        PERFORM util.raise_not_found('stock', p_id);
+    END IF;
+    IF NOT v_stock.deleted THEN
+        PERFORM util.raise_not_deleted('stock', p_id);
+    END IF;
+    IF v_stock.merged_into IS NOT NULL THEN
+        RAISE EXCEPTION 'This stock row was merged into stock row %, and can''t be restored',
+            (SELECT util.code_text(code) FROM stock WHERE id = v_stock.merged_into)
+            USING ERRCODE = 'object_not_in_prerequisite_state',
+                  HINT = 'Its quantity is in that row now; move part of that row to split it off again.';
+    END IF;
+    IF (SELECT deleted FROM item WHERE id = v_stock.item) THEN
+        RAISE EXCEPTION '% belongs to %, which is deleted', row_label('stock', p_id), row_label('item', v_stock.item)
+            USING ERRCODE = 'object_not_in_prerequisite_state',
+                  HINT = 'Restore the item first; that also restores the stock rows deleted with it.';
+    END IF;
+
+    v_location := COALESCE((p_options ->> 'location')::uuid, v_stock.location);
+    IF (SELECT deleted FROM location WHERE id = v_location) THEN
+        IF p_options ? 'location' THEN
+            PERFORM raise_deleted('location', v_location);
+        ELSIF COALESCE((p_options ->> 'with_parents')::boolean, false) THEN
+            PERFORM util.restore_location_chain(v_location);
+        ELSE
+            PERFORM util.raise_restore_into_deleted(row_label('stock', p_id),
+                format('"%s"', util.path_text(util.location_path(v_location))), 'location');
+        END IF;
+    END IF;
+
+    UPDATE stock SET location = v_location, deleted = false WHERE id = p_id;
+    PERFORM util.restore_stock_rows(ARRAY[p_id]);
+    RETURN util.stock_detail_json(p_id);
 END;
 $$;
 
@@ -502,6 +639,7 @@ AS $$
 DECLARE
     v_tenant uuid := util.require('data', 'write');
 BEGIN
+    PERFORM check_live('stock', p_stock);
     DELETE FROM stock_value
     WHERE stock = p_stock
       AND attribute = p_attribute

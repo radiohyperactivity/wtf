@@ -13,6 +13,7 @@ wtfd <action> [flags]
 | `gc`     | Remove attachment files that nothing references any more             | implemented |
 | `tenant` | Create, list or change tenants (`create`, `list`, `update`)          | implemented |
 | `history`| Delete old history entries (`purge`)                                 | implemented |
+| `deleted`| Remove what was deleted long ago (`purge`)                           | implemented |
 
 ## Configuration
 
@@ -236,6 +237,7 @@ The password comes from `WTFD_API_DATABASE_PASSWORD`.
   | `GET`, `PATCH`, `PUT` | 200 |
   | `POST` (create) | 201 Created, with a `Location` header pointing at the new object |
   | `POST /stock/{id}/move` | 200 |
+  | `POST /{…}/{id}/restore` | 200 with the restored object |
   | `DELETE` of an object | 204 No Content |
   | `DELETE` of a class attribute or value | 200 with the updated class or item |
 
@@ -256,6 +258,8 @@ Errors are `application/problem+json`:
 }
 ```
 
+When the database knows what to do about an error, a `hint` says so (revision 2), e.g. how to restore something that is in a deleted location.
+
 | Condition | `type` | Status |
 |-----------|--------|--------|
 | missing session cookie, `28000` (no or expired session), wrong login | `/problems/unauthenticated` | 401 (with `WWW-Authenticate: Cookie realm="WtF", cookie-name="wtf_session"`; an ended session's cookie is deleted) |
@@ -271,6 +275,7 @@ Errors are `application/problem+json`:
 | `23505` duplicate | `/problems/unique-violation` | 409 |
 | `23001` / `23503` on `DELETE`: still in use | `/problems/in-use` | 409 |
 | `23001` / `23503` otherwise: a referenced object doesn't exist | `/problems/invalid-reference` | 422 |
+| `55000` the object, or one it needs, is deleted; or restoring something that isn't | `/problems/deleted` | 409 |
 | `57014` statement timeout | `/problems/timeout` | 503 |
 | method not allowed on a route | `/problems/method-not-allowed` | 405 |
 | request body too large | `/problems/body-too-large` | 413 |
@@ -279,7 +284,7 @@ Errors are `application/problem+json`:
 ### Versions
 
 - **Paths:** the API is served under `/api/v1/`. The routes below are relative to it (`GET /items` is `GET /api/v1/items`), except `GET /api/health`.
-- **Within a version the API only grows:** new routes, new optional fields, and new fields in answers. Nothing is renamed, removed or changes meaning, and clients ignore fields they don't know. Every addition increases the **revision**, which every answer of `/api/v1` carries as `API-Revision: 1`. A client knows the revision it was built for, and warns when a server's is older.
+- **Within a version the API only grows:** new routes, new optional fields, and new fields in answers. Nothing is renamed, removed or changes meaning, and clients ignore fields they don't know. Every addition increases the **revision**, which every answer of `/api/v1` carries as `API-Revision`, now 2. Revision 2 added marking deleted instead of removing (`deleted` in every object, the `restore` routes, the `hint` in problems; see [api/deleting.md](api/deleting.md)). It also changed what a delete means: a deleted object can still be fetched, where it used to answer 404. That exception was made while every client was still in development. A client knows the revision it was built for, and warns when a server's is older.
 - **A breaking change becomes a new version,** `/api/v2/`, served next to `/api/v1/` for a while. Its revisions start again at 1. A version on its way out gets the standard `Deprecation` and `Sunset` headers on its answers (`apiSunset` in `internal/serve/api.go`).
 - **Versions this server doesn't serve:** any request to them gets `/problems/unsupported-api-version`, with the list of versions it does serve (`supported`). The client can then say which side to update. A 404 without `API-Revision` at all comes from a server older than the versioned API.
 
@@ -325,17 +330,20 @@ With `--web-root DIR`, `wtfd` serves the web app (a Flutter web build) on every 
 | `GET /attributes/{id}` | `attribute_get` | |
 | `PATCH /attributes/{id}` | `attribute_patch` | patch object |
 | `DELETE /attributes/{id}` | `attribute_delete` | |
+| `POST /attributes/{id}/restore` | `attribute_restore` | `{name?}` |
 | `GET /attributes/{id}/options` | `attribute_option_list` | |
 | `POST /attributes/{id}/options` | `attribute_option_create` | `{name}` |
 | `GET /options/{id}` | `attribute_option_get` | |
 | `PATCH /options/{id}` | `attribute_option_patch` | patch object |
 | `DELETE /options/{id}` | `attribute_option_delete` | |
+| `POST /options/{id}/restore` | `attribute_option_restore` | `{name?}` |
 | `GET /classes` | `class_list` | `If-None-Match` |
 | `POST /classes` | `class_create` | `{name, parent?}` |
 | `GET /classes/{id}` | `class_get` | |
 | `PATCH /classes/{id}` | `class_patch` | patch object |
 | `DELETE /classes/{id}` | `class_delete`, or with `?recursive=true` `class_delete_tree` | `force`; recursive answers 200 with what was deleted |
 | `GET /classes/{id}/deletion` | `class_delete_tree` with `p_dry_run` | `force`; what a recursive delete would delete |
+| `POST /classes/{id}/restore` | `class_restore` | `{name?, parent?, with_parents?}` |
 | `PUT /classes/{id}/attributes/{attribute}` | `class_attribute_set` | `{default?, per_unit?, required?}` |
 | `DELETE /classes/{id}/attributes/{attribute}` | `class_attribute_remove` | |
 | `GET /items` | `item_list` | `?class=&search=&limit=&offset=` |
@@ -343,6 +351,7 @@ With `--web-root DIR`, `wtfd` serves the web app (a Flutter web build) on every 
 | `GET /items/{id}` | `item_get` | |
 | `PATCH /items/{id}` | `item_patch` | patch object |
 | `DELETE /items/{id}` | `item_delete` | |
+| `POST /items/{id}/restore` | `item_restore` | `{name?, class?, with_parents?}` |
 | `PUT /items/{id}/values/{attribute}` | `value_set` | `{value}` |
 | `DELETE /items/{id}/values/{attribute}` | `value_delete` | |
 | `GET /locations` | `location_list` | `If-None-Match` |
@@ -351,11 +360,13 @@ With `--web-root DIR`, `wtfd` serves the web app (a Flutter web build) on every 
 | `PATCH /locations/{id}` | `location_patch` | patch object |
 | `DELETE /locations/{id}` | `location_delete`, or with `?recursive=true` `location_delete_tree` | `force`; recursive answers 200 with what was deleted |
 | `GET /locations/{id}/deletion` | `location_delete_tree` with `p_dry_run` | `force`; what a recursive delete would delete |
+| `POST /locations/{id}/restore` | `location_restore` | `{name?, parent?, with_parents?}` |
 | `GET /stock` | `stock_list` | `?item=&location=&limit=&offset=` |
 | `POST /stock` | `stock_create` | `{item, location, quantity?, values?}` |
 | `GET /stock/{id}` | `stock_get` | |
 | `PATCH /stock/{id}` | `stock_patch` | patch object |
 | `DELETE /stock/{id}` | `stock_delete` | |
+| `POST /stock/{id}/restore` | `stock_restore` | `{location?, with_parents?}` |
 | `PUT /stock/{id}/values/{attribute}` | `stock_value_set` | `{value}` |
 | `DELETE /stock/{id}/values/{attribute}` | `stock_value_delete` | |
 | `POST /stock/{id}/move` | `stock_move` | `{location, quantity?}` |
@@ -364,6 +375,7 @@ With `--web-root DIR`, `wtfd` serves the web app (a Flutter web build) on every 
 | `GET /attachments/{id}` | `attachment_get` | |
 | `PATCH /attachments/{id}` | `attachment_patch` | patch object |
 | `DELETE /attachments/{id}` | `attachment_delete` | |
+| `POST /attachments/{id}/restore` | `attachment_restore` | |
 | `GET /attachments/{id}/content` | `attachment_get` + files directory | `If-None-Match`, `Range` |
 | `POST /login` | `login` | `{email, password}`; no session needed; sets the session cookie |
 | `POST /logout` | `logout` | |
@@ -413,9 +425,20 @@ wtfd history purge --older-than 365d --tenant smith-home --dry-run
 
 `--older-than` takes days (`730d`) or a Go duration (`36h`). `--dry-run` only counts the entries. It connects as the DBA role.
 
+## The `deleted` action
+
+Deleted objects stay in the database until the operator purges them (see [api/deleting.md](api/deleting.md)):
+
+```sh
+wtfd deleted purge --older-than 730d                       # all tenants
+wtfd deleted purge --older-than 365d --tenant smith-home --dry-run
+```
+
+It removes what was deleted longer ago than `--older-than` (days or a Go duration), with what belongs to it, and reports how many of each kind. An object something else still refers to stays until that is purged too. `--dry-run` runs the purge in a transaction and rolls it back. It connects as the DBA role. Run `wtfd gc` afterwards to remove the files of purged attachments.
+
 ## The `gc` action
 
-`wtfd gc` removes attachment files that nothing references any more. Deleting an attachment, or its object, leaves the file on disk, and an upload whose database insert failed leaves a file nothing knows about.
+`wtfd gc` removes attachment files that nothing references any more. A deleted attachment still references its file; once it is purged (`wtfd deleted purge`), the file is unreferenced. An upload whose database insert failed leaves a file nothing knows about.
 
 ```sh
 wtfd gc --files-directory /var/lib/wtf/files --dry-run   # report only

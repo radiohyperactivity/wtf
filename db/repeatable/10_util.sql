@@ -205,6 +205,7 @@ BEGIN
         )
         FROM class c
         WHERE c.tenant = p_tenant
+          AND NOT c.deleted
           AND ((p_parent IS NULL AND c.parent IS NULL) OR c.parent = p_parent)
     );
 END;
@@ -232,6 +233,7 @@ BEGIN
         )
         FROM location l
         WHERE l.tenant = p_tenant
+          AND NOT l.deleted
           AND ((p_parent IS NULL AND l.parent IS NULL) OR l.parent = p_parent)
     );
 END;
@@ -267,6 +269,7 @@ BEGIN
                    COALESCE(bool_or(s.quantity IS NULL), false) AS uncounted
             FROM stock s
             WHERE s.item = i.id
+              AND NOT s.deleted
         ) t
         WHERE i.id = p_item
     );
@@ -366,11 +369,11 @@ BEGIN
         UNION ALL
         SELECT lower(sv.text_value)
         FROM stock s JOIN stock_value sv ON sv.stock = s.id
-        WHERE s.item = p_item AND sv.text_value IS NOT NULL
+        WHERE s.item = p_item AND NOT s.deleted AND sv.text_value IS NOT NULL
         UNION ALL
         SELECT lower(o.name)
         FROM stock s JOIN stock_value sv ON sv.stock = s.id JOIN attribute_option o ON o.id = sv.option_value
-        WHERE s.item = p_item;
+        WHERE s.item = p_item AND NOT s.deleted;
 END;
 $$;
 
@@ -490,6 +493,7 @@ BEGIN
         SELECT o.id INTO option_v
         FROM attribute_option o
         WHERE o.attribute = p_attribute
+          AND NOT o.deleted
           AND (o.id::text = lower(v_string) OR lower(o.name) = lower(v_string))
         ORDER BY (o.id::text = lower(v_string)) DESC
         LIMIT 1;
@@ -652,7 +656,8 @@ BEGIN
             'id',         a.id,
             'name',       a.name,
             'datatype',   a.datatype,
-            'unit_group', util.unit_group_json(a.unit_group)
+            'unit_group', util.unit_group_json(a.unit_group),
+            'deleted',    a.deleted
         )
         FROM attribute a
         WHERE a.id = p_attribute
@@ -664,7 +669,7 @@ CREATE FUNCTION util.option_json(p_option uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (
-        SELECT jsonb_build_object('id', o.id, 'attribute', o.attribute, 'name', o.name)
+        SELECT jsonb_build_object('id', o.id, 'attribute', o.attribute, 'name', o.name, 'deleted', o.deleted)
         FROM attribute_option o
         WHERE o.id = p_option
     );
@@ -680,7 +685,8 @@ BEGIN
             'name',      c.name,
             'parent',    c.parent,
             'container', c.container,
-            'path',      util.class_path(c.id)
+            'path',      util.class_path(c.id),
+            'deleted',   c.deleted
         )
         FROM class c
         WHERE c.id = p_class
@@ -730,7 +736,8 @@ BEGIN
             'name',      l.name,
             'parent',    l.parent,
             'container', l.container,
-            'path',      util.location_path(l.id)
+            'path',      util.location_path(l.id),
+            'deleted',   l.deleted
         )
         FROM location l
         WHERE l.id = p_location
@@ -749,7 +756,8 @@ BEGIN
             'code',       util.code_text(i.code),
             'name',       i.name,
             'class',      i.class,
-            'unit_group', util.unit_group_json(i.unit_group)
+            'unit_group', util.unit_group_json(i.unit_group),
+            'deleted',    i.deleted
         )
         FROM item i
         WHERE i.id = p_item
@@ -772,7 +780,11 @@ BEGIN
             'location', s.location,
             'quantity', s.quantity,
             'unit',     util.unit_json(util.unit_group_base_unit(i.unit_group)),
-            'display',  util.display_json(s.quantity, i.unit_group)
+            'display',  util.display_json(s.quantity, i.unit_group),
+            'deleted',  s.deleted,
+            -- A row merged into another by a move: the row it went into.
+            'merged_into', (SELECT jsonb_build_object('id', m.id, 'code', util.code_text(m.code))
+                            FROM stock m WHERE m.id = s.merged_into)
         )
         FROM stock s
         JOIN item i ON i.id = s.item
@@ -862,6 +874,7 @@ BEGIN
             SELECT 1
             FROM stock s
             WHERE s.item = p_item
+              AND NOT s.deleted
               AND EXISTS (SELECT 1 FROM stock_missing_attributes(s.id))
         );
 END;
@@ -896,6 +909,7 @@ BEGIN
             'id',         i.id,
             'code',       util.code_text(i.code),
             'name',       i.name,
+            'deleted',    i.deleted,
             'class',      util.class_json(i.class),
             'unit_group', util.unit_group_json(i.unit_group),
             'values',      util.values_json(i.class, false, i.id),
@@ -903,7 +917,9 @@ BEGIN
             'photo',       util.item_photo_json(i.id),
             'attachments', util.attachments_json(i.id, NULL, NULL, NULL),
             -- The client resolves location ids from its cached location tree.
-            -- quantity is in the base unit given by unit_group.
+            -- quantity is in the base unit given by unit_group. A live item
+            -- lists its live rows, a deleted one the rows deleted together
+            -- with it, which restoring it brings back.
             'stock', (
                 SELECT COALESCE(
                     jsonb_agg(
@@ -924,6 +940,9 @@ BEGIN
                 FROM stock s
                 JOIN location l ON l.id = s.location
                 WHERE s.item = i.id
+                  AND (NOT i.deleted AND NOT s.deleted
+                       OR i.deleted AND s.deleted AND s.merged_into IS NULL
+                          AND s.id IN (SELECT util.deleted_in('stock', util.deletion_transaction('item', i.id))))
             )
         )
         FROM item i
@@ -1043,6 +1062,137 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- Deleting and restoring (see api/deleting.md)
+-- ---------------------------------------------------------------------------
+-- Deleting marks rows; restoring clears the mark. Restoring "touches" what
+-- belongs to a row (UPDATE … SET x = x), so the triggers check it again as
+-- if it were new. History records nothing for a touch, since nothing changes.
+
+-- Raises the error for restoring something that isn't deleted (55000, 409).
+CREATE FUNCTION util.raise_not_deleted(p_table text, p_id uuid) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION '% is not deleted', row_label(p_table, p_id)
+        USING ERRCODE = 'object_not_in_prerequisite_state';
+END;
+$$;
+
+-- The transaction that deleted a row (its latest deletion), from history;
+-- NULL when history no longer has it.
+CREATE FUNCTION util.deletion_transaction(p_table text, p_id uuid) RETURNS xid8
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+    RETURN (
+        SELECT h.transaction
+        FROM history h
+        WHERE (h.data ->> 'id') = p_id::text
+          AND h.table_name = p_table
+          AND h.operation = 'update'
+          AND h.changes -> 'deleted' ->> 'new' = 'true'
+        ORDER BY h.id DESC
+        LIMIT 1
+    );
+END;
+$$;
+
+-- The rows of p_table that transaction p_transaction deleted.
+CREATE FUNCTION util.deleted_in(p_table text, p_transaction xid8) RETURNS SETOF uuid
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+    RETURN QUERY
+        SELECT DISTINCT (h.data ->> 'id')::uuid
+        FROM history h
+        WHERE h.transaction = p_transaction
+          AND h.table_name = p_table
+          AND h.operation = 'update'
+          AND h.changes -> 'deleted' ->> 'new' = 'true';
+END;
+$$;
+
+-- Restores one class, and checks its attribute assignments again.
+CREATE FUNCTION util.restore_class_row(p_class uuid) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE class SET deleted = false WHERE id = p_class AND deleted;
+    UPDATE class_attribute SET attribute = attribute WHERE class = p_class;
+END;
+$$;
+
+-- Restores p_class, if it is deleted, and every deleted class above it, from
+-- the top down: only that chain, not what else was deleted with them.
+CREATE FUNCTION util.restore_class_chain(p_class uuid) RETURNS void
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_class uuid;
+BEGIN
+    FOR v_class IN
+        WITH RECURSIVE up (id, parent, depth) AS (
+            SELECT c.id, c.parent, 0 FROM class c WHERE c.id = p_class AND c.deleted
+            UNION ALL
+            SELECT c.id, c.parent, u.depth + 1
+            FROM class c JOIN up u ON c.id = u.parent
+            WHERE c.deleted
+        )
+        SELECT id FROM up ORDER BY depth DESC
+    LOOP
+        PERFORM util.restore_class_row(v_class);
+    END LOOP;
+END;
+$$;
+
+-- The same for locations.
+CREATE FUNCTION util.restore_location_chain(p_location uuid) RETURNS void
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_location uuid;
+BEGIN
+    FOR v_location IN
+        WITH RECURSIVE up (id, parent, depth) AS (
+            SELECT l.id, l.parent, 0 FROM location l WHERE l.id = p_location AND l.deleted
+            UNION ALL
+            SELECT l.id, l.parent, u.depth + 1
+            FROM location l JOIN up u ON l.id = u.parent
+            WHERE l.deleted
+        )
+        SELECT id FROM up ORDER BY depth DESC
+    LOOP
+        UPDATE location SET deleted = false WHERE id = v_location;
+    END LOOP;
+END;
+$$;
+
+-- Restores items, and checks them and their values again.
+CREATE FUNCTION util.restore_item_rows(p_items uuid[]) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE item SET deleted = false, class = class WHERE id = ANY (p_items) AND deleted;
+    UPDATE value SET item = item, attribute = attribute WHERE item = ANY (p_items);
+END;
+$$;
+
+-- Restores stock rows (never those merged into others), and checks them and
+-- their per-unit values again.
+CREATE FUNCTION util.restore_stock_rows(p_stock uuid[]) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE stock SET deleted = false, item = item, location = location, quantity = quantity
+    WHERE id = ANY (p_stock) AND deleted AND merged_into IS NULL;
+    UPDATE stock_value SET stock = stock, attribute = attribute WHERE stock = ANY (p_stock);
+END;
+$$;
+
+-- The error for restoring into something deleted, naming both ways out.
+CREATE FUNCTION util.raise_restore_into_deleted(p_what text, p_into text, p_place_key text) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION '% is in %, which is deleted', p_what, p_into
+        USING ERRCODE = 'object_not_in_prerequisite_state',
+              HINT = format('Restore it together with what it is in ("with_parents": true), or somewhere else ("%s": …).',
+                            p_place_key);
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- Attachments
 -- ---------------------------------------------------------------------------
 
@@ -1057,7 +1207,8 @@ BEGIN
             'size',          f.size,
             'sha256',        encode(a.file, 'hex'),
             'caption',       a.caption,
-            'primary_photo', a.primary_photo
+            'primary_photo', a.primary_photo,
+            'deleted',       a.deleted
         )
         FROM attachment a
         JOIN file f ON f.sha256 = a.file
@@ -1079,10 +1230,11 @@ BEGIN
             '[]'::jsonb
         )
         FROM attachment a
-        WHERE a.item = p_item
-           OR a.stock = p_stock
-           OR a.location = p_location
-           OR a.class = p_class
+        WHERE NOT a.deleted
+          AND (a.item = p_item
+               OR a.stock = p_stock
+               OR a.location = p_location
+               OR a.class = p_class)
     );
 END;
 $$;
@@ -1096,6 +1248,7 @@ BEGIN
         FROM attachment a
         WHERE a.item = p_item
           AND a.primary_photo
+          AND NOT a.deleted
     );
 END;
 $$;
@@ -1111,6 +1264,7 @@ BEGIN
     WHERE k.id = p_keep
       AND a.id <> k.id
       AND a.primary_photo
+      AND NOT a.deleted
       AND (a.item = k.item OR a.stock = k.stock OR a.location = k.location OR a.class = k.class);
 END;
 $$;

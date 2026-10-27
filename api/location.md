@@ -4,10 +4,10 @@ The SQL is in [`db/repeatable/50_location.sql`](../db/repeatable/50_location.sql
 
 ## Deleting a subtree
 
-`location_delete` deletes one location, which must have no sublocations or stock (409 otherwise). `location_delete_tree(p_id, p_force, p_dry_run)` (`DELETE /locations/{id}?recursive=true`) deletes a location and every location below it in one transaction, deepest first:
+Deleting marks locations deleted; they can be restored (`location_restore`). See [deleting.md](deleting.md). `location_delete` deletes one location, which must have no live sublocations or stock (409 otherwise). `location_delete_tree(p_id, p_force, p_dry_run)` (`DELETE /locations/{id}?recursive=true`) deletes a location and every live location below it in one transaction, deepest first:
 
-- **Stock blocks it:** if there is stock in any of them, nothing is deleted (23001, 409), and the message names the locations and their stock row counts (`Garage/Box (2 stock rows)`).
-- **`p_force`** (`force=true`) deletes those stock rows too, with their per-unit values and attachments. The items themselves stay.
+- **Stock blocks it:** if there is live stock in any of them, nothing is deleted (23001, 409), and the message names the locations and their stock row counts (`Garage/Box (2 stock rows)`).
+- **`p_force`** (`force=true`) deletes those stock rows too. The items themselves stay.
 - **`p_dry_run`** deletes nothing; it only reports. Its route is a `GET`, `GET /locations/{id}/deletion?force=…`, so a server that doesn't know recursive deletes answers 404 rather than mistaking a preview for a delete. Unlike the delete, the preview reports stock without `force` instead of failing.
 - **The result** is what was (or would be) deleted: `{locations: [{id, code, path}], stock: [{id, code, item: {id, code, name}, location, quantity}]}`, locations deepest first.
 

@@ -167,6 +167,7 @@ func TestAttachments(t *testing.T) {
 	e.upload(t, 404, "/items/"+missing+"/attachments", "x.png", "image/png", pngBytes)
 
 	// Garbage collection: the HTML file is only referenced by one attachment.
+	// Deleted, it is still referenced; purged, it isn't.
 	htmlHash := str(t, page, "sha256")
 	e.expect(t, 204, "DELETE", "/attachments/"+str(t, page, "id"), nil)
 	gc := func(dryRun bool) files.GCResult {
@@ -181,6 +182,11 @@ func TestAttachments(t *testing.T) {
 		}
 		return result
 	}
+	gc(false)
+	if !e.fileExists(t, htmlHash) {
+		t.Fatal("gc removed the file of a deleted attachment")
+	}
+	purgeDeleted(t, e)
 	if r := gc(true); r.Files == 0 || !e.fileExists(t, htmlHash) {
 		t.Errorf("dry run: %+v, file exists: %v", r, e.fileExists(t, htmlHash))
 	}

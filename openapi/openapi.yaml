@@ -220,7 +220,7 @@ paths:
         "200": { $ref: "#/components/responses/Attribute" }
         default: { $ref: "#/components/responses/Problem" }
     delete:
-      summary: Delete an attribute
+      summary: Mark an attribute deleted (it must not be in use)
       operationId: attributeDelete
       responses:
         "204": { description: Deleted. }
@@ -285,7 +285,7 @@ paths:
         "200": { $ref: "#/components/responses/Option" }
         default: { $ref: "#/components/responses/Problem" }
     delete:
-      summary: Delete an option
+      summary: Mark an option deleted (it must not be in use)
       operationId: attributeOptionDelete
       responses:
         "204": { description: Deleted. }
@@ -330,7 +330,7 @@ paths:
         "200": { $ref: "#/components/responses/Class" }
         default: { $ref: "#/components/responses/Problem" }
     delete:
-      summary: Delete a class; with recursive=true also every class below it
+      summary: Mark a class deleted; with recursive=true also every class below it
       description: |
         Without `recursive`, the class must have no subclasses or items (else 409).
         With `recursive=true`, the class and every class below it are deleted in one
@@ -489,7 +489,7 @@ paths:
         "200": { $ref: "#/components/responses/Item" }
         default: { $ref: "#/components/responses/Problem" }
     delete:
-      summary: Delete an item (it must have no stock)
+      summary: Mark an item deleted (it must have no stock)
       operationId: itemDelete
       responses:
         "204": { description: Deleted. }
@@ -562,7 +562,7 @@ paths:
         "200": { $ref: "#/components/responses/Location" }
         default: { $ref: "#/components/responses/Problem" }
     delete:
-      summary: Delete a location; with recursive=true also every location below it
+      summary: Mark a location deleted; with recursive=true also every location below it
       description: |
         Without `recursive`, the location must have no sublocations or stock (else 409).
         With `recursive=true`, the location and every location below it are deleted in one
@@ -679,7 +679,7 @@ paths:
         "200": { $ref: "#/components/responses/Stock" }
         default: { $ref: "#/components/responses/Problem" }
     delete:
-      summary: Delete a stock row
+      summary: Mark a stock row deleted
       operationId: stockDelete
       responses:
         "204": { description: Deleted. }
@@ -802,7 +802,7 @@ paths:
         "200": { $ref: "#/components/responses/Attachment" }
         default: { $ref: "#/components/responses/Problem" }
     delete:
-      summary: Delete an attachment (the file is removed later by wtfd gc)
+      summary: Mark an attachment deleted (the file stays until it is purged)
       operationId: attachmentDelete
       responses:
         "204": { description: Deleted. }
@@ -1104,6 +1104,107 @@ paths:
                       - $ref: "#/components/schemas/Stock"
         default: { $ref: "#/components/responses/Problem" }
 
+  # Restoring what was marked deleted (see api/deleting.md). Rules are checked
+  # again as for something new; a 409 /problems/deleted explains what is in
+  # the way, with a hint.
+  /items/{id}/restore:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Restore a deleted item, with the stock rows deleted together with it
+      operationId: itemRestore
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string, description: A new name. }
+                class: { $ref: "#/components/schemas/Uuid", description: Restore it in this class instead. }
+                with_parents: { type: boolean, description: Also restore its deleted class, and the deleted classes above it. }
+      responses:
+        "200": { $ref: "#/components/responses/Item" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /stock/{id}/restore:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Restore a deleted stock row (not one merged into another)
+      operationId: stockRestore
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                location: { $ref: "#/components/schemas/Uuid", description: Restore it at this location instead. }
+                with_parents: { type: boolean, description: Also restore its deleted location, and the deleted locations above it. }
+      responses:
+        "200": { $ref: "#/components/responses/Stock" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /locations/{id}/restore:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Restore a deleted location, with what was deleted together with it below it
+      operationId: locationRestore
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TreeNodeRestore" }
+      responses:
+        "200": { $ref: "#/components/responses/Location" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /classes/{id}/restore:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Restore a deleted class, with the classes, items and stock rows deleted together with it
+      operationId: classRestore
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TreeNodeRestore" }
+      responses:
+        "200": { $ref: "#/components/responses/Class" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /attributes/{id}/restore:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Restore a deleted attribute
+      operationId: attributeRestore
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NameRestore" }
+      responses:
+        "200": { $ref: "#/components/responses/Attribute" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /options/{id}/restore:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Restore a deleted option (its attribute must not be deleted)
+      operationId: optionRestore
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NameRestore" }
+      responses:
+        "200": { $ref: "#/components/responses/Option" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /attachments/{id}/restore:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      summary: Restore a deleted attachment (its object must not be deleted)
+      operationId: attachmentRestore
+      responses:
+        "200": { $ref: "#/components/responses/Attachment" }
+        default: { $ref: "#/components/responses/Problem" }
+
 components:
   securitySchemes:
     session:
@@ -1336,6 +1437,7 @@ components:
               path: { type: string }
         stock:
           type: array
+          description: The live stock rows; for a deleted item, those deleted together with it.
           items:
             type: object
             properties:
@@ -1362,7 +1464,28 @@ components:
         title: { type: string }
         status: { type: integer }
         detail: { type: string }
+        hint: { type: string, description: What to do about it, when the database knows (revision 2). }
         sqlstate: { type: string, description: PostgreSQL error code, when the error came from the database. }
+
+    TreeNodeRestore:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, description: A new name, for when the old one has been taken since. }
+        parent:
+          oneOf: [{ $ref: "#/components/schemas/Uuid" }, { type: "null" }]
+          description: Restore it under this parent instead; null at the top.
+        with_parents: { type: boolean, description: Also restore the deleted nodes it is in. }
+
+    NameRestore:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, description: A new name, for when the old one has been taken since. }
+
+    Deleted:
+      type: boolean
+      description: Marked deleted (revision 2). Lists and trees leave deleted objects out; fetching one by id or code still works.
 
     NamedRef:
       type: object
@@ -1463,6 +1586,7 @@ components:
         sha256: { type: string, description: Hex SHA-256 of the content. }
         caption: { type: [string, "null"] }
         primary_photo: { type: boolean }
+        deleted: { $ref: "#/components/schemas/Deleted" }
 
     Attachments:
       type: array
@@ -1505,6 +1629,7 @@ components:
           type: array
           description: Only for choice attributes in GET /attributes/{id}.
           items: { $ref: "#/components/schemas/NamedRef" }
+        deleted: { $ref: "#/components/schemas/Deleted" }
 
     Option:
       type: object
@@ -1512,6 +1637,7 @@ components:
         id: { $ref: "#/components/schemas/Uuid" }
         attribute: { $ref: "#/components/schemas/Uuid" }
         name: { type: string }
+        deleted: { $ref: "#/components/schemas/Deleted" }
 
     TreeNode:
       type: object
@@ -1538,6 +1664,7 @@ components:
         parent: { oneOf: [{ $ref: "#/components/schemas/Uuid" }, { type: "null" }] }
         container: { type: boolean, description: Holds only other classes, no items. }
         path: { type: array, items: { $ref: "#/components/schemas/PathEntry" } }
+        deleted: { $ref: "#/components/schemas/Deleted" }
         attributes:
           type: array
           items:
@@ -1561,6 +1688,7 @@ components:
         parent: { oneOf: [{ $ref: "#/components/schemas/Uuid" }, { type: "null" }] }
         container: { type: boolean, description: Holds only other locations, no stock. }
         path: { type: array, items: { $ref: "#/components/schemas/PathEntry" } }
+        deleted: { $ref: "#/components/schemas/Deleted" }
         attachments:
           $ref: "#/components/schemas/Attachments"
           description: Only in GET /locations/{id}.
@@ -1574,6 +1702,7 @@ components:
         class: { $ref: "#/components/schemas/Uuid" }
         unit_group:
           oneOf: [{ $ref: "#/components/schemas/UnitGroup" }, { type: "null" }]
+        deleted: { $ref: "#/components/schemas/Deleted" }
 
     ItemListed:
       allOf:
@@ -1596,6 +1725,7 @@ components:
         id: { $ref: "#/components/schemas/Uuid" }
         code: { type: string, description: Label code (Crockford Base32), e.g. 1A7K. }
         name: { type: string }
+        deleted: { $ref: "#/components/schemas/Deleted" }
         class: { $ref: "#/components/schemas/ClassDetail" }
         unit_group:
           oneOf: [{ $ref: "#/components/schemas/UnitGroup" }, { type: "null" }]
@@ -1627,6 +1757,15 @@ components:
         quantity: { type: [number, "null"] }
         unit: { oneOf: [{ $ref: "#/components/schemas/Unit" }, { type: "null" }] }
         display: { $ref: "#/components/schemas/Display" }
+        deleted: { $ref: "#/components/schemas/Deleted" }
+        merged_into:
+          description: For a row a move merged into another, that row.
+          oneOf:
+            - type: object
+              properties:
+                id: { $ref: "#/components/schemas/Uuid" }
+                code: { type: string }
+            - type: "null"
         values:
           $ref: "#/components/schemas/Values"
           description: Not in GET /stock list rows.

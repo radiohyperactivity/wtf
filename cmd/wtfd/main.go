@@ -5,6 +5,7 @@
 //	wtfd gc [flags]        remove attachment files nothing refers to any more
 //	wtfd tenant <command> create, list or change tenants
 //	wtfd history purge     delete old history entries
+//	wtfd deleted purge     remove what was deleted long ago
 //
 // Run "wtfd <action> -h" for the flags of an action. See WTFD.md.
 package main
@@ -43,6 +44,7 @@ Actions:
   gc        remove attachment files nothing refers to any more
   tenant    create, list or change tenants
   history   delete old history entries (purge)
+  deleted   remove what was deleted long ago (purge)
 
 Run "wtfd <action> -h" for the flags of an action.
 `
@@ -65,6 +67,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runGC(args[1:], stderr)
 	case "tenant":
 		return runTenant(args[1:], stdout, stderr)
+	case "deleted":
+		return runDeleted(args[1:], stdout, stderr)
 	case "history":
 		return runHistory(args[1:], stdout, stderr)
 	case "help", "-h", "-help", "--help":
@@ -419,6 +423,80 @@ func runHistory(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "Would delete %d history entries.\n", n)
 	} else {
 		fmt.Fprintf(stdout, "Deleted %d history entries.\n", n)
+	}
+	return exitOK
+}
+
+const deletedUsage = `Usage:
+  wtfd deleted purge --older-than AGE [--tenant NAME] [--dry-run] [database flags]
+
+Removes for good what was deleted longer ago than AGE: a number of days
+(730d) or a Go duration (36h).
+`
+
+func runDeleted(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "purge" {
+		fmt.Fprint(stderr, deletedUsage)
+		if len(args) > 0 && (args[0] == "help" || args[0] == "-h" || args[0] == "--help") {
+			return exitOK
+		}
+		return exitUsage
+	}
+	fs := flag.NewFlagSet("wtfd deleted purge", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	database := config.RegisterDatabase(fs)
+	olderThan := fs.String("older-than", "", "remove what was deleted longer ago than this, e.g. 730d (required)")
+	tenantName := fs.String("tenant", "", "only this tenant (default: all tenants)")
+	dryRun := fs.Bool("dry-run", false, "count what would be removed, remove nothing")
+	if err := fs.Parse(args[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return exitOK
+		}
+		return exitUsage
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "wtfd deleted purge: unexpected argument %q\n", fs.Arg(0))
+		return exitUsage
+	}
+	if *olderThan == "" {
+		fmt.Fprintln(stderr, "wtfd deleted purge: --older-than is required")
+		return exitUsage
+	}
+	age, err := tenant.ParseAge(*olderThan)
+	if err != nil {
+		fmt.Fprintf(stderr, "wtfd deleted purge: --older-than: %v\n", err)
+		return exitUsage
+	}
+	if err := database.Validate(); err != nil {
+		fmt.Fprintf(stderr, "wtfd deleted purge: %v\n", err)
+		return exitUsage
+	}
+
+	connConfig, err := database.ConnConfig(database.DBAUser, os.Getenv(config.DBAPasswordEnv), "wtfd deleted")
+	if err != nil {
+		fmt.Fprintf(stderr, "wtfd deleted purge: %v\n", err)
+		return exitUsage
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	conn, err := tenant.Connect(ctx, connConfig)
+	if err != nil {
+		fmt.Fprintf(stderr, "wtfd deleted purge: %v\n", err)
+		return exitFailure
+	}
+	defer conn.Close(context.Background())
+
+	counts, err := tenant.PurgeDeleted(ctx, conn, age, *tenantName, *dryRun)
+	if err != nil {
+		fmt.Fprintf(stderr, "wtfd deleted purge: %v\n", err)
+		return exitFailure
+	}
+	verb := "Removed"
+	if *dryRun {
+		verb = "Would remove"
+	}
+	for _, kind := range tenant.PurgedKinds {
+		fmt.Fprintf(stdout, "%s %d %s.\n", verb, counts[kind.Table], kind.Name)
 	}
 	return exitOK
 }

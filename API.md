@@ -17,14 +17,16 @@ All access to the data goes through the PL/pgSQL functions described here. They 
 | [api/attachment.md](api/attachment.md)   | [db/repeatable/80_attachment.sql](db/repeatable/80_attachment.sql) | `attachment_*` |
 | [api/account.md](api/account.md)         | [db/repeatable/90_account.sql](db/repeatable/90_account.sql)   | `login`, `session_use`, `logout`, `me`, `password_change`, `account_*` |
 | [api/history.md](api/history.md)         | [db/repeatable/95_history.sql](db/repeatable/95_history.sql)   | `*_history` |
+| [api/deleting.md](api/deleting.md)       | [db/migrations/0010_deleted.sql](db/migrations/0010_deleted.sql) | Marking deleted, `*_restore`, purging |
 | [api/meta.md](api/meta.md)               | [db/repeatable/60_meta.sql](db/repeatable/60_meta.sql)         | `schema_version()` |
 
 The files are applied by `wtfd schema` (see [WTFD.md](WTFD.md)). Migrations run once, in order; the repeatable scripts are rebuilt as a whole whenever one of them changes.
 
 ## Conventions
 
-- **Functions, not procedures.** Every API entry point is a `FUNCTION` returning `jsonb` (or `void` for deletes).
+- **Functions, not procedures.** Every API entry point is a `FUNCTION` returning `jsonb` (or `void` for deletes, which mark objects deleted).
 - **History.** Every change to tenant data is logged by a trigger: who, when, what changed. It can be read per object with the history privilege; see [api/history.md](api/history.md).
+- **Deleting marks objects** instead of removing them; see [api/deleting.md](api/deleting.md). Lists and trees leave deleted objects out; `_get` and `code_resolve` still return them, with `deleted: true`. A deleted object can't be changed, only restored (`<entity>_restore(p_id, p_options)`) or purged by the operator.
 - **Tenants and logins.** Every API function works on behalf of a logged-in account, within its tenant (see [TENANTS.md](TENANTS.md) and [api/account.md](api/account.md)).
   - `wtfd` calls `session_use(token, hostname)` first in each transaction.
   - The function checks the account's privilege (`data`, `model` or `account`; read or write) and only sees the tenant's objects.
@@ -34,7 +36,7 @@ The files are applied by `wtfd schema` (see [WTFD.md](WTFD.md)). Migrations run 
   - Each one pins `search_path = public, pg_temp`, so a caller can't redirect table or function names to objects of its own.
   - The REST layer connects as `wtf_api`. That role may only `EXECUTE` the API functions; it has no access to tables, views, the `util` schema or other functions. See [README.md](README.md).
 - **Naming.**
-  - API functions are `<entity>_<verb>` in schema `public`: `list`, `get`, `create`, `patch`, `delete`, plus a few domain verbs (`class_attribute_set`, `stock_move`).
+  - API functions are `<entity>_<verb>` in schema `public`: `list`, `get`, `create`, `patch`, `delete`, `restore`, plus a few domain verbs (`class_attribute_set`, `stock_move`).
   - Internal helpers live in schema `util` and are not called by the REST layer.
   - Parameters start with `p_`, local variables with `v_`. This keeps them apart from column names such as `class` or `item`.
 - **Create and patch.**
@@ -117,7 +119,8 @@ Functions raise standard SQLSTATEs. Suggested HTTP mapping for the REST layer:
 | `22P02`, `22003`, `22008` | invalid text / out of range / bad date | Malformed uuid, number too large, impossible date | 400 |
 | `23514`  | `check_violation`               | Integrity rule from a CHECK or trigger (cycle, wrong datatype, orphaned values, …) | 422 |
 | `23505`  | `unique_violation`              | Duplicate name                                              | 409   |
-| `23001`  | `restrict_violation`            | On delete: the object is still in use (all foreign keys are `ON DELETE RESTRICT`) | 409   |
+| `23001`  | `restrict_violation`            | On delete: something live still depends on the object | 409   |
+| `55000`  | `object_not_in_prerequisite_state` | The object, or one it needs, is deleted; or a restore of something that isn't deleted (the `hint` names the ways out) | 409   |
 | `23503`  | `foreign_key_violation`         | On create/update: a referenced object doesn't exist | 422   |
 | `23502`  | `not_null_violation`            | A required parameter was NULL                               | 400   |
 | `28000`  | `invalid_authorization_specification` | Not logged in, or the session has expired              | 401   |
@@ -135,23 +138,24 @@ quantity   { id, name, datatype }
 unit       { id, name, symbol, quantity: quantity, base_factor, base_offset, is_base }
 unit_group { id, name, quantity: quantity, base_unit: unit }
            unit_group_get adds  units: [ unit ]  (smallest to largest)
-attribute  { id, name, datatype, unit_group: unit_group | null }
+attribute  { id, name, datatype, unit_group: unit_group | null, deleted }
            attribute_get adds  options: [ { id, name } ]  for choice attributes
-option     { id, attribute, name }
-class      { id, name, parent, container, path: [ { id, name } ] }
+option     { id, attribute, name, deleted }
+class      { id, name, parent, container, path: [ { id, name } ], deleted }
            class_get adds  attributes: [ { attribute, defined_on_class, inherited, default, default_display: display | null, per_unit, required } ], attachments: [ attachment ]
-location   { id, code, name, parent, container, path: [ { id, name } ] }
+location   { id, code, name, parent, container, path: [ { id, name } ], deleted }
            location_get adds  attachments: [ attachment ]
-attachment { id, file_name, content_type, size, sha256, caption, primary_photo }
-item       (list)  { id, code, name, class: <class id>, unit_group: unit_group | null,
+attachment { id, file_name, content_type, size, sha256, caption, primary_photo, deleted }
+item       (list)  { id, code, name, class: <class id>, unit_group: unit_group | null, deleted,
                      stock: { total, unit: unit | null, display: display | null, uncounted }, incomplete }
-           (get)   { id, code, name, class: class, unit_group: unit_group | null,
+           (get)   { id, code, name, deleted, class: class, unit_group: unit_group | null,
                      values: [ value ], missing: [ { id, name } ],
                      stock: [ { id, code, location: <location id>, quantity, display: display | null,
                                 values: [ value ], missing: [ { id, name } ] } ] }
 value      { attribute, value, unit: unit | null, display: display | null, is_default }
 stock      { id, code, item: item (list form, without stock total), location: <location id>,
              quantity: number | null, unit: unit | null, display: display | null,
+             deleted, merged_into: { id, code } | null,
              values: [ value ], missing: [ { id, name } ] }   (values and missing not in stock_list rows)
 ```
 
@@ -172,17 +176,20 @@ Suggested REST routes are only there to show intent. The REST design comes later
 | `attribute_create(p_name, p_datatype, p_unit_group)` | attribute | `POST /attributes` |
 | `attribute_patch(p_id, p_patch)` | attribute | `PATCH /attributes/{id}` |
 | `attribute_delete(p_id)` | void | `DELETE /attributes/{id}` |
+| `attribute_restore(p_id, p_options)` | attribute (+ options) | `POST /attributes/{id}/restore` |
 | `attribute_option_list(p_attribute)` | [option] | `GET /attributes/{id}/options` |
 | `attribute_option_get(p_id)` | option | `GET /options/{id}` |
 | `attribute_option_create(p_attribute, p_name)` | option | `POST /attributes/{id}/options` |
 | `attribute_option_patch(p_id, p_patch)` | option | `PATCH /options/{id}` |
 | `attribute_option_delete(p_id)` | void | `DELETE /options/{id}` |
+| `attribute_option_restore(p_id, p_options)` | option | `POST /options/{id}/restore` |
 | `class_list(p_known_version)` | tree | `GET /classes` (ETag) |
 | `class_get(p_id)` | class (+ attributes) | `GET /classes/{id}` |
 | `class_create(p_name, p_parent)` | class (+ attributes) | `POST /classes` |
 | `class_patch(p_id, p_patch)` | class (+ attributes) | `PATCH /classes/{id}` |
 | `class_delete(p_id)` | void | `DELETE /classes/{id}` |
 | `class_delete_tree(p_id, p_force, p_dry_run)` | `{classes, items, stock}` deleted | `DELETE /classes/{id}?recursive=true[&force=true]`; preview `GET /classes/{id}/deletion` |
+| `class_restore(p_id, p_options)` | class (+ attributes) | `POST /classes/{id}/restore` |
 | `class_attribute_set(p_class, p_attribute, p_default, p_per_unit, p_required)` | class (+ attributes) | `PUT /classes/{id}/attributes/{attribute}` |
 | `class_attribute_remove(p_class, p_attribute)` | class (+ attributes) | `DELETE /classes/{id}/attributes/{attribute}` |
 | `item_list(p_class, p_search, p_limit, p_offset)` | page of item (list form, with stock total) | `GET /items?class=&search=` |
@@ -190,6 +197,7 @@ Suggested REST routes are only there to show intent. The REST design comes later
 | `item_create(p_class, p_name, p_unit_group, p_values)` | item | `POST /items` |
 | `item_patch(p_id, p_patch)` | item | `PATCH /items/{id}` |
 | `item_delete(p_id)` | void | `DELETE /items/{id}` |
+| `item_restore(p_id, p_options)` | item | `POST /items/{id}/restore` |
 | `value_set(p_item, p_attribute, p_value)` | item | `PUT /items/{id}/values/{attribute}` |
 | `value_delete(p_item, p_attribute)` | item | `DELETE /items/{id}/values/{attribute}` |
 | `location_list(p_known_version)` | tree | `GET /locations` (ETag) |
@@ -198,18 +206,21 @@ Suggested REST routes are only there to show intent. The REST design comes later
 | `location_patch(p_id, p_patch)` | location | `PATCH /locations/{id}` |
 | `location_delete(p_id)` | void | `DELETE /locations/{id}` |
 | `location_delete_tree(p_id, p_force, p_dry_run)` | `{locations, stock}` deleted | `DELETE /locations/{id}?recursive=true[&force=true]`; preview `GET /locations/{id}/deletion` |
+| `location_restore(p_id, p_options)` | location | `POST /locations/{id}/restore` |
 | `stock_list(p_item, p_location, p_limit, p_offset)` | page of stock | `GET /stock?item=&location=` |
 | `stock_get(p_id)` | stock | `GET /stock/{id}` |
 | `stock_create(p_item, p_location, p_quantity, p_values)` | stock | `POST /stock` |
 | `stock_patch(p_id, p_patch)` | stock | `PATCH /stock/{id}` |
 | `stock_move(p_id, p_location, p_quantity)` | stock (at destination) | `POST /stock/{id}/move` |
 | `stock_delete(p_id)` | void | `DELETE /stock/{id}` |
+| `stock_restore(p_id, p_options)` | stock | `POST /stock/{id}/restore` |
 | `stock_value_set(p_stock, p_attribute, p_value)` | stock | `PUT /stock/{id}/values/{attribute}` |
 | `stock_value_delete(p_stock, p_attribute)` | stock | `DELETE /stock/{id}/values/{attribute}` |
 | `attachment_lock(p_sha256)`, `attachment_create(…)` | attachment | `POST /items\|stock\|locations\|classes/{id}/attachments` (multipart, via wtfd) |
 | `attachment_get(p_id)` | attachment | `GET /attachments/{id}` (content: `GET /attachments/{id}/content`, via wtfd) |
 | `attachment_patch(p_id, p_patch)` | attachment | `PATCH /attachments/{id}` |
 | `attachment_delete(p_id)` | void | `DELETE /attachments/{id}` |
+| `attachment_restore(p_id, p_options)` | attachment | `POST /attachments/{id}/restore` |
 | `login(p_hostname, p_email, p_password)` | `{ok, token, account, tenant}` or `{ok: false, reason}` | `POST /api/v1/login` (the token becomes the session cookie) |
 | `session_use(p_token, p_hostname)` | void | – (called by wtfd before every function) |
 | `logout()` | void | `POST /logout` |

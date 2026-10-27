@@ -160,11 +160,13 @@ BEGIN
         SELECT COALESCE(jsonb_agg(util.attribute_json(a.id) ORDER BY lower(a.name), a.id), '[]'::jsonb)
         FROM attribute a
         WHERE a.tenant = v_tenant
+          AND NOT a.deleted
     );
 END;
 $$;
 
 -- For choice attributes the result also lists all options, alphabetically.
+-- A deleted attribute is returned too, with deleted: true.
 CREATE FUNCTION attribute_get(p_id uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
@@ -189,6 +191,7 @@ BEGIN
                 )
                 FROM attribute_option o
                 WHERE o.attribute = p_id
+                  AND NOT o.deleted
             )
         );
     END IF;
@@ -247,6 +250,8 @@ BEGIN
 END;
 $$;
 
+-- Marks an attribute deleted. Fails (23001) while live items, stock rows or
+-- classes use it. Its options stay as they are, and come back with it.
 CREATE FUNCTION attribute_delete(p_id uuid) RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
@@ -254,11 +259,38 @@ AS $$
 DECLARE
     v_tenant uuid := util.require('model', 'write');
 BEGIN
-    DELETE FROM attribute WHERE id = p_id AND tenant = v_tenant;
+    UPDATE attribute SET deleted = true WHERE id = p_id AND tenant = v_tenant;
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('attribute', p_id);
     END IF;
+END;
+$$;
+
+-- Restores a deleted attribute. p_options: {"name": …} gives it a new name,
+-- for when the old one has been taken since.
+CREATE FUNCTION attribute_restore(p_id uuid, p_options jsonb DEFAULT '{}') RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_tenant  uuid := util.require('model', 'write');
+    v_deleted boolean;
+BEGIN
+    PERFORM util.check_patch(p_options, ARRAY['name'], ARRAY['name']);
+    SELECT deleted INTO v_deleted FROM attribute WHERE id = p_id AND tenant = v_tenant FOR UPDATE;
+    IF NOT FOUND THEN
+        PERFORM util.raise_not_found('attribute', p_id);
+    END IF;
+    IF NOT v_deleted THEN
+        PERFORM util.raise_not_deleted('attribute', p_id);
+    END IF;
+
+    UPDATE attribute
+    SET deleted = false,
+        name    = CASE WHEN p_options ? 'name' THEN util.clean_name(p_options ->> 'name') ELSE name END
+    WHERE id = p_id;
+    RETURN attribute_get(p_id);
 END;
 $$;
 
@@ -282,6 +314,7 @@ BEGIN
         SELECT COALESCE(jsonb_agg(util.option_json(o.id) ORDER BY lower(o.name), o.id), '[]'::jsonb)
         FROM attribute_option o
         WHERE o.attribute = p_attribute
+          AND NOT o.deleted
     );
 END;
 $$;
@@ -344,6 +377,7 @@ BEGIN
 END;
 $$;
 
+-- Marks an option deleted. Fails (23001) while live values or defaults use it.
 CREATE FUNCTION attribute_option_delete(p_id uuid) RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
@@ -351,10 +385,37 @@ AS $$
 DECLARE
     v_tenant uuid := util.require('model', 'write');
 BEGIN
-    DELETE FROM attribute_option WHERE id = p_id AND tenant = v_tenant;
+    UPDATE attribute_option SET deleted = true WHERE id = p_id AND tenant = v_tenant;
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('attribute option', p_id);
     END IF;
+END;
+$$;
+
+-- Restores a deleted option; its attribute must be live. p_options:
+-- {"name": …} as for attribute_restore.
+CREATE FUNCTION attribute_option_restore(p_id uuid, p_options jsonb DEFAULT '{}') RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_tenant  uuid := util.require('model', 'write');
+    v_deleted boolean;
+BEGIN
+    PERFORM util.check_patch(p_options, ARRAY['name'], ARRAY['name']);
+    SELECT deleted INTO v_deleted FROM attribute_option WHERE id = p_id AND tenant = v_tenant FOR UPDATE;
+    IF NOT FOUND THEN
+        PERFORM util.raise_not_found('attribute option', p_id);
+    END IF;
+    IF NOT v_deleted THEN
+        PERFORM util.raise_not_deleted('attribute_option', p_id);
+    END IF;
+
+    UPDATE attribute_option
+    SET deleted = false,
+        name    = CASE WHEN p_options ? 'name' THEN util.clean_name(p_options ->> 'name') ELSE name END
+    WHERE id = p_id;
+    RETURN util.option_json(p_id);
 END;
 $$;

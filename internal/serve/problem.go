@@ -12,10 +12,12 @@ import (
 // problem is an RFC 9457 problem detail. It doubles as an error, so request
 // handling code can return one directly.
 type problem struct {
-	Type     string `json:"type"`
-	Title    string `json:"title"`
-	Status   int    `json:"status"`
-	Detail   string `json:"detail,omitempty"`
+	Type   string `json:"type"`
+	Title  string `json:"title"`
+	Status int    `json:"status"`
+	Detail string `json:"detail,omitempty"`
+	// Hint says what to do about it, when the database gave a hint.
+	Hint     string `json:"hint,omitempty"`
 	SQLState string `json:"sqlstate,omitempty"`
 	// Supported lists the API versions this server serves, in an
 	// unsupported-api-version problem.
@@ -72,7 +74,7 @@ func problemFor(err error, method string) (*problem, bool) {
 		return internalError, false
 	}
 
-	p = &problem{Detail: pgErr.Message, SQLState: pgErr.Code}
+	p = &problem{Detail: pgErr.Message, Hint: pgErr.Hint, SQLState: pgErr.Code}
 	if pgErr.Detail != "" {
 		p.Detail += ": " + pgErr.Detail
 	}
@@ -95,6 +97,8 @@ func problemFor(err error, method string) (*problem, bool) {
 		} else {
 			p.Type, p.Title, p.Status = "/problems/invalid-reference", "Invalid reference", http.StatusUnprocessableEntity
 		}
+	case "55000": // object_not_in_prerequisite_state: deleted, or not deleted when restoring
+		p.Type, p.Title, p.Status = "/problems/deleted", "Deleted", http.StatusConflict
 	case "57014": // query_canceled, e.g. statement_timeout
 		p.Type, p.Title, p.Status = "/problems/timeout", "Timeout", http.StatusServiceUnavailable
 	default:

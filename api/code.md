@@ -18,4 +18,4 @@ In the database a code is stored as the number (`code bigint`). Every location, 
 
   `type` is `location`, `item` or `stock`, and `object` is what the matching `_get` function returns. Lower case and hyphens are accepted (`1a-7k`). The letters `I`, `L`, `O` and `U` are rejected (400). Clients map `I` and `L` to `1`, and `O` to `0`, before sending, as Crockford's scheme intends. An unknown code is a 404.
 
-A stock row that `stock_move` merges into another row is deleted, and its code stops resolving. A row split off by a partial move is new, and gets a new code.
+A deleted object's code still resolves, to the object with `deleted: true` (see [deleting.md](deleting.md)); a code is never reused. A stock row that `stock_move` merges into another row is deleted, and its code resolves to it with `merged_into`, the row it went into. A row split off by a partial move is new, and gets a new code.

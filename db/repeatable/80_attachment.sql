@@ -98,6 +98,7 @@ BEGIN
 END;
 $$;
 
+-- A deleted attachment is returned too, with deleted: true.
 CREATE FUNCTION attachment_get(p_id uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
@@ -137,14 +138,42 @@ BEGIN
 END;
 $$;
 
--- Deletes an attachment. The file stays on disk until "wtfd gc" finds it
--- unreferenced.
+-- Marks an attachment deleted. Its file stays on disk while it is referenced,
+-- until the attachment is purged and "wtfd gc" finds the file unreferenced.
 CREATE FUNCTION attachment_delete(p_id uuid) RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.attachment_access(p_id, 'write');
-    DELETE FROM attachment WHERE id = p_id;
+    UPDATE attachment SET deleted = true WHERE id = p_id;
+END;
+$$;
+
+-- Restores a deleted attachment; its object must be live. If it was the
+-- primary photo and the object has another one by now, it comes back as an
+-- ordinary attachment.
+CREATE FUNCTION attachment_restore(p_id uuid, p_options jsonb DEFAULT '{}') RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_attachment attachment;
+BEGIN
+    PERFORM util.attachment_access(p_id, 'write');
+    PERFORM util.check_patch(p_options, ARRAY[]::text[], ARRAY[]::text[]);
+    SELECT * INTO v_attachment FROM attachment WHERE id = p_id FOR UPDATE;
+    IF NOT v_attachment.deleted THEN
+        PERFORM util.raise_not_deleted('attachment', p_id);
+    END IF;
+
+    UPDATE attachment a
+    SET deleted       = false,
+        primary_photo = a.primary_photo AND NOT EXISTS (
+            SELECT 1 FROM attachment o
+            WHERE o.id <> a.id AND o.primary_photo AND NOT o.deleted
+              AND (o.item = a.item OR o.stock = a.stock OR o.location = a.location OR o.class = a.class))
+    WHERE a.id = p_id;
+    RETURN util.attachment_json(p_id);
 END;
 $$;

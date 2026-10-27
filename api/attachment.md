@@ -8,12 +8,12 @@ Files (photos, datasheets, manuals, receipts, …) can be attached to items, sto
 
 - **Content on disk:** the file contents live in `wtfd`'s files directory (`--files-directory`), named by their SHA-256 hash: `<directory>/ab/abcdef…`. A stored file never changes, and the same content is stored only once, however often it is attached.
 - **Metadata in the database:** a `file` row per stored content (hash, size), and an `attachment` row per attachment (file name, content type, caption, primary photo flag, and the one object it belongs to).
-- **Deleting** an attachment, or the object it belongs to, leaves the file on disk. `wtfd gc` removes files that nothing references any more (see [WTFD.md](../WTFD.md)).
+- **Deleting** an attachment, or the object it belongs to, marks it deleted and keeps the file (see [deleting.md](deleting.md)). Once it is purged, `wtfd gc` removes files that nothing references any more (see [WTFD.md](../WTFD.md)).
 
 ## Functions
 
 - **`attachment_lock(p_sha256)`** and **`attachment_create(p_target_type, p_target, p_sha256, p_size, p_file_name, p_content_type, p_caption, p_primary_photo)`** are used by the upload handler, in one transaction: lock the hash, put the file in place, record it. `wtfd gc` takes the same lock before removing a file, so a running upload never loses its file.
-- **`attachment_get(p_id)`**, **`attachment_patch(p_id, p_patch)`** (`file_name`, `caption`, `primary_photo`) and **`attachment_delete(p_id)`**.
+- **`attachment_get(p_id)`**, **`attachment_patch(p_id, p_patch)`** (`file_name`, `caption`, `primary_photo`) **`attachment_delete(p_id)`** and **`attachment_restore(p_id, p_options)`**.
 
 ## Primary photo
 

@@ -45,12 +45,14 @@ func (s *server) routes() []route {
 		{"GET /attributes/{id}", s.read("attribute_get", id)},
 		{"PATCH /attributes/{id}", s.update("attribute_patch", id, patch("p_patch"))},
 		{"DELETE /attributes/{id}", s.remove("attribute_delete", id)},
+		{"POST /attributes/{id}/restore", s.update("attribute_restore", id, patch("p_options"))},
 		{"GET /attributes/{id}/options", s.read("attribute_option_list", path("p_attribute", "id"))},
 		{"POST /attributes/{id}/options", s.create("attribute_option_create", "/options/",
 			path("p_attribute", "id"), body(field{key: "name", name: "p_name", typ: "text"}))},
 		{"GET /options/{id}", s.read("attribute_option_get", id)},
 		{"PATCH /options/{id}", s.update("attribute_option_patch", id, patch("p_patch"))},
 		{"DELETE /options/{id}", s.remove("attribute_option_delete", id)},
+		{"POST /options/{id}/restore", s.update("attribute_option_restore", id, patch("p_options"))},
 
 		{"GET /classes", s.tree("class_list")},
 		{"POST /classes", s.create("class_create", "/classes/", body(
@@ -61,6 +63,7 @@ func (s *server) routes() []route {
 		{"GET /classes/{id}", s.read("class_get", id)},
 		{"PATCH /classes/{id}", s.update("class_patch", id, patch("p_patch"))},
 		{"DELETE /classes/{id}", s.removeTree("class_delete", "class_delete_tree", id)},
+		{"POST /classes/{id}/restore", s.update("class_restore", id, patch("p_options"))},
 		{"GET /classes/{id}/deletion", s.read("class_delete_tree", id,
 			query("p_force", "force", "boolean"), constant("p_dry_run", "boolean", true))},
 		{"PUT /classes/{id}/attributes/{attribute}", s.update("class_attribute_set",
@@ -87,6 +90,7 @@ func (s *server) routes() []route {
 		{"GET /items/{id}", s.read("item_get", id)},
 		{"PATCH /items/{id}", s.update("item_patch", id, patch("p_patch"))},
 		{"DELETE /items/{id}", s.remove("item_delete", id)},
+		{"POST /items/{id}/restore", s.update("item_restore", id, patch("p_options"))},
 		{"PUT /items/{id}/values/{attribute}", s.update("value_set",
 			path("p_item", "id"), path("p_attribute", "attribute"),
 			body(field{key: "value", name: "p_value", typ: "jsonb"}))},
@@ -103,6 +107,7 @@ func (s *server) routes() []route {
 		{"GET /locations/{id}", s.read("location_get", id)},
 		{"PATCH /locations/{id}", s.update("location_patch", id, patch("p_patch"))},
 		{"DELETE /locations/{id}", s.removeTree("location_delete", "location_delete_tree", id)},
+		{"POST /locations/{id}/restore", s.update("location_restore", id, patch("p_options"))},
 		{"GET /locations/{id}/deletion", s.read("location_delete_tree", id,
 			query("p_force", "force", "boolean"), constant("p_dry_run", "boolean", true))},
 
@@ -120,6 +125,7 @@ func (s *server) routes() []route {
 		{"GET /stock/{id}", s.read("stock_get", id)},
 		{"PATCH /stock/{id}", s.update("stock_patch", id, patch("p_patch"))},
 		{"DELETE /stock/{id}", s.remove("stock_delete", id)},
+		{"POST /stock/{id}/restore", s.update("stock_restore", id, patch("p_options"))},
 		{"POST /stock/{id}/move", s.update("stock_move", id, body(
 			field{key: "location", name: "p_location", typ: "uuid"},
 			field{key: "quantity", name: "p_quantity", typ: "numeric"},
@@ -134,6 +140,7 @@ func (s *server) routes() []route {
 		{"GET /attachments/{id}", s.read("attachment_get", id)},
 		{"PATCH /attachments/{id}", s.update("attachment_patch", id, patch("p_patch"))},
 		{"DELETE /attachments/{id}", s.remove("attachment_delete", id)},
+		{"POST /attachments/{id}/restore", s.update("attachment_restore", id, patch("p_options"))},
 		{"GET /attachments/{id}/content", s.download},
 
 		{"POST /login", s.login},
