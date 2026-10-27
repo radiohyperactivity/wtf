@@ -198,7 +198,8 @@ class ClassScreen extends StatelessWidget {
                       subtitle: Text(
                         [
                           a.attribute.datatype,
-                          ?a.attribute.unitGroup?.name,
+                          if (a.attribute.unit case final u?)
+                            unitLabel(u, lock: a.attribute.unitLock),
                           if (a.perUnit) 'per unit',
                           if (a.required) 'required',
                           if (a.defaultText.isNotEmpty)
@@ -290,11 +291,11 @@ Future<bool> showAssignDialog(
     final full = attribute.datatype == 'choice'
         ? await client.attribute(attribute.id)
         : attribute;
-    final group = full.unitGroup;
+    final unit = full.unit;
     input = ValueInput(
       attribute: full,
       initial: current?.defaultText ?? '',
-      units: group == null ? null : await client.unitChoice(group),
+      units: unit == null ? null : await client.unitChoice(unit),
     );
   } catch (e) {
     if (context.mounted) showError(context, e);

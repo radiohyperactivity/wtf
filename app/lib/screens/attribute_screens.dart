@@ -3,12 +3,17 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../api/models.dart';
+import '../api/units.dart';
 import '../session.dart';
 import '../widgets/common.dart';
 import '../widgets/pickers.dart';
 import '../widgets/restore.dart';
+import '../widgets/value_fields.dart';
 
-String _describe(Attribute a) => [a.datatype, ?a.unitGroup?.name].join(' · ');
+String _describe(Attribute a) => [
+  a.datatype,
+  if (a.unit case final u?) unitLabel(u, lock: a.unitLock),
+].join(' · ');
 
 /// All attributes, like `wtf attribute list`.
 class AttributesScreen extends StatefulWidget {
@@ -197,12 +202,15 @@ class AttributeScreen extends StatelessWidget {
                   ),
                 const SizedBox(height: 8),
                 Field('Type', a.datatype),
-                if (a.unitGroup != null)
+                if (a.unit case final u?) ...[
+                  Field('Unit', unitLabel(u), note: u.quantity.name),
                   Field(
-                    'Unit group',
-                    a.unitGroup!.name,
-                    note: a.unitGroup!.quantity.name,
+                    'Unit lock',
+                    a.unitLock
+                        ? 'on: always shown in ${u.symbol}'
+                        : 'off: shown in the unit of ${u.familyName} that fits best',
                   ),
+                ],
                 if (a.datatype == 'choice') ...[
                   SectionTitle(
                     'Options',
@@ -306,8 +314,9 @@ Future<String?> askText(
 }
 
 /// Creates an attribute, or changes [current], like `wtf attribute add` and
-/// `wtf attribute edit`: name, type, and a unit group for numbers. Returns
-/// the attribute, or null when cancelled.
+/// `wtf attribute edit`: name, type, and a unit for numbers, with Unit lock.
+/// Picking a unit sets the type to its quantity's. Returns the attribute, or
+/// null when cancelled.
 Future<Attribute?> showAttributeDialog(
   BuildContext context, {
   Attribute? current,
@@ -315,7 +324,8 @@ Future<Attribute?> showAttributeDialog(
   final client = context.read<Session>().client;
   final name = TextEditingController(text: current?.name ?? '');
   var datatype = current?.datatype ?? 'text';
-  UnitGroup? group = current?.unitGroup;
+  Unit? unit = current?.unit;
+  var unitLock = current?.unitLock ?? false;
   String? error;
   return showDialog<Attribute>(
     context: context,
@@ -336,16 +346,17 @@ Future<Attribute?> showAttributeDialog(
                 saved = await client.createAttribute(
                   name: n,
                   datatype: datatype,
-                  unitGroupId: number ? group?.id : null,
+                  unitId: number ? unit?.id : null,
+                  unitLock: number && unit != null && unitLock,
                 );
               } else {
                 saved = await client.patchAttribute(current.id, {
                   if (n != current.name) 'name': n,
                   if (datatype != current.datatype) 'datatype': datatype,
-                  if (number &&
-                      group != null &&
-                      group!.id != current.unitGroup?.id)
-                    'unit_group': group!.id,
+                  if (number && unit != null && unit!.id != current.unit?.id)
+                    'unit': unit!.id,
+                  if (number && unit != null && unitLock != current.unitLock)
+                    'unit_lock': unitLock,
                 });
               }
               if (context.mounted) Navigator.pop(context, saved);
@@ -379,34 +390,49 @@ Future<Attribute?> showAttributeDialog(
                     ],
                     onChanged: (v) => setState(() => datatype = v ?? datatype),
                   ),
-                  if (number) ...[
+                  // A unit can be changed (to another of its quantity), but
+                  // not added or removed, as in the CLI.
+                  if (number && (current == null || current.unit != null)) ...[
                     const SizedBox(height: 16),
                     InputDecorator(
-                      decoration: const InputDecoration(
-                        labelText: 'Unit group',
-                      ),
+                      decoration: const InputDecoration(labelText: 'Unit'),
                       child: InkWell(
                         onTap: () async {
-                          final g = await pickUnitGroup(
+                          final picked = await pickUnit(
                             context,
                             noneLabel: current == null
                                 ? 'None: plain numbers'
                                 : null,
+                            quantityId: current?.unit?.quantity.id,
                           );
-                          if (g != null) {
-                            setState(() => group = g.id.isEmpty ? null : g);
-                          }
+                          if (picked == null) return;
+                          setState(() {
+                            unit = picked.unit;
+                            if (unit != null) {
+                              datatype = unit!.quantity.datatype;
+                            }
+                          });
                         },
                         child: Row(
                           children: [
                             Expanded(
-                              child: Text(group?.name ?? 'None: plain numbers'),
+                              child: Text(
+                                unit == null
+                                    ? 'None: plain numbers'
+                                    : unitLabel(unit!),
+                              ),
                             ),
                             const Icon(Icons.arrow_drop_down),
                           ],
                         ),
                       ),
                     ),
+                    if (unit != null)
+                      UnitLockSwitch(
+                        unit: unit!,
+                        value: unitLock,
+                        onChanged: (v) => setState(() => unitLock = v),
+                      ),
                   ],
                   if (error != null) ...[
                     const SizedBox(height: 12),
@@ -437,8 +463,8 @@ Future<Attribute?> showAttributeDialog(
   );
 }
 
-/// The quantities' unit groups and their units, like `wtf unit-group list`
-/// and `wtf unit-group get`.
+/// The unit families of each quantity and their units, like
+/// `wtf unit-family list`.
 class UnitsScreen extends StatefulWidget {
   const UnitsScreen({super.key});
 
@@ -458,13 +484,16 @@ class _UnitsScreenState extends State<UnitsScreen> {
   @override
   Widget build(BuildContext context) {
     final client = context.read<Session>().client;
-    return Loader<List<UnitGroup>>(
+    return Loader<List<UnitFamily>>(
       title: 'Units',
-      load: client.unitGroups,
-      builder: (context, groups, _) {
-        final shown = groups
+      load: client.unitFamilies,
+      builder: (context, families, _) {
+        final shown = families
             .where(
-              (g) => matchesWords('${g.name} ${g.quantity.name}', _filter.text),
+              (f) => matchesWords(
+                '${f.name} ${f.quantity.name} ${f.units.map((u) => '${u.symbol} ${u.name}').join(' ')}',
+                _filter.text,
+              ),
             )
             .toList();
         return Scaffold(
@@ -478,7 +507,7 @@ class _UnitsScreenState extends State<UnitsScreen> {
                     controller: _filter,
                     decoration: const InputDecoration(
                       prefixIcon: Icon(Icons.filter_list),
-                      hintText: 'Filter unit groups',
+                      hintText: 'Filter unit families and units',
                       border: OutlineInputBorder(),
                       isDense: true,
                     ),
@@ -488,43 +517,31 @@ class _UnitsScreenState extends State<UnitsScreen> {
                 Expanded(
                   child: ListView(
                     children: [
-                      for (final g in shown)
+                      for (final f in shown)
                         ExpansionTile(
-                          key: ValueKey(g.id),
-                          title: Text(g.name),
-                          subtitle: Text(g.quantity.name),
+                          key: ValueKey(f.id),
+                          title: Text(f.name),
+                          subtitle: Text(
+                            '${f.quantity.name} · ${unitSymbols(f.units)}',
+                          ),
                           children: [
-                            FutureBuilder(
-                              future: client.unitGroup(g.id),
-                              builder: (context, snap) {
-                                if (snap.hasError) {
-                                  return EmptyNote(errorText(snap.error!));
-                                }
-                                if (!snap.hasData) {
-                                  return const LinearProgressIndicator();
-                                }
-                                return Column(
-                                  children: [
-                                    for (final u in snap.data!.units)
-                                      ListTile(
-                                        dense: true,
-                                        leading: SizedBox(
-                                          width: 48,
-                                          child: Text(u.symbol),
-                                        ),
-                                        title: Text(u.name),
-                                        // base = value × factor + offset
-                                        trailing: Text(
-                                          u.isBase
-                                              ? 'base unit'
-                                              : '× ${u.baseFactor.toDecimal()}'
-                                                    '${u.baseOffset.isZero ? '' : ' + ${u.baseOffset.toDecimal()}'}',
-                                        ),
-                                      ),
-                                  ],
-                                );
-                              },
-                            ),
+                            for (final u in f.units)
+                              ListTile(
+                                dense: true,
+                                leading: SizedBox(
+                                  width: 72,
+                                  child: Text(u.symbol),
+                                ),
+                                title: Text(u.name),
+                                // base = value × factor + offset
+                                trailing: Text(
+                                  u.baseFactor == Rational(BigInt.one) &&
+                                          u.baseOffset.isZero
+                                      ? 'base unit'
+                                      : '× ${u.baseFactor.toDecimal()}'
+                                            '${u.baseOffset.isZero ? '' : ' + ${u.baseOffset.toDecimal()}'}',
+                                ),
+                              ),
                           ],
                         ),
                     ],

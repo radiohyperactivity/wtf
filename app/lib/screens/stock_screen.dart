@@ -185,14 +185,14 @@ Future<Stock?> showMoveDialog(
   final client = context.read<Session>().client;
   UnitChoice? units;
   try {
-    final group = stock.item.unitGroup;
-    units = group == null ? null : await client.unitChoice(group);
+    final unit = stock.item.unit;
+    units = unit == null ? null : await client.unitChoice(unit);
   } catch (e) {
     if (context.mounted) showError(context, e);
     return null;
   }
   if (!context.mounted) return null;
-  final quantity = TextEditingController();
+  final quantity = MeasureController();
   final form = GlobalKey<FormState>();
   String? target;
   return showDialog<Stock>(
@@ -272,7 +272,7 @@ Future<Stock?> showMoveDialog(
                   final moved = await client.moveStock(
                     stock.id,
                     target!,
-                    quantity: QuantityField.parse(quantity.text, units),
+                    quantity: QuantityField.parse(quantity, units),
                   );
                   if (context.mounted) Navigator.pop(context, moved);
                 } catch (e) {

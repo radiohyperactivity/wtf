@@ -52,7 +52,7 @@ A small hand-written Dart client, the counterpart of the CLI's Go client (`inter
 
 - **One method per API call:** for example `items.get(code)` or `stock.move(id, location, quantity)`, returning Dart classes such as `Item` and `Stock`.
 - **Server address:**
-  - The **web app** uses its own address, because `wtfd` serves it from the tenant's hostname, so there's nothing to enter.
+  - The **web app** uses its own address, because `wtfd` serves it, so there's nothing to enter.
   - The **native apps** ask for the server address at login and remember it, like `wtf login --server`.
 - **The session:**
   - **On the web,** the browser handles the cookie by itself. The app never sees the token.
@@ -81,7 +81,7 @@ Every screen has a URL. In the web app it shows in the address bar, and it works
 | `/classes/new?parent=…`, `/classes/<id>/edit` | Add or edit a class: name, parent, container. |
 | `/items/1B2C` | An item: values, stock rows with their locations, photos. A stock row's code shows its item too, as in the CLI. |
 | `/items/new?class=…` | Add an item: class, name, then its attributes (required ones first). Afterwards it offers to add stock, like the CLI. |
-| `/items/1B2C/edit` | Edit an item: name, class, unit group, values. |
+| `/items/1B2C/edit` | Edit an item: name, class, unit and Unit lock, values. |
 | `/stock/1C3D` | A stock row: quantity, location, per-unit values; move it (all or part), edit or delete it. |
 | `/stock/new?item=…&location=…` | Add stock: item, location, quantity, per-unit values. |
 | `/stock/1C3D/edit` | Edit a stock row: location, quantity, per-unit values. |
@@ -90,8 +90,8 @@ Every screen has a URL. In the web app it shows in the address bar, and it works
 | `/me` | Your account: email, privileges, appearance (light, dark or as the system), change password, log out. |
 | `/manage` | Links to attributes, units and accounts. |
 | `/attributes`, `/attributes/<id>` | The attributes; one attribute with its options (add, rename, delete). |
-| `/accounts`, `/accounts/<id>` | The tenant's accounts: email, privileges, password (keep, set or remove). |
-| `/units` | The unit groups and their units, for reference. |
+| `/accounts`, `/accounts/<id>` | The accounts: email, privileges, password (keep, set or remove). |
+| `/units` | The unit families and their units, for reference. |
 
 **Choosing things:** wherever a location or class must be chosen, a picker with search and the tree replaces the CLI's typing with Tab. Units work as in the CLI: you can type `12mm` or `2.5 m` into a number field, and the app converts and checks it as you type, with the same rules as the CLI (decision 1).
 
@@ -176,7 +176,7 @@ These are decisions I made without you, recorded for review. You asked me to cop
     - **Existing values:** they appear as shown elsewhere (`18 V`, `32 KiB`), which reads back to the same number. So saving without changes sends nothing.
 12. **New items.**
     - **Stock afterwards:** as in the CLI (decision 43), the app asks once "Add stock for …?". Yes opens the stock form, and the item's screen follows.
-    - **Unit groups:** a new item can have any unit group, or pieces. An existing item can only change to another group of the same quantity, and only if it has one (CLI decision 41).
+    - **Units:** a new item can have any unit, or pieces. An existing item can only change to another unit of the same quantity, and only if it has one (CLI decision 41).
 13. **Moving stock.**
     - **How much:** an empty quantity moves all of it. Uncounted rows can only move whole, so they get no quantity field.
     - **What you see afterwards:** the server answers with the row at the destination, which may be the same row, a new one split off, or one it was merged into. The app shows that row.
@@ -187,7 +187,7 @@ These are decisions I made without you, recorded for review. You asked me to cop
 15. **Privileges.** Buttons for changes the account may not make are hidden: data write for items, stock and locations, model write for classes and attributes, account write for accounts. The server checks anyway. (Locations were first wrongly tied to model write; fixed with decision 24.)
 16. **An ended session sends you to the login.** A 401 means the session has ended. The native apps also notice the deleted cookie, while the web app notices the 401.
 
-17. **What this app adds or changes shows at once** (your rule, not a decision of mine). The client keeps the class and location trees for the session, and revalidates them on every use. After a change to a tree (adding, renaming, moving or deleting a class or location, grids included), it fetches that tree again before the change counts as done. It then tells every screen still showing that tree, including the screens underneath, which load again. Unit groups and units are kept for the session as well, but they can't be changed through the API.
+17. **What this app adds or changes shows at once** (your rule, not a decision of mine). The client keeps the class and location trees for the session, and revalidates them on every use. After a change to a tree (adding, renaming, moving or deleting a class or location, grids included), it fetches that tree again before the change counts as done. It then tells every screen still showing that tree, including the screens underneath, which load again. Unit families and units are kept for the session as well, but they can't be changed through the API.
 
 ### Numbers
 
@@ -219,7 +219,7 @@ Added after review, with the deletion design ([api/deleting.md](api/deleting.md)
 
 23. **History in words** (agreed with you before building).
     - **One card per action:** the entries of one transaction, with the time and who did it, under a heading per day ("Today", "Yesterday", "Mon 26 Oct 2026").
-    - **Sentences with names, not ids:** "Added 2 at Garage/Shelf 1 (1C00)", "Voltage: 12 V → 18 V", "Renamed from “Drill” to “Cordless drill”". Classes and locations come from the trees, deleted ones are fetched by id, and the rest from the entries themselves, the attributes and their units. Numbers are shown in the group's best unit, as the server's `display` does.
+    - **Sentences with names, not ids:** "Added 2 at Garage/Shelf 1 (1C00)", "Voltage: 12 V → 18 V", "Renamed from “Drill” to “Cordless drill”". Classes and locations come from the trees, deleted ones are fetched by id, and the rest from the entries themselves, the attributes and their units. Numbers are shown as the server's `display` does: in the unit of the family that fits best, or in the unit itself with Unit lock.
     - **Whose history it is** decides the wording: in a location's history a stock row is named by its item ("Cordless drill (1C00) moved here from Garage"), in an item's history by its location.
     - **Actions that change several rows are one line:** a split or merge is "Moved 1 from A to B, into a new row 1C05", a grid is "Added Box with 40 compartments (A1 … H5)", and a box deleted with what was in it is "Deleted Box, with 40 locations inside and 2 stock rows". More than 8 lines per action are cut off with "… and N more changes".
     - **Lines lead to what they name,** deleted things included. That is how deleted things are found again (deletion decision 1).
@@ -229,5 +229,18 @@ Added after review, with the deletion design ([api/deleting.md](api/deleting.md)
     - **Restoring into something deleted** asks: "Restore the location too", or "Somewhere else…", which opens the picker. The CLI asks the same.
     - **A stock row a move merged into another** says so and leads to that row; a label code of one goes there straight from search.
     - **Label codes** of deleted things are shown as "…, deleted" in search.
-    - **Privileges:** while building this I noticed that the app tied locations to model write, but the server ties them to data write (TENANTS.md). The location buttons now follow data write.
+    - **Privileges:** while building this I noticed that the app tied locations to model write, but the server ties them to data write (ACCOUNTS.md). The location buttons now follow data write.
     - **Not built:** restoring attachments and options in the app. The CLI can (`wtf attachment restore`, `wtf option restore`); deleted attachments and options have no screen of their own in the app yet.
+
+### Unit families, and no tenants
+
+Built for API revision 3, with the server's change to units (CLI.md decision 48).
+
+25. **A unit menu next to every number field** (your design). The field takes a number, and the menu next to it offers the units of the attribute's or item's family, starting at its own unit: for a length in mm, nm … km.
+    - **A plain number** is in the unit picked in the menu.
+    - **A number typed with a unit** (`1in`, `18000mV`) ignores the menu, and any unit of the quantity is accepted, also from another family, as in the CLI.
+    - **Saving converts** to the base unit, exactly, as before. The menu only says what a plain number means; it isn't stored.
+    - **Quantities of stock** get the same menu, from the item's unit.
+26. **Choosing a unit** (attributes and items) lists every unit, filtered by symbol, name, family or quantity: "mm, millimetre · Metric length · Length". For a new attribute, choosing a unit sets the type to its quantity's (float, or integer for pieces), as `wtf attribute add --unit` does.
+27. **Unit lock** is a switch under the unit, off by default. Its line says what it does with that unit: "Always shown in mm", or "Shown in the unit of Metric length that fits best". Units are shown as "mm (Metric length)", with ", locked" when it is set.
+28. **No tenants:** Me shows the server instead of the tenant.

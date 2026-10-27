@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 import '../session.dart';
 import '../widgets/common.dart';
 
-/// The logged-in account, like `wtf whoami`: email, tenant, privileges;
+/// The logged-in account, like `wtf whoami`: email, server, privileges;
 /// the appearance; changing the password (`wtf password`) and logging out.
 class MeScreen extends StatelessWidget {
   const MeScreen({super.key});
@@ -24,11 +24,12 @@ class MeScreen extends StatelessWidget {
               title: Text(me.email),
               subtitle: const Text('Account'),
             ),
-            ListTile(
-              leading: const Icon(Icons.home_work_outlined),
-              title: Text(me.tenant.name),
-              subtitle: Text('Tenant, ${session.server ?? me.tenant.hostname}'),
-            ),
+            if (session.server case final server?)
+              ListTile(
+                leading: const Icon(Icons.dns_outlined),
+                title: Text(server.toString()),
+                subtitle: const Text('Server'),
+              ),
             const SectionTitle('Privileges'),
             for (final (label, privilege) in [
               ('Items and stock', me.dataPrivilege),

@@ -5,19 +5,27 @@ import 'package:wtf/api/client.dart';
 import 'package:wtf/api/models.dart';
 import 'package:wtf/api/units.dart';
 
+const length = Quantity(id: 1000, name: 'Length', datatype: 'float');
+
+var _ids = 2000;
+
 Unit unit(
   String symbol, {
   String name = '',
   String factor = '1',
   String offset = '0',
-  bool base = false,
+  String family = 'Family',
+  int familyId = 1000,
+  Quantity quantity = length,
 }) => Unit(
-  id: symbol,
+  id: _ids++,
   name: name,
   symbol: symbol,
+  familyId: familyId,
+  familyName: family,
+  quantity: quantity,
   baseFactor: Rational.tryParse(factor)!,
   baseOffset: Rational.tryParse(offset)!,
-  isBase: base,
 );
 
 void main() {
@@ -69,11 +77,13 @@ void main() {
   test('matchUnit', () {
     final units = [
       unit('Ω', name: 'ohm'),
-      unit('mΩ', name: 'milliohm'),
-      unit('kΩ', name: 'kiloohm'),
-      unit('MΩ', name: 'megaohm'),
-      unit('µm', name: 'micrometre'),
-      unit('°C', name: 'degree Celsius'),
+      unit('mΩ', name: 'milliohm', factor: '0.001'),
+      unit('kΩ', name: 'kiloohm', factor: '1000'),
+      unit('MΩ', name: 'megaohm', factor: '1000000'),
+      unit('µm', name: 'micrometre', factor: '0.000001'),
+      unit('°C', name: 'degree Celsius', offset: '273.15'),
+      unit('B', name: 'byte'), // decimal bytes
+      unit('B', name: 'byte'), // binary bytes
     ];
     for (final (input, want) in [
       ('kΩ', 'kΩ'),
@@ -86,6 +96,7 @@ void main() {
       ('degree celsius', '°C'),
       ('KILOOHM', 'kΩ'),
       ('MOHM', 'MΩ'),
+      ('byte', 'B'), // two units, but they convert the same
     ]) {
       expect(matchUnit(units, input).symbol, want, reason: input);
     }
@@ -102,49 +113,43 @@ void main() {
     expect(() => matchUnit(units, 'ft'), throwsA(isA<InputError>()));
   });
 
-  test('plainUnit', () {
-    final m = unit('m', base: true),
-        mm = unit('mm'),
-        degC = unit('°C'),
-        inch = unit('in'),
-        ft = unit('ft');
-    expect(plainUnit([mm, m]).symbol, 'm');
-    expect(plainUnit([degC]).symbol, '°C');
-    expect(() => plainUnit([inch, ft]), throwsA(isA<InputError>()));
-  });
-
   test('parseMeasure', () {
-    const length = Quantity(id: 'q', name: 'Length', datatype: 'float');
-    final m = unit('m', base: true),
+    final m = unit('m'),
         mm = unit('mm', factor: '0.001'),
-        inch = unit('in', factor: '0.0254');
+        mil = unit('mil', factor: '0.0000254', familyId: 1001),
+        inch = unit('in', factor: '0.0254', familyId: 1001);
     final metric = UnitChoice(
-      group: const UnitGroup(id: 'g', name: 'Metric length', quantity: length),
-      quantityUnits: [m, mm, inch],
-      groupUnits: [mm, m],
+      unit: mm,
+      familyUnits: [mm, m],
+      quantityUnits: [mm, m, mil, inch],
     );
-    expect(parseMeasure('12mm', metric), const Decimal('0.012'));
-    expect(parseMeasure('12', metric), const Decimal('12'));
+    // A plain number is in the attribute's unit, or in the one picked.
+    expect(parseMeasure('12', metric), const Decimal('0.012'));
+    expect(parseMeasure('12', metric, plainIn: m), const Decimal('12'));
+    expect(parseMeasure('12mm', metric, plainIn: m), const Decimal('0.012'));
+    // Units of another family are accepted too.
     expect(parseMeasure('1 in', metric), const Decimal('0.0254'));
     expect(() => parseMeasure('3kg', metric), throwsA(isA<InputError>()));
 
     const temperature = Quantity(
-      id: 't',
+      id: 1001,
       name: 'Temperature',
       datatype: 'float',
     );
+    final degC = unit('°C', offset: '273.15', quantity: temperature);
     final celsius = UnitChoice(
-      group: const UnitGroup(id: 'c', name: 'Celsius', quantity: temperature),
+      unit: degC,
+      familyUnits: [degC],
       quantityUnits: [
-        unit('K', base: true),
-        unit('°C', offset: '273.15'),
+        degC,
+        unit('K', quantity: temperature, familyId: 1002),
       ],
-      groupUnits: [unit('°C', offset: '273.15')],
     );
     expect(parseMeasure('20', celsius), const Decimal('293.15'));
     expect(parseMeasure('-40 degC', celsius), const Decimal('233.15'));
+    expect(parseMeasure('300 K', celsius), const Decimal('300'));
 
-    // Without a unit group: plain numbers only.
+    // Without a unit: plain numbers only.
     expect(parseMeasure('3', null, integer: true), const Decimal('3'));
     expect(
       () => parseMeasure('2.5', null, integer: true),
@@ -157,24 +162,18 @@ void main() {
     // °F as the dev database has it.
     final f = Unit.fromJson(
       decodeBody(
-        '{"id": "f", "name": "degree Fahrenheit", "symbol": "°F", "is_base": false, '
+        '{"id": 1077, "name": "degree Fahrenheit", "symbol": "°F", '
+        '"family": {"id": 1019, "name": "Fahrenheit"}, '
+        '"quantity": {"id": 1012, "name": "Temperature", "datatype": "float"}, '
         '"base_factor": 0.55555555555555555556, "base_offset": 255.37222222222222222}',
       ) as Json,
     );
     expect(f.baseFactor.toDecimal(), '0.55555555555555555556');
-    const temperature = Quantity(
-      id: 't',
-      name: 'Temperature',
-      datatype: 'float',
-    );
+    expect(f.familyName, 'Fahrenheit');
     final fahrenheit = UnitChoice(
-      group: const UnitGroup(
-        id: 'g',
-        name: 'Fahrenheit',
-        quantity: temperature,
-      ),
+      unit: f,
+      familyUnits: [f],
       quantityUnits: [f],
-      groupUnits: [f],
     );
     // 100 × 0.55555555555555555556 + 255.37222222222222222, exactly.
     expect(

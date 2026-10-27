@@ -225,7 +225,7 @@ void main() {
     await tester.tap(find.text('Tools/Drills'));
     await tester.pumpAndSettle();
 
-    // A required value, checked with the units of its group.
+    // A required value, checked with the units of its quantity.
     expect(field('Voltage *'), findsOneWidget);
     await tester.enterText(field('Name'), 'Impact driver');
     await tester.enterText(field('Voltage *'), '3 kg');
@@ -234,7 +234,13 @@ void main() {
     expect(find.textContaining('unknown unit "kg"'), findsOneWidget);
     expect(fake.changes, isEmpty);
 
-    await tester.enterText(field('Voltage *'), '18000mV');
+    // A plain number is in the unit picked next to the field: the
+    // attribute's own (V) until another of its family is chosen.
+    await tester.tap(find.text('V'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('mV').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(field('Voltage *'), '18000');
     await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
     expect(

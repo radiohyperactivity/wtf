@@ -14,7 +14,7 @@ String _privilegeSummary(Account a) => privilegeKeys.entries
     )
     .join(' · ');
 
-/// The tenant's accounts, like `wtf account list`.
+/// The accounts, like `wtf account list`.
 class AccountsScreen extends StatelessWidget {
   const AccountsScreen({super.key});
 

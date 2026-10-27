@@ -166,12 +166,11 @@ class ApiClient {
   final bool _ownsHttp;
 
   // Data that rarely changes, kept for the session: the trees (revalidated
-  // with their ETag on every use), unit groups and units. A tree this client
-  // changes is fetched again at once (see _wrote); unit groups and units
+  // with their ETag on every use), and the unit families with their units.
+  // A tree this client changes is fetched again at once (see _wrote); units
   // can't be changed through the API.
   final Map<TreeKind, Tree> _trees = {};
-  final Map<String, Future<UnitGroup>> _groups = {};
-  final Map<String, Future<List<Unit>>> _units = {};
+  Future<List<UnitFamily>>? _families;
   final _treeChanges = StreamController<TreeKind>.broadcast();
 
   /// A tree this client has changed, once its new version is in the cache;
@@ -184,17 +183,17 @@ class ApiClient {
 
   // --- Session ---
 
-  /// POST /login: logs in to the tenant of the server's hostname.
+  /// POST /login.
   Future<Me> login(String email, String password) async {
     final json = await _call(
       'POST',
       '/login',
       body: {'email': email, 'password': password},
     ) as Json;
-    return Me.fromJson(json['account'] as Json, json['tenant'] as Json);
+    return Me.fromJson(json['account'] as Json);
   }
 
-  /// GET /me: the logged-in account and its tenant.
+  /// GET /me: the logged-in account.
   Future<Me> me() async => Me.fromJson(await _call('GET', '/me') as Json);
 
   /// POST /logout: ends the session.
@@ -268,7 +267,8 @@ class ApiClient {
   Future<ItemDetail> createItem({
     required String classId,
     required String name,
-    String? unitGroupId,
+    int? unitId,
+    bool unitLock = false,
     Map<String, Object?> values = const {},
   }) async => ItemDetail.fromJson(
     await _call(
@@ -277,13 +277,14 @@ class ApiClient {
       body: {
         'class': classId,
         'name': name,
-        'unit_group': ?unitGroupId,
+        'unit': ?unitId,
+        if (unitLock) 'unit_lock': true,
         if (values.isNotEmpty) 'values': values,
       },
     ) as Json,
   );
 
-  /// PATCH /items/{id} with any of name, class and unit_group.
+  /// PATCH /items/{id} with any of name, class, unit and unit_lock.
   Future<ItemDetail> patchItem(String id, Map<String, Object?> changes) async =>
       ItemDetail.fromJson(
         await _call('PATCH', '/items/$id', body: changes) as Json,
@@ -579,57 +580,61 @@ class ApiClient {
   Future<Attribute> attribute(String id) async =>
       Attribute.fromJson(await _call('GET', '/attributes/$id') as Json);
 
-  Future<List<UnitGroup>> unitGroups() async =>
-      (await _call('GET', '/unit-groups') as List)
-          .cast<Json>()
-          .map(UnitGroup.fromJson)
-          .toList();
-
-  /// A unit group with its units, smallest first.
-  Future<UnitGroup> unitGroup(String id) =>
-      _groups[id] ??= _call('GET', '/unit-groups/$id')
-          .then((json) => UnitGroup.fromJson(json as Json))
-          .catchError((Object e) => throw _forget(_groups, id, e));
-
-  /// All units of a quantity.
-  Future<List<Unit>> unitsOf(String quantityId) => _units[quantityId] ??=
-      _call('GET', '/units', query: {'quantity': quantityId})
+  /// All unit families with their units (smallest first), by quantity.
+  Future<List<UnitFamily>> unitFamilies() =>
+      _families ??= _call('GET', '/unit-families')
           .then(
-            (json) => (json as List).cast<Json>().map(Unit.fromJson).toList(),
+            (json) =>
+                (json as List).cast<Json>().map(UnitFamily.fromJson).toList(),
           )
-          .catchError((Object e) => throw _forget(_units, quantityId, e));
+          // A failed lookup isn't kept, so that the next use tries again.
+          .catchError((Object e) {
+            _families = null;
+            throw e;
+          });
 
-  /// What numbers of a unit group may be typed in, for [parseMeasure].
-  Future<UnitChoice> unitChoice(UnitGroup group) async {
-    final full = await unitGroup(group.id);
+  /// All units, by family.
+  Future<List<Unit>> units() async => [
+    for (final f in await unitFamilies()) ...f.units,
+  ];
+
+  /// What numbers in [unit] may be typed in, for [parseMeasure].
+  Future<UnitChoice> unitChoice(Unit unit) async {
+    final families = await unitFamilies();
     return UnitChoice(
-      group: full,
-      quantityUnits: await unitsOf(full.quantity.id),
-      groupUnits: full.units,
+      unit: unit,
+      familyUnits: [
+        for (final f in families)
+          if (f.id == unit.familyId) ...f.units,
+      ],
+      quantityUnits: [
+        for (final f in families)
+          if (f.quantity.id == unit.quantity.id) ...f.units,
+      ],
     );
   }
 
-  /// A failed lookup isn't kept, so that the next use tries again.
-  Object _forget(Map<String, Object> cache, String key, Object error) {
-    cache.remove(key);
-    return error;
-  }
-
-  /// Creates an attribute; numbers may have a unit group (of a quantity with
-  /// the same datatype).
+  /// Creates an attribute; numbers may have a unit (of a quantity with the
+  /// same datatype), shown always in that unit with [unitLock].
   Future<Attribute> createAttribute({
     required String name,
     required String datatype,
-    String? unitGroupId,
+    int? unitId,
+    bool unitLock = false,
   }) async => Attribute.fromJson(
     await _call(
       'POST',
       '/attributes',
-      body: {'name': name, 'datatype': datatype, 'unit_group': ?unitGroupId},
+      body: {
+        'name': name,
+        'datatype': datatype,
+        'unit': ?unitId,
+        if (unitLock) 'unit_lock': true,
+      },
     ) as Json,
   );
 
-  /// PATCH /attributes/{id} with any of name, datatype and unit_group.
+  /// PATCH /attributes/{id} with any of name, datatype, unit and unit_lock.
   Future<Attribute> patchAttribute(
     String id,
     Map<String, Object?> changes,

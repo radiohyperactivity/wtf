@@ -10,13 +10,17 @@ import 'package:wtf/api/units.dart';
 import 'app_test.dart' show search, setSize, startApp;
 import 'fake_server.dart';
 
+var _ids = 1000;
+
 Unit unit(String symbol, String factor) => Unit(
-  id: symbol,
+  id: _ids++,
   name: symbol,
   symbol: symbol,
+  familyId: 1000,
+  familyName: 'Metric length',
+  quantity: const Quantity(id: 1000, name: 'Length', datatype: 'float'),
   baseFactor: Rational.tryParse(factor)!,
   baseOffset: Rational(BigInt.zero),
-  isBase: factor == '1',
 );
 
 /// A history entry as the server sends it.
@@ -41,12 +45,16 @@ Map<String, dynamic> entry(
 void main() {
   test('numbers in their best unit, as the server shows them', () {
     final metres = [unit('mm', '0.001'), unit('m', '1'), unit('km', '1000')];
-    String show(String base) => displayIn(Rational.tryParse(base)!, metres);
+    final mm = metres.first;
+    String show(String base, {bool lock = false}) =>
+        displayIn(Rational.tryParse(base)!, mm, metres, lock: lock);
     expect(show('0.0012'), '1.2 mm');
     expect(show('12'), '12 m');
     expect(show('2500'), '2.5 km');
-    expect(show('0'), '0 m');
+    expect(show('0'), '0 mm'); // in the unit itself
     expect(show('0.0000005'), '0.0005 mm'); // smaller than every unit
+    // Unit lock: always in the unit itself.
+    expect(show('2500', lock: true), '2500000 mm');
     expect(Rational.tryParse('1')! / Rational.tryParse('3')!, isA<Rational>());
     expect(
       (Rational.tryParse('1')! / Rational.tryParse('3')!).toDecimal(6),

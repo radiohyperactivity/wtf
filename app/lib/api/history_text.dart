@@ -67,11 +67,12 @@ class _Named {
 }
 
 class _ItemInfo {
-  const _ItemInfo(this.name, this.code, this.unitGroup);
+  const _ItemInfo(this.name, this.code, this.unit, this.unitLock);
 
   final String name;
   final String code;
-  final String? unitGroup;
+  final int? unit;
+  final bool unitLock;
 }
 
 /// The names of what history entries refer to, looked up once: classes and
@@ -90,14 +91,22 @@ class HistoryNames {
   final _stock = <String, (String code, String item, String location)>{};
   final _attribute = <String, Attribute>{};
   final _option = <String, String>{};
-  final _units = <String, List<Unit>>{};
-  final _groupNames = <String, String>{};
+  final _unit = <int, Unit>{};
+  final _familyUnits = <int, List<Unit>>{};
   final _tried = <String>{};
 
   /// Looks up what [entries] refer to and isn't known yet.
   Future<void> load(List<HistoryEntry> entries) async {
     _locations ??= await _maybe(client.tree(TreeKind.locations));
     _classes ??= await _maybe(client.tree(TreeKind.classes));
+    if (_unit.isEmpty && _tried.add('units')) {
+      for (final f in await _maybe(client.unitFamilies()) ?? <UnitFamily>[]) {
+        _familyUnits[f.id] = f.units;
+        for (final u in f.units) {
+          _unit[u.id] = u;
+        }
+      }
+    }
 
     final locations = <String>{}, classes = <String>{}, items = <String>{};
     final stock = <String>{}, attributes = <String>{}, options = <String>{};
@@ -129,7 +138,8 @@ class HistoryNames {
           _item[e.rowId] = _ItemInfo(
             '${d['name']}',
             codeText(d['code']),
-            d['unit_group'] as String?,
+            d['unit'] as int?,
+            d['unit_lock'] == true,
           );
           both(e, 'class', classes);
         case 'stock':
@@ -147,8 +157,6 @@ class HistoryNames {
           attributes.add('${d['attribute']}');
           both(e, 'option_value', options);
           both(e, 'option_default', options);
-        case 'attribute':
-          if (d['unit_group'] is String) _groups.add(d['unit_group'] as String);
         case 'attribute_option':
           _option[e.rowId] = '${d['name']}';
           attributes.add('${d['attribute']}');
@@ -183,8 +191,7 @@ class HistoryNames {
         if (_tried.add(id))
           _maybe(client.item(id)).then((i) {
             if (i != null) {
-              _item[id] = _ItemInfo(i.name, i.code, i.unitGroup?.id);
-              if (i.unitGroup case final g?) _groupNames[g.id] = g.name;
+              _item[id] = _ItemInfo(i.name, i.code, i.unit?.id, i.unitLock);
             }
           }),
       for (final id in stock.difference({..._stock.keys}))
@@ -194,7 +201,12 @@ class HistoryNames {
               _stock[id] = (s.code, s.item.id, s.location);
               _item.putIfAbsent(
                 s.item.id,
-                () => _ItemInfo(s.item.name, s.item.code, s.item.unitGroup?.id),
+                () => _ItemInfo(
+                  s.item.name,
+                  s.item.code,
+                  s.item.unit?.id,
+                  s.item.unitLock,
+                ),
               );
             }
           }),
@@ -210,30 +222,14 @@ class HistoryNames {
           }),
     ]);
 
-    // Options of deleted attributes and deleted options; unit groups.
+    // Options of deleted attributes and deleted options.
     await Future.wait([
       for (final id in options.difference({..._option.keys}))
         if (_tried.add(id))
           _maybe(client.option(id)).then((o) {
             if (o != null) _option[id] = '${o['name']}';
           }),
-      for (final a in _attribute.values)
-        if (a.unitGroup != null) _loadUnits(a.unitGroup!.id),
-      for (final i in _item.values)
-        if (i.unitGroup != null) _loadUnits(i.unitGroup!),
-      for (final g in _groups) _loadUnits(g),
     ]);
-  }
-
-  final _groups = <String>{};
-
-  Future<void> _loadUnits(String group) async {
-    if (_units.containsKey(group) || !_tried.add('group:$group')) return;
-    final g = await _maybe(client.unitGroup(group));
-    if (g != null) {
-      _units[group] = g.units;
-      _groupNames[group] = g.name;
-    }
   }
 
   static Future<T?> _maybe<T>(Future<T> f) async {
@@ -283,17 +279,30 @@ class HistoryNames {
 
   String option(Object? id) => _option[id] ?? 'an option';
 
-  String unitGroupName(Object? id) =>
-      _groupNames[id] ?? (id == null ? 'pieces' : 'a unit group');
+  /// A unit as "mm (Metric length)"; [none] when there is none.
+  String unitName(Object? id, [String none = 'none']) => id == null
+      ? none
+      : _unit[id] == null
+      ? 'a unit'
+      : unitLabel(_unit[id]!);
 
-  /// A quantity of an item's stock, in its unit group: "2", "1.5 m",
-  /// "uncounted".
+  /// A base-unit number as shown in [unitId] ([lock]: Unit lock).
+  String _number(num n, int? unitId, bool lock) {
+    final unit = _unit[unitId];
+    if (unit == null) return formatNumber(n);
+    return displayIn(
+      Rational.fromNum(n),
+      unit,
+      _familyUnits[unit.familyId] ?? [unit],
+      lock: lock,
+    );
+  }
+
+  /// A quantity of an item's stock, in its unit: "2", "1.5 m", "uncounted".
   String quantity(Object? item, Object? quantity) {
     if (quantity is! num) return 'uncounted';
-    final group = _item[item]?.unitGroup;
-    final units = group == null ? null : _units[group];
-    if (units == null) return formatNumber(quantity);
-    return displayIn(Rational.fromNum(quantity), units);
+    final i = _item[item];
+    return _number(quantity, i?.unit, i?.unitLock ?? false);
   }
 
   /// A typed value of [row] (a value, per-unit value or default), e.g.
@@ -306,11 +315,8 @@ class HistoryNames {
     if (boolean is bool) return boolean ? 'yes' : 'no';
     final number = v('integer') ?? v('float');
     if (number is num) {
-      final group = _attribute[attributeId]?.unitGroup;
-      final units = group == null ? null : _units[group.id];
-      return units == null
-          ? formatNumber(number)
-          : displayIn(Rational.fromNum(number), units);
+      final a = _attribute[attributeId];
+      return _number(number, a?.unit?.id, a?.unitLock ?? false);
     }
     final text = v('text') ?? v('date');
     return text == null ? '' : '$text';
@@ -565,8 +571,9 @@ class _Describer {
               : focus.kind == 'classes' && c?.now == focus.id
               ? 'Item $name moved here from class ${n._cls(c?.old).name}'
               : 'Moved from class ${n._cls(c?.old).name} to ${n._cls(c?.now).name}',
-        'unit_group' =>
-          'Unit group: ${n.unitGroupName(c?.old)} → ${n.unitGroupName(c?.now)}',
+        'unit' =>
+          'Unit: ${n.unitName(c?.old, 'pieces')} → ${n.unitName(c?.now, 'pieces')}',
+        'unit_lock' => 'Unit lock ${c?.now == true ? 'on' : 'off'}',
         _ => null,
       };
       if (line != null) out.add(HistoryLine(line, link));
@@ -755,10 +762,11 @@ class _Describer {
     final link = self ? null : '/attributes/${e.rowId}';
     switch (e.operation) {
       case 'insert':
-        final group = e.data['unit_group'];
+        final unit = e.data['unit'];
+        final lock = e.data['unit_lock'] == true ? ', locked' : '';
         return [
           HistoryLine(
-            'Created$subject (${self ? '$name, ' : ''}${e.data['datatype']}${group == null ? '' : ', ${n.unitGroupName(group)}'})',
+            'Created$subject (${self ? '$name, ' : ''}${e.data['datatype']}${unit == null ? '' : ', ${n.unitName(unit)}$lock'})',
             link,
           ),
         ];
@@ -774,8 +782,10 @@ class _Describer {
                 'Renamed from “${e.change(column)?.old}” to “${e.change(column)?.now}”',
               'datatype' =>
                 'Type: ${e.change(column)?.old} → ${e.change(column)?.now}',
-              'unit_group' =>
-                'Unit group: ${n.unitGroupName(e.change(column)?.old)} → ${n.unitGroupName(e.change(column)?.now)}',
+              'unit' =>
+                'Unit: ${n.unitName(e.change(column)?.old)} → ${n.unitName(e.change(column)?.now)}',
+              'unit_lock' =>
+                'Unit lock ${e.change(column)?.now == true ? 'on' : 'off'}',
               _ => null,
             }
             case final String line)

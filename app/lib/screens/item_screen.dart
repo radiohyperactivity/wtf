@@ -147,7 +147,12 @@ class ItemScreen extends StatelessWidget {
                     item.cls.pathText,
                     onTap: () => open('/classes/${item.cls.id}'),
                   ),
-                  Field('Stock in', item.unitGroup?.name ?? 'pieces'),
+                  Field(
+                    'Stock in',
+                    item.unit == null
+                        ? 'pieces'
+                        : unitLabel(item.unit!, lock: item.unitLock),
+                  ),
                   if (item.values.isNotEmpty) ...[
                     const SectionTitle('Values'),
                     ...valueFields(item.values),

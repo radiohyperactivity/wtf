@@ -11,7 +11,7 @@ import '../widgets/pickers.dart';
 import '../widgets/value_fields.dart';
 
 /// Adds an item (in [classId], if given), or edits the item with [code].
-/// Like `wtf item add` and `wtf item edit`: class, name, unit group, then
+/// Like `wtf item add` and `wtf item edit`: class, name, unit, then
 /// the class's attributes, required ones first.
 class ItemFormScreen extends StatelessWidget {
   const ItemFormScreen({super.key, this.code, this.classId});
@@ -55,7 +55,8 @@ class _ItemFormState extends State<_ItemForm> {
   final _form = GlobalKey<FormState>();
   late final _name = TextEditingController(text: widget.item?.name ?? '');
   late String? _classId = widget.item?.cls.id ?? _usable(widget.classId);
-  late UnitGroup? _unitGroup = widget.item?.unitGroup;
+  late Unit? _unit = widget.item?.unit;
+  late bool _unitLock = widget.item?.unitLock ?? false;
   List<ValueInput> _inputs = [];
   bool _loadingValues = false;
   Object? _valuesError;
@@ -138,17 +139,17 @@ class _ItemFormState extends State<_ItemForm> {
     _loadValues();
   }
 
-  Future<void> _chooseUnitGroup() async {
-    final current = widget.item?.unitGroup;
-    final g = await pickUnitGroup(
+  Future<void> _chooseUnit() async {
+    final current = widget.item?.unit;
+    final picked = await pickUnit(
       context,
       // A new item may be counted in pieces; an existing one can only change
-      // to another group of the same quantity, as in the CLI.
+      // to another unit of the same quantity, as in the CLI.
       noneLabel: _editing ? null : 'None: counted in pieces',
       quantityId: _editing ? current?.quantity.id : null,
     );
-    if (g == null) return;
-    setState(() => _unitGroup = g.id.isEmpty ? null : g);
+    if (picked == null) return;
+    setState(() => _unit = picked.unit);
   }
 
   Future<void> _save() async {
@@ -182,7 +183,8 @@ class _ItemFormState extends State<_ItemForm> {
     final item = await _client.createItem(
       classId: _classId!,
       name: _name.text.trim(),
-      unitGroupId: _unitGroup?.id,
+      unitId: _unit?.id,
+      unitLock: _unit != null && _unitLock,
       values: values,
     );
     if (!mounted) return;
@@ -208,15 +210,13 @@ class _ItemFormState extends State<_ItemForm> {
     final changes = <String, Object?>{
       if (name != item.name) 'name': name,
       if (_classId != item.cls.id) 'class': _classId,
-      if (_unitGroup != null && _unitGroup!.id != item.unitGroup?.id)
-        'unit_group': _unitGroup!.id,
+      if (_unit != null && _unit!.id != item.unit?.id) 'unit': _unit!.id,
+      if (_unit != null && _unitLock != item.unitLock) 'unit_lock': _unitLock,
     };
     final saved = <String>[];
     if (changes.isNotEmpty) {
       await _client.patchItem(item.id, changes);
-      saved.addAll(
-        changes.keys.map((k) => k == 'unit_group' ? 'unit group' : k),
-      );
+      saved.addAll(changes.keys.map((k) => k == 'unit_lock' ? 'Unit lock' : k));
     }
     final all = await saveValues(
       _inputs,
@@ -286,7 +286,7 @@ class _ItemFormState extends State<_ItemForm> {
                 validator: (v) =>
                     (v ?? '').trim().isEmpty ? 'Enter a name' : null,
               ),
-              if (!_editing || widget.item!.unitGroup != null) ...[
+              if (!_editing || widget.item!.unit != null) ...[
                 const SizedBox(height: 16),
                 InputDecorator(
                   decoration: const InputDecoration(
@@ -294,15 +294,25 @@ class _ItemFormState extends State<_ItemForm> {
                     border: OutlineInputBorder(),
                   ),
                   child: InkWell(
-                    onTap: _chooseUnitGroup,
+                    onTap: _chooseUnit,
                     child: Row(
                       children: [
-                        Expanded(child: Text(_unitGroup?.name ?? 'pieces')),
+                        Expanded(
+                          child: Text(
+                            _unit == null ? 'pieces' : unitLabel(_unit!),
+                          ),
+                        ),
                         const Icon(Icons.arrow_drop_down),
                       ],
                     ),
                   ),
                 ),
+                if (_unit != null)
+                  UnitLockSwitch(
+                    unit: _unit!,
+                    value: _unitLock,
+                    onChanged: (v) => setState(() => _unitLock = v),
+                  ),
               ],
               if (_valuesError != null) ...[
                 const SizedBox(height: 16),

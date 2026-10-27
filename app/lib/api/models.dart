@@ -29,21 +29,7 @@ enum Privilege {
   bool get canWrite => this == readWrite;
 }
 
-class Tenant {
-  const Tenant({required this.id, required this.name, required this.hostname});
-
-  factory Tenant.fromJson(Json json) => Tenant(
-    id: json['id'] as String,
-    name: json['name'] as String,
-    hostname: json['hostname'] as String,
-  );
-
-  final String id;
-  final String name;
-  final String hostname;
-}
-
-/// The logged-in account and its tenant: GET /me, and the login answer.
+/// The logged-in account: GET /me, and the login answer.
 class Me {
   const Me({
     required this.id,
@@ -52,11 +38,9 @@ class Me {
     required this.modelPrivilege,
     required this.accountPrivilege,
     required this.historyPrivilege,
-    required this.tenant,
   });
 
-  /// [json] is an account; the tenant is in [tenant], or in json['tenant'].
-  factory Me.fromJson(Json json, [Json? tenant]) => Me(
+  factory Me.fromJson(Json json) => Me(
     id: json['id'] as String,
     email: json['email'] as String,
     dataPrivilege: Privilege.parse(json['data_privilege']),
@@ -66,7 +50,6 @@ class Me {
       'history_privilege',
       json['history_privilege'],
     ),
-    tenant: Tenant.fromJson(tenant ?? json['tenant'] as Json),
   );
 
   final String id;
@@ -75,7 +58,6 @@ class Me {
   final Privilege modelPrivilege;
   final Privilege accountPrivilege;
   final Privilege historyPrivilege;
-  final Tenant tenant;
 }
 
 class NamedRef {
@@ -96,36 +78,41 @@ class Quantity {
   });
 
   factory Quantity.fromJson(Json json) => Quantity(
-    id: json['id'] as String,
+    id: json['id'] as int,
     name: json['name'] as String,
     datatype: json['datatype'] as String,
   );
 
-  final String id;
+  final int id;
   final String name;
 
   /// integer or float.
   final String datatype;
 }
 
-/// base = value × baseFactor + baseOffset.
+/// base = value × baseFactor + baseOffset. Each unit is in one family of its
+/// quantity, such as Metric length.
 class Unit {
   const Unit({
     required this.id,
     required this.name,
     required this.symbol,
+    required this.familyId,
+    required this.familyName,
+    required this.quantity,
     required this.baseFactor,
     required this.baseOffset,
-    required this.isBase,
   });
 
   factory Unit.fromJson(Json json) => Unit(
-    id: json['id'] as String,
+    id: json['id'] as int,
     name: json['name'] as String,
     symbol: json['symbol'] as String,
+    familyId: (json['family'] as Json)['id'] as int,
+    familyName: (json['family'] as Json)['name'] as String,
+    quantity: Quantity.fromJson(json['quantity'] as Json),
     baseFactor: _exact(json['base_factor'], 1),
     baseOffset: _exact(json['base_offset'], 0),
-    isBase: json['is_base'] as bool? ?? false,
   );
 
   /// The client passes factors as text, exactly as the server wrote them
@@ -137,36 +124,45 @@ class Unit {
     _ => Rational(BigInt.from(fallback)),
   };
 
-  final String id;
+  final int id;
   final String name;
   final String symbol;
+  final int familyId;
+  final String familyName;
+  final Quantity quantity;
   final Rational baseFactor;
   final Rational baseOffset;
-  final bool isBase;
 }
 
-class UnitGroup {
-  const UnitGroup({
+/// Units of one quantity that are used together, and that numbers are
+/// scaled between on output: Metric length is nm … km.
+class UnitFamily {
+  const UnitFamily({
     required this.id,
     required this.name,
     required this.quantity,
     this.units = const [],
   });
 
-  factory UnitGroup.fromJson(Json json) => UnitGroup(
-    id: json['id'] as String,
+  factory UnitFamily.fromJson(Json json) => UnitFamily(
+    id: json['id'] as int,
     name: json['name'] as String,
     quantity: Quantity.fromJson(json['quantity'] as Json),
     units: _list(json['units']).map(Unit.fromJson).toList(),
   );
 
-  final String id;
+  final int id;
   final String name;
   final Quantity quantity;
 
-  /// Smallest first; only in GET /unit-groups/{id}.
+  /// Smallest first.
   final List<Unit> units;
 }
+
+/// A unit as shown next to a thing that has it: "mm (Metric length)", with
+/// ", locked" when [lock] is set.
+String unitLabel(Unit u, {bool lock = false}) =>
+    '${u.symbol} (${u.familyName})${lock ? ', locked' : ''}';
 
 /// A number written plainly: 12 rather than 12.0.
 String formatNumber(num n) {
@@ -176,7 +172,8 @@ String formatNumber(num n) {
   return n.toString();
 }
 
-/// A base-unit number in the best-scaling unit of its group: "1.2 mm".
+/// A base-unit number as shown, in the unit that scales best within the
+/// family, or in the unit itself with Unit lock: "1.2 mm".
 class Display {
   const Display(this.value, this.symbol);
 
@@ -214,7 +211,8 @@ class Attribute {
     required this.id,
     required this.name,
     required this.datatype,
-    this.unitGroup,
+    this.unit,
+    this.unitLock = false,
     this.options = const [],
     this.deleted = false,
   });
@@ -223,9 +221,8 @@ class Attribute {
     id: json['id'] as String,
     name: json['name'] as String,
     datatype: json['datatype'] as String,
-    unitGroup: json['unit_group'] == null
-        ? null
-        : UnitGroup.fromJson(json['unit_group'] as Json),
+    unit: json['unit'] == null ? null : Unit.fromJson(json['unit'] as Json),
+    unitLock: json['unit_lock'] as bool? ?? false,
     options: _list(json['options']).map(NamedRef.fromJson).toList(),
     deleted: json['deleted'] as bool? ?? false,
   );
@@ -233,7 +230,11 @@ class Attribute {
   final String id;
   final String name;
   final String datatype;
-  final UnitGroup? unitGroup;
+
+  /// The unit numbers are typed in; they are shown scaled within its family,
+  /// or in the unit itself with [unitLock].
+  final Unit? unit;
+  final bool unitLock;
 
   /// Only for choice attributes, in GET /attributes/{id}.
   final List<NamedRef> options;
@@ -537,7 +538,8 @@ class ItemSummary {
     required this.code,
     required this.name,
     required this.classId,
-    this.unitGroup,
+    this.unit,
+    this.unitLock = false,
     this.deleted = false,
   });
 
@@ -548,9 +550,8 @@ class ItemSummary {
     classId: json['class'] is Map
         ? (json['class'] as Json)['id'] as String
         : json['class'] as String? ?? '',
-    unitGroup: json['unit_group'] == null
-        ? null
-        : UnitGroup.fromJson(json['unit_group'] as Json),
+    unit: json['unit'] == null ? null : Unit.fromJson(json['unit'] as Json),
+    unitLock: json['unit_lock'] as bool? ?? false,
     deleted: json['deleted'] as bool? ?? false,
   );
 
@@ -559,8 +560,9 @@ class ItemSummary {
   final String name;
   final String classId;
 
-  /// The unit group stock is measured in; null means pieces.
-  final UnitGroup? unitGroup;
+  /// The unit stock is measured in; null means pieces.
+  final Unit? unit;
+  final bool unitLock;
   final bool deleted;
 }
 
@@ -571,7 +573,8 @@ class ItemListed extends ItemSummary {
     required super.code,
     required super.name,
     required super.classId,
-    super.unitGroup,
+    super.unit,
+    super.unitLock,
     super.deleted,
     required this.stockText,
     this.incomplete = false,
@@ -585,7 +588,8 @@ class ItemListed extends ItemSummary {
       code: s.code,
       name: s.name,
       classId: s.classId,
-      unitGroup: s.unitGroup,
+      unit: s.unit,
+      unitLock: s.unitLock,
       deleted: s.deleted,
       stockText: _formatTotal(_obj(json['stock'])),
       incomplete: json['incomplete'] as bool? ?? false,
@@ -652,7 +656,8 @@ class ItemDetail {
     required this.code,
     required this.name,
     required this.cls,
-    this.unitGroup,
+    this.unit,
+    this.unitLock = false,
     this.values = const [],
     this.missing = const [],
     this.photo,
@@ -667,9 +672,8 @@ class ItemDetail {
     name: json['name'] as String,
     deleted: json['deleted'] as bool? ?? false,
     cls: ClassDetail.fromJson(json['class'] as Json),
-    unitGroup: json['unit_group'] == null
-        ? null
-        : UnitGroup.fromJson(json['unit_group'] as Json),
+    unit: json['unit'] == null ? null : Unit.fromJson(json['unit'] as Json),
+    unitLock: json['unit_lock'] as bool? ?? false,
     values: _values(json['values']),
     missing: _refs(json['missing']),
     photo: Attachment.maybe(json['photo']),
@@ -681,7 +685,8 @@ class ItemDetail {
   final String code;
   final String name;
   final ClassDetail cls;
-  final UnitGroup? unitGroup;
+  final Unit? unit;
+  final bool unitLock;
   final List<Value> values;
   final List<NamedRef> missing;
   final Attachment? photo;
@@ -696,7 +701,8 @@ class ItemDetail {
     code: code,
     name: name,
     classId: cls.id,
-    unitGroup: unitGroup,
+    unit: unit,
+    unitLock: unitLock,
     deleted: deleted,
   );
 }

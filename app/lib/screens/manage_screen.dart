@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import '../session.dart';
 import '../widgets/common.dart';
 
-/// What the tenant is set up with, rather than what it keeps: attributes
+/// What the inventory is set up with, rather than what it keeps: attributes
 /// (with their options), units and accounts.
 class ManageScreen extends StatelessWidget {
   const ManageScreen({super.key});
@@ -33,7 +33,7 @@ class ManageScreen extends StatelessWidget {
               leading: const Icon(Icons.straighten),
               title: const Text('Units'),
               subtitle: const Text(
-                'Unit groups and the units numbers can be typed in',
+                'Unit families and the units numbers can be typed in',
               ),
               onTap: () => context.push('/units'),
             ),
@@ -41,9 +41,7 @@ class ManageScreen extends StatelessWidget {
               ListTile(
                 leading: const Icon(Icons.group_outlined),
                 title: const Text('Accounts'),
-                subtitle: const Text(
-                  "Who can log in to this tenant, and what they may do",
-                ),
+                subtitle: const Text("Who can log in, and what they may do"),
                 onTap: () => context.push('/accounts'),
               ),
           ],

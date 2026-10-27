@@ -268,34 +268,34 @@ Future<ItemListed?> pickItem(
   );
 }
 
-/// Chooses a unit group, or "none" (pieces) when [noneLabel] is given,
-/// returned as an empty id. [quantityId] limits it to one quantity.
-Future<UnitGroup?> pickUnitGroup(
+/// A chosen unit; [unit] null is "none" (pieces, or no unit).
+class PickedUnit {
+  const PickedUnit(this.unit);
+
+  final Unit? unit;
+}
+
+/// Chooses a unit, or "none" when [noneLabel] is given. [quantityId] limits
+/// it to the units of one quantity, in all of its families.
+Future<PickedUnit?> pickUnit(
   BuildContext context, {
   String? noneLabel,
-  String? quantityId,
+  int? quantityId,
 }) {
   final client = context.read<Session>().client;
-  return pickFromList<UnitGroup>(
+  return pickFromList<PickedUnit>(
     context,
-    title: 'Choose a unit group',
-    load: () async {
-      final groups = await client.unitGroups();
-      return [
-        if (noneLabel != null)
+    title: 'Choose a unit',
+    load: () async => [
+      if (noneLabel != null) Choice(const PickedUnit(null), noneLabel),
+      for (final u in await client.units())
+        if (quantityId == null || u.quantity.id == quantityId)
           Choice(
-            UnitGroup(
-              id: '',
-              name: noneLabel,
-              quantity: const Quantity(id: '', name: '', datatype: ''),
-            ),
-            noneLabel,
+            PickedUnit(u),
+            u.symbol,
+            subtitle: '${u.name} · ${u.familyName} · ${u.quantity.name}',
           ),
-        for (final g in groups)
-          if (quantityId == null || g.quantity.id == quantityId)
-            Choice(g, g.name, subtitle: g.quantity.name),
-      ];
-    },
+    ],
   );
 }
 
@@ -311,11 +311,7 @@ Future<Attribute?> pickAttribute(
     load: () async => [
       for (final a in await client.attributes())
         if (!exclude.contains(a.id))
-          Choice(
-            a,
-            a.name,
-            subtitle: [a.datatype, ?a.unitGroup?.name].join(', '),
-          ),
+          Choice(a, a.name, subtitle: [a.datatype, ?a.unit?.symbol].join(', ')),
     ],
   );
 }

@@ -23,34 +23,37 @@ class FakeServer {
 
   // --- The data ---
 
-  final volt = {
-    'id': 'u-v',
+  final quantity = {'id': 1003, 'name': 'Voltage', 'datatype': 'float'};
+  late final volt = {
+    'id': 1032,
     'name': 'volt',
     'symbol': 'V',
-    'is_base': true,
+    'family': {'id': 1007, 'name': 'Voltage'},
+    'quantity': quantity,
     'base_factor': 1,
     'base_offset': 0,
   };
-  final millivolt = {
-    'id': 'u-mv',
+  late final millivolt = {
+    'id': 1031,
     'name': 'millivolt',
     'symbol': 'mV',
-    'is_base': false,
+    'family': {'id': 1007, 'name': 'Voltage'},
+    'quantity': quantity,
     'base_factor': 0.001,
     'base_offset': 0,
   };
-  late final quantity = {'id': 'q-v', 'name': 'Voltage', 'datatype': 'float'};
-  late final group = {
-    'id': 'g-v',
+  late final family = {
+    'id': 1007,
     'name': 'Voltage',
     'quantity': quantity,
-    'base_unit': volt,
+    'units': [millivolt, volt],
   };
   late final voltage = {
     'id': 'a-volt',
     'name': 'Voltage',
     'datatype': 'float',
-    'unit_group': group,
+    'unit': volt,
+    'unit_lock': false,
   };
 
   final classes = <Map<String, dynamic>>[
@@ -91,7 +94,8 @@ class FakeServer {
       'code': '1B00',
       'name': 'Cordless drill',
       'class': 'c-drills',
-      'unit_group': null,
+      'unit': null,
+      'unit_lock': false,
       'values': <String, Object?>{'a-volt': 18},
     },
   ];
@@ -169,7 +173,8 @@ class FakeServer {
     'code': i['code'],
     'name': i['name'],
     'class': i['class'],
-    'unit_group': null,
+    'unit': null,
+    'unit_lock': false,
   };
 
   List<Map<String, dynamic>> _values(Map<String, dynamic> i) => [
@@ -178,7 +183,6 @@ class FakeServer {
         {
           'attribute': voltage,
           'value': value,
-          'unit': volt,
           'display': {'value': value, 'unit': volt},
           'is_default': false,
         },
@@ -212,7 +216,6 @@ class FakeServer {
     return {
       ...s,
       'item': _summary(i),
-      'unit': null,
       'display': null,
       'values': [],
       'missing': [],
@@ -226,7 +229,6 @@ class FakeServer {
       ..._summary(i),
       'stock': {
         'total': rows.fold<num>(0, (t, s) => t + (s['quantity'] as num? ?? 0)),
-        'unit': null,
         'display': null,
         'uncounted': rows.any((s) => s['quantity'] == null),
       },
@@ -242,7 +244,6 @@ class FakeServer {
     'model_privilege': privilege,
     'account_privilege': 'none',
     'history_privilege': 'read_only',
-    'tenant': {'id': 't1', 'name': 'Home', 'hostname': 'wtf.test'},
   };
 
   // --- Requests ---
@@ -270,7 +271,7 @@ class FakeServer {
 
     if (path == '/login') {
       return http.Response(
-        jsonEncode({'account': me..remove('tenant'), 'tenant': me['tenant']}),
+        jsonEncode({'account': me}),
         200,
         headers: {
           ..._headers,
@@ -382,13 +383,8 @@ class FakeServer {
           }
         }
         return _problem(404, 'Not found');
-      case ('GET', ['unit-groups']):
-        return _json([group]);
-      case ('GET', ['unit-groups', _]):
-        return _json({
-          ...group,
-          'units': [millivolt, volt],
-        });
+      case ('GET', ['unit-families']):
+        return _json([family]);
       case ('GET', ['units']):
         return _json([millivolt, volt]);
       case ('GET', ['attributes']):
@@ -401,7 +397,8 @@ class FakeServer {
           'code': _code('1D'),
           'name': body!['name'],
           'class': body['class'],
-          'unit_group': null,
+          'unit': null,
+          'unit_lock': false,
           'values': body['values'] ?? {},
         };
         items.add(item);

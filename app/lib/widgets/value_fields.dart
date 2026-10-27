@@ -1,5 +1,7 @@
 // Inputs for attribute values: a text field that understands units
 // ("12mm"), dates ("+2w") and yes/no as the CLI does, or a list for choices.
+// A number field has a menu of its unit's family next to it, for numbers
+// typed without a unit.
 
 import 'package:flutter/material.dart';
 
@@ -15,7 +17,7 @@ class ValueInput {
     this.defaultText = '',
     this.initial = '',
     this.units,
-  }) : controller = TextEditingController(text: initial);
+  }) : controller = MeasureController(text: initial, plainIn: units?.unit);
 
   /// With its options, for a choice attribute.
   final Attribute attribute;
@@ -27,15 +29,19 @@ class ValueInput {
   /// The own value as text, when editing.
   final String initial;
 
-  /// For numbers with a unit group.
+  /// For numbers with a unit.
   final UnitChoice? units;
-  final TextEditingController controller;
+  final MeasureController controller;
 
   String get text => controller.text.trim();
-  bool get changed => text != initial.trim();
+  bool get changed =>
+      text != initial.trim() ||
+      (text.isNotEmpty && controller.plainIn?.id != units?.unit.id);
 
   /// The value for the API; null when empty.
-  Object? parse() => text.isEmpty ? null : parseValue(attribute, text, units);
+  Object? parse() => text.isEmpty
+      ? null
+      : parseValue(attribute, text, units, controller.plainIn);
 
   String? validate() {
     if (text.isEmpty) {
@@ -75,13 +81,13 @@ Future<List<ValueInput>> loadValueInputs(
       final attribute = ca.attribute.datatype == 'choice'
           ? await client.attribute(ca.attribute.id)
           : ca.attribute;
-      final group = attribute.unitGroup;
+      final unit = attribute.unit;
       return ValueInput(
         attribute: attribute,
         required: ca.required,
         defaultText: ca.defaultText,
         initial: current[ca.attribute.id] ?? '',
-        units: group == null ? null : await client.unitChoice(group),
+        units: unit == null ? null : await client.unitChoice(unit),
       );
     }),
   );
@@ -112,12 +118,7 @@ class _ValueFieldState extends State<ValueField> {
   String? get _hint {
     if (input.defaultText.isNotEmpty) return 'Default: ${input.defaultText}';
     final units = input.units;
-    if (units == null) return null;
-    try {
-      return 'e.g. 12 ${plainUnit(units.groupUnits).symbol}';
-    } on InputError {
-      return 'with a unit: ${unitSymbols(units.groupUnits)}';
-    }
+    return units == null ? null : measureHint(units, input.controller);
   }
 
   @override
@@ -186,9 +187,18 @@ class _ValueFieldState extends State<ValueField> {
           validator: (_) => input.validate(),
         );
       default:
+        final units = input.units;
         return TextFormField(
           controller: input.controller,
-          decoration: decoration,
+          decoration: units == null
+              ? decoration
+              : decoration.copyWith(
+                  suffixIcon: UnitMenu(
+                    units: units,
+                    controller: input.controller,
+                    onChanged: () => setState(() {}),
+                  ),
+                ),
           keyboardType: a.datatype == 'url' ? TextInputType.url : null,
           autovalidateMode: AutovalidateMode.onUserInteraction,
           validator: (_) => input.validate(),
@@ -197,9 +207,67 @@ class _ValueFieldState extends State<ValueField> {
   }
 }
 
+/// The text of a number field, and the unit picked in its [UnitMenu]: a
+/// number typed without a unit is in [plainIn].
+class MeasureController extends TextEditingController {
+  MeasureController({super.text, this.plainIn});
+
+  Unit? plainIn;
+}
+
+/// A hint for a number field: "e.g. 12, or 1.5 m".
+String measureHint(UnitChoice units, MeasureController controller) {
+  final picked = controller.plainIn ?? units.unit;
+  final other =
+      units.familyUnits.where((u) => u.symbol != picked.symbol).lastOrNull ??
+      units.quantityUnits.where((u) => u.symbol != picked.symbol).firstOrNull;
+  return other == null ? 'e.g. 12' : 'e.g. 12, or 1.5 ${other.symbol}';
+}
+
+/// The units of a number's family, next to its field: the unit a number
+/// typed without one is in. It starts at the attribute's or item's own unit;
+/// a number typed with a unit ("1in") ignores it.
+class UnitMenu extends StatelessWidget {
+  const UnitMenu({
+    super.key,
+    required this.units,
+    required this.controller,
+    this.onChanged,
+  });
+
+  final UnitChoice units;
+  final MeasureController controller;
+  final VoidCallback? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final picked = controller.plainIn ?? units.unit;
+    final family = units.familyUnits.isEmpty ? [units.unit] : units.familyUnits;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<int>(
+          value: picked.id,
+          isDense: true,
+          items: [
+            for (final u in family)
+              DropdownMenuItem(value: u.id, child: Text(u.symbol)),
+          ],
+          onChanged: family.length < 2
+              ? null
+              : (id) {
+                  controller.plainIn = family.firstWhere((u) => u.id == id);
+                  onChanged?.call();
+                },
+        ),
+      ),
+    );
+  }
+}
+
 /// A quantity field: empty means uncounted (or, when moving, all of it).
-/// Numbers may carry units of the item's unit group, as in the CLI.
-class QuantityField extends StatelessWidget {
+/// Numbers may carry units of the item's unit's quantity, as in the CLI.
+class QuantityField extends StatefulWidget {
   const QuantityField({
     super.key,
     required this.controller,
@@ -207,38 +275,46 @@ class QuantityField extends StatelessWidget {
     this.emptyMeans = 'uncounted',
   });
 
-  final TextEditingController controller;
+  final MeasureController controller;
   final UnitChoice? units;
   final String emptyMeans;
 
   /// The quantity for the API; null when empty.
-  static Decimal? parse(String text, UnitChoice? units) =>
-      text.trim().isEmpty ? null : parseMeasure(text, units);
+  static Decimal? parse(MeasureController controller, UnitChoice? units) =>
+      controller.text.trim().isEmpty
+      ? null
+      : parseMeasure(controller.text, units, plainIn: controller.plainIn);
 
   @override
+  State<QuantityField> createState() => _QuantityFieldState();
+}
+
+class _QuantityFieldState extends State<QuantityField> {
+  @override
   Widget build(BuildContext context) {
-    String? hint;
-    if (units != null) {
-      try {
-        hint = 'e.g. 12 ${plainUnit(units!.groupUnits).symbol}';
-      } on InputError {
-        hint = 'with a unit: ${unitSymbols(units!.groupUnits)}';
-      }
-    }
+    final units = widget.units;
+    final controller = widget.controller;
     return TextFormField(
       controller: controller,
       decoration: InputDecoration(
         labelText: units == null
             ? 'Quantity (pieces)'
-            : 'Quantity (${units!.group.name})',
-        hintText: hint,
-        helperText: 'Empty: $emptyMeans',
+            : 'Quantity (${units.unit.familyName})',
+        hintText: units == null ? null : measureHint(units, controller),
+        helperText: 'Empty: ${widget.emptyMeans}',
         border: const OutlineInputBorder(),
+        suffixIcon: units == null
+            ? null
+            : UnitMenu(
+                units: units,
+                controller: controller,
+                onChanged: () => setState(() {}),
+              ),
       ),
       autovalidateMode: AutovalidateMode.onUserInteraction,
-      validator: (text) {
+      validator: (_) {
         try {
-          parse(text ?? '', units);
+          QuantityField.parse(controller, units);
           return null;
         } on InputError catch (e) {
           return e.message;
@@ -246,6 +322,34 @@ class QuantityField extends StatelessWidget {
       },
     );
   }
+}
+
+/// Unit lock for an attribute or item: numbers always shown in [unit]
+/// itself, instead of in the unit of its family that scales best.
+class UnitLockSwitch extends StatelessWidget {
+  const UnitLockSwitch({
+    super.key,
+    required this.unit,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final Unit unit;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) => SwitchListTile(
+    contentPadding: EdgeInsets.zero,
+    title: const Text('Unit lock'),
+    subtitle: Text(
+      value
+          ? 'Always shown in ${unit.symbol}'
+          : 'Shown in the unit of ${unit.familyName} that fits best',
+    ),
+    value: value,
+    onChanged: onChanged,
+  );
 }
 
 /// Saves the values of [inputs] that changed: [set] for new text, [remove]

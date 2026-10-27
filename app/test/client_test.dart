@@ -19,7 +19,6 @@ const account = {
   'history_privilege': 'read_only',
   'deleted': false,
 };
-const tenant = {'id': 't1', 'name': 'Development', 'hostname': 'wtf.test'};
 
 http.Response json(
   Object body, {
@@ -47,13 +46,13 @@ void main() {
         seen.add(req);
         if (req.url.path == '/api/v1/login') {
           return json(
-            {'account': account, 'tenant': tenant},
+            {'account': account},
             headers: {
               'set-cookie': 'wtf_session=tok123; Path=/api; Max-Age=2592000; HttpOnly; SameSite=Strict',
             },
           );
         }
-        return json({...account, 'tenant': tenant});
+        return json(account);
       }),
     );
 
@@ -61,7 +60,6 @@ void main() {
     expect(me.email, 'bbj@bbj.io');
     expect(me.dataPrivilege, Privilege.readWrite);
     expect(me.accountPrivilege, Privilege.none);
-    expect(me.tenant.name, 'Development');
     expect(stored, 'tok123');
     expect(client.serverRevision, 1);
     expect(seen.first.method, 'POST');
@@ -119,7 +117,7 @@ void main() {
       httpClient: MockClient((req) async {
         seen.add(req);
         return json(
-          {'account': account, 'tenant': tenant},
+          {'account': account},
           headers: {'set-cookie': 'wtf_session=tok; Path=/api'},
         );
       }),
@@ -269,10 +267,7 @@ void main() {
     final a = Account.fromJson({...account, 'history_privilege': 'read_write'});
     expect(a.privileges['history_privilege'], Privilege.readOnly);
     expect(a.privileges['data_privilege'], Privilege.readWrite);
-    final me = Me.fromJson({
-      ...account,
-      'history_privilege': 'read_write',
-    }, tenant);
+    final me = Me.fromJson({...account, 'history_privilege': 'read_write'});
     expect(me.historyPrivilege, Privilege.readOnly);
   });
 

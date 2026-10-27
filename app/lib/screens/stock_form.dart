@@ -83,7 +83,7 @@ class _StockForm extends StatefulWidget {
 
 class _StockFormState extends State<_StockForm> {
   final _form = GlobalKey<FormState>();
-  final _quantity = TextEditingController();
+  final _quantity = MeasureController();
   late ItemDetail? _item = widget.item;
   late String? _locationId =
       widget.stock?.location ?? _usable(widget.locationId);
@@ -128,8 +128,8 @@ class _StockFormState extends State<_StockForm> {
       _loadError = null;
     });
     try {
-      final group = item.unitGroup;
-      final units = group == null ? null : await _client.unitChoice(group);
+      final unit = item.unit;
+      final units = unit == null ? null : await _client.unitChoice(unit);
       final cls = await _client.cls(item.cls.id);
       final current = widget.stock == null
           ? <String, String>{}
@@ -144,6 +144,7 @@ class _StockFormState extends State<_StockForm> {
       final old = _inputs;
       setState(() {
         _units = units;
+        _quantity.plainIn = null; // the new item's own unit
         _inputs = inputs;
       });
       // The old fields are still drawn once more.
@@ -195,7 +196,7 @@ class _StockFormState extends State<_StockForm> {
     if (!_form.currentState!.validate()) return;
     setState(() => _busy = true);
     try {
-      final quantity = QuantityField.parse(_quantity.text, _units);
+      final quantity = QuantityField.parse(_quantity, _units);
       final stock = widget.stock;
       if (stock == null) {
         final created = await _client.createStock(
@@ -225,7 +226,8 @@ class _StockFormState extends State<_StockForm> {
       final changes = <String, Object?>{
         if (location != stock.location) 'location': location,
         if (_quantity.text.trim() !=
-            (stock.quantity == null ? '' : stock.quantityText))
+                (stock.quantity == null ? '' : stock.quantityText) ||
+            _quantity.plainIn != null)
           'quantity': quantity,
       };
       if (changes.isNotEmpty) {

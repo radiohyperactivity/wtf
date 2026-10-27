@@ -68,6 +68,13 @@ class Rational {
   /// Whether this is at least [o].
   bool operator >=(Rational o) => numer * o.denom >= o.numer * denom;
 
+  @override
+  bool operator ==(Object other) =>
+      other is Rational && other.numer == numer && other.denom == denom;
+
+  @override
+  int get hashCode => Object.hash(numer, denom);
+
   bool get isInteger => denom == BigInt.one;
   bool get isZero => numer == BigInt.zero;
 
@@ -133,7 +140,9 @@ String _aliases(String s) => s
     .replaceAll('deg', '°');
 
 /// Finds a unit by symbol or name: exactly, then with ASCII spellings ("um",
-/// "kohm", "degC"), then ignoring case if that is unique.
+/// "kohm", "degC"), then ignoring case if that is unique. Units that convert
+/// the same count as one, such as the B of decimal and of binary bytes; the
+/// first of them is returned.
 Unit matchUnit(List<Unit> units, String s) {
   s = s.trim();
   final candidates = [s, _aliases(s)];
@@ -153,88 +162,98 @@ Unit matchUnit(List<Unit> units, String s) {
             lower.contains(u.name.toLowerCase()),
       )
       .toList();
-  if (folded.length == 1) return folded.single;
   if (folded.isEmpty) throw InputError('unknown unit "$s"');
+  if (folded.every((u) => sameConversion(u, folded.first))) {
+    return folded.first;
+  }
   throw InputError(
     '"$s" is ambiguous: ${folded.map((u) => '${u.symbol} (${u.name})').join(', ')}',
   );
 }
 
-/// The unit of a number given without one: the base unit if the group has it
-/// (Metric length: metres), else the group's only unit (Celsius: °C).
-/// Otherwise a unit must be given.
-Unit plainUnit(List<Unit> groupUnits) {
-  for (final u in groupUnits) {
-    if (u.isBase) return u;
-  }
-  if (groupUnits.length == 1) return groupUnits.single;
-  throw InputError('give a unit: ${unitSymbols(groupUnits)}');
-}
+bool sameConversion(Unit a, Unit b) =>
+    a.baseFactor == b.baseFactor && a.baseOffset == b.baseOffset;
 
-String unitSymbols(List<Unit> units) => units.map((u) => u.symbol).join(', ');
+/// The symbols of [units], each once.
+String unitSymbols(List<Unit> units) =>
+    units.map((u) => u.symbol).toSet().join(', ');
 
-/// A base-unit number in the group's unit that scales best, as the server's
-/// `display` does: the largest unit in which it is at least 1, else the
-/// smallest; zero in the base unit. Six decimals at most: "1.2 mm".
-String displayIn(Rational base, List<Unit> groupUnits) {
-  if (groupUnits.isEmpty) return base.toDecimal(6);
+/// A base-unit number as the server's `display` shows it: with [lock] in
+/// [unit] itself; otherwise in the unit of its family that scales best, the
+/// largest in which it is at least 1, else the smallest. Zero is shown in
+/// [unit]. Six decimals at most: "1.2 mm".
+String displayIn(
+  Rational base,
+  Unit unit,
+  List<Unit> familyUnits, {
+  bool lock = false,
+}) {
   Rational inUnit(Unit u) => (base - u.baseOffset) / u.baseFactor;
-  Unit? best;
-  if (base.isZero) {
-    best = groupUnits.where((u) => u.isBase).firstOrNull;
-  } else {
-    for (final u in groupUnits) {
+  var best = unit;
+  if (!lock && !base.isZero && familyUnits.isNotEmpty) {
+    Unit? found;
+    for (final u in familyUnits) {
       if (inUnit(u).abs() >= Rational(BigInt.one) &&
-          (best == null || u.baseFactor >= best.baseFactor)) {
-        best = u;
+          (found == null || u.baseFactor >= found.baseFactor)) {
+        found = u;
       }
     }
-    best ??= groupUnits.reduce((a, b) => b.baseFactor >= a.baseFactor ? a : b);
+    best =
+        found ??
+        familyUnits.reduce((a, b) => b.baseFactor >= a.baseFactor ? a : b);
   }
-  best ??= groupUnits.first;
   return '${inUnit(best).toDecimal(6)} ${best.symbol}';
 }
 
-/// The units a measure may be typed in: all units of the quantity, and the
-/// group's units for numbers without one.
+/// The units a measure may be typed in: a plain number is in [unit], and a
+/// symbol is looked up in its family first, then in the whole quantity.
 class UnitChoice {
   const UnitChoice({
-    required this.group,
+    required this.unit,
+    required this.familyUnits,
     required this.quantityUnits,
-    required this.groupUnits,
   });
 
-  final UnitGroup group;
+  final Unit unit;
+
+  /// The units of [unit]'s family, smallest first: what the unit menu of a
+  /// number field offers.
+  final List<Unit> familyUnits;
   final List<Unit> quantityUnits;
-  final List<Unit> groupUnits;
+
+  Quantity get quantity => unit.quantity;
 }
 
-/// Converts input such as "12mm" to the base unit of the group's quantity; a
-/// plain number is in the group's plainUnit. Without units (no unit group)
-/// only plain numbers are accepted. [integer] demands a whole result.
-Decimal parseMeasure(String input, UnitChoice? units, {bool integer = false}) {
+/// Converts input such as "12mm" to the base unit of the unit's quantity. A
+/// plain number is in [plainIn] if given (a unit picked next to the field),
+/// else in the attribute's or item's unit. Without units (pieces) only plain
+/// numbers are accepted. [integer] demands a whole result.
+Decimal parseMeasure(
+  String input,
+  UnitChoice? units, {
+  bool integer = false,
+  Unit? plainIn,
+}) {
   var (r, symbol) = splitMeasure(input);
   if (units == null) {
     if (symbol.isNotEmpty) throw InputError('"$input": no unit expected here');
   } else {
-    final Unit u;
+    var u = plainIn ?? units.unit;
     if (symbol.isNotEmpty) {
       try {
-        u = matchUnit(units.quantityUnits, symbol);
-      } on InputError catch (e) {
-        throw InputError(
-          '${e.message}; ${units.group.quantity.name} is measured in ${unitSymbols(units.quantityUnits)}',
-        );
-      }
-    } else {
-      try {
-        u = plainUnit(units.groupUnits);
-      } on InputError catch (e) {
-        throw InputError('"$input": ${e.message}');
+        u = matchUnit(units.familyUnits, symbol);
+      } on InputError {
+        try {
+          u = matchUnit(units.quantityUnits, symbol);
+        } on InputError catch (e) {
+          throw InputError(
+            '${e.message}; ${units.quantity.name} is measured in ${unitSymbols(units.quantityUnits)}',
+          );
+        }
       }
     }
     r = r * u.baseFactor + u.baseOffset;
-    integer = integer || units.group.quantity.datatype == 'integer';
+    integer = integer || units.quantity.datatype == 'integer';
   }
   if (integer && !r.isInteger) {
     throw InputError('"$input" is not a whole number');
@@ -244,13 +263,24 @@ Decimal parseMeasure(String input, UnitChoice? units, {bool integer = false}) {
 
 /// Converts typed text to the JSON value the API expects for an attribute:
 /// numbers in the base unit ([units] must be given for attributes with a
-/// unit group), yes/no, dates; text, url and choices (by name) as they are.
-Object parseValue(Attribute a, String input, [UnitChoice? units]) {
+/// unit, [plainIn] is the unit picked for a plain number), yes/no, dates;
+/// text, url and choices (by name) as they are.
+Object parseValue(
+  Attribute a,
+  String input, [
+  UnitChoice? units,
+  Unit? plainIn,
+]) {
   input = input.trim();
   try {
     switch (a.datatype) {
       case 'integer' || 'float':
-        return parseMeasure(input, units, integer: a.datatype == 'integer');
+        return parseMeasure(
+          input,
+          units,
+          integer: a.datatype == 'integer',
+          plainIn: plainIn,
+        );
       case 'boolean':
         return parseYesNo(input) ??
             (throw InputError('"$input" is not yes or no'));
