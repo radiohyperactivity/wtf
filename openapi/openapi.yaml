@@ -130,6 +130,45 @@ paths:
               schema: { $ref: "#/components/schemas/Unit" }
         default: { $ref: "#/components/responses/Problem" }
 
+  /units/import:
+    post:
+      summary: Import quantities, unit families and units from a unit file (model write privilege)
+      operationId: unitImport
+      description: |
+        The body is a unit file (seed/units-format.md). What isn't there yet is
+        added; what is there must be the same, or it is a conflict. Nothing
+        that exists is changed or removed. All or nothing: with a conflict, or
+        with dry_run, nothing is kept. A body that isn't a valid unit file is
+        refused with 400.
+      parameters:
+        - { name: dry_run, in: query, schema: { type: boolean }, description: Only tell what would happen. }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, description: A unit file, see seed/units-format.md. }
+      responses:
+        "200":
+          description: What was (or would be) added, what was there already, and the conflicts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  applied: { type: boolean, description: Whether the import was kept. }
+                  dry_run: { type: boolean }
+                  quantities: { $ref: "#/components/schemas/ImportSection" }
+                  families: { $ref: "#/components/schemas/ImportSection" }
+                  units: { $ref: "#/components/schemas/ImportSection" }
+                  conflicts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        where: { type: string, description: 'e.g. "Length › Imperial length › in"' }
+                        message: { type: string }
+        default: { $ref: "#/components/responses/Problem" }
+
   /unit-families:
     get:
       summary: All unit families with their units
@@ -1555,6 +1594,18 @@ components:
         id: { type: integer }
         name: { type: string }
         datatype: { type: string, enum: [integer, float] }
+        base_unit:
+          type: object
+          description: The unit numbers are stored in, with factor 1 and offset 0.
+          properties:
+            symbol: { type: string }
+            name: { type: string }
+
+    ImportSection:
+      type: object
+      properties:
+        added: { type: array, items: { type: object }, description: "{name}; families {quantity, name}; units {quantity, family, symbol, name}" }
+        existing: { type: array, items: { type: object } }
 
     Unit:
       type: object

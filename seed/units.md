@@ -1,12 +1,12 @@
 # Seed data: quantities, unit families and units
 
-System data loaded after [SCHEMA.md](../SCHEMA.md). It can't be changed through the API. This is a bootstrap set: other units are meant to be imported from simple files later, so it only covers what most inventories need.
+System data loaded after [SCHEMA.md](../SCHEMA.md). This is a bootstrap set, so it only covers what most inventories need. More quantities, families and units are imported from unit files ([units-format.md](units-format.md)); the bootstrap set itself is one too: [units.json](units.json). Nothing else changes them through the API.
 
 - A **quantity** is what is measured: Length, Weight, Voltage, …
 - A **unit family** is a set of units of one quantity that are used together, and that a number is scaled between on output: Metric length is nm … km, Imperial length is mil … mi. A quantity can have several families.
 - A **unit** belongs to exactly one family.
 
-Numbers of every quantity are stored in its base unit. Count is stored as integer, every other quantity as float. Every unit converts to the base unit as:
+Numbers of every quantity are stored in its base unit, which the quantity names (`base_unit` in the API). Count is stored as integer, every other quantity as float. Every unit converts to the base unit as:
 
 ```text
 base = value × base_factor + base_offset

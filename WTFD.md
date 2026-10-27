@@ -319,6 +319,7 @@ With `--web-root DIR`, `wtfd` serves the web app (a Flutter web build) outside `
 | `GET /unit-families/{id}` | `unit_family_get` | |
 | `GET /units` | `unit_list` | `?quantity=&family=` |
 | `GET /units/{id}` | `unit_get` | |
+| `POST /units/import` | `unit_import` | a unit file ([seed/units-format.md](seed/units-format.md)); `?dry_run=true` |
 | `GET /attributes` | `attribute_list()` | |
 | `POST /attributes` | `attribute_create` | `{name, datatype, unit?, unit_lock?}` |
 | `GET /attributes/{id}` | `attribute_get` | |

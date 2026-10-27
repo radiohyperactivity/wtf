@@ -443,7 +443,113 @@ func unitsGroup() group {
 					})
 				}),
 			},
+			{
+				name:    "import",
+				args:    "<file> [--dry-run]",
+				summary: "Import quantities, unit families and units from a unit file (seed/units-format.md); nothing that exists is changed.",
+				params:  []param{fileArg("File")},
+				setup: func(fs *flag.FlagSet) func(*env, []string) error {
+					dryRun := fs.Bool("dry-run", false, "only tell what would be added, and the conflicts")
+					return func(e *env, args []string) error {
+						if err := wantArgs(args, 1, 1); err != nil {
+							return err
+						}
+						file, err := os.ReadFile(args[0])
+						if err != nil {
+							return err
+						}
+						if !json.Valid(file) {
+							return fmt.Errorf("%s is not JSON", args[0])
+						}
+						var q url.Values
+						if *dryRun {
+							q = url.Values{"dry_run": {"true"}}
+						}
+						data, _, err := e.api.Do(e.ctx, http.MethodPost, "/units/import", q, json.RawMessage(file))
+						if err != nil {
+							return err
+						}
+						e.wrote("/units/import")
+						var report importReport
+						if err := decode(data, &report); err != nil {
+							return err
+						}
+						if err := e.emit(data, func() error {
+							printImport(e, report)
+							return nil
+						}); err != nil {
+							return err
+						}
+						if len(report.Conflicts) > 0 {
+							return fmt.Errorf("nothing was imported: %d conflicts", len(report.Conflicts))
+						}
+						return nil
+					}
+				},
+			},
 		},
+	}
+}
+
+// importReport is the answer of POST /units/import.
+type importReport struct {
+	Applied    bool `json:"applied"`
+	DryRun     bool `json:"dry_run"`
+	Quantities struct {
+		Added, Existing []struct{ Name string }
+	}
+	Families struct {
+		Added, Existing []struct{ Quantity, Name string }
+	}
+	Units struct {
+		Added, Existing []struct{ Quantity, Family, Symbol, Name string }
+	}
+	Conflicts []struct{ Where, Message string }
+}
+
+// printImport tells what an import added (or would add), what was there
+// already, and the conflicts.
+func printImport(e *env, r importReport) {
+	verb := "Added"
+	if !r.Applied {
+		verb = "Would add"
+	}
+	var lines []string
+	for _, q := range r.Quantities.Added {
+		lines = append(lines, "  quantity "+q.Name)
+	}
+	for _, f := range r.Families.Added {
+		lines = append(lines, "  unit family "+f.Quantity+" › "+f.Name)
+	}
+	byFamily := map[string][]string{}
+	var families []string
+	for _, u := range r.Units.Added {
+		key := u.Quantity + " › " + u.Family
+		if byFamily[key] == nil {
+			families = append(families, key)
+		}
+		byFamily[key] = append(byFamily[key], u.Symbol)
+	}
+	for _, f := range families {
+		lines = append(lines, "  units "+strings.Join(byFamily[f], ", ")+" in "+f)
+	}
+	if len(lines) == 0 {
+		fmt.Fprintln(e.stdout, "Nothing new.")
+	} else {
+		fmt.Fprintln(e.stdout, verb+":")
+		for _, l := range lines {
+			fmt.Fprintln(e.stdout, l)
+		}
+	}
+	if n := len(r.Quantities.Existing) + len(r.Families.Existing) + len(r.Units.Existing); n > 0 {
+		fmt.Fprintf(e.stdout, "Already there: %d quantities, %d unit families, %d units.\n",
+			len(r.Quantities.Existing), len(r.Families.Existing), len(r.Units.Existing))
+	}
+	if len(r.Conflicts) > 0 {
+		fmt.Fprintln(e.stdout, "Conflicts, so nothing was imported:")
+		for _, c := range r.Conflicts {
+			fmt.Fprintf(e.stdout, "  %s: %s\n", c.Where, c.Message)
+		}
 	}
 }
 

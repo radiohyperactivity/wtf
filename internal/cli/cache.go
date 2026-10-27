@@ -21,7 +21,7 @@ import (
 //     families, quantities and units, for a minute.
 //
 // A change made by this client refreshes what it makes outdated at once (see
-// wrote). Quantities, unit families and units can't be changed through the API.
+// wrote). Quantities, unit families and units only change by an import.
 
 const listTTL = time.Minute
 
@@ -89,6 +89,12 @@ func (e *env) wrote(path string) {
 		e.cache.attributes = nil
 		if dir := e.cacheDir(); dir != "" {
 			_ = os.Remove(filepath.Join(dir, "attributes.json"))
+		}
+	case strings.HasPrefix(path, "/units/import"):
+		e.cache.families, e.cache.quantities = nil, nil
+		if dir := e.cacheDir(); dir != "" {
+			_ = os.Remove(filepath.Join(dir, "unit-families.json"))
+			_ = os.Remove(filepath.Join(dir, "quantities.json"))
 		}
 	}
 }

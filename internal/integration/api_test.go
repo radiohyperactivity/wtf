@@ -8,6 +8,8 @@ import (
 	"io"
 	"log/slog"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -331,6 +333,164 @@ func TestUnitFamilies(t *testing.T) {
 	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
 		t.Errorf("a second meaning of B: %v", err)
 	}
+}
+
+func TestUnitImport(t *testing.T) {
+	e := setup(t)
+	e.reset(t)
+	// What this test adds goes again, so other tests see the bootstrap set.
+	ctx := context.Background()
+	var maxQ, maxF, maxU int
+	if err := e.dba.QueryRow(ctx, "SELECT (SELECT max(id) FROM quantity), (SELECT max(id) FROM unit_family), (SELECT max(id) FROM unit)").
+		Scan(&maxQ, &maxF, &maxU); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		for _, del := range []struct {
+			sql string
+			max int
+		}{
+			{"DELETE FROM attribute WHERE unit > $1", maxU},
+			{"DELETE FROM unit WHERE id > $1", maxU},
+			{"DELETE FROM unit_family WHERE id > $1", maxF},
+			{"DELETE FROM quantity WHERE id > $1", maxQ},
+		} {
+			if _, err := e.dba.Exec(ctx, del.sql, del.max); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	count := func(report any, kind, which string) int {
+		return len(get(t, report, kind, which).([]any))
+	}
+
+	// The bootstrap set as a file is what the database starts with.
+	seed, err := os.ReadFile("../../seed/units.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := e.expect(t, 200, "POST", "/units/import", string(seed)).body
+	if get(t, r, "applied") != true || count(r, "quantities", "added")+count(r, "families", "added")+count(r, "units", "added") != 0 ||
+		count(r, "quantities", "existing") != 16 || count(r, "families", "existing") != 25 || count(r, "units", "existing") != 95 ||
+		len(get(t, r, "conflicts").([]any)) != 0 {
+		t.Fatalf("seed/units.json differs from the bootstrap set: %v", r)
+	}
+
+	file := func(quantities ...any) map[string]any {
+		return obj("format", "wtf-units", "version", 1, "quantities", quantities)
+	}
+	u := func(symbol, name, factor string) map[string]any {
+		return obj("symbol", symbol, "name", name, "factor", factor)
+	}
+	pressure := obj("name", "Pressure", "base_unit", obj("symbol", "Pa", "name", "pascal"),
+		"x-source", "anything of the file's own is ignored",
+		"families", []any{
+			obj("name", "Pascals", "units", []any{u("Pa", "pascal", "1"), u("kPa", "kilopascal", "1000"), u("MPa", "megapascal", "1000000")}),
+			obj("name", "Bar", "units", []any{u("mbar", "millibar", "100"), u("bar", "bar", "100000")}),
+		})
+	yards := obj("name", "length", "base_unit", obj("symbol", "m", "name", "metre"), // an existing quantity, any case
+		"families", []any{obj("name", "Imperial length", "units", []any{u("yd", "yard", "0.9144"), u("in", "inch", "0.0254")})})
+
+	// A dry run tells, and keeps nothing.
+	r = e.expect(t, 200, "POST", "/units/import?dry_run=true", file(pressure, yards)).body
+	if get(t, r, "applied") != false || get(t, r, "dry_run") != true ||
+		count(r, "quantities", "added") != 1 || count(r, "families", "added") != 2 || count(r, "units", "added") != 6 ||
+		count(r, "quantities", "existing") != 1 || count(r, "families", "existing") != 1 || count(r, "units", "existing") != 1 {
+		t.Errorf("dry run: %v", r)
+	}
+	for _, q := range e.expect(t, 200, "GET", "/quantities", nil).body.([]any) {
+		if str(t, q, "name") == "Pressure" {
+			t.Fatal("a dry run added Pressure")
+		}
+	}
+
+	r = e.expect(t, 200, "POST", "/units/import", file(pressure, yards)).body
+	if get(t, r, "applied") != true || count(r, "units", "added") != 6 {
+		t.Fatalf("import: %v", r)
+	}
+	if e.unit(t, "Pascals", "kPa") <= maxU || e.unit(t, "Imperial length", "yd") <= maxU {
+		t.Error("imported units should get new ids")
+	}
+	var q any
+	for _, x := range e.expect(t, 200, "GET", "/quantities", nil).body.([]any) {
+		if str(t, x, "name") == "Pressure" {
+			q = x
+		}
+	}
+	if q == nil || str(t, q, "base_unit", "symbol") != "Pa" || str(t, q, "datatype") != "float" {
+		t.Errorf("Pressure: %v", q)
+	}
+	// Importing it again changes nothing.
+	r = e.expect(t, 200, "POST", "/units/import", file(pressure, yards)).body
+	if get(t, r, "applied") != true || count(r, "units", "added") != 0 || count(r, "units", "existing") != 7 {
+		t.Errorf("again: %v", r)
+	}
+
+	// Conflicts: reported all together, and nothing is kept.
+	torque := obj("name", "Torque", "base_unit", obj("symbol", "N·m", "name", "newton metre"),
+		"families", []any{obj("name", "Newton metres", "units", []any{u("N·m", "newton metre", "1")})})
+	r = e.expect(t, 200, "POST", "/units/import", file(
+		torque,
+		obj("name", "Length", "base_unit", obj("symbol", "mm", "name", "millimetre")), // another base
+		obj("name", "Distance", "base_unit", obj("symbol", "m", "name", "metre"),
+			"families", []any{obj("name", "Metric length")}), // a family of another quantity
+		obj("name", "Bytes", "base_unit", obj("symbol", "B", "name", "byte"),
+			"families", []any{
+				obj("name", "Imperial length"),
+				obj("name", "Decimal bytes", "units", []any{u("kB", "kilobyte", "1024")}), // another factor
+				obj("name", "Odd bytes", "units", []any{u("KiB", "kibibyte", "1000")}),    // KiB means 1024 elsewhere
+			}),
+	)).body
+	conflicts := get(t, r, "conflicts").([]any)
+	if get(t, r, "applied") != false || len(conflicts) != 5 {
+		t.Fatalf("want 5 conflicts, not applied: %v", r)
+	}
+	for i, want := range []string{"Length", "Metric length", "Imperial length", "kB", "KiB"} {
+		if !strings.Contains(str(t, conflicts[i], "where"), want) {
+			t.Errorf("conflict %d: %v, want it about %s", i, conflicts[i], want)
+		}
+	}
+	for _, x := range e.expect(t, 200, "GET", "/quantities", nil).body.([]any) {
+		if n := str(t, x, "name"); n == "Torque" || n == "Distance" {
+			t.Errorf("%s was kept although the import had conflicts", n)
+		}
+	}
+
+	// Files that aren't unit files are refused, saying why.
+	for _, bad := range []struct {
+		body any
+		want string
+	}{
+		{obj("format", "something", "version", 1, "quantities", []any{}), "not a WtF unit file"},
+		{obj("format", "wtf-units", "version", 2, "quantities", []any{}), "newer"},
+		{obj("format", "wtf-units", "version", 1, "quantities", []any{}, "colour", "red"), `unknown key "colour"`},
+		{file(obj("name", "Speed")), `needs "base_unit"`},
+		{file(obj("name", "Speed", "base_unit", obj("symbol", "m/s", "name", "metre per second"),
+			"families", []any{obj("name", "Metric speed", "units", []any{u("m/s", "metre per second", "3.6")})})), "base unit"},
+		{file(obj("name", "Speed", "base_unit", obj("symbol", "m/s", "name", "metre per second"),
+			"families", []any{obj("name", "Metric speed", "units", []any{u("km/h", "kilometre per hour", "fast")})})), "decimal"},
+		{file(obj("name", "Speed", "datatype", "date", "base_unit", obj("symbol", "m/s", "name", "metre per second"))), "datatype"},
+	} {
+		r := e.expect(t, 400, "POST", "/units/import", bad.body).body
+		if !strings.Contains(str(t, r, "detail"), bad.want) {
+			t.Errorf("%v: %v, want %q", bad.body, r, bad.want)
+		}
+	}
+
+	// The CLI: a dry run, the import, and the new units in use at once.
+	c := e.cli(t)
+	path := filepath.Join(t.TempDir(), "torque.json")
+	data, _ := json.Marshal(file(torque))
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	contains(t, c.ok("unit", "list", "--quantity", "Length"), "mm") // fills the CLI's unit cache
+	contains(t, c.ok("unit", "import", path, "--dry-run"), "Would add:", "quantity Torque", "units N·m in Torque › Newton metres")
+	contains(t, c.ok("unit", "import", path), "Added:", "quantity Torque")
+	contains(t, c.ok("unit", "import", path), "Nothing new.", "Already there: 1 quantities, 1 unit families, 1 units.")
+	contains(t, c.ok("attribute", "add", "Tightening torque", "--unit", "N·m"), "N·m (Newton metres)")
+	_, stderr := c.run(1, "", "unit", "import", path+".missing")
+	contains(t, stderr, "torque.json.missing")
 }
 
 func TestErrors(t *testing.T) {

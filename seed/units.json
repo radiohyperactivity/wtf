@@ -1,0 +1,325 @@
+{
+  "format": "wtf-units",
+  "version": 1,
+  "name": "WtF bootstrap set",
+  "description": "The quantities, unit families and units every WtF installation starts with (db/migrations/0002_units.sql). Importing it changes nothing.",
+  "quantities": [
+    {
+      "name": "Length",
+      "base_unit": { "symbol": "m", "name": "metre" },
+      "families": [
+        {
+          "name": "Metric length",
+          "units": [
+            { "symbol": "nm", "name": "nanometre", "factor": "0.000000001" },
+            { "symbol": "µm", "name": "micrometre", "factor": "0.000001" },
+            { "symbol": "mm", "name": "millimetre", "factor": "0.001" },
+            { "symbol": "cm", "name": "centimetre", "factor": "0.01" },
+            { "symbol": "m", "name": "metre", "factor": "1" },
+            { "symbol": "km", "name": "kilometre", "factor": "1000" }
+          ]
+        },
+        {
+          "name": "Imperial length",
+          "units": [
+            { "symbol": "mil", "name": "thou", "factor": "0.0000254" },
+            { "symbol": "in", "name": "inch", "factor": "0.0254" },
+            { "symbol": "ft", "name": "foot", "factor": "0.3048" },
+            { "symbol": "mi", "name": "mile", "factor": "1609.344" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Weight",
+      "base_unit": { "symbol": "kg", "name": "kilogram" },
+      "families": [
+        {
+          "name": "Metric weight",
+          "units": [
+            { "symbol": "µg", "name": "microgram", "factor": "0.000000001" },
+            { "symbol": "mg", "name": "milligram", "factor": "0.000001" },
+            { "symbol": "g", "name": "gram", "factor": "0.001" },
+            { "symbol": "kg", "name": "kilogram", "factor": "1" },
+            { "symbol": "t", "name": "tonne", "factor": "1000" }
+          ]
+        },
+        {
+          "name": "Imperial weight",
+          "units": [
+            { "symbol": "gr", "name": "grain", "factor": "0.00006479891" },
+            { "symbol": "oz", "name": "ounce", "factor": "0.028349523125" },
+            { "symbol": "lb", "name": "pound", "factor": "0.45359237" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Volume",
+      "base_unit": { "symbol": "m³", "name": "cubic metre" },
+      "families": [
+        {
+          "name": "Metric volume",
+          "units": [
+            { "symbol": "µL", "name": "microlitre", "factor": "0.000000001" },
+            { "symbol": "mL", "name": "millilitre", "factor": "0.000001" },
+            { "symbol": "L", "name": "litre", "factor": "0.001" },
+            { "symbol": "m³", "name": "cubic metre", "factor": "1" }
+          ]
+        },
+        {
+          "name": "US volume",
+          "units": [
+            { "symbol": "fl oz (US)", "name": "US fluid ounce", "factor": "0.0000295735295625" },
+            { "symbol": "pt (US)", "name": "US pint", "factor": "0.000473176473" },
+            { "symbol": "qt (US)", "name": "US quart", "factor": "0.000946352946" },
+            { "symbol": "gal (US)", "name": "US gallon", "factor": "0.003785411784" }
+          ]
+        },
+        {
+          "name": "Imperial volume",
+          "units": [
+            { "symbol": "fl oz (imp)", "name": "imperial fluid ounce", "factor": "0.0000284130625" },
+            { "symbol": "pt (imp)", "name": "imperial pint", "factor": "0.00056826125" },
+            { "symbol": "qt (imp)", "name": "imperial quart", "factor": "0.0011365225" },
+            { "symbol": "gal (imp)", "name": "imperial gallon", "factor": "0.00454609" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Voltage",
+      "base_unit": { "symbol": "V", "name": "volt" },
+      "families": [
+        {
+          "name": "Voltage",
+          "units": [
+            { "symbol": "µV", "name": "microvolt", "factor": "0.000001" },
+            { "symbol": "mV", "name": "millivolt", "factor": "0.001" },
+            { "symbol": "V", "name": "volt", "factor": "1" },
+            { "symbol": "kV", "name": "kilovolt", "factor": "1000" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Current",
+      "base_unit": { "symbol": "A", "name": "ampere" },
+      "families": [
+        {
+          "name": "Current",
+          "units": [
+            { "symbol": "nA", "name": "nanoampere", "factor": "0.000000001" },
+            { "symbol": "µA", "name": "microampere", "factor": "0.000001" },
+            { "symbol": "mA", "name": "milliampere", "factor": "0.001" },
+            { "symbol": "A", "name": "ampere", "factor": "1" },
+            { "symbol": "kA", "name": "kiloampere", "factor": "1000" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Resistance",
+      "base_unit": { "symbol": "Ω", "name": "ohm" },
+      "families": [
+        {
+          "name": "Resistance",
+          "units": [
+            { "symbol": "mΩ", "name": "milliohm", "factor": "0.001" },
+            { "symbol": "Ω", "name": "ohm", "factor": "1" },
+            { "symbol": "kΩ", "name": "kilohm", "factor": "1000" },
+            { "symbol": "MΩ", "name": "megohm", "factor": "1000000" },
+            { "symbol": "GΩ", "name": "gigohm", "factor": "1000000000" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Capacitance",
+      "base_unit": { "symbol": "F", "name": "farad" },
+      "families": [
+        {
+          "name": "Capacitance",
+          "units": [
+            { "symbol": "pF", "name": "picofarad", "factor": "0.000000000001" },
+            { "symbol": "nF", "name": "nanofarad", "factor": "0.000000001" },
+            { "symbol": "µF", "name": "microfarad", "factor": "0.000001" },
+            { "symbol": "mF", "name": "millifarad", "factor": "0.001" },
+            { "symbol": "F", "name": "farad", "factor": "1" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Inductance",
+      "base_unit": { "symbol": "H", "name": "henry" },
+      "families": [
+        {
+          "name": "Inductance",
+          "units": [
+            { "symbol": "nH", "name": "nanohenry", "factor": "0.000000001" },
+            { "symbol": "µH", "name": "microhenry", "factor": "0.000001" },
+            { "symbol": "mH", "name": "millihenry", "factor": "0.001" },
+            { "symbol": "H", "name": "henry", "factor": "1" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Frequency",
+      "base_unit": { "symbol": "Hz", "name": "hertz" },
+      "families": [
+        {
+          "name": "Frequency",
+          "units": [
+            { "symbol": "Hz", "name": "hertz", "factor": "1" },
+            { "symbol": "kHz", "name": "kilohertz", "factor": "1000" },
+            { "symbol": "MHz", "name": "megahertz", "factor": "1000000" },
+            { "symbol": "GHz", "name": "gigahertz", "factor": "1000000000" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Power",
+      "base_unit": { "symbol": "W", "name": "watt" },
+      "families": [
+        {
+          "name": "Power",
+          "units": [
+            { "symbol": "µW", "name": "microwatt", "factor": "0.000001" },
+            { "symbol": "mW", "name": "milliwatt", "factor": "0.001" },
+            { "symbol": "W", "name": "watt", "factor": "1" },
+            { "symbol": "kW", "name": "kilowatt", "factor": "1000" },
+            { "symbol": "MW", "name": "megawatt", "factor": "1000000" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Energy",
+      "base_unit": { "symbol": "J", "name": "joule" },
+      "families": [
+        {
+          "name": "Joules",
+          "units": [
+            { "symbol": "mJ", "name": "millijoule", "factor": "0.001" },
+            { "symbol": "J", "name": "joule", "factor": "1" },
+            { "symbol": "kJ", "name": "kilojoule", "factor": "1000" },
+            { "symbol": "MJ", "name": "megajoule", "factor": "1000000" },
+            { "symbol": "GJ", "name": "gigajoule", "factor": "1000000000" }
+          ]
+        },
+        {
+          "name": "Watt hours",
+          "units": [
+            { "symbol": "mWh", "name": "milliwatt hour", "factor": "3.6" },
+            { "symbol": "Wh", "name": "watt hour", "factor": "3600" },
+            { "symbol": "kWh", "name": "kilowatt hour", "factor": "3600000" },
+            { "symbol": "MWh", "name": "megawatt hour", "factor": "3600000000" }
+          ]
+        },
+        {
+          "name": "Calories",
+          "units": [
+            { "symbol": "cal", "name": "calorie", "factor": "4.184" },
+            { "symbol": "kcal", "name": "kilocalorie", "factor": "4184" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Charge",
+      "base_unit": { "symbol": "C", "name": "coulomb" },
+      "families": [
+        {
+          "name": "Battery capacity",
+          "units": [
+            { "symbol": "mAh", "name": "milliampere hour", "factor": "3.6" },
+            { "symbol": "Ah", "name": "ampere hour", "factor": "3600" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Temperature",
+      "base_unit": { "symbol": "K", "name": "kelvin" },
+      "families": [
+        {
+          "name": "Celsius",
+          "units": [
+            { "symbol": "°C", "name": "degree Celsius", "factor": "1", "offset": "273.15" }
+          ]
+        },
+        {
+          "name": "Fahrenheit",
+          "units": [
+            { "symbol": "°F", "name": "degree Fahrenheit", "factor": "0.55555555555555555556", "offset": "255.37222222222222222" }
+          ]
+        },
+        {
+          "name": "Kelvin",
+          "units": [
+            { "symbol": "K", "name": "kelvin", "factor": "1" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Bytes",
+      "base_unit": { "symbol": "B", "name": "byte" },
+      "families": [
+        {
+          "name": "Decimal bytes",
+          "units": [
+            { "symbol": "B", "name": "byte", "factor": "1" },
+            { "symbol": "kB", "name": "kilobyte", "factor": "1000" },
+            { "symbol": "MB", "name": "megabyte", "factor": "1000000" },
+            { "symbol": "GB", "name": "gigabyte", "factor": "1000000000" },
+            { "symbol": "TB", "name": "terabyte", "factor": "1000000000000" },
+            { "symbol": "PB", "name": "petabyte", "factor": "1000000000000000" }
+          ]
+        },
+        {
+          "name": "Binary bytes",
+          "units": [
+            { "symbol": "B", "name": "byte", "factor": "1" },
+            { "symbol": "KiB", "name": "kibibyte", "factor": "1024" },
+            { "symbol": "MiB", "name": "mebibyte", "factor": "1048576" },
+            { "symbol": "GiB", "name": "gibibyte", "factor": "1073741824" },
+            { "symbol": "TiB", "name": "tebibyte", "factor": "1099511627776" },
+            { "symbol": "PiB", "name": "pebibyte", "factor": "1125899906842624" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Bits",
+      "base_unit": { "symbol": "bit", "name": "bit" },
+      "families": [
+        {
+          "name": "Bits",
+          "units": [
+            { "symbol": "bit", "name": "bit", "factor": "1" },
+            { "symbol": "kbit", "name": "kilobit", "factor": "1000" },
+            { "symbol": "Mbit", "name": "megabit", "factor": "1000000" },
+            { "symbol": "Gbit", "name": "gigabit", "factor": "1000000000" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Count",
+      "datatype": "integer",
+      "base_unit": { "symbol": "pcs", "name": "piece" },
+      "families": [
+        {
+          "name": "Pieces",
+          "units": [
+            { "symbol": "pcs", "name": "piece", "factor": "1" }
+          ]
+        }
+      ]
+    }
+  ]
+}

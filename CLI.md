@@ -72,7 +72,7 @@ wtf item add            # asks for everything, with Tab completion
 | `wtf attribute list` / `get` / `add <name> [--type T] [--unit U [--unit-lock]] [--edit]` (with a unit, the type follows from it) / `set` / `edit` / `delete` / `restore` / `history [attribute]` | `/attributes` |
 | `wtf option list <attribute>` / `get` / `add <attribute> <name>…` / `set --name N` / `delete` / `restore` | `/attributes/{id}/options`, `/options/{id}` |
 | `wtf attachment list <type> <ref>` / `add <type> <ref> <file> [--caption C] [--primary]` / `get` / `download [-o FILE\ / `restore`|-]` / `set` / `edit` / `delete` | attachments |
-| `wtf quantity list` / `get`, `wtf unit-family list [--quantity Q]` / `get`, `wtf unit list [--quantity Q] [--family F]` / `get` | system data |
+| `wtf quantity list` / `get`, `wtf unit-family list [--quantity Q]` / `get`, `wtf unit list [--quantity Q] [--family F]` / `get` / `import <file> [--dry-run]` | system data |
 | `wtf account list` / `get` / `add <email> [--password] [--data P] [--model P] [--account P] [--history P] [--edit]` / `set` / `edit` / `delete` / `history` | `/accounts` |
 
 ## Interactive use
@@ -322,3 +322,7 @@ These follow your answers: all attributes offered, a picker on Tab Tab, bash, zs
     - **Yes/no:** `Lead-free=yes`.
     - **What is compared** is what the item shows, class defaults included; a per-unit attribute matches when any stock row does (see [api/item.md](api/item.md)).
     - **The condition is split at its first operator,** so an attribute name can't contain `<`, `>`, `=` or `~`.
+
+### Importing units
+
+50. **`wtf unit import FILE [--dry-run]`** sends a unit file ([seed/units-format.md](seed/units-format.md)) and tells what was added (or would be, with `--dry-run`), how much was there already, and every conflict. With conflicts nothing is imported, and the exit code is 1. `--json` prints the server's report. The CLI's cached units are dropped at once, so the new units can be used straight away.

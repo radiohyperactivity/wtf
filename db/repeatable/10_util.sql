@@ -725,7 +725,8 @@ CREATE FUNCTION util.quantity_json(p_quantity integer) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (
-        SELECT jsonb_build_object('id', q.id, 'name', q.name, 'datatype', q.datatype)
+        SELECT jsonb_build_object('id', q.id, 'name', q.name, 'datatype', q.datatype,
+                                  'base_unit', jsonb_build_object('symbol', q.base_symbol, 'name', q.base_name))
         FROM quantity q
         WHERE q.id = p_quantity
     );
