@@ -292,6 +292,22 @@ func TestDeletedRules(t *testing.T) {
 	e.expect(t, 204, "DELETE", "/locations/"+van, nil)
 	refused(t, e.expect(t, 409, "PATCH", "/locations/"+shed, obj("parent", van)), `Location "Van" is deleted`)
 
+	// A deleted location can be found in the history of the one it was in,
+	// and a deleted item in its class's; renaming them isn't shown there.
+	box := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Box", "parent", shed)).body, "id")
+	e.expect(t, 200, "PATCH", "/locations/"+box, obj("name", "Crate"))
+	e.expect(t, 204, "DELETE", "/locations/"+box, nil)
+	kinds, rows := historyOf(t, e, "/locations/"+shed+"/history")
+	if strings.Join(kinds, ",") != "location.update,location.insert,location.insert" ||
+		get(t, rows[0], "changes", "deleted", "new") != true || str(t, rows[0], "data", "id") != box {
+		t.Errorf("shed history: %v", kinds)
+	}
+	e.expect(t, 204, "DELETE", "/items/"+item, nil)
+	if kinds, rows := historyOf(t, e, "/classes/"+other+"/history"); kinds[0] != "item.update" || str(t, rows[0], "data", "id") != item {
+		t.Errorf("class history: %v", kinds)
+	}
+	e.expect(t, 200, "POST", "/items/"+item+"/restore", nil)
+
 	// Attachments: a restored primary photo stays primary, unless the object
 	// has a new one by then.
 	first := str(t, e.upload(t, 201, "/items/"+item+"/attachments", "a.png", "image/png", pngBytes,

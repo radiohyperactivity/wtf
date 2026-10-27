@@ -29,8 +29,8 @@ Each function needs the **history privilege**: `none` or `read_only`, where `rea
 |----------|-------|----------|
 | `item_history(p_id, …)` | `GET /items/{id}/history` | the item, its values, its stock rows and their per-unit values, and the attachments of the item and its stock rows |
 | `stock_history(p_id, …)` | `GET /stock/{id}/history` | the row, its per-unit values and its attachments |
-| `location_history(p_id, …)` | `GET /locations/{id}/history` | the location, stock rows that were there (including arrivals and departures), and its attachments |
-| `class_history(p_id, …)` | `GET /classes/{id}/history` | the class, its attribute assignments and its attachments |
+| `location_history(p_id, …)` | `GET /locations/{id}/history` | the location, stock rows that were there (including arrivals and departures), its attachments, and the locations directly inside it being added, moved in or out, deleted, restored or purged |
+| `class_history(p_id, …)` | `GET /classes/{id}/history` | the class, its attribute assignments, its attachments, and the classes directly below it and its items being added, moved in or out, deleted, restored or purged |
 | `attribute_history(p_id, …)` | `GET /attributes/{id}/history` | the attribute and its options |
 | `account_history(p_id, …)` | `GET /accounts/{id}/history` | changes to the account itself |
 

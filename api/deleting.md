@@ -104,7 +104,7 @@ Nothing purges by itself; when and how much is the operator's choice, as with hi
 
 Agreed on 27 October 2026, when this replaced deleting rows:
 
-1. **No "Recently deleted" list for now.** Deleted objects are reached through history, label codes and links. It can come later, since history already holds what it would need.
+1. **No "Recently deleted" list for now.** Deleted objects are reached through history, label codes and links. For that, a location's history also shows the locations directly inside it, and a class's history the classes below it and its items, being added, moved, deleted or restored. It can come later, since history already holds what it would need.
 2. **Merged stock rows** are marked deleted with `merged_into`, so an old label leads to the row it went into.
 3. **Fetching a deleted object** returns it, marked `deleted: true`.
 4. **Restoring into something deleted** offers both: restoring what it was in as well, or restoring it somewhere else.

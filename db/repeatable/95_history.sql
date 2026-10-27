@@ -98,7 +98,9 @@ END;
 $$;
 
 -- A location: the location itself, stock rows that were there (including
--- those that arrived or left), and its attachments.
+-- those that arrived or left), its attachments, and the locations directly
+-- inside it being added, moved in or out, deleted, restored or purged (so a
+-- deleted one can be found from here).
 CREATE FUNCTION location_history(p_id uuid, p_limit integer DEFAULT 100, p_offset integer DEFAULT 0)
 RETURNS jsonb
 LANGUAGE plpgsql STABLE
@@ -112,11 +114,16 @@ BEGIN
         OR (h.table_name = 'stock'      AND (h.data ->> 'location' = %1$s
                                              OR h.changes -> 'location' ->> 'old' = %1$s))
         OR (h.table_name = 'attachment' AND h.data ->> 'location' = %1$s)
+        OR (h.table_name = 'location'   AND (h.data ->> 'parent' = %1$s
+                                             OR h.changes -> 'parent' ->> 'old' = %1$s)
+                                        AND (h.operation <> 'update' OR h.changes ?| ARRAY['parent', 'deleted']))
     $q$, quote_literal(p_id)), p_limit, p_offset);
 END;
 $$;
 
--- A class: the class itself, its attribute assignments and its attachments.
+-- A class: the class itself, its attribute assignments, its attachments,
+-- and the classes directly below it and its items being added, moved in or
+-- out, deleted, restored or purged.
 CREATE FUNCTION class_history(p_id uuid, p_limit integer DEFAULT 100, p_offset integer DEFAULT 0)
 RETURNS jsonb
 LANGUAGE plpgsql STABLE
@@ -129,6 +136,12 @@ BEGIN
            (h.table_name = 'class'           AND h.data ->> 'id'    = %1$s)
         OR (h.table_name = 'class_attribute' AND h.data ->> 'class' = %1$s)
         OR (h.table_name = 'attachment'      AND h.data ->> 'class' = %1$s)
+        OR (h.table_name = 'class'           AND (h.data ->> 'parent' = %1$s
+                                                  OR h.changes -> 'parent' ->> 'old' = %1$s)
+                                             AND (h.operation <> 'update' OR h.changes ?| ARRAY['parent', 'deleted']))
+        OR (h.table_name = 'item'            AND (h.data ->> 'class' = %1$s
+                                                  OR h.changes -> 'class' ->> 'old' = %1$s)
+                                             AND (h.operation <> 'update' OR h.changes ?| ARRAY['class', 'deleted']))
     $q$, quote_literal(p_id)), p_limit, p_offset);
 END;
 $$;
