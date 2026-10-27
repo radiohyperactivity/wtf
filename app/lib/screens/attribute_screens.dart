@@ -463,8 +463,8 @@ Future<Attribute?> showAttributeDialog(
   );
 }
 
-/// The unit families of each quantity and their units, like
-/// `wtf unit-family list`.
+/// The units by quantity, then by family, like `wtf unit-family list`:
+/// Length, with Metric length and Imperial length under it.
 class UnitsScreen extends StatefulWidget {
   const UnitsScreen({super.key});
 
@@ -481,6 +481,20 @@ class _UnitsScreenState extends State<UnitsScreen> {
     super.dispose();
   }
 
+  Widget _unitTile(Unit u) => ListTile(
+    dense: true,
+    contentPadding: const EdgeInsets.only(left: 48, right: 16),
+    leading: SizedBox(width: 72, child: Text(u.symbol)),
+    title: Text(u.name),
+    // base = value × factor + offset
+    trailing: Text(
+      u.baseFactor == Rational(BigInt.one) && u.baseOffset.isZero
+          ? 'base unit'
+          : '× ${u.baseFactor.toDecimal()}'
+                '${u.baseOffset.isZero ? '' : ' + ${u.baseOffset.toDecimal()}'}',
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     final client = context.read<Session>().client;
@@ -488,14 +502,21 @@ class _UnitsScreenState extends State<UnitsScreen> {
       title: 'Units',
       load: client.unitFamilies,
       builder: (context, families, _) {
-        final shown = families
-            .where(
-              (f) => matchesWords(
-                '${f.name} ${f.quantity.name} ${f.units.map((u) => '${u.symbol} ${u.name}').join(' ')}',
-                _filter.text,
-              ),
-            )
-            .toList();
+        // The server lists families by quantity, so grouping keeps its order.
+        final byQuantity = <int, (Quantity, List<UnitFamily>)>{};
+        for (final f in families) {
+          if (matchesWords(
+            '${f.name} ${f.quantity.name} ${f.units.map((u) => '${u.symbol} ${u.name}').join(' ')}',
+            _filter.text,
+          )) {
+            byQuantity
+                .putIfAbsent(f.quantity.id, () => (f.quantity, []))
+                .$2
+                .add(f);
+          }
+        }
+        // While filtering, everything that matches is shown open.
+        final filtering = _filter.text.trim().isNotEmpty;
         return Scaffold(
           appBar: AppBar(title: const Text('Units')),
           body: Readable(
@@ -507,7 +528,7 @@ class _UnitsScreenState extends State<UnitsScreen> {
                     controller: _filter,
                     decoration: const InputDecoration(
                       prefixIcon: Icon(Icons.filter_list),
-                      hintText: 'Filter unit families and units',
+                      hintText: 'Filter quantities, unit families and units',
                       border: OutlineInputBorder(),
                       isDense: true,
                     ),
@@ -517,30 +538,26 @@ class _UnitsScreenState extends State<UnitsScreen> {
                 Expanded(
                   child: ListView(
                     children: [
-                      for (final f in shown)
+                      for (final (q, fs) in byQuantity.values)
                         ExpansionTile(
-                          key: ValueKey(f.id),
-                          title: Text(f.name),
-                          subtitle: Text(
-                            '${f.quantity.name} · ${unitSymbols(f.units)}',
-                          ),
+                          key: ValueKey('q${q.id} $filtering'),
+                          initiallyExpanded: filtering,
+                          title: Text(q.name),
+                          subtitle: Text(fs.map((f) => f.name).join(' · ')),
                           children: [
-                            for (final u in f.units)
-                              ListTile(
-                                dense: true,
-                                leading: SizedBox(
-                                  width: 72,
-                                  child: Text(u.symbol),
+                            for (final f in fs)
+                              ExpansionTile(
+                                key: ValueKey('f${f.id} $filtering'),
+                                initiallyExpanded: filtering,
+                                tilePadding: const EdgeInsets.only(
+                                  left: 32,
+                                  right: 16,
                                 ),
-                                title: Text(u.name),
-                                // base = value × factor + offset
-                                trailing: Text(
-                                  u.baseFactor == Rational(BigInt.one) &&
-                                          u.baseOffset.isZero
-                                      ? 'base unit'
-                                      : '× ${u.baseFactor.toDecimal()}'
-                                            '${u.baseOffset.isZero ? '' : ' + ${u.baseOffset.toDecimal()}'}',
-                                ),
+                                title: Text(f.name),
+                                subtitle: Text(unitSymbols(f.units)),
+                                children: [
+                                  for (final u in f.units) _unitTile(u),
+                                ],
                               ),
                           ],
                         ),

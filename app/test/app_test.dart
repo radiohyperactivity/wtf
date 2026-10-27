@@ -87,6 +87,70 @@ void main() {
     );
   });
 
+  testWidgets('units by quantity, then by family', (tester) async {
+    setSize(tester, 400, 800);
+    final fake = FakeServer();
+    const length = {'id': 1000, 'name': 'Length', 'datatype': 'float'};
+    Map<String, dynamic> family(
+      int id,
+      String name,
+      List<List<Object>> units,
+    ) => {
+      'id': id,
+      'name': name,
+      'quantity': length,
+      'units': [
+        for (final [uid, unitName, symbol, factor] in units)
+          {
+            'id': uid,
+            'name': unitName,
+            'symbol': symbol,
+            'family': {'id': id, 'name': name},
+            'quantity': length,
+            'base_factor': factor,
+            'base_offset': 0,
+          },
+      ],
+    };
+    fake.families.insertAll(0, [
+      family(1000, 'Metric length', [
+        [1002, 'millimetre', 'mm', 0.001],
+        [1004, 'metre', 'm', 1],
+      ]),
+      family(1001, 'Imperial length', [
+        [1007, 'inch', 'in', 0.0254],
+      ]),
+    ]);
+    await startApp(tester, fake);
+    await tester.tap(find.text('Manage'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Units'));
+    await tester.pumpAndSettle();
+
+    // Quantities first, naming their families.
+    expect(find.text('Length'), findsOneWidget);
+    expect(find.text('Metric length · Imperial length'), findsOneWidget);
+    expect(find.text('Voltage'), findsWidgets);
+    expect(find.text('millimetre'), findsNothing);
+
+    await tester.tap(find.text('Length'));
+    await tester.pumpAndSettle();
+    expect(find.text('mm, m'), findsOneWidget);
+    await tester.tap(find.text('Metric length'));
+    await tester.pumpAndSettle();
+    expect(find.text('millimetre'), findsOneWidget);
+    expect(find.text('base unit'), findsOneWidget);
+
+    // A filter opens what matches.
+    await tester.enterText(find.byType(TextField), 'inch');
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(ListTile, 'inch'), findsOneWidget);
+    // Under Length, and as Length's only family in its subtitle.
+    expect(find.text('Imperial length'), findsNWidgets(2));
+    expect(find.text('Metric length'), findsNothing);
+    expect(find.text('Voltage'), findsNothing);
+  });
+
   testWidgets('the appearance is kept on the device', (tester) async {
     setSize(tester, 400, 800);
     final fake = FakeServer();

@@ -48,6 +48,9 @@ class FakeServer {
     'quantity': quantity,
     'units': [millivolt, volt],
   };
+
+  /// GET /unit-families, by quantity as the server lists them.
+  late final families = <Map<String, dynamic>>[family];
   late final voltage = {
     'id': 'a-volt',
     'name': 'Voltage',
@@ -384,7 +387,7 @@ class FakeServer {
         }
         return _problem(404, 'Not found');
       case ('GET', ['unit-families']):
-        return _json([family]);
+        return _json(families);
       case ('GET', ['units']):
         return _json([millivolt, volt]);
       case ('GET', ['attributes']):
