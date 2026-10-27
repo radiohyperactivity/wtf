@@ -25,7 +25,7 @@ import (
 const (
 	APIPath     = "/api/v1"
 	APIVersion  = 1
-	APIRevision = 1
+	APIRevision = 2
 )
 
 // SessionCookie is the cookie the API keeps the session in.
@@ -57,6 +57,7 @@ type Problem struct {
 	Title     string `json:"title"`
 	Status    int    `json:"status"`
 	Detail    string `json:"detail"`
+	Hint      string `json:"hint"` // what to do about it, when the server knows (revision 2)
 	SQLState  string `json:"sqlstate"`
 	Supported []int  `json:"supported"` // API versions, in an unsupported-api-version problem
 }
@@ -76,10 +77,14 @@ func (p *Problem) Error() string {
 		}
 		return fmt.Sprintf("the server only serves API version %v, older than this client's (%d): update the server (wtfd)", p.Supported, APIVersion)
 	}
+	msg := p.Title
 	if p.Detail != "" {
-		return fmt.Sprintf("%s: %s", p.Title, p.Detail)
+		msg += ": " + p.Detail
 	}
-	return p.Title
+	if p.Hint != "" {
+		msg += "\n" + p.Hint
+	}
+	return msg
 }
 
 // Do sends a request with an optional JSON body and returns the response

@@ -271,6 +271,8 @@ func itemGroup() group {
 			},
 			editCommand("item", itemParam, resolveItemFn, (*env).editItem),
 			deleteCommand("item", "/items/", resolveItemFn),
+			restoreCommand(restoreKind{kind: "item", prefix: "/items/", codeType: "item", place: "class", placeKind: "class", named: true,
+				show: func(e *env, data json.RawMessage) error { return e.printItemJSON(data) }}),
 			historyCommand("item", "/items/", resolveItemFn),
 			valueSetCommand("item", "/items/", itemParam, attributeParam, resolveItemFn, func(e *env, data json.RawMessage) error { return e.printItemJSON(data) }),
 			valueDeleteCommand("item", "/items/", itemParam, attributeParam, resolveItemFn, func(e *env, data json.RawMessage) error { return e.printItemJSON(data) }),
@@ -384,6 +386,7 @@ func (e *env) printItemJSON(data json.RawMessage) error {
 	fields(w,
 		"Code", it.Code,
 		"Name", it.Name,
+		"Deleted", deletedNote(it.Deleted, "item", it.Code),
 		"Class", pathNames(it.Class.Path),
 		"Unit group", unitGroupName(it.UnitGroup),
 		"Photo", photo,
@@ -635,6 +638,7 @@ func stockGroup() group {
 			},
 			editCommand("stock", stockParam, resolveStockFn, (*env).editStock),
 			deleteCommand("stock", "/stock/", resolveStockFn),
+			restoreCommand(restoreKind{kind: "stock", prefix: "/stock/", codeType: "stock", place: "location", placeKind: "location", show: show}),
 			historyCommand("stock", "/stock/", resolveStockFn),
 			valueSetCommand("stock", "/stock/", stockParam, arg("Attribute", completeAttributes), resolveStockFn, show),
 			valueDeleteCommand("stock", "/stock/", stockParam, arg("Attribute", completeAttributes), resolveStockFn, show),
@@ -669,8 +673,14 @@ func (e *env) printStockJSON(data json.RawMessage) error {
 		return err
 	}
 	w := e.stdout
+	deleted, merged := deletedNote(s.Deleted, "stock", s.Code), ""
+	if s.MergedInto != nil {
+		deleted, merged = "yes", s.MergedInto.Code+" (a move added its quantity to that row)"
+	}
 	fields(w,
 		"Code", s.Code,
+		"Deleted", deleted,
+		"Merged into", merged,
 		"Item", s.Item.Code+"  "+s.Item.Name,
 		"Location", locations.pathString(s.Location),
 		"Quantity", formatQuantity(s.Quantity, s.Display),

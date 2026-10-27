@@ -51,12 +51,14 @@ type attribute struct {
 	Datatype  string     `json:"datatype"`
 	UnitGroup *unitGroup `json:"unit_group"`
 	Options   []option   `json:"options"`
+	Deleted   bool       `json:"deleted"`
 }
 
 type option struct {
 	ID        string `json:"id"`
 	Attribute string `json:"attribute"`
 	Name      string `json:"name"`
+	Deleted   bool   `json:"deleted"`
 }
 
 type node struct {
@@ -81,6 +83,7 @@ type class struct {
 	Path        []ref            `json:"path"`
 	Attributes  []classAttribute `json:"attributes"`
 	Attachments []attachment     `json:"attachments"`
+	Deleted     bool             `json:"deleted"`
 }
 
 type classAttribute struct {
@@ -101,6 +104,7 @@ type location struct {
 	Container   bool         `json:"container"`
 	Path        []ref        `json:"path"`
 	Attachments []attachment `json:"attachments"`
+	Deleted     bool         `json:"deleted"`
 }
 
 type attachment struct {
@@ -111,6 +115,7 @@ type attachment struct {
 	SHA256       string  `json:"sha256"`
 	Caption      *string `json:"caption"`
 	PrimaryPhoto bool    `json:"primary_photo"`
+	Deleted      bool    `json:"deleted"`
 }
 
 type value struct {
@@ -131,6 +136,7 @@ type itemRow struct {
 	Stock      *stockTotal `json:"stock"`
 	Incomplete bool        `json:"incomplete"`
 	Photo      *attachment `json:"photo"`
+	Deleted    bool        `json:"deleted"`
 }
 
 type stockTotal struct {
@@ -151,6 +157,7 @@ type item struct {
 	Photo       *attachment  `json:"photo"`
 	Attachments []attachment `json:"attachments"`
 	Stock       []itemStock  `json:"stock"`
+	Deleted     bool         `json:"deleted"`
 }
 
 type itemStock struct {
@@ -175,6 +182,11 @@ type stock struct {
 	Values      []value      `json:"values"`
 	Missing     []ref        `json:"missing"`
 	Attachments []attachment `json:"attachments"`
+	Deleted     bool         `json:"deleted"`
+	MergedInto  *struct {
+		ID   string `json:"id"`
+		Code string `json:"code"`
+	} `json:"merged_into"`
 }
 
 type page[T any] struct {

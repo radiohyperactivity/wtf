@@ -371,6 +371,7 @@ func locationGroup() group {
 			nodeSetCommand("location", "/locations/", resolveLocationFn, show),
 			editCommand("location", objectParam("location"), resolveLocationFn, (*env).editLocation),
 			treeDeleteCommand("location", "/locations/", resolveLocationFn),
+			restoreCommand(restoreKind{kind: "location", prefix: "/locations/", codeType: "location", place: "parent", placeKind: "location", named: true, show: show}),
 			historyCommand("location", "/locations/", resolveLocationFn),
 		},
 	}
@@ -384,6 +385,7 @@ func (e *env) printLocationJSON(data json.RawMessage) error {
 	fields(e.stdout,
 		"Code", l.Code,
 		"Name", l.Name,
+		"Deleted", deletedNote(l.Deleted, "location", l.Code),
 		"Container", yesNo(l.Container),
 		"Path", pathNames(l.Path),
 		"Id", l.ID)
@@ -403,6 +405,7 @@ func classGroup() group {
 			nodeSetCommand("class", "/classes/", resolveClassFn, show),
 			editCommand("class", objectParam("class"), resolveClassFn, (*env).editClass),
 			treeDeleteCommand("class", "/classes/", resolveClassFn),
+			restoreCommand(restoreKind{kind: "class", prefix: "/classes/", place: "parent", placeKind: "class", named: true, show: show}),
 			historyCommand("class", "/classes/", resolveClassFn),
 			{
 				name:    "assign",
@@ -477,6 +480,7 @@ func (e *env) printClassJSON(data json.RawMessage) error {
 	w := e.stdout
 	fields(w,
 		"Name", c.Name,
+		"Deleted", deletedNote(c.Deleted, "class", c.ID),
 		"Container", yesNo(c.Container),
 		"Path", pathNames(c.Path),
 		"Id", c.ID)
@@ -641,6 +645,7 @@ func attributeGroup() group {
 			},
 			editCommand("attribute", objectParam("attribute"), resolveAttrIDFn, (*env).editAttribute),
 			deleteCommand("attribute", "/attributes/", resolveAttrIDFn),
+			restoreCommand(restoreKind{kind: "attribute", prefix: "/attributes/", named: true, show: show}),
 			historyCommand("attribute", "/attributes/", resolveAttrIDFn),
 		},
 	}
@@ -660,6 +665,7 @@ func (e *env) printAttributeJSON(data json.RawMessage) error {
 	}
 	fields(e.stdout,
 		"Name", a.Name,
+		"Deleted", deletedNote(a.Deleted, "attribute", a.ID),
 		"Type", a.Datatype,
 		"Unit group", unitGroupName(a.UnitGroup),
 		"Units", units,
@@ -827,6 +833,7 @@ func optionGroup() group {
 					return nil
 				}),
 			},
+			restoreCommand(restoreKind{kind: "option", prefix: "/options/", named: true, show: (*env).printOptionJSON}),
 		},
 	}
 }

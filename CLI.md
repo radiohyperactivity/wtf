@@ -62,15 +62,15 @@ wtf item add            # asks for everything, with Tab completion
 | `wtf profile list` / `use <name>` / `delete <name>` | (local configuration) |
 | `wtf find <words…> [--class C]` | `GET /items?search=`, plus each item's stock locations |
 | `wtf code <code>` | `/codes/{code}` |
-| `wtf item list [--class C] [--search S]` / `get` / `add <name> --class C [--unit-group G] [--value A=V]… [--edit]` / `set` / `edit` / `delete` / `history` | `/items` |
+| `wtf item list [--class C] [--search S]` / `get` / `add <name> --class C [--unit-group G] [--value A=V]… [--edit]` / `set` / `edit` / `delete` / `restore` / `history` | `/items` |
 | `wtf item value-set <item> <attribute> <value…>` / `value-delete <item> <attribute>` | `/items/{id}/values/{attribute}` |
-| `wtf stock list [--item I] [--location L]` / `get` / `add <item> <location> [quantity] [--value A=V]…` / `move <stock> <location> [quantity]` / `set` / `edit` / `delete` / `history` | `/stock` |
+| `wtf stock list [--item I] [--location L]` / `get` / `add <item> <location> [quantity] [--value A=V]…` / `move <stock> <location> [quantity]` / `set` / `edit` / `delete` / `restore` / `history` | `/stock` |
 | `wtf stock value-set` / `value-delete` | `/stock/{id}/values/{attribute}` |
-| `wtf location tree` / `get` / `add <name or path> [--parent P] [--create-parents] [--container \| --grid COLUMNSxROWS] [--edit]` / `set [--name N] [--parent P\|none] [--container yes\|no]` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` / `history` | `/locations` |
-| `wtf class tree` / `get` / `add` / `set` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` / `history` / `assign <class> <attribute> [--default V] [--per-unit] [--required]` / `unassign` | `/classes`, `/classes/{id}/attributes/{attribute}` |
-| `wtf attribute list` / `get` / `add <name> --type T [--unit-group G] [--edit]` / `set` / `edit` / `delete` / `history` | `/attributes` |
-| `wtf option list <attribute>` / `get` / `add <attribute> <name>…` / `set --name N` / `delete` | `/attributes/{id}/options`, `/options/{id}` |
-| `wtf attachment list <type> <ref>` / `add <type> <ref> <file> [--caption C] [--primary]` / `get` / `download [-o FILE\|-]` / `set` / `edit` / `delete` | attachments |
+| `wtf location tree` / `get` / `add <name or path> [--parent P] [--create-parents] [--container \| --grid COLUMNSxROWS] [--edit]` / `set [--name N] [--parent P\|none] [--container yes\|no]` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` / `restore` / `history` | `/locations` |
+| `wtf class tree` / `get` / `add` / `set` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` / `restore` / `history` / `assign <class> <attribute> [--default V] [--per-unit] [--required]` / `unassign` | `/classes`, `/classes/{id}/attributes/{attribute}` |
+| `wtf attribute list` / `get` / `add <name> --type T [--unit-group G] [--edit]` / `set` / `edit` / `delete` / `restore` / `history` | `/attributes` |
+| `wtf option list <attribute>` / `get` / `add <attribute> <name>…` / `set --name N` / `delete` / `restore` | `/attributes/{id}/options`, `/options/{id}` |
+| `wtf attachment list <type> <ref>` / `add <type> <ref> <file> [--caption C] [--primary]` / `get` / `download [-o FILE\ / `restore`|-]` / `set` / `edit` / `delete` | attachments |
 | `wtf quantity list` / `get`, `wtf unit list [--quantity Q]` / `get`, `wtf unit-group list [--quantity Q]` / `get` | system data |
 | `wtf account list` / `get` / `add <email> [--password] [--data P] [--model P] [--account P] [--history P] [--edit]` / `set` / `edit` / `delete` / `history` | `/accounts` |
 
@@ -281,7 +281,7 @@ These follow your answers: all attributes offered, a picker on Tab Tab, bash, zs
 45. **Which side is out of date.**
     - **A server older than the versioned API** answers `/api/v1/…` with a 404 without `API-Revision`. The CLI then says "the server doesn't serve /api/v1; … update the server (wtfd)".
     - **"Unsupported API version"** from a server that only serves other versions gets "update this client" or "update the server", depending on whether those versions are newer or older.
-    - **An older revision:** when the server's `API-Revision` is older than the one the CLI was built for, it warns on stderr after the command. With revision 1, that can't happen yet.
+    - **An older revision:** when the server's `API-Revision` is older than the one the CLI was built for, it warns on stderr after the command. Since revision 2, a server from before marking deleted gets that warning.
 46. **Server details I decided:**
     - **The 401 challenge:** `WWW-Authenticate: Cookie realm="WtF", cookie-name="wtf_session"`. There is no registered scheme for cookie sessions, and HTTP requires the header on a 401.
     - **The cookie's lifetime:** every authenticated answer renews it, so it matches the session's "30 days from last use". A 401 for an ended session deletes it.
@@ -291,3 +291,13 @@ These follow your answers: all attributes offered, a picker on Tab Tab, bash, zs
     - **`index.html` instead of a 404:** only for paths whose last part has no `.`, so missing scripts or images are a 404, not the app.
     - **The Content Security Policy** expects a Flutter build without Google's CDN (`--no-web-resources-cdn`). It may need adjusting once there is a real app.
     - **No `GET /api` overview:** as discussed, the "unsupported version" problem, the `Sunset` header and Flutter's `version.json` cover what it would have done.
+
+### Deleted things
+
+47. **Restoring** (agreed with the design in [api/deleting.md](api/deleting.md)). Deleting marks things deleted, and `wtf <noun> restore` brings them back, with what was deleted together with them: `item`, `stock`, `location`, `class`, `attribute`, `option`, `attachment`.
+    - **Naming a deleted thing:** deleted things are in no list or tree, so they are named by id or, for items, stock rows and locations, by label code. Their history shows the id.
+    - **Showing one:** `get`, `code` and the like mark it with a `Deleted:` line, which gives the restore command. A stock row a move merged into another shows `Merged into:` instead; it can't be restored.
+    - **In something deleted:** `--with-parents` also restores what it is in, `--to PLACE` restores it somewhere else (`--to none`: at the top, for locations and classes). Without either, on a terminal `wtf` asks which; in a script it fails and names both flags.
+    - **`--name N`** restores it under a new name, for when the old one has been taken since.
+    - **Errors** now show the server's `hint` on a second line, e.g. how to delete a location that still has stock.
+    - **Deleting doesn't ask** (decision 14) and doesn't mention restoring; showing the deleted thing does.

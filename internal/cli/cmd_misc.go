@@ -231,7 +231,7 @@ func attachmentGroup() group {
 			{
 				name:    "delete",
 				args:    "<attachment-id>",
-				summary: "Delete an attachment (the file is removed by 'wtfd gc' when nothing uses it).",
+				summary: "Delete an attachment (it can be restored; its file stays until it is purged).",
 				params:  []param{arg("Attachment id", nil)},
 				setup: simple(func(e *env, args []string) error {
 					id, err := attachmentID(args)
@@ -245,6 +245,7 @@ func attachmentGroup() group {
 					return nil
 				}),
 			},
+			restoreCommand(restoreKind{kind: "attachment", prefix: "/attachments/", show: printAttachmentJSON}),
 		},
 	}
 }
@@ -709,6 +710,7 @@ func printAttachmentJSON(e *env, data json.RawMessage) error {
 	}
 	fields(e.stdout,
 		"File name", a.FileName,
+		"Deleted", deletedNote(a.Deleted, "attachment", a.ID),
 		"Type", a.ContentType,
 		"Size", formatSize(a.Size),
 		"Caption", caption,

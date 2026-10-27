@@ -157,7 +157,7 @@ func article(kind string) string {
 	switch kind {
 	case "stock":
 		return "a stock row"
-	case "item", "attribute", "account", "attachment":
+	case "item", "attribute", "account", "attachment", "option":
 		return "an " + kind
 	}
 	return "a " + kind
