@@ -186,7 +186,10 @@ class FakeServer {
         {
           'attribute': voltage,
           'value': value,
-          'display': {'value': value, 'unit': volt},
+          // As the server scales it within the family: 0.5 is 500 mV.
+          'display': (value as num).abs() < 1 && value != 0
+              ? {'value': value * 1000, 'unit': millivolt}
+              : {'value': value, 'unit': volt},
           'is_default': false,
         },
   ];

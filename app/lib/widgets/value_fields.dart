@@ -15,9 +15,13 @@ class ValueInput {
     required this.attribute,
     this.required = false,
     this.defaultText = '',
-    this.initial = '',
+    String initial = '',
     this.units,
-  }) : controller = MeasureController(text: initial, plainIn: units?.unit);
+  }) : controller = MeasureController(plainIn: units?.unit) {
+    controller.show(initial, units);
+    this.initial = controller.text;
+    initialUnit = controller.plainIn;
+  }
 
   /// With its options, for a choice attribute.
   final Attribute attribute;
@@ -26,8 +30,10 @@ class ValueInput {
   /// The class default, which applies while there's no own value.
   final String defaultText;
 
-  /// The own value as text, when editing.
-  final String initial;
+  /// The own value as text, when editing; a number without the unit, which
+  /// is [initialUnit].
+  late final String initial;
+  late final Unit? initialUnit;
 
   /// For numbers with a unit.
   final UnitChoice? units;
@@ -36,7 +42,7 @@ class ValueInput {
   String get text => controller.text.trim();
   bool get changed =>
       text != initial.trim() ||
-      (text.isNotEmpty && controller.plainIn?.id != units?.unit.id);
+      (text.isNotEmpty && controller.plainIn?.id != initialUnit?.id);
 
   /// The value for the API; null when empty.
   Object? parse() => text.isEmpty
@@ -213,6 +219,23 @@ class MeasureController extends TextEditingController {
   MeasureController({super.text, this.plainIn});
 
   Unit? plainIn;
+
+  /// Shows [shown], a number as the server shows it ("64 kHz"): the number
+  /// in the field and its unit in the menu, when the unit is in the menu.
+  /// Anything else goes in the field as it is.
+  void show(String shown, UnitChoice? units) {
+    text = shown;
+    final split = splitShown(shown);
+    if (units == null || split == null || split.$2.isEmpty) return;
+    final (number, symbol) = split;
+    for (final u in units.familyUnits) {
+      if (u.symbol == symbol) {
+        text = number;
+        plainIn = u;
+        return;
+      }
+    }
+  }
 }
 
 /// A hint for a number field: "e.g. 12, or 1.5 m".

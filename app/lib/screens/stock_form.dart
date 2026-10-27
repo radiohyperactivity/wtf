@@ -144,7 +144,13 @@ class _StockFormState extends State<_StockForm> {
       final old = _inputs;
       setState(() {
         _units = units;
-        _quantity.plainIn = null; // the new item's own unit
+        final stock = widget.stock;
+        if (stock?.quantity != null && item.id == stock!.item.id) {
+          // The number in the field and its unit in the menu: "1.2", "m".
+          _quantity.show(stock.quantityText, units);
+        } else {
+          _quantity.plainIn = null; // the new item's own unit
+        }
         _inputs = inputs;
       });
       // The old fields are still drawn once more.
@@ -181,6 +187,13 @@ class _StockFormState extends State<_StockForm> {
     );
     if (id != null) setState(() => _locationId = id);
   }
+
+  /// Whether [quantity] (null: uncounted) is the [old] one, whatever unit it
+  /// was typed in.
+  static bool _sameQuantity(Decimal? quantity, num? old) =>
+      quantity == null || old == null
+      ? quantity == null && old == null
+      : Rational.tryParse(quantity.text) == Rational.fromNum(old);
 
   Future<void> _save() async {
     if (_busy || _loading) return;
@@ -225,10 +238,7 @@ class _StockFormState extends State<_StockForm> {
       final saved = <String>[];
       final changes = <String, Object?>{
         if (location != stock.location) 'location': location,
-        if (_quantity.text.trim() !=
-                (stock.quantity == null ? '' : stock.quantityText) ||
-            _quantity.plainIn != null)
-          'quantity': quantity,
+        if (!_sameQuantity(quantity, stock.quantity)) 'quantity': quantity,
       };
       if (changes.isNotEmpty) {
         await _client.patchStock(stock.id, changes);

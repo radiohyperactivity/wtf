@@ -397,8 +397,16 @@ void main() {
 
     await tester.tap(find.byTooltip('Edit'));
     await tester.pumpAndSettle();
-    // The current value, as shown, reads back unchanged.
-    expect(find.widgetWithText(TextFormField, '18 V'), findsOneWidget);
+    // The current value as shown: the number in the field, its unit in the
+    // menu. It reads back unchanged.
+    expect(
+      tester.widget<TextFormField>(field('Voltage *')).controller!.text,
+      '18',
+    );
+    expect(
+      find.descendant(of: field('Voltage *'), matching: find.text('V')),
+      findsOneWidget,
+    );
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
     expect(fake.changes, isEmpty);
@@ -416,6 +424,32 @@ void main() {
     ]);
     expect(find.text('14.4 V'), findsOneWidget);
 
+    // A value shown in another unit of the family opens in that unit.
+    await tester.tap(find.byTooltip('Edit'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('Voltage *'), '0.5');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      'PUT /api/v1/items/i-drill/values/a-volt {"value":0.5}',
+    );
+    expect(find.text('500 mV'), findsOneWidget);
+    await tester.tap(find.byTooltip('Edit'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextFormField>(field('Voltage *')).controller!.text,
+      '500',
+    );
+    expect(
+      find.descendant(of: field('Voltage *'), matching: find.text('mV')),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(fake.changes, hasLength(3));
+    expect(find.text('No changes.'), findsOneWidget);
+
     // A required value without a default can't be cleared.
     await tester.tap(find.byTooltip('Edit'));
     await tester.pumpAndSettle();
@@ -423,7 +457,7 @@ void main() {
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
     expect(find.text('Required'), findsOneWidget);
-    expect(fake.changes, hasLength(2));
+    expect(fake.changes, hasLength(3));
   });
 
   testWidgets('delete a location with stock in it only when told to', (

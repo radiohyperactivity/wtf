@@ -130,6 +130,13 @@ final _numberPattern = RegExp(
   return (r, m![2]!);
 }
 
+/// Splits a number as the server shows it ("64 kHz") into its number and
+/// unit symbol, as written; null when it isn't a number.
+(String, String)? splitShown(String text) {
+  final m = _numberPattern.firstMatch(text);
+  return m == null ? null : (m[1]!, m[2]!);
+}
+
 /// Unit symbols that are hard to type.
 String _aliases(String s) => s
     .replaceAll('μ', 'µ') // Greek mu → micro sign
