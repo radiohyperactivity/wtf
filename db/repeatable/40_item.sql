@@ -10,21 +10,36 @@
 --             substring) in the item name, a class in its class path, a text or
 --             url value, or a choice value, including the defaults it shows.
 --             The words may match in different places.
+--   p_where   attribute filters, all of which must match: a list of
+--             {attribute, op, value}, matched against the values the item
+--             shows (class defaults included; per-unit attributes against
+--             each live stock row). See util.check_item_filter and
+--             api/item.md.
 CREATE FUNCTION item_list(
     p_class  uuid    DEFAULT NULL,
     p_search text    DEFAULT NULL,
     p_limit  integer DEFAULT 100,
-    p_offset integer DEFAULT 0
+    p_offset integer DEFAULT 0,
+    p_where  jsonb   DEFAULT NULL
 ) RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
+DECLARE
+    v_where jsonb := '[]'::jsonb;
 BEGIN
     PERFORM util.require('data', 'read');
     PERFORM util.check_paging(p_limit, p_offset);
 
     IF p_class IS NOT NULL AND NOT EXISTS (SELECT 1 FROM class WHERE id = p_class) THEN
         PERFORM util.raise_not_found('class', p_class);
+    END IF;
+    IF p_where IS NOT NULL THEN
+        IF jsonb_typeof(p_where) <> 'array' THEN
+            PERFORM util.raise_invalid('where must be a list of filters');
+        END IF;
+        SELECT COALESCE(jsonb_agg(util.check_item_filter(f)), '[]'::jsonb) INTO v_where
+        FROM jsonb_array_elements(p_where) AS f;
     END IF;
 
     RETURN (
@@ -47,6 +62,12 @@ BEGIN
                       FROM util.item_search_texts(i.id, i.class) AS t (text)
                       WHERE strpos(t.text, words.w) > 0
                   )
+              )
+              -- and every filter matches
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM jsonb_array_elements(v_where) AS f
+                  WHERE NOT util.item_matches(i.id, i.class, f)
               )
         )
         SELECT util.page(

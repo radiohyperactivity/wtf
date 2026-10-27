@@ -95,7 +95,8 @@ func pathText(name, key string) param {
 }
 
 // query passes the optional query parameter key. typ is "uuid", "text",
-// "integer" or "boolean"; all but text are validated here for clearer errors.
+// "integer", "boolean" or "jsonb"; all but text are validated here for
+// clearer errors.
 func query(name, key, typ string) param {
 	return func(r *http.Request) ([]arg, error) {
 		if !r.URL.Query().Has(key) {
@@ -114,6 +115,10 @@ func query(name, key, typ string) param {
 		case "boolean":
 			if v != "true" && v != "false" {
 				return nil, invalidInput("query parameter %s=%q must be true or false", key, v)
+			}
+		case "jsonb":
+			if !json.Valid([]byte(v)) {
+				return nil, invalidInput("query parameter %s is not JSON", key)
 			}
 		}
 		return []arg{{name: name, typ: typ, value: v, optional: true}}, nil

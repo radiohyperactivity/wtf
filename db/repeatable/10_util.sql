@@ -379,6 +379,187 @@ BEGIN
 END;
 $$;
 
+-- ---------------------------------------------------------------------------
+-- Attribute filters of item_list (see api/item.md)
+-- ---------------------------------------------------------------------------
+
+-- Checks one filter of item_list and returns it ready for
+-- util.item_matches: {attribute, datatype, op, value}, with numbers as JSON
+-- numbers, dates as YYYY-MM-DD and choices as option ids (given by id or
+-- name). Raises 22023 for a filter that doesn't fit its attribute.
+--   integer, float, date: op =, >, >=, <, <=, or between with value [low, high]
+--   text, url:            op = (ignoring case) or contains
+--   choice:               op = with one option, or in with a list of them
+--   boolean:              op = with true or false
+CREATE FUNCTION util.check_item_filter(p_filter jsonb) RETURNS jsonb
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    v_attribute attribute;
+    v_op        text := p_filter ->> 'op';
+    v_value     jsonb := p_filter -> 'value';
+    v_options   jsonb;
+    v_option    uuid;
+    v_element   jsonb;
+BEGIN
+    IF jsonb_typeof(p_filter) IS DISTINCT FROM 'object' THEN
+        PERFORM util.raise_invalid('Each filter must be an object {attribute, op, value}');
+    END IF;
+    IF NOT (p_filter ->> 'attribute') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+        PERFORM util.raise_invalid('A filter needs the id of an attribute');
+    END IF;
+    SELECT * INTO v_attribute FROM attribute a WHERE a.id = (p_filter ->> 'attribute')::uuid AND NOT a.deleted;
+    IF NOT FOUND THEN
+        PERFORM util.raise_not_found('attribute', (p_filter ->> 'attribute')::uuid);
+    END IF;
+    IF v_value IS NULL OR jsonb_typeof(v_value) = 'null' THEN
+        PERFORM util.raise_invalid(format('The filter on %s needs a value', v_attribute.name));
+    END IF;
+
+    CASE
+    WHEN v_attribute.datatype IN ('integer', 'float', 'date') THEN
+        IF v_op = 'between' THEN
+            IF jsonb_typeof(v_value) <> 'array' OR jsonb_array_length(v_value) <> 2 THEN
+                PERFORM util.raise_invalid(format('between on %s needs [low, high]', v_attribute.name));
+            END IF;
+        ELSIF v_op IS NULL OR v_op NOT IN ('=', '>', '>=', '<', '<=') THEN
+            PERFORM util.raise_invalid(format('%s can be compared with =, >, >=, <, <= or between', v_attribute.name));
+        ELSE
+            v_value := jsonb_build_array(v_value);
+        END IF;
+        FOR v_element IN SELECT jsonb_array_elements(v_value) LOOP
+            IF v_attribute.datatype = 'date' THEN
+                IF jsonb_typeof(v_element) <> 'string' OR (v_element #>> '{}') !~ '^\d{4}-\d{2}-\d{2}$' THEN
+                    PERFORM util.raise_invalid(format('%s takes dates as YYYY-MM-DD', v_attribute.name));
+                END IF;
+                PERFORM (v_element #>> '{}')::date; -- an impossible date raises 22008
+            ELSIF jsonb_typeof(v_element) <> 'number' THEN
+                PERFORM util.raise_invalid(format('%s takes numbers, in the base unit', v_attribute.name));
+            END IF;
+        END LOOP;
+        IF v_op <> 'between' THEN
+            v_value := v_value -> 0;
+        END IF;
+
+    WHEN v_attribute.datatype IN ('text', 'url') THEN
+        IF v_op IS NULL OR v_op NOT IN ('=', 'contains') THEN
+            PERFORM util.raise_invalid(format('%s can be compared with = or contains', v_attribute.name));
+        END IF;
+        IF jsonb_typeof(v_value) <> 'string' THEN
+            PERFORM util.raise_invalid(format('%s takes text', v_attribute.name));
+        END IF;
+
+    WHEN v_attribute.datatype = 'choice' THEN
+        IF v_op = '=' THEN
+            v_value := jsonb_build_array(v_value);
+        ELSIF v_op IS DISTINCT FROM 'in' OR jsonb_typeof(v_value) <> 'array' THEN
+            PERFORM util.raise_invalid(format('%s can be compared with = (one option) or in (a list of them)', v_attribute.name));
+        END IF;
+        v_options := '[]'::jsonb;
+        FOR v_element IN SELECT jsonb_array_elements(v_value) LOOP
+            -- By id or by name, ignoring case; deleted options are kept,
+            -- since values may still refer to them.
+            SELECT o.id INTO v_option
+            FROM attribute_option o
+            WHERE o.attribute = v_attribute.id
+              AND (o.id::text = lower(v_element #>> '{}') OR lower(o.name) = lower(v_element #>> '{}'))
+            ORDER BY o.deleted, o.id
+            LIMIT 1;
+            IF NOT FOUND THEN
+                PERFORM util.raise_invalid(format('%s has no option %s', v_attribute.name, v_element));
+            END IF;
+            v_options := v_options || to_jsonb(v_option);
+        END LOOP;
+        v_op := 'in';
+        v_value := v_options;
+
+    WHEN v_attribute.datatype = 'boolean' THEN
+        IF v_op IS DISTINCT FROM '=' OR jsonb_typeof(v_value) <> 'boolean' THEN
+            PERFORM util.raise_invalid(format('%s can be compared with = true or = false', v_attribute.name));
+        END IF;
+    END CASE;
+
+    RETURN jsonb_build_object('attribute', v_attribute.id, 'datatype', v_attribute.datatype,
+                              'op', v_op, 'value', v_value);
+END;
+$$;
+
+-- The values item p_item (of class p_class) shows for attribute
+-- p_attribute: its own value, or else the class default, for a per-kind
+-- attribute; for a per-unit one, the same for each of its live stock rows.
+-- Numbers come as numeric; nothing when the attribute doesn't apply.
+CREATE FUNCTION util.item_shown_values(p_item uuid, p_class uuid, p_attribute uuid)
+RETURNS TABLE (text_v text, number_v numeric, date_v date, boolean_v boolean, option_v uuid)
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+    RETURN QUERY
+        SELECT CASE WHEN v.item IS NULL THEN e.text_default ELSE v.text_value END,
+               CASE WHEN v.item IS NULL
+                    THEN COALESCE(e.integer_default::numeric, e.float_default::numeric)
+                    ELSE COALESCE(v.integer_value::numeric, v.float_value::numeric) END,
+               CASE WHEN v.item IS NULL THEN e.date_default ELSE v.date_value END,
+               CASE WHEN v.item IS NULL THEN e.boolean_default ELSE v.boolean_value END,
+               CASE WHEN v.item IS NULL THEN e.option_default ELSE v.option_value END
+        FROM class_effective_attribute e
+        LEFT JOIN value v ON v.item = p_item AND v.attribute = e.attribute
+        WHERE e.class = p_class AND e.attribute = p_attribute AND NOT e.per_unit
+        UNION ALL
+        SELECT CASE WHEN sv.stock IS NULL THEN e.text_default ELSE sv.text_value END,
+               CASE WHEN sv.stock IS NULL
+                    THEN COALESCE(e.integer_default::numeric, e.float_default::numeric)
+                    ELSE COALESCE(sv.integer_value::numeric, sv.float_value::numeric) END,
+               CASE WHEN sv.stock IS NULL THEN e.date_default ELSE sv.date_value END,
+               CASE WHEN sv.stock IS NULL THEN e.boolean_default ELSE sv.boolean_value END,
+               CASE WHEN sv.stock IS NULL THEN e.option_default ELSE sv.option_value END
+        FROM class_effective_attribute e
+        JOIN stock s ON s.item = p_item AND NOT s.deleted
+        LEFT JOIN stock_value sv ON sv.stock = s.id AND sv.attribute = e.attribute
+        WHERE e.class = p_class AND e.attribute = p_attribute AND e.per_unit;
+END;
+$$;
+
+-- Whether item p_item (of class p_class) matches p_filter, as returned by
+-- util.check_item_filter: one of the values it shows does.
+CREATE FUNCTION util.item_matches(p_item uuid, p_class uuid, p_filter jsonb) RETURNS boolean
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    v_op    text := p_filter ->> 'op';
+    v_value jsonb := p_filter -> 'value';
+BEGIN
+    RETURN EXISTS (
+        SELECT 1
+        FROM util.item_shown_values(p_item, p_class, (p_filter ->> 'attribute')::uuid) x
+        WHERE CASE p_filter ->> 'datatype'
+            WHEN 'date' THEN CASE v_op
+                WHEN '='       THEN x.date_v =  (v_value #>> '{}')::date
+                WHEN '>'       THEN x.date_v >  (v_value #>> '{}')::date
+                WHEN '>='      THEN x.date_v >= (v_value #>> '{}')::date
+                WHEN '<'       THEN x.date_v <  (v_value #>> '{}')::date
+                WHEN '<='      THEN x.date_v <= (v_value #>> '{}')::date
+                WHEN 'between' THEN x.date_v BETWEEN (v_value ->> 0)::date AND (v_value ->> 1)::date
+                END
+            WHEN 'text' THEN CASE v_op
+                WHEN '='        THEN lower(x.text_v) = lower(v_value #>> '{}')
+                WHEN 'contains' THEN strpos(lower(x.text_v), lower(v_value #>> '{}')) > 0
+                END
+            WHEN 'url' THEN CASE v_op
+                WHEN '='        THEN lower(x.text_v) = lower(v_value #>> '{}')
+                WHEN 'contains' THEN strpos(lower(x.text_v), lower(v_value #>> '{}')) > 0
+                END
+            WHEN 'choice'  THEN x.option_v IN (SELECT jsonb_array_elements_text(v_value)::uuid)
+            WHEN 'boolean' THEN x.boolean_v = (v_value #>> '{}')::boolean
+            ELSE CASE v_op -- integer and float
+                WHEN '='       THEN x.number_v =  (v_value #>> '{}')::numeric
+                WHEN '>'       THEN x.number_v >  (v_value #>> '{}')::numeric
+                WHEN '>='      THEN x.number_v >= (v_value #>> '{}')::numeric
+                WHEN '<'       THEN x.number_v <  (v_value #>> '{}')::numeric
+                WHEN '<='      THEN x.number_v <= (v_value #>> '{}')::numeric
+                WHEN 'between' THEN x.number_v BETWEEN (v_value ->> 0)::numeric AND (v_value ->> 1)::numeric
+                END
+            END
+    );
+END;
+$$;
+
 -- p_class and all its descendants.
 CREATE FUNCTION util.class_subtree(p_class uuid) RETURNS SETOF uuid
 LANGUAGE plpgsql STABLE AS $$

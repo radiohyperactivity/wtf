@@ -340,7 +340,7 @@ With `--web-root DIR`, `wtfd` serves the web app (a Flutter web build) outside `
 | `POST /classes/{id}/restore` | `class_restore` | `{name?, parent?, with_parents?}` |
 | `PUT /classes/{id}/attributes/{attribute}` | `class_attribute_set` | `{default?, per_unit?, required?}` |
 | `DELETE /classes/{id}/attributes/{attribute}` | `class_attribute_remove` | |
-| `GET /items` | `item_list` | `?class=&search=&limit=&offset=` |
+| `GET /items` | `item_list` | `?class=&search=&where=&limit=&offset=` (`where`: JSON, see [api/item.md](api/item.md)) |
 | `POST /items` | `item_create` | `{class, name, unit?, unit_lock?, values?}` |
 | `GET /items/{id}` | `item_get` | |
 | `PATCH /items/{id}` | `item_patch` | patch object |

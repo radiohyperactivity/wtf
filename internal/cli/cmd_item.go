@@ -15,18 +15,20 @@ import (
 func findCommand() command {
 	return command{
 		name:    "find",
-		args:    "<words…> [--class C] [--limit N] [--offset N]",
-		summary: "Search items by name, class, and text or choice values, and show where they are.",
+		args:    "<words…> [--class C] [--where CONDITION]… [--limit N] [--offset N]",
+		summary: "Search items by name, class, and text or choice values, and attribute conditions, and show where they are.",
 		params:  []param{{name: "Search", complete: completeItems, variadic: true, optional: true}},
 		flags:   map[string]param{"class": arg("Class", completeClasses)},
 		setup: func(fs *flag.FlagSet) func(*env, []string) error {
 			classRef := fs.String("class", "", "only items of this class (and its subclasses)")
+			var where stringList
+			fs.Var(&where, "where", whereHelp)
 			var p paging
 			p.register(fs)
 			return func(e *env, args []string) error {
-				if len(args) == 0 && *classRef == "" {
+				if len(args) == 0 && *classRef == "" && len(where) == 0 {
 					if e.term == nil {
-						return usagef("give search words or --class")
+						return usagef("give search words, --class or --where")
 					}
 					v, err := e.ask(param{name: "Search", complete: completeItems}, nil)
 					if err != nil {
@@ -44,6 +46,9 @@ func findCommand() command {
 						return err
 					}
 					q.Set("class", id)
+				}
+				if err := e.setWhere(q, where); err != nil {
+					return err
 				}
 				return e.list(p, listing{
 					path:   "/items",
@@ -99,12 +104,14 @@ func itemGroup() group {
 		commands: []command{
 			{
 				name:    "list",
-				args:    "[--class C] [--search WORDS] [--limit N] [--offset N]",
+				args:    "[--class C] [--search WORDS] [--where CONDITION]… [--limit N] [--offset N]",
 				summary: "List items alphabetically.",
 				flags:   map[string]param{"class": arg("Class", completeClasses)},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
 					classRef := fs.String("class", "", "only items of this class (and its subclasses)")
 					search := fs.String("search", "", "search words")
+					var where stringList
+					fs.Var(&where, "where", whereHelp)
 					var p paging
 					p.register(fs)
 					return func(e *env, args []string) error {
@@ -121,6 +128,9 @@ func itemGroup() group {
 								return err
 							}
 							q.Set("class", id)
+						}
+						if err := e.setWhere(q, where); err != nil {
+							return err
 						}
 						return e.list(p, listing{path: "/items", query: q, render: e.renderItems})
 					}

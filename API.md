@@ -67,6 +67,7 @@ The files are applied by `wtfd schema` (see [WTFD.md](WTFD.md)). Migrations run 
   - the name of a choice value.
 
   Values include class defaults the item shows. Different words may match in different places, so "resistor 0805" finds 0805 resistors. Results stay alphabetical, and the search combines with the `p_class` filter.
+- **Attribute filters.** `item_list`'s `p_where` (`GET /items?where=`, JSON) is a list of conditions on attribute values, all of which must match; see [api/item.md](api/item.md). For example `[{"attribute": "<Resistance>", "op": ">=", "value": 32000}]`. They combine with `p_search` and `p_class`.
 - **Per-unit attributes.** A class assignment with `per_unit` puts the attribute's values on stock rows (`stock_value_set`, or `values` in `stock_create`) instead of on the item, e.g. a serial number or purchase date. Defaults work the same way for both scopes.
   - **Splitting** a row with `stock_move` copies its per-unit values.
   - **Merging** only happens when both rows have exactly the same per-unit values; otherwise the moved part becomes a row of its own.
@@ -190,7 +191,7 @@ Suggested REST routes are only there to show intent. The REST design comes later
 | `class_restore(p_id, p_options)` | class (+ attributes) | `POST /classes/{id}/restore` |
 | `class_attribute_set(p_class, p_attribute, p_default, p_per_unit, p_required)` | class (+ attributes) | `PUT /classes/{id}/attributes/{attribute}` |
 | `class_attribute_remove(p_class, p_attribute)` | class (+ attributes) | `DELETE /classes/{id}/attributes/{attribute}` |
-| `item_list(p_class, p_search, p_limit, p_offset)` | page of item (list form, with stock total) | `GET /items?class=&search=` |
+| `item_list(p_class, p_search, p_limit, p_offset, p_where)` | page of item (list form, with stock total) | `GET /items?class=&search=&where=` |
 | `item_get(p_id)` | item | `GET /items/{id}` |
 | `item_create(p_class, p_name, p_unit, p_unit_lock, p_values)` | item | `POST /items` |
 | `item_patch(p_id, p_patch)` | item | `PATCH /items/{id}` |

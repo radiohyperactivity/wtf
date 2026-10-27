@@ -138,6 +138,17 @@ func TestCLI(t *testing.T) {
 	}
 	contains(t, c.ok("item", "value-set", "M4 screw", "Length", "0.03"), "3 cm")
 
+	// Attribute conditions, in any unit; all must match.
+	contains(t, c.ok("item", "list", "--where", "Length>=2.5cm"), "M4 screw")
+	contains(t, c.ok("item", "list", "--where", "Length = 1in..2in", "--where", "Colour=red,blue"), "M4 screw")
+	if out := c.ok("item", "list", "--where", "Length<1in"); strings.Contains(out, "M4 screw") {
+		t.Errorf("Length<1in found the 3 cm screw:\n%s", out)
+	}
+	_, stderr = c.run(0, "", "find", "--where", "Colour=Blue")
+	contains(t, stderr, "Nothing found.")
+	_, stderr = c.run(2, "", "item", "list", "--where", "Length~3")
+	contains(t, stderr, "Length can be compared with")
+
 	// Stock: add, find, move part of it, look it up by code.
 	c.ok("stock", "add", "M4 screw", "Garage/Shelf 2", "100", "--value", "Serial=A1")
 	contains(t, c.ok("find", "screw"), "M4 screw", "Hardware/Screws", "Garage/Shelf 2", "100")

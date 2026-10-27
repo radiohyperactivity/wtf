@@ -2,10 +2,12 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"regexp"
 	"strings"
 	"testing"
@@ -422,6 +424,101 @@ func TestSearch(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSearchWhere(t *testing.T) {
+	e := setup(t)
+	e.reset(t)
+
+	resistors := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Resistors")).body, "id")
+	attribute := func(name, datatype string, more ...any) string {
+		return str(t, e.expect(t, 201, "POST", "/attributes",
+			obj(append([]any{"name", name, "datatype", datatype}, more...)...)).body, "id")
+	}
+	ohms := attribute("Resistance", "float", "unit", e.unit(t, "Resistance", "Ω"))
+	pkg := attribute("Package", "choice")
+	e.expect(t, 201, "POST", "/attributes/"+pkg+"/options", obj("name", "0805"))
+	e.expect(t, 201, "POST", "/attributes/"+pkg+"/options", obj("name", "0603"))
+	notes := attribute("Notes", "text")
+	leadFree := attribute("Lead-free", "boolean")
+	bought := attribute("Purchased", "date")
+	e.expect(t, 200, "PUT", "/classes/"+resistors+"/attributes/"+ohms, nil)
+	e.expect(t, 200, "PUT", "/classes/"+resistors+"/attributes/"+pkg, obj("default", "0805"))
+	e.expect(t, 200, "PUT", "/classes/"+resistors+"/attributes/"+notes, nil)
+	e.expect(t, 200, "PUT", "/classes/"+resistors+"/attributes/"+leadFree, nil)
+	e.expect(t, 200, "PUT", "/classes/"+resistors+"/attributes/"+bought, obj("per_unit", true))
+	shelf := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Shelf")).body, "id")
+
+	item := func(name string, values map[string]any) string {
+		return str(t, e.expect(t, 201, "POST", "/items",
+			obj("class", resistors, "name", name, "values", values)).body, "id")
+	}
+	r10k := item("10k", obj(ohms, 10000))
+	r4k7 := item("4k7", obj(ohms, 4700, pkg, "0603"))
+	item("47k", obj(ohms, 47000, notes, "Metal film"))
+	item("100R", obj(ohms, 100, leadFree, true))
+	e.expect(t, 201, "POST", "/stock", obj("item", r10k, "location", shelf, "quantity", 5, "values", obj(bought, "2026-01-10")))
+	e.expect(t, 201, "POST", "/stock", obj("item", r10k, "location", shelf, "quantity", 5, "values", obj(bought, "2025-05-01")))
+	e.expect(t, 201, "POST", "/stock", obj("item", r4k7, "location", shelf, "quantity", 5))
+
+	where := func(filters ...map[string]any) string {
+		b, err := json.Marshal(append([]map[string]any{}, filters...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return "where=" + url.QueryEscape(string(b))
+	}
+	f := func(attribute, op string, value any) map[string]any {
+		return obj("attribute", attribute, "op", op, "value", value)
+	}
+	tests := []struct {
+		name  string
+		query string
+		want  []string
+	}{
+		{"greater or equal", where(f(ohms, ">=", 32000)), []string{"47k"}},
+		{"less than", where(f(ohms, "<", 4700)), []string{"100R"}},
+		{"exact number", where(f(ohms, "=", 4700)), []string{"4k7"}},
+		{"range, inclusive", where(f(ohms, "between", []any{1000, 10000})), []string{"10k", "4k7"}},
+		{"choice by name, defaults included", where(f(pkg, "=", "0805")), []string{"100R", "10k", "47k"}},
+		{"any of several options", where(f(pkg, "in", []any{"0603", "0805"})), []string{"100R", "10k", "47k", "4k7"}},
+		{"text contains, ignoring case", where(f(notes, "contains", "METAL")), []string{"47k"}},
+		{"text exactly", where(f(notes, "=", "metal film")), []string{"47k"}},
+		{"yes", where(f(leadFree, "=", true)), []string{"100R"}},
+		{"per unit: any stock row", where(f(bought, ">=", "2026-01-01")), []string{"10k"}},
+		{"per unit: no rows match", where(f(bought, "<", "2025-01-01")), nil},
+		{"all filters must match", where(f(ohms, ">", 1000), f(pkg, "=", "0805")), []string{"10k", "47k"}},
+		{"with search words", "search=4&" + where(f(ohms, ">", 1000)), []string{"47k", "4k7"}},
+		{"no filters", where(), []string{"100R", "10k", "47k", "4k7"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := e.expect(t, 200, "GET", "/items?"+tt.query, nil)
+			var got []string
+			for _, row := range get(t, r.body, "rows").([]any) {
+				got = append(got, str(t, row, "name"))
+			}
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	for _, bad := range []string{
+		"where=" + url.QueryEscape("{"),                             // not JSON
+		"where=" + url.QueryEscape(`{"attribute": "x"}`),            // not a list
+		where(f(ohms, "contains", 1)),                               // not for numbers
+		where(f(ohms, ">", "1k")),                                   // numbers are numbers, in the base unit
+		where(f(ohms, "between", []any{1})),                         // a range needs two ends
+		where(f(pkg, "=", "1206")),                                  // no such option
+		where(f(bought, ">", "2026-02-30")),                         // no such date
+		where(f(leadFree, "=", "yes")),                              // true or false
+		where(obj("attribute", ohms, "op", ">")),                    // no value
+		where(obj("attribute", "not-an-id", "op", "=", "value", 1)), // no attribute id
+	} {
+		e.expect(t, 400, "GET", "/items?"+bad, nil)
+	}
+	e.expect(t, 404, "GET", "/items?"+where(f("00000000-0000-0000-0000-000000000000", "=", 1)), nil)
 }
 
 func TestCodes(t *testing.T) {

@@ -61,9 +61,9 @@ wtf item add            # asks for everything, with Tab completion
 |---------|-----|
 | `wtf login [--server URL] [--email E]`, `wtf logout`, `wtf whoami`, `wtf password` | `/login`, `/logout`, `/me`, `/me/password` |
 | `wtf profile list` / `use <name>` / `delete <name>` | (local configuration) |
-| `wtf find <words…> [--class C]` | `GET /items?search=`, plus each item's stock locations |
+| `wtf find <words…> [--class C] [--where CONDITION]…` | `GET /items?search=&where=`, plus each item's stock locations |
 | `wtf code <code>` | `/codes/{code}` |
-| `wtf item list [--class C] [--search S]` / `get` / `add <name> --class C [--unit U [--unit-lock]] [--value A=V]… [--edit]` / `set` / `edit` / `delete` / `restore` / `history` | `/items` |
+| `wtf item list [--class C] [--search S] [--where CONDITION]…` / `get` / `add <name> --class C [--unit U [--unit-lock]] [--value A=V]… [--edit]` / `set` / `edit` / `delete` / `restore` / `history` | `/items` |
 | `wtf item value-set <item> <attribute> <value…>` / `value-delete <item> <attribute>` | `/items/{id}/values/{attribute}` |
 | `wtf stock list [--item I] [--location L]` / `get` / `add <item> <location> [quantity] [--value A=V]…` / `move <stock> <location> [quantity]` / `set` / `edit` / `delete` / `restore` / `history` | `/stock` |
 | `wtf stock value-set` / `value-delete` | `/stock/{id}/values/{attribute}` |
@@ -312,3 +312,13 @@ These follow your answers: all attributes offered, a picker on Tab Tab, bash, zs
     - **A symbol that several families share** (`B` in decimal and binary bytes) means the same unit wherever it is typed, but `--unit B` must name the family, `--unit "B (Binary bytes)"`, because the family decides the display.
     - **`wtf unit-family`** replaces `wtf unit-group`. Units, families and quantities have integer ids.
     - **No tenants:** a profile is one server, and the `Transport` test hook is gone, since the tests no longer need a tenant's hostname.
+
+### Attribute conditions
+
+49. **`--where` on `find` and `item list`** (agreed before building). Repeatable; all conditions must match, together with the search words and `--class`.
+    - **Numbers and dates:** `Resistance>=32k`, `=`, `>`, `<`, `<=`, and a range `Resistance=10k..47k`, both ends included. Units as anywhere else: any unit of the quantity, and a plain number in the attribute's unit.
+    - **Choices:** `Package=0603,0805` is any of the options.
+    - **Text:** `Notes~metal` contains, `Notes=metal film` is the whole text; both ignore case.
+    - **Yes/no:** `Lead-free=yes`.
+    - **What is compared** is what the item shows, class defaults included; a per-unit attribute matches when any stock row does (see [api/item.md](api/item.md)).
+    - **The condition is split at its first operator,** so an attribute name can't contain `<`, `>`, `=` or `~`.

@@ -82,7 +82,8 @@ func (s *server) routes() []route {
 			query("p_class", "class", "uuid"),
 			query("p_search", "search", "text"),
 			query("p_limit", "limit", "integer"),
-			query("p_offset", "offset", "integer"))},
+			query("p_offset", "offset", "integer"),
+			query("p_where", "where", "jsonb"))},
 		{"POST /items", s.create("item_create", "/items/", body(
 			field{key: "class", name: "p_class", typ: "uuid"},
 			field{key: "name", name: "p_name", typ: "text"},

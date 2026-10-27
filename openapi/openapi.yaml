@@ -415,6 +415,17 @@ paths:
             or url value, or a choice value (including class defaults the item
             shows). Different words may match in different places, so
             "resistor 0805" finds 0805 resistors.
+        - name: where
+          in: query
+          schema: { type: string }
+          description: |
+            Attribute filters, all of which must match: a JSON list of
+            {attribute, op, value}. Numbers and dates take =, >, >=, <, <= or
+            between [low, high] (numbers in the base unit); text and url take
+            = or contains; choices take = (one option) or in (a list), by id
+            or name; booleans take = true or false. Compared with the values
+            the item shows, class defaults included; a per-unit attribute
+            matches when any live stock row does. See api/item.md.
         - { $ref: "#/components/parameters/Limit" }
         - { $ref: "#/components/parameters/Offset" }
       responses:
