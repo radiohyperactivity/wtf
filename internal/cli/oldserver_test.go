@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -25,6 +26,38 @@ func runAgainst(t *testing.T, handler http.HandlerFunc, args ...string) (int, st
 	var stdout, stderr bytes.Buffer
 	code := Run(context.Background(), args, strings.NewReader(""), &stdout, &stderr, func(k string) string { return vars[k] })
 	return code, stderr.String()
+}
+
+// TestNewAttributeRefreshesCache: the list of attributes kept for completion
+// is dropped as soon as an attribute is added, so the new one completes at once.
+func TestNewAttributeRefreshesCache(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("API-Revision", "1")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id": "11111111-1111-1111-1111-111111111111", "name": "Colour", "datatype": "text", "unit_group": null}`))
+	}))
+	defer server.Close()
+	dir := t.TempDir()
+	vars := map[string]string{
+		"WTF_SERVER":    server.URL,
+		"WTF_TOKEN":     "token",
+		"WTF_CONFIG":    filepath.Join(dir, "config.json"),
+		"WTF_CACHE_DIR": dir,
+	}
+	e := &env{api: newClient(server.URL, "token"), getenv: func(k string) string { return vars[k] }}
+	e.writeCache("attributes", []attribute{})
+	cached := filepath.Join(e.cacheDir(), "attributes.json")
+	if _, err := os.Stat(cached); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), []string{"attribute", "add", "Colour", "--type", "text"}, strings.NewReader(""), &stdout, &stderr, func(k string) string { return vars[k] }); code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr.String())
+	}
+	if _, err := os.Stat(cached); !os.IsNotExist(err) {
+		t.Errorf("the cached attributes are still there: %v", err)
+	}
 }
 
 // TestRecursiveDeleteOnOldServer: a server without recursive deletes doesn't

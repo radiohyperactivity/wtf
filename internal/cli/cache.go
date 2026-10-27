@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -18,6 +19,9 @@ import (
 //     version (ETag), which costs the server one row lookup;
 //   - while completing on the command line, the lists of attributes, unit
 //     groups, quantities and units, for a minute.
+//
+// A change made by this client refreshes what it makes outdated at once (see
+// wrote). Unit groups, quantities and units can't be changed through the API.
 
 const listTTL = time.Minute
 
@@ -68,6 +72,24 @@ func (e *env) writeCache(name string, v any) {
 	tmp := filepath.Join(dir, name+".json.tmp")
 	if os.WriteFile(tmp, data, 0o600) == nil {
 		_ = os.Rename(tmp, filepath.Join(dir, name+".json"))
+	}
+}
+
+// wrote is called after a successful change at path. It drops the copies
+// the change makes outdated, so the next use fetches them again: this run's
+// tree (the cached file is revalidated anyway), or the attributes, including
+// the list kept for completion.
+func (e *env) wrote(path string) {
+	switch {
+	case strings.HasPrefix(path, "/locations"):
+		e.cache.locations = nil
+	case strings.HasPrefix(path, "/classes"):
+		e.cache.classes = nil
+	case strings.HasPrefix(path, "/attributes"), strings.HasPrefix(path, "/options"):
+		e.cache.attributes = nil
+		if dir := e.cacheDir(); dir != "" {
+			_ = os.Remove(filepath.Join(dir, "attributes.json"))
+		}
 	}
 }
 

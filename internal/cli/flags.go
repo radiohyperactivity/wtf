@@ -60,6 +60,9 @@ func (e *env) parseValues(list []string) (object, error) {
 // do sends a request and returns the response body.
 func (e *env) do(method, path string, body any) (json.RawMessage, error) {
 	data, _, err := e.api.Do(e.ctx, method, path, nil, body)
+	if err == nil && method != http.MethodGet {
+		e.wrote(path)
+	}
 	return data, err
 }
 

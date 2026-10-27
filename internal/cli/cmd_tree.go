@@ -129,6 +129,7 @@ func treeDeleteCommand(kind, prefix string, resolve func(*env, string) (string, 
 				if err != nil {
 					return err
 				}
+				e.wrote(prefix + id)
 				return e.emit(data, func() error {
 					fmt.Fprintf(e.stdout, "Deleted %s.\n", s.summary)
 					return nil
