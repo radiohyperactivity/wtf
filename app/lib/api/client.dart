@@ -730,19 +730,24 @@ class ApiClient {
     'accounts',
   };
 
-  /// GET /{kind}/{id}/history, newest first.
+  /// The kinds whose list has a history of its own: the top level of a tree,
+  /// or all attributes (added, deleted, restored).
+  static const listHistoryKinds = {'locations', 'classes', 'attributes'};
+
+  /// GET /{kind}/{id}/history, newest first; with no id, GET
+  /// /{kind}/history, the history of the list.
   Future<ResultPage<HistoryEntry>> history(
     String kind,
-    String id, {
+    String? id, {
     int limit = 100,
     int offset = 0,
   }) async {
-    if (!historyKinds.contains(kind)) {
+    if (!(id == null ? listHistoryKinds : historyKinds).contains(kind)) {
       throw InputError('There is no history of "$kind".');
     }
     final json = await _call(
       'GET',
-      '/$kind/$id/history',
+      id == null ? '/$kind/history' : '/$kind/$id/history',
       query: {'limit': '$limit', 'offset': '$offset'},
     );
     return ResultPage.fromJson(json as Json, HistoryEntry.fromJson);

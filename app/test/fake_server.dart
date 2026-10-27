@@ -294,6 +294,15 @@ class FakeServer {
             'set-cookie': 'wtf_session=; Path=/api; Max-Age=0',
           },
         );
+      // The history of a list: history['locations'] and so on.
+      case ('GET', [final kind, 'history']):
+        final rows = history[kind] ?? const [];
+        return _json({
+          'total': rows.length,
+          'limit': 100,
+          'offset': 0,
+          'rows': rows,
+        });
       case ('GET', ['classes']):
         return _json({'version': 1, 'tree': _tree(classes, null)});
       case ('GET', ['locations']):

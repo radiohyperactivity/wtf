@@ -16,16 +16,13 @@ import '../widgets/restore.dart';
 /// Tapping a card shows its entries as the server sent them, as the CLI's
 /// `… history` does.
 class HistoryScreen extends StatefulWidget {
-  const HistoryScreen({
-    super.key,
-    required this.kind,
-    required this.id,
-    this.title,
-  });
+  const HistoryScreen({super.key, required this.kind, this.id, this.title});
 
   /// items, stock, locations, classes, attributes or accounts.
   final String kind;
-  final String id;
+
+  /// Null: the history of the list itself (locations, classes, attributes).
+  final String? id;
   final String? title;
 
   @override

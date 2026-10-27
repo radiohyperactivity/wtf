@@ -302,4 +302,99 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('update value'), findsOneWidget);
   });
+
+  testWidgets('the top level of a tree has a history, with deleted locations', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    fake.history['locations'] = [
+      entry(
+        3,
+        't3',
+        'location',
+        'update',
+        {'id': 'l-shed', 'name': 'Shed', 'parent': null, 'deleted': true},
+        {
+          'deleted': {'old': false, 'new': true},
+        },
+      ),
+      entry(
+        2,
+        't2',
+        'location',
+        'update',
+        {'id': 'l-shelf1', 'name': 'Shelf 1', 'parent': null},
+        {
+          'parent': {'old': 'l-garage', 'new': null},
+        },
+      ),
+      entry(1, 't1', 'location', 'insert', {
+        'id': 'l-garage',
+        'name': 'Garage',
+        'parent': null,
+      }),
+    ];
+    await startApp(tester, fake);
+    await tester.tap(find.text('Locations'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('History'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('History of the top-level locations'), findsOneWidget);
+    expect(find.text('Deleted location Shed'), findsOneWidget);
+    expect(
+      find.text('Location Shelf 1 moved to the top from Garage'),
+      findsOneWidget,
+    );
+    expect(find.text('Added location Garage at the top'), findsOneWidget);
+  });
+
+  test('the history of all attributes names each attribute', () async {
+    final fake = FakeServer();
+    final client = ApiClient(
+      Uri.parse('http://wtf.test:8080'),
+      httpClient: fake.client,
+      manageCookie: true,
+      session: 'tok',
+    );
+    final entries = [
+      entry(
+        2,
+        't2',
+        'attribute',
+        'update',
+        {'id': 'a-size', 'name': 'Size', 'datatype': 'text', 'deleted': true},
+        {
+          'deleted': {'old': false, 'new': true},
+        },
+      ),
+      entry(1, 't1', 'attribute', 'insert', {
+        'id': 'a-size',
+        'name': 'Size',
+        'datatype': 'text',
+      }),
+    ].map(HistoryEntry.fromJson).toList();
+    final names = HistoryNames(client);
+    await names.load(entries);
+    final lines = historyEvents(
+      entries,
+      names,
+      const HistoryFocus('attributes'),
+    ).map((e) => e.lines.single);
+    expect(lines.map((l) => l.text), [
+      'Deleted attribute Size',
+      'Created attribute Size (text)',
+    ]);
+    expect(lines.first.link, '/attributes/a-size');
+    // In the attribute's own history, it isn't named.
+    expect(
+      historyEvents(
+        entries,
+        names,
+        const HistoryFocus('attributes', 'a-size'),
+      ).map((e) => e.lines.single.text),
+      ['Deleted', 'Created (Size, text)'],
+    );
+  });
 }

@@ -211,6 +211,13 @@ GoRouter buildRouter(Session session) => GoRouter(
         ),
 
         GoRoute(
+          path: '/history/:kind',
+          builder: (context, state) => HistoryScreen(
+            kind: state.pathParameters['kind']!,
+            title: state.uri.queryParameters['title'],
+          ),
+        ),
+        GoRoute(
           path: '/history/:kind/:id',
           builder: (context, state) => HistoryScreen(
             kind: state.pathParameters['kind']!,

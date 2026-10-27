@@ -86,6 +86,7 @@ Every screen has a URL. In the web app it shows in the address bar, and it works
 | `/stock/new?item=…&location=…` | Add stock: item, location, quantity, per-unit values. |
 | `/stock/1C3D/edit` | Edit a stock row: location, quantity, per-unit values. |
 | `/history/<kind>/<id>` | The history of an item, stock row, location, class, attribute or account, in words, by day (decision 23). |
+| `/history/<kind>` | The history of the top level of the locations or classes, or of the list of attributes: what was added, moved to or from the top level, deleted or restored. The History button on the tree and on Attributes opens it. |
 | `/me` | Your account: email, privileges, appearance (light, dark or as the system), change password, log out. |
 | `/manage` | Links to attributes, units and accounts. |
 | `/attributes`, `/attributes/<id>` | The attributes; one attribute with its options (add, rename, delete). |
@@ -208,7 +209,7 @@ These are decisions I made without you, recorded for review. You asked me to cop
     - **Unit tests:** units, dates, codes and grids, with the CLI's cases.
     - **The API client:** cookies, error messages, version checks, exact numbers in request bodies, and a changed tree being fetched again at once.
     - **Against `openapi.yaml`:** every method and path the client uses must be in the spec.
-    - **Widget tests:** they run the whole app against a pretend `wtfd` (`test/fake_server.dart`). They cover logging in and out, search, label codes, moving part of a stock row, adding an item with a value in other units (`18000mV` is sent as `18`), adding its stock, editing and clearing values, the location tree, a compartment grid (and the tree underneath showing it at once), deleting a location with stock, a read-only account, the Manage destination, the appearance being kept, a deleted location restored with what it is in, and the history screen. Unit tests turn history entries into sentences against the pretend server.
+    - **Widget tests:** they run the whole app against a pretend `wtfd` (`test/fake_server.dart`). They cover logging in and out, search, label codes, moving part of a stock row, adding an item with a value in other units (`18000mV` is sent as `18`), adding its stock, editing and clearing values, the location tree, a compartment grid (and the tree underneath showing it at once), deleting a location with stock, a read-only account, the Manage destination, the appearance being kept, a deleted location restored with what it is in, the history screen, and the history of the top level. Unit tests turn history entries into sentences against the pretend server.
 21. **Against the dev server:** every reading call of the client ran against `wtf` (as Development Tenant, reads only). The test that did this isn't kept, because it depends on your data. Nothing was changed in the database.
 22. **Not tested by hand:** I can't click through the app myself. The Windows and web builds succeed, but nobody has looked at the screens yet.
 

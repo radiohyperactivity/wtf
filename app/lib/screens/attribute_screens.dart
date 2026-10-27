@@ -40,7 +40,21 @@ class _AttributesScreenState extends State<AttributesScreen> {
             )
             .toList();
         return Scaffold(
-          appBar: AppBar(title: const Text('Attributes')),
+          appBar: AppBar(
+            title: const Text('Attributes'),
+            actions: [
+              // Attributes added, deleted or restored: how a deleted one is
+              // found.
+              if (session.canReadHistory)
+                IconButton(
+                  icon: const Icon(Icons.history),
+                  tooltip: 'History',
+                  onPressed: () => context.push(
+                    '/history/attributes?title=${Uri.encodeComponent('the attributes')}',
+                  ),
+                ),
+            ],
+          ),
           floatingActionButton: session.canWriteModel
               ? FloatingActionButton.extended(
                   onPressed: () async {

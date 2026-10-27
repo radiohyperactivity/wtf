@@ -34,11 +34,13 @@ class HistoryEvent {
 
 /// Whose history it is: the kind of the history route and the object's id.
 class HistoryFocus {
-  const HistoryFocus(this.kind, this.id);
+  const HistoryFocus(this.kind, [this.id]);
 
   /// items, stock, locations, classes, attributes or accounts.
   final String kind;
-  final String id;
+
+  /// Null: the list itself, i.e. the top level of a tree or all attributes.
+  final String? id;
 }
 
 /// The label code of a code number, as the server writes it (Crockford
@@ -683,7 +685,7 @@ class _Describer {
           HistoryLine(
             self
                 ? 'Created${e.data['parent'] == null ? '' : ' in ${place(e.data['parent'])}'}'
-                : 'Added $noun $name $inside',
+                : 'Added $noun $name ${focus.id == null ? 'at the top' : inside}',
             link,
           ),
         ];
@@ -701,7 +703,7 @@ class _Describer {
           !self && c?.old == focus.id
               ? '${noun == 'location' ? 'Location' : 'Class'} $name moved to ${place(c?.now)}'
               : !self && c?.now == focus.id
-              ? '${noun == 'location' ? 'Location' : 'Class'} $name moved here from ${place(c?.old)}'
+              ? '${noun == 'location' ? 'Location' : 'Class'} $name moved ${focus.id == null ? 'to the top' : 'here'} from ${place(c?.old)}'
               : 'Moved from ${place(c?.old)} to ${place(c?.now)}',
         'container' =>
           c?.now == true ? 'Now a container' : 'No longer a container',
@@ -747,22 +749,27 @@ class _Describer {
 
   List<HistoryLine> _attribute(HistoryEntry e) {
     final name = '${e.data['name']}';
+    // In the history of all attributes, each line names its attribute.
+    final self = _isFocus('attributes', e.rowId);
+    final subject = self ? '' : ' attribute $name';
+    final link = self ? null : '/attributes/${e.rowId}';
     switch (e.operation) {
       case 'insert':
         final group = e.data['unit_group'];
         return [
           HistoryLine(
-            'Created ($name, ${e.data['datatype']}${group == null ? '' : ', ${n.unitGroupName(group)}'})',
+            'Created$subject (${self ? '$name, ' : ''}${e.data['datatype']}${group == null ? '' : ', ${n.unitGroupName(group)}'})',
+            link,
           ),
         ];
       case 'delete':
-        return [const HistoryLine('Purged')];
+        return [HistoryLine('Purged$subject')];
     }
     return [
       for (final column in e.changes.keys)
         if (switch (column) {
               'deleted' =>
-                e.change(column)?.now == true ? 'Deleted' : 'Restored',
+                '${e.change(column)?.now == true ? 'Deleted' : 'Restored'}$subject',
               'name' =>
                 'Renamed from “${e.change(column)?.old}” to “${e.change(column)?.now}”',
               'datatype' =>
@@ -772,7 +779,7 @@ class _Describer {
               _ => null,
             }
             case final String line)
-          HistoryLine(line),
+          HistoryLine(line, link),
     ];
   }
 
