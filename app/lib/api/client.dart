@@ -11,7 +11,7 @@ import 'units.dart';
 /// The API version and revision this app was built for.
 const apiPath = '/api/v1';
 const apiVersion = 1;
-const apiRevision = 1;
+const apiRevision = 2;
 
 const sessionCookie = 'wtf_session';
 
@@ -23,6 +23,7 @@ class ApiProblem implements Exception {
     required this.title,
     required this.status,
     this.detail = '',
+    this.hint = '',
     this.supported = const [],
   });
 
@@ -36,6 +37,7 @@ class ApiProblem implements Exception {
           title: json['title'] as String,
           status: json['status'] as int? ?? resp.statusCode,
           detail: json['detail'] as String? ?? '',
+          hint: json['hint'] as String? ?? '',
           supported: (json['supported'] as List?)?.cast<int>() ?? const [],
         );
       }
@@ -70,10 +72,20 @@ class ApiProblem implements Exception {
   static const unsupportedVersion = '/problems/unsupported-api-version';
   static const unauthenticated = '/problems/unauthenticated';
 
+  /// Something is deleted, or a restore of something that isn't (409).
+  static const deleted = '/problems/deleted';
+
   final String type;
   final String title;
   final int status;
   final String detail;
+
+  /// What to do about it, when the server knows (revision 2).
+  final String hint;
+
+  /// A restore refused because the object is in something deleted; the
+  /// app then offers to restore that too, or to put it somewhere else.
+  bool get intoDeleted => type == deleted && hint.contains('with_parents');
 
   /// The API versions the server serves, in an unsupported-api-version problem.
   final List<int> supported;
@@ -85,7 +97,8 @@ class ApiProblem implements Exception {
           ? 'The server only serves API version ${supported.join(', ')}, newer than this app\'s ($apiVersion): update the app.'
           : 'The server only serves API version ${supported.join(', ')}, older than this app\'s ($apiVersion): update the server (wtfd).';
     }
-    return detail.isEmpty ? title : '$title: $detail';
+    final text = detail.isEmpty ? title : '$title: $detail';
+    return hint.isEmpty ? text : '$text\n$hint';
   }
 
   @override
@@ -278,6 +291,13 @@ class ApiClient {
 
   Future<void> deleteItem(String id) => _call('DELETE', '/items/$id');
 
+  /// Restores a deleted item with the stock deleted together with it.
+  /// [options]: name, class (another class), with_parents.
+  Future<ItemDetail> restoreItem(String id, [Json options = const {}]) async =>
+      ItemDetail.fromJson(
+        await _call('POST', '/items/$id/restore', body: options) as Json,
+      );
+
   Future<ItemDetail> setItemValue(
     String id,
     String attributeId,
@@ -355,6 +375,12 @@ class ApiClient {
 
   Future<void> deleteStock(String id) => _call('DELETE', '/stock/$id');
 
+  /// Restores a deleted stock row. [options]: location, with_parents.
+  Future<Stock> restoreStock(String id, [Json options = const {}]) async =>
+      Stock.fromJson(
+        await _call('POST', '/stock/$id/restore', body: options) as Json,
+      );
+
   Future<Stock> setStockValue(
     String id,
     String attributeId,
@@ -429,6 +455,33 @@ class ApiClient {
     query: {if (recursive) 'recursive': 'true', if (force) 'force': 'true'},
   );
 
+  /// The paths of locations, by id: from the tree, or fetched for deleted
+  /// ones, which aren't in it.
+  Future<Map<String, String>> locationPaths(Iterable<String> ids) async {
+    final locations = await tree(TreeKind.locations);
+    final paths = <String, String>{};
+    await Future.wait([
+      for (final id in ids.toSet())
+        if (locations[id] case final n?)
+          Future.sync(() => paths[id] = n.path)
+        else
+          location(id).then(
+            (l) => paths[id] = l.pathText,
+            onError: (Object _) => paths[id] = 'a location',
+          ),
+    ]);
+    return paths;
+  }
+
+  /// Restores a deleted location with what was deleted together with it.
+  /// [options]: name, parent (another one; null: at the top), with_parents.
+  Future<Location> restoreLocation(
+    String id, [
+    Json options = const {},
+  ]) async => Location.fromJson(
+    await _call('POST', '/locations/$id/restore', body: options) as Json,
+  );
+
   // --- Classes ---
 
   Future<ClassDetail> cls(String id) async =>
@@ -476,6 +529,15 @@ class ApiClient {
     'DELETE',
     '/classes/$id',
     query: {if (recursive) 'recursive': 'true', if (force) 'force': 'true'},
+  );
+
+  /// Restores a deleted class with what was deleted together with it.
+  /// [options]: name, parent (another one; null: at the top), with_parents.
+  Future<ClassDetail> restoreClass(
+    String id, [
+    Json options = const {},
+  ]) async => ClassDetail.fromJson(
+    await _call('POST', '/classes/$id/restore', body: options) as Json,
   );
 
   /// Assigns an attribute to a class, replacing an assignment: options left
@@ -577,6 +639,14 @@ class ApiClient {
 
   Future<void> deleteAttribute(String id) => _call('DELETE', '/attributes/$id');
 
+  /// Restores a deleted attribute. [options]: name.
+  Future<Attribute> restoreAttribute(
+    String id, [
+    Json options = const {},
+  ]) async => Attribute.fromJson(
+    await _call('POST', '/attributes/$id/restore', body: options) as Json,
+  );
+
   Future<NamedRef> addOption(String attributeId, String name) async =>
       NamedRef.fromJson(
         await _call(
@@ -592,6 +662,14 @@ class ApiClient {
       );
 
   Future<void> deleteOption(String id) => _call('DELETE', '/options/$id');
+
+  /// One option, also a deleted one: {id, attribute, name, deleted}.
+  Future<Json> option(String id) async =>
+      await _call('GET', '/options/$id') as Json;
+
+  /// Restores a deleted option; its attribute must not be deleted.
+  Future<void> restoreOption(String id) =>
+      _call('POST', '/options/$id/restore', body: const {});
 
   /// The quantities, with their base units.
   Future<List<Quantity>> quantities() async =>
@@ -681,9 +759,14 @@ class ApiClient {
     await _call('PATCH', '/attachments/$id', body: changes) as Json,
   );
 
-  /// Deletes an attachment; wtfd gc removes the file later.
+  /// Marks an attachment deleted; it can be restored.
   Future<void> deleteAttachment(String id) =>
       _call('DELETE', '/attachments/$id');
+
+  /// Restores a deleted attachment; its object must not be deleted.
+  Future<Attachment> restoreAttachment(String id) async => Attachment.fromJson(
+    await _call('POST', '/attachments/$id/restore', body: const {}) as Json,
+  );
 
   /// Where an attachment's content is. Native apps send [authHeaders] with it.
   Uri attachmentUrl(String id) =>
@@ -715,18 +798,22 @@ class ApiClient {
   }
 
   /// Refreshes the cached tree a successful change at [path] has changed,
-  /// before the change is reported done.
+  /// before the change is reported done. A restore may bring back classes
+  /// and locations too (with_parents), so it refreshes both.
   Future<void> _wrote(String path) async {
     final m = _treeWrite.firstMatch(path);
-    if (m == null) return;
-    final kind = TreeKind.values.byName(m[1]!);
-    try {
-      await tree(kind);
-    } catch (_) {
-      // The change itself succeeded; the tree is fetched on its next use.
-      _trees.remove(kind);
+    final kinds = path.endsWith('/restore')
+        ? TreeKind.values
+        : [if (m != null) TreeKind.values.byName(m[1]!)];
+    for (final kind in kinds) {
+      try {
+        await tree(kind);
+      } catch (_) {
+        // The change itself succeeded; the tree is fetched on its next use.
+        _trees.remove(kind);
+      }
+      if (!_treeChanges.isClosed) _treeChanges.add(kind);
     }
-    if (!_treeChanges.isClosed) _treeChanges.add(kind);
   }
 
   Future<http.Response> _request(

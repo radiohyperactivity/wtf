@@ -59,22 +59,30 @@ class Rational {
   Rational operator *(Rational o) => Rational(numer * o.numer, denom * o.denom);
   Rational operator +(Rational o) =>
       Rational(numer * o.denom + o.numer * denom, denom * o.denom);
+  Rational operator -(Rational o) =>
+      Rational(numer * o.denom - o.numer * denom, denom * o.denom);
+  Rational operator /(Rational o) => Rational(numer * o.denom, denom * o.numer);
+
+  Rational abs() => Rational(numer.abs(), denom);
+
+  /// Whether this is at least [o].
+  bool operator >=(Rational o) => numer * o.denom >= o.numer * denom;
 
   bool get isInteger => denom == BigInt.one;
   bool get isZero => numer == BigInt.zero;
 
-  /// The decimal form: exact when it has at most 30 decimals, else rounded
-  /// to 30 (halves away from zero), without trailing zeros.
-  String toDecimal() {
+  /// The decimal form: exact when it has at most [places] decimals, else
+  /// rounded to that many (halves away from zero), without trailing zeros.
+  String toDecimal([int places = 30]) {
     if (isInteger) return numer.toString();
-    final scale = BigInt.from(10).pow(30);
+    final scale = BigInt.from(10).pow(places);
     final scaled = numer.abs() * scale;
     var digits = scaled ~/ denom;
     if ((scaled % denom) * BigInt.two >= denom) digits += BigInt.one;
-    var text = digits.toString().padLeft(31, '0');
-    var intPart = text.substring(0, text.length - 30);
+    var text = digits.toString().padLeft(places + 1, '0');
+    var intPart = text.substring(0, text.length - places);
     var frac = text
-        .substring(text.length - 30)
+        .substring(text.length - places)
         .replaceFirst(RegExp(r'0+$'), '');
     final sign = numer.isNegative && (intPart != '0' || frac.isNotEmpty)
         ? '-'
@@ -164,6 +172,28 @@ Unit plainUnit(List<Unit> groupUnits) {
 }
 
 String unitSymbols(List<Unit> units) => units.map((u) => u.symbol).join(', ');
+
+/// A base-unit number in the group's unit that scales best, as the server's
+/// `display` does: the largest unit in which it is at least 1, else the
+/// smallest; zero in the base unit. Six decimals at most: "1.2 mm".
+String displayIn(Rational base, List<Unit> groupUnits) {
+  if (groupUnits.isEmpty) return base.toDecimal(6);
+  Rational inUnit(Unit u) => (base - u.baseOffset) / u.baseFactor;
+  Unit? best;
+  if (base.isZero) {
+    best = groupUnits.where((u) => u.isBase).firstOrNull;
+  } else {
+    for (final u in groupUnits) {
+      if (inUnit(u).abs() >= Rational(BigInt.one) &&
+          (best == null || u.baseFactor >= best.baseFactor)) {
+        best = u;
+      }
+    }
+    best ??= groupUnits.reduce((a, b) => b.baseFactor >= a.baseFactor ? a : b);
+  }
+  best ??= groupUnits.first;
+  return '${inUnit(best).toDecimal(6)} ${best.symbol}';
+}
 
 /// The units a measure may be typed in: all units of the quantity, and the
 /// group's units for numbers without one.

@@ -8,6 +8,7 @@ import '../session.dart';
 import '../widgets/attachments.dart';
 import '../widgets/common.dart';
 import '../widgets/pickers.dart';
+import '../widgets/restore.dart';
 import '../widgets/value_fields.dart';
 import 'node_delete.dart';
 
@@ -51,6 +52,9 @@ class ClassScreen extends StatelessWidget {
       builder: (context, data, reload) {
         final c = data.cls;
         final node = data.tree[c.id];
+        // A deleted class can only be looked at, and restored.
+        final write = session.canWriteModel && !c.deleted;
+
         Future<void> open(String path) async {
           await context.push(path);
           reload();
@@ -97,7 +101,7 @@ class ClassScreen extends StatelessWidget {
                     '/history/classes/${c.id}?title=${Uri.encodeComponent(c.pathText)}',
                   ),
                 ),
-              if (session.canWriteModel)
+              if (write)
                 PopupMenuButton<String>(
                   onSelected: (action) async {
                     switch (action) {
@@ -137,7 +141,8 @@ class ClassScreen extends StatelessWidget {
                 ),
             ],
           ),
-          floatingActionButton: session.canWriteData && !c.container
+          floatingActionButton:
+              session.canWriteData && !c.container && !c.deleted
               ? FloatingActionButton.extended(
                   onPressed: () => open('/items/new?class=${c.id}'),
                   icon: const Icon(Icons.add),
@@ -150,6 +155,14 @@ class ClassScreen extends StatelessWidget {
               child: ListView(
                 padding: const EdgeInsets.only(bottom: 88),
                 children: [
+                  if (c.deleted)
+                    DeletedBanner(
+                      kind: RestoreKind.cls,
+                      id: c.id,
+                      label: c.name,
+                      canRestore: session.canWriteModel,
+                      onRestored: reload,
+                    ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                     child: PathLinks(
@@ -167,7 +180,7 @@ class ClassScreen extends StatelessWidget {
                     ),
                   SectionTitle(
                     'Attributes',
-                    trailing: session.canWriteModel
+                    trailing: write
                         ? TextButton.icon(
                             onPressed: assign,
                             icon: const Icon(Icons.add),
@@ -194,10 +207,8 @@ class ClassScreen extends StatelessWidget {
                             'from ${data.tree.pathOf(a.definedOnClass)}',
                         ].join(' · '),
                       ),
-                      onTap: session.canWriteModel && !a.inherited
-                          ? () => assign(a)
-                          : null,
-                      trailing: session.canWriteModel && !a.inherited
+                      onTap: write && !a.inherited ? () => assign(a) : null,
+                      trailing: write && !a.inherited
                           ? IconButton(
                               icon: const Icon(Icons.remove_circle_outline),
                               tooltip: 'Remove from this class',
@@ -207,7 +218,7 @@ class ClassScreen extends StatelessWidget {
                     ),
                   SectionTitle(
                     'Classes below',
-                    trailing: session.canWriteModel
+                    trailing: write
                         ? TextButton.icon(
                             onPressed: () =>
                                 open('/classes/new?parent=${c.id}'),
@@ -252,7 +263,7 @@ class ClassScreen extends StatelessWidget {
                     ),
                   AttachmentList(
                     c.attachments,
-                    onChanged: session.canWriteModel ? reload : null,
+                    onChanged: write ? reload : null,
                   ),
                 ],
               ),

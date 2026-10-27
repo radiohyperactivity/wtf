@@ -6,6 +6,7 @@ import '../api/models.dart';
 import '../session.dart';
 import '../widgets/common.dart';
 import '../widgets/pickers.dart';
+import '../widgets/restore.dart';
 
 String _describe(Attribute a) => [a.datatype, ?a.unitGroup?.name].join(' · ');
 
@@ -112,7 +113,8 @@ class AttributeScreen extends StatelessWidget {
       title: 'Attribute',
       load: () => client.attribute(id),
       builder: (context, a, reload) {
-        final write = session.canWriteModel;
+        // A deleted attribute can only be looked at, and restored.
+        final write = session.canWriteModel && !a.deleted;
 
         Future<void> run(Future<void> Function() change) async {
           try {
@@ -171,6 +173,14 @@ class AttributeScreen extends StatelessWidget {
           body: Readable(
             child: ListView(
               children: [
+                if (a.deleted)
+                  DeletedBanner(
+                    kind: RestoreKind.attribute,
+                    id: a.id,
+                    label: a.name,
+                    canRestore: session.canWriteModel,
+                    onRestored: reload,
+                  ),
                 const SizedBox(height: 8),
                 Field('Type', a.datatype),
                 if (a.unitGroup != null)

@@ -216,6 +216,7 @@ class Attribute {
     required this.datatype,
     this.unitGroup,
     this.options = const [],
+    this.deleted = false,
   });
 
   factory Attribute.fromJson(Json json) => Attribute(
@@ -226,6 +227,7 @@ class Attribute {
         ? null
         : UnitGroup.fromJson(json['unit_group'] as Json),
     options: _list(json['options']).map(NamedRef.fromJson).toList(),
+    deleted: json['deleted'] as bool? ?? false,
   );
 
   final String id;
@@ -235,6 +237,7 @@ class Attribute {
 
   /// Only for choice attributes, in GET /attributes/{id}.
   final List<NamedRef> options;
+  final bool deleted;
 
   bool get isNumber => datatype == 'integer' || datatype == 'float';
 }
@@ -288,6 +291,7 @@ class Attachment {
     required this.size,
     this.caption,
     this.primaryPhoto = false,
+    this.deleted = false,
   });
 
   factory Attachment.fromJson(Json json) => Attachment(
@@ -297,6 +301,7 @@ class Attachment {
     size: json['size'] as int? ?? 0,
     caption: json['caption'] as String?,
     primaryPhoto: json['primary_photo'] as bool? ?? false,
+    deleted: json['deleted'] as bool? ?? false,
   );
 
   static Attachment? maybe(Object? json) =>
@@ -308,6 +313,7 @@ class Attachment {
   final int size;
   final String? caption;
   final bool primaryPhoto;
+  final bool deleted;
 
   /// Images the app can show itself (SVG is sent as a download).
   bool get isImage =>
@@ -464,6 +470,7 @@ class ClassDetail {
     this.path = const [],
     this.attributes = const [],
     this.attachments = const [],
+    this.deleted = false,
   });
 
   factory ClassDetail.fromJson(Json json) => ClassDetail(
@@ -474,6 +481,7 @@ class ClassDetail {
     path: _refs(json['path']),
     attributes: _list(json['attributes']).map(ClassAttribute.fromJson).toList(),
     attachments: _attachments(json['attachments']),
+    deleted: json['deleted'] as bool? ?? false,
   );
 
   final String id;
@@ -483,6 +491,7 @@ class ClassDetail {
   final List<NamedRef> path;
   final List<ClassAttribute> attributes;
   final List<Attachment> attachments;
+  final bool deleted;
 
   String get pathText => path.map((p) => p.name).join('/');
 }
@@ -496,6 +505,7 @@ class Location {
     this.container = false,
     this.path = const [],
     this.attachments = const [],
+    this.deleted = false,
   });
 
   factory Location.fromJson(Json json) => Location(
@@ -506,6 +516,7 @@ class Location {
     container: json['container'] as bool? ?? false,
     path: _refs(json['path']),
     attachments: _attachments(json['attachments']),
+    deleted: json['deleted'] as bool? ?? false,
   );
 
   final String id;
@@ -515,6 +526,7 @@ class Location {
   final bool container;
   final List<NamedRef> path;
   final List<Attachment> attachments;
+  final bool deleted;
 
   String get pathText => path.map((p) => p.name).join('/');
 }
@@ -526,6 +538,7 @@ class ItemSummary {
     required this.name,
     required this.classId,
     this.unitGroup,
+    this.deleted = false,
   });
 
   factory ItemSummary.fromJson(Json json) => ItemSummary(
@@ -538,6 +551,7 @@ class ItemSummary {
     unitGroup: json['unit_group'] == null
         ? null
         : UnitGroup.fromJson(json['unit_group'] as Json),
+    deleted: json['deleted'] as bool? ?? false,
   );
 
   final String id;
@@ -547,6 +561,7 @@ class ItemSummary {
 
   /// The unit group stock is measured in; null means pieces.
   final UnitGroup? unitGroup;
+  final bool deleted;
 }
 
 /// An item in a list (GET /items).
@@ -557,6 +572,7 @@ class ItemListed extends ItemSummary {
     required super.name,
     required super.classId,
     super.unitGroup,
+    super.deleted,
     required this.stockText,
     this.incomplete = false,
     this.photo,
@@ -570,6 +586,7 @@ class ItemListed extends ItemSummary {
       name: s.name,
       classId: s.classId,
       unitGroup: s.unitGroup,
+      deleted: s.deleted,
       stockText: _formatTotal(_obj(json['stock'])),
       incomplete: json['incomplete'] as bool? ?? false,
       photo: Attachment.maybe(json['photo']),
@@ -641,12 +658,14 @@ class ItemDetail {
     this.photo,
     this.attachments = const [],
     this.stock = const [],
+    this.deleted = false,
   });
 
   factory ItemDetail.fromJson(Json json) => ItemDetail(
     id: json['id'] as String,
     code: json['code'] as String? ?? '',
     name: json['name'] as String,
+    deleted: json['deleted'] as bool? ?? false,
     cls: ClassDetail.fromJson(json['class'] as Json),
     unitGroup: json['unit_group'] == null
         ? null
@@ -667,7 +686,10 @@ class ItemDetail {
   final List<NamedRef> missing;
   final Attachment? photo;
   final List<Attachment> attachments;
+
+  /// The live stock rows; for a deleted item, those deleted with it.
   final List<ItemStock> stock;
+  final bool deleted;
 
   ItemSummary get summary => ItemSummary(
     id: id,
@@ -675,6 +697,7 @@ class ItemDetail {
     name: name,
     classId: cls.id,
     unitGroup: unitGroup,
+    deleted: deleted,
   );
 }
 
@@ -689,6 +712,8 @@ class Stock {
     this.values = const [],
     this.missing = const [],
     this.attachments = const [],
+    this.deleted = false,
+    this.mergedInto,
   });
 
   factory Stock.fromJson(Json json) => Stock(
@@ -701,7 +726,14 @@ class Stock {
     values: _values(json['values']),
     missing: _refs(json['missing']),
     attachments: _attachments(json['attachments']),
+    deleted: json['deleted'] as bool? ?? false,
+    mergedInto: _obj(json['merged_into'])?['code'] as String?,
   );
+
+  final bool deleted;
+
+  /// For a row a move merged into another: that row's code.
+  final String? mergedInto;
 
   final String id;
   final String code;
@@ -860,64 +892,74 @@ class Account {
   final bool deleted;
 }
 
+/// One history entry: one changed row (see api/history.md), as the server
+/// sends it. The history screen turns entries into sentences
+/// (history_text.dart).
 class HistoryEntry {
   const HistoryEntry({
-    required this.happenedAt,
-    required this.who,
+    required this.id,
+    this.happenedAt,
+    required this.transaction,
+    this.who,
+    this.whoDeleted = false,
     required this.table,
     required this.operation,
-    required this.subject,
-    required this.changes,
+    this.data = const {},
+    this.changes = const {},
   });
 
   factory HistoryEntry.fromJson(Json json) {
     final account = _obj(json['account']);
-    var who = '(system)';
-    if (account != null) {
-      who = account['email'] as String;
-      if (account['deleted'] == true) who += ' (deleted)';
-    }
-    final data = _obj(json['data']) ?? const {};
-    var subject = '';
-    for (final k in ['name', 'email', 'file_name']) {
-      if (data[k] is String && (data[k] as String).isNotEmpty) {
-        subject = '"${data[k]}"';
-        break;
-      }
-    }
-    final changes = <String>[];
-    final c = _obj(json['changes']);
-    if (json['operation'] == 'update' && c != null) {
-      for (final k in c.keys.toList()..sort()) {
-        final v = c[k];
-        if (v is Map && (v.containsKey('old') || v.containsKey('new'))) {
-          changes.add('$k: ${_compact(v['old'])} → ${_compact(v['new'])}');
-        } else {
-          changes.add('$k: ${formatJsonValue(v)}');
-        }
-      }
-    }
     return HistoryEntry(
+      id: json['id'] as int? ?? 0,
       happenedAt: DateTime.tryParse(json['happened_at'] as String? ?? '')
           ?.toLocal(),
-      who: who,
+      transaction: json['transaction']?.toString() ?? '',
+      who: account?['email'] as String?,
+      whoDeleted: account?['deleted'] == true,
       table: json['table'] as String? ?? '',
       operation: json['operation'] as String? ?? '',
-      subject: subject,
-      changes: changes,
+      data: _obj(json['data']) ?? const {},
+      changes: _obj(json['changes']) ?? const {},
     );
   }
 
-  final DateTime? happenedAt;
-  final String who;
-  final String table;
-  final String operation;
-  final String subject;
-  final List<String> changes;
-}
+  final int id;
 
-String _compact(Object? v) => switch (v) {
-  null => 'null',
-  String s => '"$s"',
-  _ => formatJsonValue(v),
-};
+  /// The start of the transaction: the same for everything one action did.
+  final DateTime? happenedAt;
+  final String transaction;
+
+  /// The account's email; null for changes outside the API.
+  final String? who;
+  final bool whoDeleted;
+
+  /// item, value, stock, stock_value, location, class, class_attribute,
+  /// attribute, attribute_option, attachment or account.
+  final String table;
+
+  /// insert, update or delete.
+  final String operation;
+
+  /// The row after the change (before it, for a delete).
+  final Json data;
+
+  /// Updates only: {column: {old, new}}.
+  final Json changes;
+
+  /// The row's id.
+  String get rowId => data['id']?.toString() ?? '';
+
+  /// The old and new value of a changed column, or null.
+  ({Object? old, Object? now})? change(String column) {
+    final c = changes[column];
+    if (c is! Map) return null;
+    return (old: c['old'], now: c['new']);
+  }
+
+  /// Marking the row deleted (since migration 0010, a delete is an update).
+  bool get marksDeleted => change('deleted')?.now == true;
+
+  /// Restoring it.
+  bool get marksRestored => change('deleted')?.now == false;
+}

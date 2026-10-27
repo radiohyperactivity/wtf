@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
-import '../api/client.dart';
 import '../api/models.dart';
 import '../api/units.dart';
 import '../session.dart';
 import '../widgets/attachments.dart';
 import '../widgets/common.dart';
+import '../widgets/restore.dart';
 
 /// The values of an item or a stock row; class defaults are marked.
 List<Widget> valueFields(List<Value> values) => [
@@ -27,7 +27,7 @@ class ItemScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final session = context.watch<Session>();
     final client = session.client;
-    return Loader<(ItemDetail, Tree)>(
+    return Loader<(ItemDetail, Map<String, String>)>(
       key: ValueKey(code),
       title: 'Item $code',
       refreshOn: client.treeChanges,
@@ -38,14 +38,20 @@ class ItemScreen extends StatelessWidget {
           CodeStock(:final stock) => await client.item(stock.item.id),
           _ => throw InputError('There is no item with the code $code.'),
         };
-        return (item, await client.tree(TreeKind.locations));
+        return (
+          item,
+          await client.locationPaths(item.stock.map((s) => s.location)),
+        );
       },
       builder: (context, data, reload) {
-        final (item, locations) = data;
+        final (item, paths) = data;
         Future<void> open(String path) async {
           await context.push(path);
           reload();
         }
+
+        // A deleted item can only be looked at, and restored.
+        final write = session.canWriteData && !item.deleted;
 
         Future<void> delete() async {
           final ok = await confirm(
@@ -77,7 +83,7 @@ class ItemScreen extends StatelessWidget {
                     '/history/items/${item.id}?title=${Uri.encodeComponent(item.name)}',
                   ),
                 ),
-              if (session.canWriteData) ...[
+              if (write) ...[
                 IconButton(
                   icon: const Icon(Icons.edit_outlined),
                   tooltip: 'Edit',
@@ -99,7 +105,7 @@ class ItemScreen extends StatelessWidget {
               ],
             ],
           ),
-          floatingActionButton: session.canWriteData
+          floatingActionButton: write
               ? FloatingActionButton.extended(
                   onPressed: () => open('/stock/new?item=${item.id}'),
                   icon: const Icon(Icons.add),
@@ -112,6 +118,14 @@ class ItemScreen extends StatelessWidget {
               child: ListView(
                 padding: const EdgeInsets.only(bottom: 88),
                 children: [
+                  if (item.deleted)
+                    DeletedBanner(
+                      kind: RestoreKind.item,
+                      id: item.id,
+                      label: item.name,
+                      canRestore: session.canWriteData,
+                      onRestored: reload,
+                    ),
                   if (item.photo != null)
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -141,7 +155,7 @@ class ItemScreen extends StatelessWidget {
                   MissingNote(item.missing.map((m) => m.name).toList()),
                   SectionTitle(
                     'Stock',
-                    trailing: session.canWriteData
+                    trailing: write
                         ? TextButton.icon(
                             onPressed: () => open('/stock/new?item=${item.id}'),
                             icon: const Icon(Icons.add),
@@ -153,7 +167,7 @@ class ItemScreen extends StatelessWidget {
                   for (final s in item.stock) ...[
                     ListTile(
                       leading: const Icon(Icons.place_outlined),
-                      title: Text(locations.pathOf(s.location)),
+                      title: Text(paths[s.location] ?? s.location),
                       subtitle: Text(s.code),
                       trailing: Text(
                         s.quantityText,
@@ -175,7 +189,7 @@ class ItemScreen extends StatelessWidget {
                   ],
                   AttachmentList(
                     item.attachments,
-                    onChanged: session.canWriteData ? reload : null,
+                    onChanged: write ? reload : null,
                   ),
                 ],
               ),

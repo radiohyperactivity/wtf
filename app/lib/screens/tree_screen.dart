@@ -91,7 +91,9 @@ class _TreeScreenState extends State<TreeScreen> {
               ),
             ],
           ),
-          floatingActionButton: session.canWriteModel
+          // Locations belong to the data privilege, classes to the model one.
+          floatingActionButton:
+              (_locations ? session.canWriteData : session.canWriteModel)
               ? FloatingActionButton.extended(
                   onPressed: () async {
                     await context.push(

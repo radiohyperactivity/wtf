@@ -8,6 +8,7 @@ import '../api/units.dart';
 import '../session.dart';
 import '../widgets/attachments.dart';
 import '../widgets/common.dart';
+import '../widgets/restore.dart';
 import 'node_delete.dart';
 
 /// Stock rows shown on a location screen at most; more are counted.
@@ -67,6 +68,10 @@ class LocationScreen extends StatelessWidget {
           reload();
         }
 
+        // Locations belong to the data privilege. A deleted one can only be
+        // looked at, and restored.
+        final write = session.canWriteData && !l.deleted;
+
         return Scaffold(
           appBar: AppBar(
             title: Text(l.name),
@@ -79,7 +84,7 @@ class LocationScreen extends StatelessWidget {
                     '/history/locations/${l.id}?title=${Uri.encodeComponent(l.pathText)}',
                   ),
                 ),
-              if (session.canWriteModel)
+              if (write)
                 PopupMenuButton<String>(
                   onSelected: (action) async {
                     switch (action) {
@@ -113,7 +118,8 @@ class LocationScreen extends StatelessWidget {
                 ),
             ],
           ),
-          floatingActionButton: session.canWriteData && !l.container
+          floatingActionButton:
+              session.canWriteData && !l.container && !l.deleted
               ? FloatingActionButton.extended(
                   onPressed: () => open('/stock/new?location=${l.id}'),
                   icon: const Icon(Icons.add),
@@ -126,6 +132,14 @@ class LocationScreen extends StatelessWidget {
               child: ListView(
                 padding: const EdgeInsets.only(bottom: 88),
                 children: [
+                  if (l.deleted)
+                    DeletedBanner(
+                      kind: RestoreKind.location,
+                      id: l.id,
+                      label: l.name,
+                      canRestore: session.canWriteData,
+                      onRestored: reload,
+                    ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                     child: PathLinks(
@@ -133,9 +147,10 @@ class LocationScreen extends StatelessWidget {
                         for (final p in l.path)
                           (
                             p.name,
-                            p.id == l.id
+                            // Deleted ones above it aren't in the tree.
+                            p.id == l.id || tree[p.id]?.code == null
                                 ? null
-                                : '/locations/${tree[p.id]?.code ?? ''}',
+                                : '/locations/${tree[p.id]!.code}',
                           ),
                       ],
                     ),
@@ -149,7 +164,7 @@ class LocationScreen extends StatelessWidget {
                     ),
                   SectionTitle(
                     'Inside',
-                    trailing: session.canWriteModel
+                    trailing: write
                         ? TextButton.icon(
                             onPressed: () =>
                                 open('/locations/new?parent=${l.id}'),
@@ -197,7 +212,7 @@ class LocationScreen extends StatelessWidget {
                     ),
                   AttachmentList(
                     l.attachments,
-                    onChanged: session.canWriteModel ? reload : null,
+                    onChanged: write ? reload : null,
                   ),
                 ],
               ),

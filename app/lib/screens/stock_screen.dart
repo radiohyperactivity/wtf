@@ -9,6 +9,7 @@ import '../session.dart';
 import '../widgets/attachments.dart';
 import '../widgets/common.dart';
 import '../widgets/pickers.dart';
+import '../widgets/restore.dart';
 import '../widgets/value_fields.dart';
 import 'item_screen.dart';
 
@@ -23,7 +24,7 @@ class StockScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final session = context.watch<Session>();
     final client = session.client;
-    return Loader<(Stock, Tree)>(
+    return Loader<(Stock, Tree, String)>(
       key: ValueKey(code),
       title: 'Stock $code',
       refreshOn: client.treeChanges,
@@ -32,14 +33,18 @@ class StockScreen extends StatelessWidget {
         if (target is! CodeStock) {
           throw InputError('There is no stock row with the code $code.');
         }
+        final stock = await client.stock(target.stock.id);
         return (
-          await client.stock(target.stock.id),
+          stock,
           await client.tree(TreeKind.locations),
+          (await client.locationPaths([stock.location]))[stock.location]!,
         );
       },
       builder: (context, data, reload) {
-        final (stock, locations) = data;
+        final (stock, locations, path) = data;
         final place = locations[stock.location];
+        // A deleted row can only be looked at, and restored.
+        final write = session.canWriteData && !stock.deleted;
 
         Future<void> delete() async {
           final ok = await confirm(
@@ -72,7 +77,7 @@ class StockScreen extends StatelessWidget {
                     '/history/stock/${stock.id}?title=${Uri.encodeComponent('${stock.item.name} ${stock.code}')}',
                   ),
                 ),
-              if (session.canWriteData) ...[
+              if (write) ...[
                 IconButton(
                   icon: const Icon(Icons.edit_outlined),
                   tooltip: 'Edit',
@@ -94,7 +99,7 @@ class StockScreen extends StatelessWidget {
               ],
             ],
           ),
-          floatingActionButton: session.canWriteData
+          floatingActionButton: write
               ? FloatingActionButton.extended(
                   onPressed: () async {
                     final moved = await showMoveDialog(
@@ -125,6 +130,17 @@ class StockScreen extends StatelessWidget {
               child: ListView(
                 padding: const EdgeInsets.only(bottom: 88),
                 children: [
+                  if (stock.deleted)
+                    DeletedBanner(
+                      kind: RestoreKind.stock,
+                      id: stock.id,
+                      label: 'stock row ${stock.code}',
+                      canRestore: session.canWriteData,
+                      onRestored: reload,
+                      mergedInto: stock.mergedInto,
+                      onOpenMerged: () =>
+                          context.pushReplacement('/stock/${stock.mergedInto}'),
+                    ),
                   const SizedBox(height: 8),
                   Field(
                     'Item',
@@ -133,7 +149,7 @@ class StockScreen extends StatelessWidget {
                   ),
                   Field(
                     'Location',
-                    locations.pathOf(stock.location),
+                    path,
                     onTap: place?.code == null
                         ? null
                         : () => context.push('/locations/${place!.code}'),
@@ -147,7 +163,7 @@ class StockScreen extends StatelessWidget {
                   MissingNote(stock.missing.map((m) => m.name).toList()),
                   AttachmentList(
                     stock.attachments,
-                    onChanged: session.canWriteData ? reload : null,
+                    onChanged: write ? reload : null,
                   ),
                 ],
               ),

@@ -289,23 +289,31 @@ class _CodeTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Deleted things are shown as such; a stock row a move merged into
+    // another leads to that row.
     final (icon, title, subtitle, path) = switch (target) {
       CodeLocation(:final location) => (
         Icons.place_outlined,
         location.pathText,
-        'Location ${location.code}',
+        'Location ${location.code}${location.deleted ? ', deleted' : ''}',
         '/locations/${location.code}',
       ),
       CodeItem(:final item) => (
         Icons.inventory_2_outlined,
         item.name,
-        'Item ${item.code}',
+        'Item ${item.code}${item.deleted ? ', deleted' : ''}',
         '/items/${item.code}',
+      ),
+      CodeStock(:final stock) when stock.mergedInto != null => (
+        Icons.layers_outlined,
+        stock.item.name,
+        'Stock row ${stock.code}, merged into ${stock.mergedInto}',
+        '/stock/${stock.mergedInto}',
       ),
       CodeStock(:final stock) => (
         Icons.layers_outlined,
         '${stock.item.name}, ${stock.quantityText}',
-        'Stock row ${stock.code}',
+        'Stock row ${stock.code}${stock.deleted ? ', deleted' : ''}',
         '/stock/${stock.code}',
       ),
     };

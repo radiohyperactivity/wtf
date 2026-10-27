@@ -7,7 +7,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-const _headers = {'content-type': 'application/json', 'api-revision': '1'};
+const _headers = {'content-type': 'application/json', 'api-revision': '2'};
 
 class FakeServer {
   FakeServer({this.privilege = 'read_write'});
@@ -17,6 +17,9 @@ class FakeServer {
 
   /// Requests that changed something: "POST /api/v1/stock {…}".
   final List<String> changes = [];
+
+  /// History pages by route, e.g. "items/i-drill": the entries, newest first.
+  final Map<String, List<Map<String, dynamic>>> history = {};
 
   // --- The data ---
 
@@ -115,7 +118,9 @@ class FakeServer {
     List<Map<String, dynamic>> nodes,
     String? parent,
   ) => [
-    for (final n in nodes.where((n) => n['parent'] == parent))
+    for (final n in nodes.where(
+      (n) => n['parent'] == parent && n['deleted'] != true,
+    ))
       {...n, 'children': _tree(nodes, n['id'] as String)},
   ];
 
@@ -153,6 +158,7 @@ class FakeServer {
   }
 
   Map<String, dynamic> locationJson(String id) => {
+    'deleted': false,
     ...locations.firstWhere((l) => l['id'] == id),
     'path': _path(locations, id),
     'attachments': [],
@@ -320,6 +326,7 @@ class FakeServer {
         return _json(itemJson(id));
       case ('GET', ['stock']):
         final rows = stock.where((s) {
+          if (s['deleted'] == true) return false;
           if (q['item'] != null && s['item'] != q['item']) return false;
           if (q['location'] != null) {
             final under = _path(
@@ -471,9 +478,44 @@ class FakeServer {
             .toSet();
         final used = stock.any((s) => ids.contains(s['location']));
         if (used && q['force'] != 'true') return _problem(409, 'In use');
-        locations.removeWhere((l) => ids.contains(l['id']));
-        stock.removeWhere((s) => ids.contains(s['location']));
+        for (final l in locations.where((l) => ids.contains(l['id']))) {
+          l['deleted'] = true;
+        }
+        for (final s in stock.where((s) => ids.contains(s['location']))) {
+          s['deleted'] = true;
+        }
         return http.Response('', 204, headers: _headers);
+      case ('POST', ['locations', final id, 'restore']):
+        final l = locations.firstWhere((l) => l['id'] == id);
+        final parent = locations
+            .where((p) => p['id'] == l['parent'])
+            .firstOrNull;
+        if (parent?['deleted'] == true) {
+          if (body?['with_parents'] == true) {
+            parent!['deleted'] = false;
+          } else if (body?.containsKey('parent') == true) {
+            l['parent'] = body!['parent'];
+          } else {
+            return _json({
+              'type': '/problems/deleted',
+              'title': 'Deleted',
+              'status': 409,
+              'detail':
+                  'Location "${l['name']}" is in "${parent!['name']}", which is deleted',
+              'hint': 'Restore it together with what it is in ("with_parents": true), or somewhere else ("parent": …).',
+            }, 409);
+          }
+        }
+        l['deleted'] = false;
+        return _json(locationJson(id));
+      case ('GET', [final kind, final id, 'history']):
+        final rows = history['$kind/$id'] ?? const [];
+        return _json({
+          'total': rows.length,
+          'limit': 100,
+          'offset': 0,
+          'rows': rows,
+        });
       case ('POST', ['locations']):
         final l = {
           'id': _id('l'),

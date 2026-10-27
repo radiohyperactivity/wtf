@@ -85,7 +85,7 @@ Every screen has a URL. In the web app it shows in the address bar, and it works
 | `/stock/1C3D` | A stock row: quantity, location, per-unit values; move it (all or part), edit or delete it. |
 | `/stock/new?item=…&location=…` | Add stock: item, location, quantity, per-unit values. |
 | `/stock/1C3D/edit` | Edit a stock row: location, quantity, per-unit values. |
-| `/history/<kind>/<id>` | The history of an item, stock row, location, class, attribute or account, as raw as in the CLI. |
+| `/history/<kind>/<id>` | The history of an item, stock row, location, class, attribute or account, in words, by day (decision 23). |
 | `/me` | Your account: email, privileges, appearance (light, dark or as the system), change password, log out. |
 | `/manage` | Links to attributes, units and accounts. |
 | `/attributes`, `/attributes/<id>` | The attributes; one attribute with its options (add, rename, delete). |
@@ -183,7 +183,7 @@ These are decisions I made without you, recorded for review. You asked me to cop
     - **The form:** two fields, columns and rows, with a preview ("40 compartments, A1 … H5").
     - **Big grids:** over 1000 locations, the app asks first and then sends `confirm`, as the server requires.
     - **Parents:** missing parents aren't created (decision 5).
-15. **Privileges.** Buttons for changes the account may not make are hidden: data write for items and stock, model write for classes, locations and attributes, account write for accounts. The server checks anyway.
+15. **Privileges.** Buttons for changes the account may not make are hidden: data write for items, stock and locations, model write for classes and attributes, account write for accounts. The server checks anyway. (Locations were first wrongly tied to model write; fixed with decision 24.)
 16. **An ended session sends you to the login.** A 401 means the session has ended. The native apps also notice the deleted cookie, while the web app notices the 401.
 
 17. **What this app adds or changes shows at once** (your rule, not a decision of mine). The client keeps the class and location trees for the session, and revalidates them on every use. After a change to a tree (adding, renaming, moving or deleting a class or location, grids included), it fetches that tree again before the change counts as done. It then tells every screen still showing that tree, including the screens underneath, which load again. Unit groups and units are kept for the session as well, but they can't be changed through the API.
@@ -204,10 +204,29 @@ These are decisions I made without you, recorded for review. You asked me to cop
 
 ### Tests
 
-20. **Automated:** 32 tests in total.
+20. **Automated:** 38 tests in total.
     - **Unit tests:** units, dates, codes and grids, with the CLI's cases.
     - **The API client:** cookies, error messages, version checks, exact numbers in request bodies, and a changed tree being fetched again at once.
     - **Against `openapi.yaml`:** every method and path the client uses must be in the spec.
-    - **Widget tests:** they run the whole app against a pretend `wtfd` (`test/fake_server.dart`). They cover logging in and out, search, label codes, moving part of a stock row, adding an item with a value in other units (`18000mV` is sent as `18`), adding its stock, editing and clearing values, the location tree, a compartment grid (and the tree underneath showing it at once), deleting a location with stock, a read-only account, the Manage destination, and the appearance being kept.
+    - **Widget tests:** they run the whole app against a pretend `wtfd` (`test/fake_server.dart`). They cover logging in and out, search, label codes, moving part of a stock row, adding an item with a value in other units (`18000mV` is sent as `18`), adding its stock, editing and clearing values, the location tree, a compartment grid (and the tree underneath showing it at once), deleting a location with stock, a read-only account, the Manage destination, the appearance being kept, a deleted location restored with what it is in, and the history screen. Unit tests turn history entries into sentences against the pretend server.
 21. **Against the dev server:** every reading call of the client ran against `wtf` (as Development Tenant, reads only). The test that did this isn't kept, because it depends on your data. Nothing was changed in the database.
 22. **Not tested by hand:** I can't click through the app myself. The Windows and web builds succeed, but nobody has looked at the screens yet.
+
+### History and deleted things
+
+Added after review, with the deletion design ([api/deleting.md](api/deleting.md)).
+
+23. **History in words** (agreed with you before building).
+    - **One card per action:** the entries of one transaction, with the time and who did it, under a heading per day ("Today", "Yesterday", "Mon 26 Oct 2026").
+    - **Sentences with names, not ids:** "Added 2 at Garage/Shelf 1 (1C00)", "Voltage: 12 V → 18 V", "Renamed from “Drill” to “Cordless drill”". Classes and locations come from the trees, deleted ones are fetched by id, and the rest from the entries themselves, the attributes and their units. Numbers are shown in the group's best unit, as the server's `display` does.
+    - **Whose history it is** decides the wording: in a location's history a stock row is named by its item ("Cordless drill (1C00) moved here from Garage"), in an item's history by its location.
+    - **Actions that change several rows are one line:** a split or merge is "Moved 1 from A to B, into a new row 1C05", a grid is "Added Box with 40 compartments (A1 … H5)", and a box deleted with what was in it is "Deleted Box, with 40 locations inside and 2 stock rows". More than 8 lines per action are cut off with "… and N more changes".
+    - **Lines lead to what they name,** deleted things included. That is how deleted things are found again (deletion decision 1).
+    - **The raw entries stay available:** tapping a card shows them as the server sent them.
+24. **Deleted things.**
+    - **Their screens** show a red "deleted" banner, with when and by whom (from history, with the history privilege) and **Restore**. Editing, adding and deleting are hidden, since the server refuses them.
+    - **Restoring into something deleted** asks: "Restore the location too", or "Somewhere else…", which opens the picker. The CLI asks the same.
+    - **A stock row a move merged into another** says so and leads to that row; a label code of one goes there straight from search.
+    - **Label codes** of deleted things are shown as "…, deleted" in search.
+    - **Privileges:** while building this I noticed that the app tied locations to model write, but the server ties them to data write (TENANTS.md). The location buttons now follow data write.
+    - **Not built:** restoring attachments and options in the app. The CLI can (`wtf attachment restore`, `wtf option restore`); deleted attachments and options have no screen of their own in the app yet.

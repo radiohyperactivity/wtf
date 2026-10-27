@@ -385,8 +385,9 @@ void main() {
       fake.changes.single,
       'DELETE /api/v1/locations/l-garage?recursive=true&force=true',
     );
-    expect(fake.locations, isEmpty);
-    expect(fake.stock, isEmpty);
+    // Marked deleted, not removed (api/deleting.md).
+    expect(fake.locations.every((l) => l['deleted'] == true), isTrue);
+    expect(fake.stock.every((s) => s['deleted'] == true), isTrue);
   });
 
   testWidgets('read-only accounts get no buttons that would be refused', (
