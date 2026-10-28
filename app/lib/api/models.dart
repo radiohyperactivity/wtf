@@ -70,23 +70,43 @@ class NamedRef {
   final String name;
 }
 
-class Quantity {
+/// Whether a quantity or unit family can be chosen, and why: global ones
+/// (every inventory has them) follow their default unless the inventory
+/// chose; its own are available unless it chose not (API revision 11).
+mixin Availability {
+  bool get global;
+  bool get available;
+  bool get defaultAvailable;
+
+  /// The inventory's own choice; null follows the default.
+  bool? get choice;
+}
+
+class Quantity with Availability {
   const Quantity({
     required this.id,
     required this.name,
     required this.datatype,
     this.baseSymbol = '',
+    this.global = true,
+    this.available = true,
+    this.defaultAvailable = true,
+    this.choice,
   });
 
   factory Quantity.fromJson(Json json) => Quantity(
-    id: json['id'] as int,
+    id: json['id'] as String,
     name: json['name'] as String,
     datatype: json['datatype'] as String,
     baseSymbol:
         (_obj(json['base_unit']) ?? const {})['symbol'] as String? ?? '',
+    global: json['global'] as bool? ?? true,
+    available: json['available'] as bool? ?? true,
+    defaultAvailable: json['default_available'] as bool? ?? true,
+    choice: json['choice'] as bool?,
   );
 
-  final int id;
+  final String id;
   final String name;
 
   /// integer or float.
@@ -94,6 +114,17 @@ class Quantity {
 
   /// The symbol of the unit numbers are stored in (API revision 5).
   final String baseSymbol;
+
+  @override
+  final bool global;
+
+  /// Only from GET /quantities and /quantities/{id}; elsewhere true.
+  @override
+  final bool available;
+  @override
+  final bool defaultAvailable;
+  @override
+  final bool? choice;
 }
 
 /// The answer of POST /units/import: what was (or would be) added, how much
@@ -166,10 +197,10 @@ class Unit {
   });
 
   factory Unit.fromJson(Json json) => Unit(
-    id: json['id'] as int,
+    id: json['id'] as String,
     name: json['name'] as String,
     symbol: json['symbol'] as String,
-    familyId: (json['family'] as Json)['id'] as int,
+    familyId: (json['family'] as Json)['id'] as String,
     familyName: (json['family'] as Json)['name'] as String,
     quantity: Quantity.fromJson(json['quantity'] as Json),
     baseFactor: _exact(json['base_factor'], 1),
@@ -185,10 +216,10 @@ class Unit {
     _ => Rational(BigInt.from(fallback)),
   };
 
-  final int id;
+  final String id;
   final String name;
   final String symbol;
-  final int familyId;
+  final String familyId;
   final String familyName;
   final Quantity quantity;
   final Rational baseFactor;
@@ -197,27 +228,49 @@ class Unit {
 
 /// Units of one quantity that are used together, and that numbers are
 /// scaled between on output: Metric length is nm … km.
-class UnitFamily {
+class UnitFamily with Availability {
   const UnitFamily({
     required this.id,
     required this.name,
     required this.quantity,
     this.units = const [],
+    this.global = true,
+    this.available = true,
+    this.defaultAvailable = true,
+    this.choice,
   });
 
-  factory UnitFamily.fromJson(Json json) => UnitFamily(
-    id: json['id'] as int,
+  /// [quantity] when the JSON leaves it out (inside GET /quantities/{id}).
+  factory UnitFamily.fromJson(Json json, {Quantity? quantity}) => UnitFamily(
+    id: json['id'] as String,
     name: json['name'] as String,
-    quantity: Quantity.fromJson(json['quantity'] as Json),
+    quantity: json['quantity'] == null
+        ? quantity!
+        : Quantity.fromJson(json['quantity'] as Json),
     units: _list(json['units']).map(Unit.fromJson).toList(),
+    global: json['global'] as bool? ?? true,
+    available: json['available'] as bool? ?? true,
+    defaultAvailable: json['default_available'] as bool? ?? true,
+    choice: json['choice'] as bool?,
   );
 
-  final int id;
+  final String id;
   final String name;
   final Quantity quantity;
 
   /// Smallest first.
   final List<Unit> units;
+
+  @override
+  final bool global;
+
+  /// Whether its units can be chosen: never while its quantity is off.
+  @override
+  final bool available;
+  @override
+  final bool defaultAvailable;
+  @override
+  final bool? choice;
 }
 
 /// A unit as shown next to a thing that has it: "mm (Metric length)", with

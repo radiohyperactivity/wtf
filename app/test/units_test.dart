@@ -5,7 +5,7 @@ import 'package:wtf/api/client.dart';
 import 'package:wtf/api/models.dart';
 import 'package:wtf/api/units.dart';
 
-const length = Quantity(id: 1000, name: 'Length', datatype: 'float');
+const length = Quantity(id: 'q-length', name: 'Length', datatype: 'float');
 
 var _ids = 2000;
 
@@ -15,10 +15,10 @@ Unit unit(
   String factor = '1',
   String offset = '0',
   String family = 'Family',
-  int familyId = 1000,
+  String familyId = 'f-1000',
   Quantity quantity = length,
 }) => Unit(
-  id: _ids++,
+  id: 'u${_ids++}',
   name: name,
   symbol: symbol,
   familyId: familyId,
@@ -116,8 +116,8 @@ void main() {
   test('parseMeasure', () {
     final m = unit('m'),
         mm = unit('mm', factor: '0.001'),
-        mil = unit('mil', factor: '0.0000254', familyId: 1001),
-        inch = unit('in', factor: '0.0254', familyId: 1001);
+        mil = unit('mil', factor: '0.0000254', familyId: 'f-1001'),
+        inch = unit('in', factor: '0.0254', familyId: 'f-1001');
     final metric = UnitChoice(
       unit: mm,
       familyUnits: [mm, m],
@@ -132,7 +132,7 @@ void main() {
     expect(() => parseMeasure('3kg', metric), throwsA(isA<InputError>()));
 
     const temperature = Quantity(
-      id: 1001,
+      id: 'q-temperature',
       name: 'Temperature',
       datatype: 'float',
     );
@@ -142,7 +142,7 @@ void main() {
       familyUnits: [degC],
       quantityUnits: [
         degC,
-        unit('K', quantity: temperature, familyId: 1002),
+        unit('K', quantity: temperature, familyId: 'f-1002'),
       ],
     );
     expect(parseMeasure('20', celsius), const Decimal('293.15'));
@@ -162,9 +162,9 @@ void main() {
     // °F as the dev database has it.
     final f = Unit.fromJson(
       decodeBody(
-        '{"id": 1077, "name": "degree Fahrenheit", "symbol": "°F", '
-        '"family": {"id": 1019, "name": "Fahrenheit"}, '
-        '"quantity": {"id": 1012, "name": "Temperature", "datatype": "float"}, '
+        '{"id": "u-1077", "name": "degree Fahrenheit", "symbol": "°F", '
+        '"family": {"id": "f-1019", "name": "Fahrenheit"}, '
+        '"quantity": {"id": "q-1012", "name": "Temperature", "datatype": "float"}, '
         '"base_factor": 0.55555555555555555556, "base_offset": 255.37222222222222222}',
       ) as Json,
     );

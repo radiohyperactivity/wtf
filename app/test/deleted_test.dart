@@ -13,12 +13,12 @@ import 'fake_server.dart';
 var _ids = 1000;
 
 Unit unit(String symbol, String factor) => Unit(
-  id: _ids++,
+  id: 'u${_ids++}',
   name: symbol,
   symbol: symbol,
-  familyId: 1000,
+  familyId: 'f-metric',
   familyName: 'Metric length',
-  quantity: const Quantity(id: 1000, name: 'Length', datatype: 'float'),
+  quantity: const Quantity(id: 'q-length', name: 'Length', datatype: 'float'),
   baseFactor: Rational.tryParse(factor)!,
   baseOffset: Rational(BigInt.zero),
 );

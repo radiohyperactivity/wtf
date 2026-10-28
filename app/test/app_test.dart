@@ -15,6 +15,7 @@ import 'package:wtf/session.dart';
 import 'package:wtf/theme.dart';
 import 'package:wtf/widgets/attachments.dart';
 import 'package:wtf/widgets/link.dart';
+import 'package:wtf/widgets/pickers.dart';
 
 import 'fake_server.dart';
 
@@ -132,9 +133,9 @@ void main() {
   testWidgets('units by quantity, then by family', (tester) async {
     setSize(tester, 400, 800);
     final fake = FakeServer();
-    const length = {'id': 1000, 'name': 'Length', 'datatype': 'float'};
+    const length = {'id': 'q-length', 'name': 'Length', 'datatype': 'float'};
     Map<String, dynamic> family(
-      int id,
+      String id,
       String name,
       List<List<Object>> units,
     ) => {
@@ -155,12 +156,12 @@ void main() {
       ],
     };
     fake.families.insertAll(0, [
-      family(1000, 'Metric length', [
-        [1002, 'millimetre', 'mm', 0.001],
-        [1004, 'metre', 'm', 1],
+      family('f-metric', 'Metric length', [
+        ['u-mm', 'millimetre', 'mm', 0.001],
+        ['u-m', 'metre', 'm', 1],
       ]),
-      family(1001, 'Imperial length', [
-        [1007, 'inch', 'in', 0.0254],
+      family('f-imperial', 'Imperial length', [
+        ['u-in', 'inch', 'in', 0.0254],
       ]),
     ]);
     await startApp(tester, fake);
@@ -191,6 +192,40 @@ void main() {
     expect(find.text('Imperial length'), findsNWidgets(2));
     expect(find.text('Metric length'), findsNothing);
     expect(find.text('Voltage'), findsNothing);
+
+    // A family turned off: its switch, then a way back to the default.
+    Finder switchOf(String name) => find.descendant(
+      of: find.ancestor(
+        of: find.text(name).last,
+        matching: find.byType(ListTile),
+      ),
+      matching: find.byType(Switch),
+    );
+    expect(tester.widget<Switch>(switchOf('Imperial length')).value, isTrue);
+    await tester.tap(switchOf('Imperial length'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      'PATCH /api/v1/unit-families/f-imperial {"available":false}',
+    );
+    expect(tester.widget<Switch>(switchOf('Imperial length')).value, isFalse);
+    await tester.tap(find.byTooltip('Back to the default (on)'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      'PATCH /api/v1/unit-families/f-imperial {"available":null}',
+    );
+    expect(tester.widget<Switch>(switchOf('Imperial length')).value, isTrue);
+
+    // A unit of a family that is off can't be chosen.
+    await tester.tap(switchOf('Imperial length'));
+    await tester.pumpAndSettle();
+    final inches = find.text('in').evaluate().length; // on the screen behind
+    pickUnit(tester.element(find.byType(UnitsScreen)));
+    await tester.pumpAndSettle();
+    expect(find.text('Choose a unit'), findsOneWidget);
+    expect(find.text('mm'), findsOneWidget);
+    expect(find.text('in'), findsNWidgets(inches));
   });
 
   testWidgets('import a unit file: a preview first, then the units', (

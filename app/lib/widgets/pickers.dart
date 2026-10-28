@@ -275,12 +275,13 @@ class PickedUnit {
   final Unit? unit;
 }
 
-/// Chooses a unit, or "none" when [noneLabel] is given. [quantityId] limits
-/// it to the units of one quantity, in all of its families.
+/// Chooses a unit of the available families, or "none" when [noneLabel] is
+/// given. [quantityId] limits it to the units of one quantity, in all of
+/// its families.
 Future<PickedUnit?> pickUnit(
   BuildContext context, {
   String? noneLabel,
-  int? quantityId,
+  String? quantityId,
 }) {
   final client = context.read<Session>().client;
   return pickFromList<PickedUnit>(
@@ -288,13 +289,15 @@ Future<PickedUnit?> pickUnit(
     title: 'Choose a unit',
     load: () async => [
       if (noneLabel != null) Choice(const PickedUnit(null), noneLabel),
-      for (final u in await client.units())
-        if (quantityId == null || u.quantity.id == quantityId)
-          Choice(
-            PickedUnit(u),
-            u.symbol,
-            subtitle: '${u.name} · ${u.familyName} · ${u.quantity.name}',
-          ),
+      for (final f in await client.unitFamilies())
+        if (f.available)
+          for (final u in f.units)
+            if (quantityId == null || u.quantity.id == quantityId)
+              Choice(
+                PickedUnit(u),
+                u.symbol,
+                subtitle: '${u.name} · ${u.familyName} · ${u.quantity.name}',
+              ),
     ],
   );
 }

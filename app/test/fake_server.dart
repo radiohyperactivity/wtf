@@ -23,31 +23,36 @@ class FakeServer {
 
   // --- The data ---
 
-  final quantity = {'id': 1003, 'name': 'Voltage', 'datatype': 'float'};
+  final quantity = {'id': 'q-voltage', 'name': 'Voltage', 'datatype': 'float'};
   late final volt = {
-    'id': 1032,
+    'id': 'u-volt',
     'name': 'volt',
     'symbol': 'V',
-    'family': {'id': 1007, 'name': 'Voltage'},
+    'family': {'id': 'f-voltage', 'name': 'Voltage'},
     'quantity': quantity,
     'base_factor': 1,
     'base_offset': 0,
   };
   late final millivolt = {
-    'id': 1031,
+    'id': 'u-millivolt',
     'name': 'millivolt',
     'symbol': 'mV',
-    'family': {'id': 1007, 'name': 'Voltage'},
+    'family': {'id': 'f-voltage', 'name': 'Voltage'},
     'quantity': quantity,
     'base_factor': 0.001,
     'base_offset': 0,
   };
   late final family = {
-    'id': 1007,
+    'id': 'f-voltage',
     'name': 'Voltage',
     'quantity': quantity,
     'units': [millivolt, volt],
   };
+
+  /// Quantities and families (by id) the inventory turned off, and its
+  /// choices (null: the default).
+  final off = <String>{};
+  final choice = <String, bool?>{};
 
   /// GET /unit-families, by quantity as the server lists them.
   late final families = <Map<String, dynamic>>[family];
@@ -296,7 +301,7 @@ class FakeServer {
         added['quantities']!.add({'name': name});
       }
       final quantity = {
-        'id': 2000 + newFamilies.length,
+        'id': 'f-new${newFamilies.length}',
         'name': name,
         'datatype': 'float',
       };
@@ -316,10 +321,10 @@ class FakeServer {
             'name': u['name'],
           });
           units.add({
-            'id': 3000 + units.length,
+            'id': 'u-new${units.length}',
             'name': u['name'],
             'symbol': u['symbol'],
-            'family': {'id': 2000 + newFamilies.length, 'name': family},
+            'family': {'id': 'f-new${newFamilies.length}', 'name': family},
             'quantity': quantity,
             'base_factor': u['factor'],
             'base_offset': 0,
@@ -330,7 +335,7 @@ class FakeServer {
         } else {
           added['families']!.add({'quantity': name, 'name': family});
           newFamilies.add({
-            'id': 2000 + newFamilies.length,
+            'id': 'f-new${newFamilies.length}',
             'name': family,
             'quantity': quantity,
             'units': units,
@@ -521,7 +526,36 @@ class FakeServer {
           _importUnits(body!, req.body, dryRun: q['dry_run'] == 'true'),
         );
       case ('GET', ['unit-families']):
-        return _json(families);
+        return _json([
+          for (final f in families)
+            {
+              ...f,
+              'available':
+                  !off.contains(f['id']) &&
+                  !off.contains((f['quantity'] as Map)['id']),
+              'choice': choice[f['id']],
+            },
+        ]);
+      case ('GET', ['quantities']):
+        return _json(
+          {
+            for (final f in families)
+              (f['quantity'] as Map)['id']: {
+                ...(f['quantity'] as Map<String, dynamic>),
+                'available': !off.contains((f['quantity'] as Map)['id']),
+                'choice': choice[(f['quantity'] as Map)['id']],
+              },
+          }.values.toList(),
+        );
+      case ('PATCH', ['quantities' || 'unit-families', final id]):
+        final available = body!['available'] as bool?;
+        choice[id] = available;
+        if (available == false) {
+          off.add(id);
+        } else {
+          off.remove(id);
+        }
+        return _json({'id': id});
       case ('GET', ['units']):
         return _json([millivolt, volt]);
       case ('GET', ['attributes']):

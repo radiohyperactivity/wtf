@@ -71,7 +71,7 @@ class _ItemInfo {
 
   final String name;
   final String code;
-  final int? unit;
+  final String? unit;
   final bool unitLock;
 }
 
@@ -91,9 +91,9 @@ class HistoryNames {
   final _stock = <String, (String code, String item, String location)>{};
   final _attribute = <String, Attribute>{};
   final _option = <String, String>{};
-  final _unit = <int, Unit>{};
+  final _unit = <String, Unit>{};
   final _attachmentTitle = <String, String>{};
-  final _familyUnits = <int, List<Unit>>{};
+  final _familyUnits = <String, List<Unit>>{};
   final _tried = <String>{};
 
   /// Looks up what [entries] refer to and isn't known yet.
@@ -139,7 +139,7 @@ class HistoryNames {
           _item[e.rowId] = _ItemInfo(
             '${d['name']}',
             codeText(d['code']),
-            d['unit'] as int?,
+            d['unit'] as String?,
             d['unit_lock'] == true,
           );
           both(e, 'class', classes);
@@ -298,7 +298,7 @@ class HistoryNames {
       : unitLabel(_unit[id]!);
 
   /// A base-unit number as shown in [unitId] ([lock]: Unit lock).
-  String _number(num n, int? unitId, bool lock) {
+  String _number(num n, String? unitId, bool lock) {
     final unit = _unit[unitId];
     if (unit == null) return formatNumber(n);
     return displayIn(

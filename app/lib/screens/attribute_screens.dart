@@ -467,7 +467,9 @@ Future<Attribute?> showAttributeDialog(
 }
 
 /// The units by quantity, then by family, like `wtf unit-family list`:
-/// Length, with Metric length and Imperial length under it.
+/// Length, with Metric length and Imperial length under it. Accounts that
+/// may change the model turn quantities and families on and off here; what
+/// is off can't be chosen as a unit (TENANTS.md, decision 16).
 class UnitsScreen extends StatefulWidget {
   const UnitsScreen({super.key});
 
@@ -498,22 +500,70 @@ class _UnitsScreenState extends State<UnitsScreen> {
     ),
   );
 
+  /// Turns a quantity or family on or off (null: back to its default);
+  /// the server refuses while something uses its units, and says what.
+  Future<void> _setAvailable(
+    Future<void> Function() change,
+    Future<void> Function() reload,
+  ) async {
+    try {
+      await change();
+    } catch (e) {
+      if (mounted) showError(context, e);
+    }
+    await reload();
+  }
+
+  /// A switch for a quantity's or family's availability, and a way back to
+  /// the default once chosen; only "Off" for others.
+  Widget _availability(
+    Availability a, {
+    required bool write,
+    bool enabled = true,
+    required Future<void> Function(bool? available) set,
+  }) {
+    if (!write) {
+      return a.available ? const SizedBox.shrink() : const Text('Off');
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (a.choice != null && a.global)
+          IconButton(
+            icon: const Icon(Icons.undo),
+            tooltip:
+                'Back to the default (${a.defaultAvailable ? 'on' : 'off'})',
+            onPressed: () => set(null),
+          ),
+        Switch(value: a.available, onChanged: enabled ? (v) => set(v) : null),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final client = context.read<Session>().client;
-    return Loader<List<UnitFamily>>(
+    final write = context.watch<Session>().canWriteModel;
+    return Loader<(List<Quantity>, List<UnitFamily>)>(
       title: 'Units',
-      load: client.unitFamilies,
-      builder: (context, families, reload) {
+      load: () async =>
+          (await client.quantities(), await client.unitFamilies()),
+      builder: (context, data, reload) {
+        final (quantities, families) = data;
+        // The quantities as the inventory has them (on or off).
+        final quantity = {for (final q in quantities) q.id: q};
         // The server lists families by quantity, so grouping keeps its order.
-        final byQuantity = <int, (Quantity, List<UnitFamily>)>{};
+        final byQuantity = <String, (Quantity, List<UnitFamily>)>{};
         for (final f in families) {
           if (matchesWords(
             '${f.name} ${f.quantity.name} ${f.units.map((u) => '${u.symbol} ${u.name}').join(' ')}',
             _filter.text,
           )) {
             byQuantity
-                .putIfAbsent(f.quantity.id, () => (f.quantity, []))
+                .putIfAbsent(
+                  f.quantity.id,
+                  () => (quantity[f.quantity.id] ?? f.quantity, []),
+                )
                 .$2
                 .add(f);
           }
@@ -562,6 +612,14 @@ class _UnitsScreenState extends State<UnitsScreen> {
                               ...fs.map((f) => f.name),
                             ].join(' · '),
                           ),
+                          trailing: _availability(
+                            q,
+                            write: write,
+                            set: (v) => _setAvailable(
+                              () => client.setQuantityAvailable(q.id, v),
+                              reload,
+                            ),
+                          ),
                           children: [
                             for (final f in fs)
                               ExpansionTile(
@@ -573,6 +631,16 @@ class _UnitsScreenState extends State<UnitsScreen> {
                                 ),
                                 title: Text(f.name),
                                 subtitle: Text(unitSymbols(f.units)),
+                                // A family of a quantity that is off stays off.
+                                trailing: _availability(
+                                  f,
+                                  write: write,
+                                  enabled: q.available,
+                                  set: (v) => _setAvailable(
+                                    () => client.setFamilyAvailable(f.id, v),
+                                    reload,
+                                  ),
+                                ),
                                 children: [
                                   for (final u in f.units) _unitTile(u),
                                 ],

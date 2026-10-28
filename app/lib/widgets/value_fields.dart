@@ -287,7 +287,7 @@ class UnitMenu extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: DropdownButtonHideUnderline(
-        child: DropdownButton<int>(
+        child: DropdownButton<String>(
           value: picked.id,
           isDense: true,
           items: [

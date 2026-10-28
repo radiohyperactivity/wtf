@@ -13,7 +13,7 @@ import 'units.dart';
 /// The API version and revision this app was built for.
 const apiPath = '/api/v1';
 const apiVersion = 1;
-const apiRevision = 10;
+const apiRevision = 11;
 
 const sessionCookie = 'wtf_session';
 
@@ -329,7 +329,7 @@ class ApiClient {
   Future<ItemDetail> createItem({
     required String classId,
     required String name,
-    int? unitId,
+    String? unitId,
     bool unitLock = false,
     Map<String, Object?> values = const {},
   }) async => ItemDetail.fromJson(
@@ -674,6 +674,30 @@ class ApiClient {
     return report;
   }
 
+  /// Turns a quantity on or off for choosing units (null: back to its
+  /// default). Refused (409) while attributes or items use its units.
+  Future<Quantity> setQuantityAvailable(String id, bool? available) async {
+    final json = await _call(
+      'PATCH',
+      '/quantities/$id',
+      body: {'available': available},
+    );
+    _families = null; // their availability follows the quantity's
+    return Quantity.fromJson(json as Json);
+  }
+
+  /// Turns a unit family on or off for choosing units (null: back to its
+  /// default). Refused (409) while attributes or items use its units.
+  Future<UnitFamily> setFamilyAvailable(String id, bool? available) async {
+    final json = await _call(
+      'PATCH',
+      '/unit-families/$id',
+      body: {'available': available},
+    );
+    _families = null;
+    return UnitFamily.fromJson(json as Json);
+  }
+
   /// What numbers in [unit] may be typed in, for [parseMeasure].
   Future<UnitChoice> unitChoice(Unit unit) async {
     final families = await unitFamilies();
@@ -683,9 +707,13 @@ class ApiClient {
         for (final f in families)
           if (f.id == unit.familyId) ...f.units,
       ],
+      // Units of families that are turned off are refused, except the
+      // unit's own family, which it is already shown in.
       quantityUnits: [
         for (final f in families)
-          if (f.quantity.id == unit.quantity.id) ...f.units,
+          if (f.quantity.id == unit.quantity.id &&
+              (f.available || f.id == unit.familyId))
+            ...f.units,
       ],
     );
   }
@@ -695,7 +723,7 @@ class ApiClient {
   Future<Attribute> createAttribute({
     required String name,
     required String datatype,
-    int? unitId,
+    String? unitId,
     bool unitLock = false,
   }) async => Attribute.fromJson(
     await _call(
