@@ -300,7 +300,7 @@ void main() {
     expect(photo.top, lessThan(tester.getRect(find.text('Voltage')).bottom));
 
     // One list of attachments: the image with its small version, named as
-    // the item photo, and the file with a paperclip.
+    // the item photo, and the file with its type's icon.
     final list = find.byType(AttachmentList);
     expect(
       find.descendant(of: list, matching: find.byType(Thumbnail)),
@@ -309,7 +309,7 @@ void main() {
     expect(
       find.descendant(
         of: find.widgetWithText(ListTile, 'Manual'),
-        matching: find.byIcon(Icons.attach_file),
+        matching: find.byIcon(Icons.picture_as_pdf_outlined),
       ),
       findsOneWidget,
     );
@@ -554,6 +554,24 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.widgetWithText(FloatingActionButton, 'Download'), findsOne);
     expect(find.widgetWithText(FloatingActionButton, 'Open'), findsNothing);
+  });
+
+  test('file icons: by sub-type, else by major type, else a file', () {
+    expect(typeIcon('application/pdf'), Icons.picture_as_pdf_outlined);
+    expect(typeIcon('text/csv; charset=utf-8'), Icons.table_chart_outlined);
+    expect(
+      typeIcon(
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      ),
+      Icons.description_outlined,
+    );
+    expect(typeIcon('application/zip'), Icons.folder_zip_outlined);
+    expect(typeIcon('model/step'), Icons.view_in_ar_outlined);
+    expect(typeIcon('audio/flac'), Icons.audio_file_outlined);
+    expect(typeIcon('video/webm'), Icons.video_file_outlined);
+    expect(typeIcon('text/x-unknown'), Icons.text_snippet_outlined);
+    expect(typeIcon('Image/SVG+XML'), Icons.draw_outlined);
+    expect(typeIcon('application/x-unknown'), Icons.insert_drive_file_outlined);
   });
 
   test('Open: what each app offers, and the file it opens', () {

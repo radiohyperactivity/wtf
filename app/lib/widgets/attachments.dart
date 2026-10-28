@@ -215,8 +215,66 @@ class WithPhoto extends StatelessWidget {
   }
 }
 
-/// The icon of an attachment that isn't an image, by its type.
-IconData attachmentIcon(Attachment a) => Icons.attach_file;
+/// The icon of an attachment that isn't shown as an image, by its type: the
+/// common sub-types their own, the major types a default each, and a plain
+/// file for the rest.
+IconData attachmentIcon(Attachment a) => typeIcon(a.type);
+
+IconData typeIcon(String mediaType) {
+  final type = mediaType.split(';').first.trim().toLowerCase();
+  final major = type.split('/').first;
+  return switch (type) {
+    'application/pdf' => Icons.picture_as_pdf_outlined,
+    'application/msword' ||
+    'application/rtf' ||
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    'application/vnd.oasis.opendocument.text' => Icons.description_outlined,
+    'text/csv' ||
+    'application/vnd.ms-excel' ||
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+    'application/vnd.oasis.opendocument.spreadsheet' =>
+      Icons.table_chart_outlined,
+    'application/vnd.ms-powerpoint' ||
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
+    'application/vnd.oasis.opendocument.presentation' =>
+      Icons.slideshow_outlined,
+    'application/zip' ||
+    'application/gzip' ||
+    'application/x-tar' ||
+    'application/x-7z-compressed' ||
+    'application/vnd.rar' ||
+    'application/x-rar-compressed' => Icons.folder_zip_outlined,
+    'application/json' ||
+    'application/xml' ||
+    'text/xml' ||
+    'application/yaml' ||
+    'text/yaml' => Icons.data_object,
+    'text/html' => Icons.html,
+    'text/javascript' ||
+    'application/javascript' ||
+    'text/x-python' ||
+    'application/x-sh' ||
+    'text/x-c' => Icons.code,
+    'text/markdown' => Icons.article_outlined,
+    'text/calendar' => Icons.event_outlined,
+    'text/vcard' => Icons.contact_page_outlined,
+    'application/epub+zip' => Icons.menu_book_outlined,
+    'image/svg+xml' => Icons.draw_outlined,
+    'application/x-msdownload' ||
+    'application/x-msi' ||
+    'application/vnd.android.package-archive' ||
+    'application/x-executable' => Icons.terminal,
+    _ => switch (major) {
+      'image' => Icons.image_outlined,
+      'audio' => Icons.audio_file_outlined,
+      'video' => Icons.video_file_outlined,
+      'text' => Icons.text_snippet_outlined,
+      'font' => Icons.font_download_outlined,
+      'model' => Icons.view_in_ar_outlined,
+      _ => Icons.insert_drive_file_outlined,
+    },
+  };
+}
 
 /// Shows an image over the whole screen, to zoom into.
 void showPhoto(BuildContext context, Attachment attachment) {
@@ -808,6 +866,14 @@ class _AttachmentScreenState extends State<AttachmentScreen> {
                   child: Align(
                     alignment: Alignment.centerLeft,
                     child: ObjectPhoto(a),
+                  ),
+                )
+              else
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: PhotoOrIcon(null, icon: attachmentIcon(a), size: 96),
                   ),
                 ),
             ],
