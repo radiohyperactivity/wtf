@@ -176,8 +176,12 @@ func TestCLI(t *testing.T) {
 	_, stderr = c.run(1, "", "attachment", "photo", "item", "M4 screw", att.ID)
 	contains(t, stderr, "must be an image")
 	contains(t, c.ok("attachment", "delete", "item", "M4 screw", att.ID), "Deleted attachment")
-	_, stderr = c.run(1, "", "attachment", "get", "item", "M4 screw", att.ID)
-	contains(t, stderr, "not found")
+	contains(t, c.ok("attachment", "get", "item", "M4 screw", att.ID), "Deleted:", "wtf attachment restore item")
+	if out := c.ok("attachment", "list", "item", "M4 screw"); strings.Contains(out, att.ID) {
+		t.Errorf("a deleted attachment is listed:\n%s", out)
+	}
+	contains(t, c.ok("attachment", "restore", "item", "M4 screw", att.ID), "Notes")
+	contains(t, c.ok("attachment", "list", "item", "M4 screw"), att.ID)
 
 	// History.
 	contains(t, c.ok("item", "history", "M4 screw"), "admin@test.local", "insert item", "insert stock")

@@ -805,11 +805,23 @@ paths:
         "200": { $ref: "#/components/responses/Attachment" }
         default: { $ref: "#/components/responses/Problem" }
     delete:
-      summary: Delete an attachment of an item, for good
-      description: If it was the photo, there is no photo any more. The file goes at the next "wtfd gc" once no attachment has its hash.
+      summary: Mark an attachment of an item deleted
+      description: If it was the photo, there is no photo any more, also after a restore. It is purged with "wtfd deleted purge"; then "wtfd gc" removes its file once no attachment has its hash.
       operationId: itemAttachmentDelete
       responses:
         "204": { description: Deleted. }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /items/{id}/attachments/{attachment}/restore:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+      - { $ref: "#/components/parameters/AttachmentId" }
+    post:
+      summary: Restore a deleted attachment of an item (the object must not be deleted)
+      description: It comes back as an ordinary attachment, not as the photo it may have been.
+      operationId: itemAttachmentRestore
+      responses:
+        "200": { $ref: "#/components/responses/Attachment" }
         default: { $ref: "#/components/responses/Problem" }
 
   /items/{id}/attachments/{attachment}/content:
@@ -863,11 +875,23 @@ paths:
         "200": { $ref: "#/components/responses/Attachment" }
         default: { $ref: "#/components/responses/Problem" }
     delete:
-      summary: Delete an attachment of a stock row, for good
-      description: If it was the photo, there is no photo any more. The file goes at the next "wtfd gc" once no attachment has its hash.
+      summary: Mark an attachment of a stock row deleted
+      description: If it was the photo, there is no photo any more, also after a restore. It is purged with "wtfd deleted purge"; then "wtfd gc" removes its file once no attachment has its hash.
       operationId: stockAttachmentDelete
       responses:
         "204": { description: Deleted. }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /stock/{id}/attachments/{attachment}/restore:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+      - { $ref: "#/components/parameters/AttachmentId" }
+    post:
+      summary: Restore a deleted attachment of a stock row (the object must not be deleted)
+      description: It comes back as an ordinary attachment, not as the photo it may have been.
+      operationId: stockAttachmentRestore
+      responses:
+        "200": { $ref: "#/components/responses/Attachment" }
         default: { $ref: "#/components/responses/Problem" }
 
   /stock/{id}/attachments/{attachment}/content:
@@ -921,11 +945,23 @@ paths:
         "200": { $ref: "#/components/responses/Attachment" }
         default: { $ref: "#/components/responses/Problem" }
     delete:
-      summary: Delete an attachment of a location, for good
-      description: If it was the photo, there is no photo any more. The file goes at the next "wtfd gc" once no attachment has its hash.
+      summary: Mark an attachment of a location deleted
+      description: If it was the photo, there is no photo any more, also after a restore. It is purged with "wtfd deleted purge"; then "wtfd gc" removes its file once no attachment has its hash.
       operationId: locationAttachmentDelete
       responses:
         "204": { description: Deleted. }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /locations/{id}/attachments/{attachment}/restore:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+      - { $ref: "#/components/parameters/AttachmentId" }
+    post:
+      summary: Restore a deleted attachment of a location (the object must not be deleted)
+      description: It comes back as an ordinary attachment, not as the photo it may have been.
+      operationId: locationAttachmentRestore
+      responses:
+        "200": { $ref: "#/components/responses/Attachment" }
         default: { $ref: "#/components/responses/Problem" }
 
   /locations/{id}/attachments/{attachment}/content:
@@ -979,11 +1015,23 @@ paths:
         "200": { $ref: "#/components/responses/Attachment" }
         default: { $ref: "#/components/responses/Problem" }
     delete:
-      summary: Delete an attachment of a class, for good
-      description: If it was the photo, there is no photo any more. The file goes at the next "wtfd gc" once no attachment has its hash.
+      summary: Mark an attachment of a class deleted
+      description: If it was the photo, there is no photo any more, also after a restore. It is purged with "wtfd deleted purge"; then "wtfd gc" removes its file once no attachment has its hash.
       operationId: classAttachmentDelete
       responses:
         "204": { description: Deleted. }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /classes/{id}/attachments/{attachment}/restore:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+      - { $ref: "#/components/parameters/AttachmentId" }
+    post:
+      summary: Restore a deleted attachment of a class (the object must not be deleted)
+      description: It comes back as an ordinary attachment, not as the photo it may have been.
+      operationId: classAttachmentRestore
+      responses:
+        "200": { $ref: "#/components/responses/Attachment" }
         default: { $ref: "#/components/responses/Problem" }
 
   /classes/{id}/attachments/{attachment}/content:
@@ -1825,6 +1873,7 @@ components:
         type: { type: string, description: MIME type. }
         size: { type: integer, description: In bytes. }
         hash: { type: string, description: Hex SHA-256 of the content. }
+        deleted: { $ref: "#/components/schemas/Deleted" }
 
     Attachments:
       type: array

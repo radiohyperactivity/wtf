@@ -12,6 +12,10 @@ import (
 // PurgedKinds are the kinds of objects PurgeDeleted removes, in the order it
 // removes them and reports them.
 var PurgedKinds = []struct{ Table, Name string }{
+	{"item_attachment", "item attachments"},
+	{"stock_attachment", "stock row attachments"},
+	{"location_attachment", "location attachments"},
+	{"class_attachment", "class attachments"},
 	{"stock", "stock rows"},
 	{"item", "items"},
 	{"location", "locations"},
@@ -24,9 +28,9 @@ var PurgedKinds = []struct{ Table, Name string }{
 var errDryRun = errors.New("dry run")
 
 // PurgeDeleted removes for good the objects that were marked deleted longer
-// than olderThan ago. What belongs to them goes with them: values,
-// assignments, options, and their links to attachments (an attachment left
-// on nothing is deleted, and its file goes at the next "wtfd gc"). An object whose deletion is no longer in history counts as
+// than olderThan ago: deleted attachments, and objects with what belongs to
+// them (values, assignments, options, attachments). The files of purged
+// attachments go at the next "wtfd gc". An object whose deletion is no longer in history counts as
 // deleted long ago. An object something else still refers to stays until
 // that is purged too: an item while it has stock rows, a location or class
 // while something is in it, an attribute or option while values or classes
@@ -47,7 +51,11 @@ func PurgeDeleted(ctx context.Context, conn *pgx.Conn, olderThan time.Duration, 
 				  AND h.happened_at >= now() - $1::interval)`, table)
 	}
 	statements := map[string]string{
-		"stock": `DELETE FROM stock r WHERE ` + old("stock"),
+		"item_attachment":     `DELETE FROM item_attachment r WHERE ` + old("item_attachment"),
+		"stock_attachment":    `DELETE FROM stock_attachment r WHERE ` + old("stock_attachment"),
+		"location_attachment": `DELETE FROM location_attachment r WHERE ` + old("location_attachment"),
+		"class_attachment":    `DELETE FROM class_attachment r WHERE ` + old("class_attachment"),
+		"stock":               `DELETE FROM stock r WHERE ` + old("stock"),
 		"item": `DELETE FROM item r WHERE ` + old("item") + `
 			AND NOT EXISTS (SELECT 1 FROM stock s WHERE s.item = r.id)`,
 		// Leaves first; repeated until nothing is left to remove.

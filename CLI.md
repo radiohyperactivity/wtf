@@ -71,7 +71,7 @@ wtf item add            # asks for everything, with Tab completion
 | `wtf class tree` / `get` / `add` / `set` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` / `restore` / `history [class]` / `assign <class> <attribute> [--default V] [--per-unit] [--required]` / `unassign` | `/classes`, `/classes/{id}/attributes/{attribute}` |
 | `wtf attribute list` / `get` / `add <name> [--type T] [--unit U [--unit-lock]] [--edit]` (with a unit, the type follows from it) / `set` / `edit` / `delete` / `restore` / `history [attribute]` | `/attributes` |
 | `wtf option list <attribute>` / `get` / `add <attribute> <name>…` / `set --name N` / `delete` / `restore` | `/attributes/{id}/options`, `/options/{id}` |
-| `wtf attachment list <type> <ref>` / `add <type> <ref> <file> [--title T] [--photo]` / `get <type> <ref> <id>` / `download <type> <ref> <id> [-o FILE\|-]` / `set <type> <ref> <id> --title T` / `photo <type> <ref> <id\|none>` / `delete <type> <ref> <id>` | attachments |
+| `wtf attachment list <type> <ref>` / `add <type> <ref> <file> [--title T] [--photo]` / `get <type> <ref> <id>` / `download <type> <ref> <id> [-o FILE\|-]` / `set <type> <ref> <id> --title T` / `photo <type> <ref> <id\|none>` / `delete <type> <ref> <id>` / `restore <type> <ref> <id>` | attachments |
 | `wtf quantity list` / `get`, `wtf unit-family list [--quantity Q]` / `get`, `wtf unit list [--quantity Q] [--family F]` / `get` / `import <file> [--dry-run]` | system data |
 | `wtf account list` / `get` / `add <email> [--password] [--data P] [--model P] [--account P] [--history P] [--edit]` / `set` / `edit` / `delete` / `history` | `/accounts` |
 
@@ -332,6 +332,6 @@ These follow your answers: all attributes offered, a picker on Tab Tab, bash, zs
     - **An attachment is always named with its object:** `get`, `download`, `set` and `delete` take `TYPE REF ID`, like `list` and `add`.
     - **`add … [--title T] [--photo]`:** the title defaults to the file name.
     - **`photo TYPE REF ID|none`** sets or clears an object's photo, which must be one of its own image attachments.
-    - **`delete TYPE REF ID`** deletes it for good; there is no `restore`.
+    - **`delete TYPE REF ID`** marks it deleted; **`restore TYPE REF ID`** brings it back, as an ordinary attachment. `get` says when one is deleted.
     - **`download`** names the file as the server does: the title, with an extension for the type if it lacks one (`internal/mediatype`).
     - **No edit form, and no `add --edit`:** the title is all there is to change, with `set --title`.

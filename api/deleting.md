@@ -2,7 +2,7 @@
 
 The `deleted` columns are in [`db/migrations/0001_schema.sql`](../db/migrations/0001_schema.sql). The functions are in the repeatable scripts of each kind, with the shared helpers in [`10_util.sql`](../db/repeatable/10_util.sql).
 
-Deleting an item, stock row, location, class, attribute or option doesn't remove its row; it sets `deleted`. Accounts work the same way (see [account.md](account.md)). A deleted object can still be fetched, scanned and restored. Only an operator's purge removes it for good.
+Deleting an item, stock row, location, class, attribute, option or attachment doesn't remove its row; it sets `deleted`. Accounts work the same way (see [account.md](account.md)). A deleted object can still be fetched, scanned and restored. Only an operator's purge removes it for good.
 
 ## What is marked, and what is removed
 
@@ -14,7 +14,7 @@ Deleting an item, stock row, location, class, attribute or option doesn't remove
 | `quantity`, `unit_family`, `unit` | not deletable | Seeded system data. |
 | `session` | removed | Not inventory data. |
 | `history` | only purged by age | See [history.md](history.md). |
-| `item_attachment`, `stock_attachment`, `location_attachment`, `class_attachment` | **removed** | Deleting an attachment removes it for good; history still records it. Purging an object removes its attachments. See [attachment.md](attachment.md). |
+| `item_attachment`, `stock_attachment`, `location_attachment`, `class_attachment` | **marked deleted** | Found again through history, and restored as an ordinary attachment: a deleted photo isn't the photo again. Purging an object removes its attachments. See [attachment.md](attachment.md). |
 | files on disk | removed by `wtfd gc` once no attachment has their hash | |
 
 `deleted` is a flag, not a date: when and by whom is in history, and a date column would store it twice. History records a delete as an update with `changes: {"deleted": {"old": false, "new": true}}`, and everything one call deleted shares its `transaction`.

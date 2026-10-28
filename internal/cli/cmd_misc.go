@@ -110,7 +110,17 @@ func attachmentGroup() group {
 					if err != nil {
 						return err
 					}
-					return e.emit(data, func() error { return printAttachment(e, data) })
+					return e.emit(data, func() error {
+						if err := printAttachment(e, data); err != nil {
+							return err
+						}
+						var a attachment
+						if decode(data, &a) == nil && a.Deleted {
+							fmt.Fprintf(e.stdout, "Deleted:  yes; restore it with 'wtf attachment restore %s %q %s'\n",
+								args[0], args[1], args[2])
+						}
+						return nil
+					})
 				}),
 			},
 			{
@@ -228,7 +238,7 @@ func attachmentGroup() group {
 			{
 				name:    "delete",
 				args:    "<item|stock|location|class> <ref> <attachment-id>",
-				summary: "Delete an attachment, for good (it can't be restored).",
+				summary: "Delete an attachment (it can be restored, until it is purged).",
 				params:  withID,
 				setup: simple(func(e *env, args []string) error {
 					path, err := e.attachmentPath(args)
@@ -242,6 +252,23 @@ func attachmentGroup() group {
 						fmt.Fprintf(e.stdout, "Deleted attachment %s.\n", args[2])
 					}
 					return nil
+				}),
+			},
+			{
+				name:    "restore",
+				args:    "<item|stock|location|class> <ref> <attachment-id>",
+				summary: "Restore a deleted attachment (as an ordinary one, not the photo it may have been).",
+				params:  withID,
+				setup: simple(func(e *env, args []string) error {
+					path, err := e.attachmentPath(args)
+					if err != nil {
+						return err
+					}
+					data, err := e.do(http.MethodPost, path+"/restore", object{})
+					if err != nil {
+						return err
+					}
+					return e.emit(data, func() error { return printAttachment(e, data) })
 				}),
 			},
 		},

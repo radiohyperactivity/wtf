@@ -100,7 +100,8 @@ BEGIN
 END;
 $$;
 
--- {id, title, type, size, hash}.
+-- {id, title, type, size, hash, deleted}. A deleted attachment is returned
+-- too, with deleted: true.
 CREATE FUNCTION attachment_get(p_kind text, p_owner uuid, p_id uuid) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
@@ -129,9 +130,8 @@ BEGIN
 END;
 $$;
 
--- Deletes an attachment, for good. If it was the object's photo, the object
--- has no photo any more. The file goes at the next "wtfd gc" once no
--- attachment has its hash.
+-- Marks an attachment deleted (see api/deleting.md). If it was the object's
+-- photo, the object has no photo any more, also when it is restored.
 CREATE FUNCTION attachment_delete(p_kind text, p_owner uuid, p_id uuid) RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
@@ -139,6 +139,31 @@ AS $$
 BEGIN
     PERFORM util.attachment_owner(p_kind, p_owner, 'write');
     PERFORM util.check_attachment_of(p_kind, p_owner, p_id);
-    EXECUTE format('DELETE FROM %I WHERE id = $1', p_kind || '_attachment') USING p_id;
+    EXECUTE format('UPDATE %I SET photo = NULL WHERE id = $1 AND photo = $2', p_kind) USING p_owner, p_id;
+    EXECUTE format('UPDATE %I SET deleted = true WHERE id = $1', p_kind || '_attachment') USING p_id;
+END;
+$$;
+
+-- Restores a deleted attachment; its object must be live. It comes back as
+-- an ordinary attachment, not as the photo it may have been. No options
+-- (p_options must be empty).
+CREATE FUNCTION attachment_restore(p_kind text, p_owner uuid, p_id uuid, p_options jsonb DEFAULT '{}')
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_deleted boolean;
+BEGIN
+    PERFORM util.attachment_owner(p_kind, p_owner, 'write');
+    PERFORM util.check_attachment_of(p_kind, p_owner, p_id);
+    PERFORM util.check_patch(COALESCE(p_options, '{}'), ARRAY[]::text[], ARRAY[]::text[]);
+    EXECUTE format('SELECT deleted FROM %I WHERE id = $1 FOR UPDATE', p_kind || '_attachment')
+        INTO v_deleted USING p_id;
+    IF NOT v_deleted THEN
+        PERFORM util.raise_not_deleted(p_kind || '_attachment', p_id);
+    END IF;
+    EXECUTE format('UPDATE %I SET deleted = false WHERE id = $1', p_kind || '_attachment') USING p_id;
+    RETURN util.attachment_json(p_kind, p_id);
 END;
 $$;

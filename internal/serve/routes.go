@@ -185,6 +185,7 @@ func (s *server) routes() []route {
 			route{"PATCH " + base, s.update("attachment_patch", kind, owner, attachment, patch("p_patch"))},
 			route{"DELETE " + base, s.remove("attachment_delete", kind, owner, attachment)},
 			route{"GET " + base + "/content", s.download(k.kind)},
+			route{"POST " + base + "/restore", s.update("attachment_restore", kind, owner, attachment, patch("p_options"))},
 		)
 	}
 	return routes

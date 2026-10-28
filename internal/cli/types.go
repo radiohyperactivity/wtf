@@ -113,11 +113,12 @@ type location struct {
 }
 
 type attachment struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
-	Type  string `json:"type"`
-	Size  int64  `json:"size"`
-	Hash  string `json:"hash"`
+	ID      string `json:"id"`
+	Title   string `json:"title"`
+	Type    string `json:"type"`
+	Size    int64  `json:"size"`
+	Hash    string `json:"hash"`
+	Deleted bool   `json:"deleted"`
 }
 
 type value struct {

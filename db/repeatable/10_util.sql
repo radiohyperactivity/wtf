@@ -1367,7 +1367,7 @@ $$;
 -- ---------------------------------------------------------------------------
 
 -- An attachment of an object of p_kind ('item', 'stock', 'location',
--- 'class'): {id, title, type, size, hash}, or SQL NULL. Its content is at
+-- 'class'): {id, title, type, size, hash, deleted}, or SQL NULL. Its content is at
 -- /<kind's path>/{object}/attachments/{id}/content.
 CREATE FUNCTION util.attachment_json(p_kind text, p_id uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
@@ -1378,15 +1378,16 @@ BEGIN
         RETURN NULL;
     END IF;
     EXECUTE format(
-        'SELECT jsonb_build_object(''id'', id, ''title'', title, ''type'', type, ''size'', size, ''hash'', hash) '
+        'SELECT jsonb_build_object(''id'', id, ''title'', title, ''type'', type, ''size'', size, ''hash'', hash, '
+        '                          ''deleted'', deleted) '
         'FROM %I WHERE id = $1', p_kind || '_attachment')
         INTO v_result USING p_id;
     RETURN v_result;
 END;
 $$;
 
--- The attachments of one object (pass its id in the matching parameter and
--- NULL in the others): its photo first, then by title.
+-- The live attachments of one object (pass its id in the matching
+-- parameter and NULL in the others): its photo first, then by title.
 CREATE FUNCTION util.attachments_json(p_item uuid, p_stock uuid, p_location uuid, p_class uuid)
 RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
@@ -1401,7 +1402,7 @@ BEGIN
     EXECUTE format(
         'SELECT COALESCE(jsonb_agg(util.attachment_json(%1$L, a.id) '
         '                ORDER BY a.id IS DISTINCT FROM o.photo, lower(a.title), a.id), ''[]''::jsonb) '
-        'FROM %2$I a JOIN %1$I o ON o.id = a.%1$I WHERE a.%1$I = $1',
+        'FROM %2$I a JOIN %1$I o ON o.id = a.%1$I WHERE a.%1$I = $1 AND NOT a.deleted',
         v_kind, v_kind || '_attachment')
         INTO v_result USING v_owner;
     RETURN v_result;
