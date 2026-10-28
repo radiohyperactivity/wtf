@@ -12,7 +12,6 @@ import (
 // PurgedKinds are the kinds of objects PurgeDeleted removes, in the order it
 // removes them and reports them.
 var PurgedKinds = []struct{ Table, Name string }{
-	{"attachment", "attachments"},
 	{"stock", "stock rows"},
 	{"item", "items"},
 	{"location", "locations"},
@@ -25,8 +24,9 @@ var PurgedKinds = []struct{ Table, Name string }{
 var errDryRun = errors.New("dry run")
 
 // PurgeDeleted removes for good the objects that were marked deleted longer
-// than olderThan ago. What belongs to them goes with them: values, assignments, options,
-// attachments. An object whose deletion is no longer in history counts as
+// than olderThan ago. What belongs to them goes with them: values,
+// assignments, options, and their links to attachments (an attachment left
+// on nothing is deleted, and its file goes at the next "wtfd gc"). An object whose deletion is no longer in history counts as
 // deleted long ago. An object something else still refers to stays until
 // that is purged too: an item while it has stock rows, a location or class
 // while something is in it, an attribute or option while values or classes
@@ -47,8 +47,7 @@ func PurgeDeleted(ctx context.Context, conn *pgx.Conn, olderThan time.Duration, 
 				  AND h.happened_at >= now() - $1::interval)`, table)
 	}
 	statements := map[string]string{
-		"attachment": `DELETE FROM attachment r WHERE ` + old("attachment"),
-		"stock":      `DELETE FROM stock r WHERE ` + old("stock"),
+		"stock": `DELETE FROM stock r WHERE ` + old("stock"),
 		"item": `DELETE FROM item r WHERE ` + old("item") + `
 			AND NOT EXISTS (SELECT 1 FROM stock s WHERE s.item = r.id)`,
 		// Leaves first; repeated until nothing is left to remove.

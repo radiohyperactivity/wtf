@@ -75,7 +75,7 @@ The files are applied by `wtfd schema` (see [WTFD.md](WTFD.md)). Migrations run 
 - **Required attributes.** A `required` assignment must be satisfied, by a value or a default, when an item or stock row is created. A required value can't be removed. Requirements added later are only reported:
   - `item_get` and `stock_get` list `missing` attributes, for the item and for each stock row;
   - `item_list` rows have `incomplete: true` when the item or one of its stock rows lacks a required value.
-- **Attachments.** Files on items, stock rows, locations and classes; see [api/attachment.md](api/attachment.md). They are listed as `attachments` in the `_get` responses of those objects. Items also show their primary photo as `photo` in `item_get` and `item_list`.
+- **Attachments.** Files on items, stock rows, locations and classes; see [api/attachment.md](api/attachment.md). They are listed as `attachments` in the `_get` responses of those objects, with the object's `photo` (one of its own image attachments). Items also show their photo in `item_list`.
 - **Defaults are fallbacks.** A class attribute's default is never stored on an item. `item_get` lists the item's own values, plus the current default for every effective attribute that has no value of its own. Those entries are marked `"is_default": true`, so changing a default affects every item that relies on it.
 - **Typed values.** Values and defaults are passed as `jsonb`. The function converts them using the attribute's datatype:
 
@@ -144,7 +144,7 @@ class      { id, name, parent, container, path: [ { id, name } ], deleted }
            class_get adds  attributes: [ { attribute, defined_on_class, inherited, default, default_display: display | null, per_unit, required } ], attachments: [ attachment ]
 location   { id, code, name, parent, container, path: [ { id, name } ], deleted }
            location_get adds  attachments: [ attachment ]
-attachment { id, file_name, content_type, size, sha256, caption, primary_photo, deleted }
+attachment { id, title, type, hash }   (type: MIME type; hash: hex SHA-256)
 item       (list)  { id, code, name, class: <class id>, unit: unit | null, unit_lock, deleted,
                      stock: { total, display: display | null, uncounted }, incomplete }
            (get)   { id, code, name, deleted, class: class, unit: unit | null, unit_lock,
@@ -216,11 +216,11 @@ Suggested REST routes are only there to show intent. The REST design comes later
 | `stock_restore(p_id, p_options)` | stock | `POST /stock/{id}/restore` |
 | `stock_value_set(p_stock, p_attribute, p_value)` | stock | `PUT /stock/{id}/values/{attribute}` |
 | `stock_value_delete(p_stock, p_attribute)` | stock | `DELETE /stock/{id}/values/{attribute}` |
-| `attachment_lock(p_sha256)`, `attachment_create(…)` | attachment | `POST /items\|stock\|locations\|classes/{id}/attachments` (multipart, via wtfd) |
+| `attachment_lock(p_hash)`, `attachment_create(…)` | attachment | `POST /items\|stock\|locations\|classes/{id}/attachments` (multipart, via wtfd) |
 | `attachment_get(p_id)` | attachment | `GET /attachments/{id}` (content: `GET /attachments/{id}/content`, via wtfd) |
 | `attachment_patch(p_id, p_patch)` | attachment | `PATCH /attachments/{id}` |
 | `attachment_delete(p_id)` | void | `DELETE /attachments/{id}` |
-| `attachment_restore(p_id, p_options)` | attachment | `POST /attachments/{id}/restore` |
+| `attachment_unlink(p_target_type, p_target, p_attachment)` | void | `DELETE /items\|stock\|locations\|classes/{id}/attachments/{attachment}` |
 | `login(p_email, p_password)` | `{ok, token, account}` or `{ok: false, reason}` | `POST /api/v1/login` (the token becomes the session cookie) |
 | `session_use(p_token)` | void | – (called by wtfd before every function) |
 | `logout()` | void | `POST /logout` |

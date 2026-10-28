@@ -139,7 +139,8 @@ BEGIN
 END;
 $$;
 
--- Changes the fields present in p_patch: class, name, unit, unit_lock.
+-- Changes the fields present in p_patch: class, name, unit, unit_lock, photo
+-- (one of its own image attachments, or null).
 -- Changing the class is rejected if existing values would no longer have a
 -- matching attribute. The unit can only change to another unit of the same
 -- quantity; nothing is converted. A unit can't be added or removed (see
@@ -150,7 +151,7 @@ SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.require('data', 'write');
-    PERFORM util.check_patch(p_patch, ARRAY['class', 'name', 'unit', 'unit_lock'], ARRAY['class', 'name', 'unit_lock']);
+    PERFORM util.check_patch(p_patch, ARRAY['class', 'name', 'unit', 'unit_lock', 'photo'], ARRAY['class', 'name', 'unit_lock']);
 
     UPDATE item
     SET class     = CASE WHEN p_patch ? 'class'
@@ -166,6 +167,7 @@ BEGIN
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('item', p_id);
     END IF;
+    PERFORM util.set_photo('item', p_id, p_patch);
     RETURN util.item_json(p_id);
 END;
 $$;

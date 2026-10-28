@@ -387,7 +387,7 @@ func (e *env) printItemJSON(data json.RawMessage) error {
 	w := e.stdout
 	photo := ""
 	if it.Photo != nil {
-		photo = it.Photo.FileName + " (" + it.Photo.ID + ")"
+		photo = it.Photo.Title + " (" + it.Photo.ID + ")"
 	}
 	fields(w,
 		"Code", it.Code,
@@ -402,7 +402,7 @@ func (e *env) printItemJSON(data json.RawMessage) error {
 		printValues(w, "  ", it.Values)
 	}
 	printMissing(w, "", it.Missing)
-	printAttachments(w, "", it.Attachments)
+	printAttachments(w, "", it.Attachments, it.Photo)
 	if len(it.Stock) == 0 {
 		fmt.Fprintln(w, "Stock: none")
 		return nil
@@ -414,7 +414,7 @@ func (e *env) printItemJSON(data json.RawMessage) error {
 		t.flush()
 		printValues(w, "      ", s.Values)
 		printMissing(w, "      ", s.Missing)
-		printAttachments(w, "      ", s.Attachments)
+		printAttachments(w, "      ", s.Attachments, s.Photo)
 	}
 	return nil
 }
@@ -696,7 +696,7 @@ func (e *env) printStockJSON(data json.RawMessage) error {
 		printValues(w, "  ", s.Values)
 	}
 	printMissing(w, "", s.Missing)
-	printAttachments(w, "", s.Attachments)
+	printAttachments(w, "", s.Attachments, s.Photo)
 	return nil
 }
 

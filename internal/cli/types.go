@@ -85,6 +85,7 @@ type class struct {
 	Container   bool             `json:"container"`
 	Path        []ref            `json:"path"`
 	Attributes  []classAttribute `json:"attributes"`
+	Photo       *attachment      `json:"photo"`
 	Attachments []attachment     `json:"attachments"`
 	Deleted     bool             `json:"deleted"`
 }
@@ -106,19 +107,16 @@ type location struct {
 	Parent      *string      `json:"parent"`
 	Container   bool         `json:"container"`
 	Path        []ref        `json:"path"`
+	Photo       *attachment  `json:"photo"`
 	Attachments []attachment `json:"attachments"`
 	Deleted     bool         `json:"deleted"`
 }
 
 type attachment struct {
-	ID           string  `json:"id"`
-	FileName     string  `json:"file_name"`
-	ContentType  string  `json:"content_type"`
-	Size         int64   `json:"size"`
-	SHA256       string  `json:"sha256"`
-	Caption      *string `json:"caption"`
-	PrimaryPhoto bool    `json:"primary_photo"`
-	Deleted      bool    `json:"deleted"`
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	Type  string `json:"type"`
+	Hash  string `json:"hash"`
 }
 
 type value struct {
@@ -171,6 +169,7 @@ type itemStock struct {
 	Display     *display     `json:"display"`
 	Values      []value      `json:"values"`
 	Missing     []ref        `json:"missing"`
+	Photo       *attachment  `json:"photo"`
 	Attachments []attachment `json:"attachments"`
 }
 
@@ -183,6 +182,7 @@ type stock struct {
 	Display     *display     `json:"display"`
 	Values      []value      `json:"values"`
 	Missing     []ref        `json:"missing"`
+	Photo       *attachment  `json:"photo"`
 	Attachments []attachment `json:"attachments"`
 	Deleted     bool         `json:"deleted"`
 	MergedInto  *struct {

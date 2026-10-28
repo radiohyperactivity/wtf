@@ -731,34 +731,14 @@ func (e *env) editAttachment(id string) error {
 	if err := e.get("/attachments/"+id, nil, &a); err != nil {
 		return err
 	}
-	e.editTitle("attachment " + a.FileName)
+	e.editTitle("attachment " + a.Title)
 	p := newPlan("/attachments/" + id)
-	v, err := e.requiredField("File name", a.FileName, nil)
+	v, err := e.requiredField("Title", a.Title, nil)
 	if err != nil {
 		return err
 	}
-	if v != a.FileName {
-		p.patch["file_name"] = v
-	}
-	caption := ""
-	if a.Caption != nil {
-		caption = *a.Caption
-	}
-	if v, err = e.field("Caption (empty: none)", caption, nil); err != nil {
-		return err
-	}
-	if v != caption {
-		p.patch["caption"] = nil
-		if v != "" {
-			p.patch["caption"] = v
-		}
-	}
-	primary, err := e.yesNoField("Primary photo", a.PrimaryPhoto)
-	if err != nil {
-		return err
-	}
-	if primary != a.PrimaryPhoto {
-		p.patch["primary_photo"] = primary
+	if v != a.Title {
+		p.patch["title"] = v
 	}
 	if err := e.apply(p); err != nil {
 		return err

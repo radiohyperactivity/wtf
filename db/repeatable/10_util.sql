@@ -1063,6 +1063,7 @@ BEGIN
         SELECT util.stock_json(s.id) || jsonb_build_object(
             'values',      util.values_json(i.class, true, s.id),
             'missing',     util.attribute_refs_json(ARRAY(SELECT stock_missing_attributes(s.id))),
+            'photo',       util.attachment_json(s.photo),
             'attachments', util.attachments_json(NULL, s.id, NULL, NULL)
         )
         FROM stock s
@@ -1105,6 +1106,7 @@ BEGIN
                             'display',  util.display_json(s.quantity, i.unit, i.unit_lock),
                             'values',      util.values_json(i.class, true, s.id),
                             'missing',     util.attribute_refs_json(ARRAY(SELECT stock_missing_attributes(s.id))),
+                            'photo',       util.attachment_json(s.photo),
                             'attachments', util.attachments_json(NULL, s.id, NULL, NULL)
                         )
                         ORDER BY lower(l.name), s.id
@@ -1364,76 +1366,89 @@ $$;
 -- Attachments
 -- ---------------------------------------------------------------------------
 
+-- {id, title, type, hash}. The content is at /attachments/{id}/content.
 CREATE FUNCTION util.attachment_json(p_attachment uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (
         SELECT jsonb_build_object(
-            'id',            a.id,
-            'file_name',     a.file_name,
-            'content_type',  a.content_type,
-            'size',          f.size,
-            'sha256',        encode(a.file, 'hex'),
-            'caption',       a.caption,
-            'primary_photo', a.primary_photo,
-            'deleted',       a.deleted
+            'id',    a.id,
+            'title', a.title,
+            'type',  a.type,
+            'hash',  a.hash
         )
         FROM attachment a
-        JOIN file f ON f.sha256 = a.file
         WHERE a.id = p_attachment
     );
 END;
 $$;
 
 -- The attachments of one object (pass its id in the matching parameter and
--- NULL in the others): the primary photo first, then by file name.
+-- NULL in the others): its photo first, then by title.
 CREATE FUNCTION util.attachments_json(p_item uuid, p_stock uuid, p_location uuid, p_class uuid)
 RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    v_photo uuid := COALESCE(
+        (SELECT photo FROM item WHERE id = p_item),
+        (SELECT photo FROM stock WHERE id = p_stock),
+        (SELECT photo FROM location WHERE id = p_location),
+        (SELECT photo FROM class WHERE id = p_class));
 BEGIN
     RETURN (
         SELECT COALESCE(
             jsonb_agg(util.attachment_json(a.id)
-                      ORDER BY a.primary_photo DESC, lower(a.file_name), a.id),
+                      ORDER BY a.id IS DISTINCT FROM v_photo, lower(a.title), a.id),
             '[]'::jsonb
         )
         FROM attachment a
-        WHERE NOT a.deleted
-          AND (a.item = p_item
-               OR a.stock = p_stock
-               OR a.location = p_location
-               OR a.class = p_class)
+        WHERE a.id IN (SELECT attachment FROM item_attachment WHERE item = p_item
+                       UNION ALL
+                       SELECT attachment FROM stock_attachment WHERE stock = p_stock
+                       UNION ALL
+                       SELECT attachment FROM location_attachment WHERE location = p_location
+                       UNION ALL
+                       SELECT attachment FROM class_attachment WHERE class = p_class)
     );
 END;
 $$;
 
--- The primary photo of an item, or SQL NULL.
+-- The photo of an item, or SQL NULL.
 CREATE FUNCTION util.item_photo_json(p_item uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
-    RETURN (
-        SELECT util.attachment_json(a.id)
-        FROM attachment a
-        WHERE a.item = p_item
-          AND a.primary_photo
-          AND NOT a.deleted
-    );
+    RETURN util.attachment_json((SELECT photo FROM item WHERE id = p_item));
 END;
 $$;
 
--- Clears the primary photo of the object an attachment belongs to, except
--- for p_keep.
-CREATE FUNCTION util.attachment_clear_primary(p_keep uuid) RETURNS void
+-- Whether attachment p_attachment is linked to an object of p_kind ('item',
+-- 'stock', 'location', 'class').
+CREATE FUNCTION util.attachment_linked(p_attachment uuid, p_kind text) RETURNS boolean
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+    RETURN CASE p_kind
+        WHEN 'item'     THEN EXISTS (SELECT 1 FROM item_attachment     WHERE attachment = p_attachment)
+        WHEN 'stock'    THEN EXISTS (SELECT 1 FROM stock_attachment    WHERE attachment = p_attachment)
+        WHEN 'location' THEN EXISTS (SELECT 1 FROM location_attachment WHERE attachment = p_attachment)
+        WHEN 'class'    THEN EXISTS (SELECT 1 FROM class_attachment    WHERE attachment = p_attachment)
+    END;
+END;
+$$;
+
+-- Sets the photo of an object of p_kind from a patch's "photo" key: an
+-- attachment id of the object's own, or null for none. The table's trigger
+-- checks that it is an image and one of the object's attachments.
+CREATE FUNCTION util.set_photo(p_kind text, p_id uuid, p_patch jsonb) RETURNS void
 LANGUAGE plpgsql AS $$
 BEGIN
-    UPDATE attachment a
-    SET primary_photo = false
-    FROM attachment k
-    WHERE k.id = p_keep
-      AND a.id <> k.id
-      AND a.primary_photo
-      AND NOT a.deleted
-      AND (a.item = k.item OR a.stock = k.stock OR a.location = k.location OR a.class = k.class);
+    IF NOT p_patch ? 'photo' THEN
+        RETURN;
+    END IF;
+    IF jsonb_typeof(p_patch -> 'photo') NOT IN ('string', 'null') THEN
+        PERFORM util.raise_invalid('photo must be the id of an attachment, or null');
+    END IF;
+    EXECUTE format('UPDATE %I SET photo = $1 WHERE id = $2', p_kind)
+        USING (p_patch ->> 'photo')::uuid, p_id;
 END;
 $$;
 

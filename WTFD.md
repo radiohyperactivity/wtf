@@ -366,11 +366,11 @@ With `--web-root DIR`, `wtfd` serves the web app (a Flutter web build) outside `
 | `DELETE /stock/{id}/values/{attribute}` | `stock_value_delete` | |
 | `POST /stock/{id}/move` | `stock_move` | `{location, quantity?}` |
 | `GET /codes/{code}` | `code_resolve` | – (code: Crockford Base32; case and hyphens ignored) |
-| `POST /items/{id}/attachments` (also `/stock/…`, `/locations/…`, `/classes/…`) | `attachment_lock`, `attachment_create` | multipart: `file`, `caption?`, `primary_photo?` |
+| `POST /items/{id}/attachments` (also `/stock/…`, `/locations/…`, `/classes/…`) | `attachment_lock`, `attachment_create` | multipart: `file`, `title?`, `photo?` |
+| `DELETE /items/{id}/attachments/{attachment}` (also `/stock/…`, `/locations/…`, `/classes/…`) | `attachment_unlink` | |
 | `GET /attachments/{id}` | `attachment_get` | |
 | `PATCH /attachments/{id}` | `attachment_patch` | patch object |
 | `DELETE /attachments/{id}` | `attachment_delete` | |
-| `POST /attachments/{id}/restore` | `attachment_restore` | |
 | `GET /attachments/{id}/content` | `attachment_get` + files directory | `If-None-Match`, `Range` |
 | `POST /login` | `login` | `{email, password}`; no session needed; sets the session cookie |
 | `POST /logout` | `logout` | |
@@ -439,10 +439,9 @@ wtfd gc --files-directory /var/lib/wtf/files --dry-run   # report only
 wtfd gc --files-directory /var/lib/wtf/files
 ```
 
-It connects as the DBA role and removes three kinds of file:
+It connects as the DBA role and removes two kinds of file:
 
-- `file` rows without attachments, and their files;
-- files on disk without a `file` row;
+- files on disk whose hash no attachment has: their attachments were removed from everything, or an upload's database insert failed;
 - abandoned uploads in the `tmp` directory.
 
 Files younger than `--min-age` (env `WTFD_GC_MIN_AGE`, default `1h`) are never removed, so uploads in progress are safe. Each removal takes the file's advisory lock, the same one an upload holds while it puts the file in place and records it, and re-checks that nothing references the file. `--dry-run` reports what would be removed, and `--verbose` logs every removed file. Run it from cron or a systemd timer, e.g. nightly.

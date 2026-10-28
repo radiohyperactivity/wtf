@@ -99,8 +99,8 @@ func TestCLIEdit(t *testing.T) {
 	}
 	var att struct{ ID string }
 	c.json(&att, "attachment", "add", "item", "M3x10", file)
-	out, _ = c.interact([]string{clear + "readme.txt\r", "a caption\r", "\r"}, false, "attachment", "edit", att.ID)
-	contains(t, out, "File name:  readme.txt", "Caption:    a caption")
+	out, _ = c.interact([]string{clear + "Read me\r"}, false, "attachment", "edit", att.ID)
+	contains(t, out, "Title:", "Read me", "text/plain")
 
 	// --edit on add opens the form for the new object.
 	out, _ = c.interact([]string{"\r", "\r", clear + "yes\r"}, false, "location", "add", "Cellar", "--edit")

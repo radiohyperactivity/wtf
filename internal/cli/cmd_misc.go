@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/radiohyperactivity/wtf/internal/mediatype"
 )
 
 func attachmentGroup() group {
@@ -50,6 +52,7 @@ func attachmentGroup() group {
 						return err
 					}
 					var obj struct {
+						Photo       *attachment     `json:"photo"`
 						Attachments json.RawMessage `json:"attachments"`
 						Stock       []itemStock     `json:"stock"`
 					}
@@ -63,12 +66,12 @@ func attachmentGroup() group {
 					if err := decode(obj.Attachments, &list); err != nil {
 						return err
 					}
-					printAttachments(e.stdout, "", list)
+					printAttachments(e.stdout, "", list, obj.Photo)
 					if args[0] == "item" {
 						for _, s := range obj.Stock {
 							if len(s.Attachments) > 0 {
 								fmt.Fprintf(e.stdout, "Stock %s:\n", s.Code)
-								printAttachments(e.stdout, "  ", s.Attachments)
+								printAttachments(e.stdout, "  ", s.Attachments, s.Photo)
 							}
 						}
 					}
@@ -77,12 +80,12 @@ func attachmentGroup() group {
 			},
 			{
 				name:    "add",
-				args:    "<item|stock|location|class> <ref> <file> [--caption C] [--primary] [--edit]",
-				summary: "Attach a file.",
+				args:    "<item|stock|location|class> <ref> <file> [--title T] [--photo] [--edit]",
+				summary: "Attach a file; its title is the file name unless --title gives one.",
 				params:  []param{arg("Type", targetTypes), arg("Object", completeTargetOf(0)), fileArg("File")},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					caption := fs.String("caption", "", "caption")
-					primary := fs.Bool("primary", false, "make it the primary photo (images only)")
+					title := fs.String("title", "", "title (default: the file name)")
+					photo := fs.Bool("photo", false, "make it the object's photo (images only)")
 					editAfter := fs.Bool("edit", false, "open the new attachment in the edit form")
 					return func(e *env, args []string) error {
 						if *editAfter {
@@ -97,9 +100,9 @@ func attachmentGroup() group {
 						if err != nil {
 							return err
 						}
-						form := map[string]string{"primary_photo": strconv.FormatBool(*primary)}
-						if *caption != "" {
-							form["caption"] = *caption
+						form := map[string]string{"photo": strconv.FormatBool(*photo)}
+						if *title != "" {
+							form["title"] = *title
 						}
 						data, err := e.api.Upload(e.ctx, path+"/attachments", args[2], form)
 						if err != nil {
@@ -132,7 +135,7 @@ func attachmentGroup() group {
 			{
 				name:    "download",
 				args:    "<attachment-id> [-o FILE|-] [--force]",
-				summary: "Save an attachment's content, by default under its file name in the current directory.",
+				summary: "Save an attachment's content, by default named after its title in the current directory.",
 				params:  []param{arg("Attachment id", nil)},
 				flags:   map[string]param{"o": fileArg("Output file")},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
@@ -153,7 +156,7 @@ func attachmentGroup() group {
 							if err := e.get("/attachments/"+id, nil, &a); err != nil {
 								return err
 							}
-							name = filepath.Base(a.FileName)
+							name = filepath.Base(mediatype.DownloadName(a.Title, a.Type))
 							if name == "." || name == string(filepath.Separator) || name == "" {
 								name = id
 							}
@@ -186,41 +189,21 @@ func attachmentGroup() group {
 			},
 			{
 				name:    "set",
-				args:    "<attachment-id> [--name N] [--caption C|none] [--primary true|false]",
-				summary: "Change an attachment's file name, caption or primary-photo flag.",
+				args:    "<attachment-id> --title T",
+				summary: "Change an attachment's title.",
 				params:  []param{arg("Attachment id", nil)},
-				flags:   map[string]param{"primary": arg("Primary", words("true", "false"))},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					var name, caption, primary optString
-					fs.Var(&name, "name", "new file name")
-					fs.Var(&caption, "caption", "new caption, or none")
-					fs.Var(&primary, "primary", "true or false")
+					var title optString
+					fs.Var(&title, "title", "new title")
 					return func(e *env, args []string) error {
 						id, err := attachmentID(args)
 						if err != nil {
 							return err
 						}
-						body := object{}
-						if name.set {
-							body["file_name"] = name.value
-						}
-						if caption.set {
-							body["caption"] = nil
-							if !isNone(caption.value) {
-								body["caption"] = caption.value
-							}
-						}
-						if primary.set {
-							b, err := strconv.ParseBool(primary.value)
-							if err != nil {
-								return usagef("--primary must be true or false")
-							}
-							body["primary_photo"] = b
-						}
-						if len(body) == 0 {
+						if !title.set {
 							return usagef("nothing to change")
 						}
-						data, err := e.do(http.MethodPatch, "/attachments/"+id, body)
+						data, err := e.do(http.MethodPatch, "/attachments/"+id, object{"title": title.value})
 						if err != nil {
 							return err
 						}
@@ -229,9 +212,67 @@ func attachmentGroup() group {
 				},
 			},
 			{
+				name:    "photo",
+				args:    "<item|stock|location|class> <ref> <attachment-id|none>",
+				summary: "Make one of an object's image attachments its photo, or none.",
+				params:  []param{arg("Type", targetTypes), arg("Object", completeTargetOf(0)), arg("Attachment id", nil)},
+				setup: simple(func(e *env, args []string) error {
+					if err := wantArgs(args, 3, 3); err != nil {
+						return err
+					}
+					path, err := e.targetPath(args[0], args[1])
+					if err != nil {
+						return err
+					}
+					var photo any
+					if !isNone(args[2]) {
+						if photo, err = attachmentID(args[2:]); err != nil {
+							return err
+						}
+					}
+					if _, err := e.do(http.MethodPatch, path, object{"photo": photo}); err != nil {
+						return err
+					}
+					if !e.json {
+						if photo == nil {
+							fmt.Fprintln(e.stdout, "No photo.")
+						} else {
+							fmt.Fprintln(e.stdout, "Photo set.")
+						}
+					}
+					return nil
+				}),
+			},
+			{
+				name:    "remove",
+				args:    "<item|stock|location|class> <ref> <attachment-id>",
+				summary: "Remove an attachment from an object; on nothing else, it is deleted for good.",
+				params:  []param{arg("Type", targetTypes), arg("Object", completeTargetOf(0)), arg("Attachment id", nil)},
+				setup: simple(func(e *env, args []string) error {
+					if err := wantArgs(args, 3, 3); err != nil {
+						return err
+					}
+					path, err := e.targetPath(args[0], args[1])
+					if err != nil {
+						return err
+					}
+					id, err := attachmentID(args[2:])
+					if err != nil {
+						return err
+					}
+					if _, err := e.do(http.MethodDelete, path+"/attachments/"+id, nil); err != nil {
+						return err
+					}
+					if !e.json {
+						fmt.Fprintf(e.stdout, "Removed attachment %s.\n", id)
+					}
+					return nil
+				}),
+			},
+			{
 				name:    "delete",
 				args:    "<attachment-id>",
-				summary: "Delete an attachment (it can be restored; its file stays until it is purged).",
+				summary: "Delete an attachment for good, from every object it is on (it can't be restored).",
 				params:  []param{arg("Attachment id", nil)},
 				setup: simple(func(e *env, args []string) error {
 					id, err := attachmentID(args)
@@ -241,11 +282,12 @@ func attachmentGroup() group {
 					if _, err := e.do(http.MethodDelete, "/attachments/"+id, nil); err != nil {
 						return err
 					}
-					e.deleted("attachment " + id)
+					if !e.json {
+						fmt.Fprintf(e.stdout, "Deleted attachment %s.\n", id)
+					}
 					return nil
 				}),
 			},
-			restoreCommand(restoreKind{kind: "attachment", prefix: "/attachments/", show: printAttachmentJSON}),
 		},
 	}
 }
@@ -804,18 +846,10 @@ func printAttachmentJSON(e *env, data json.RawMessage) error {
 	if err := decode(data, &a); err != nil {
 		return err
 	}
-	caption := ""
-	if a.Caption != nil {
-		caption = *a.Caption
-	}
 	fields(e.stdout,
-		"File name", a.FileName,
-		"Deleted", deletedNote(a.Deleted, "attachment", a.ID),
-		"Type", a.ContentType,
-		"Size", formatSize(a.Size),
-		"Caption", caption,
-		"Primary photo", yesNo(a.PrimaryPhoto),
-		"SHA-256", a.SHA256,
+		"Title", a.Title,
+		"Type", a.Type,
+		"SHA-256", a.Hash,
 		"Id", a.ID)
 	return nil
 }

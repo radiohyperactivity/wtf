@@ -139,18 +139,6 @@ func formatValue(v value) string {
 	return formatJSONValue(v.Value)
 }
 
-func formatSize(n int64) string {
-	switch {
-	case n >= 1<<30:
-		return fmt.Sprintf("%.1f GiB", float64(n)/(1<<30))
-	case n >= 1<<20:
-		return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
-	case n >= 1<<10:
-		return fmt.Sprintf("%.1f KiB", float64(n)/(1<<10))
-	}
-	return fmt.Sprintf("%d B", n)
-}
-
 func pathNames(p []ref) string {
 	var names []string
 	for _, r := range p {
@@ -224,22 +212,18 @@ func printMissing(w io.Writer, indent string, missing []ref) {
 	fmt.Fprintf(w, "%sMissing required: %s\n", indent, strings.Join(names, ", "))
 }
 
-func printAttachments(w io.Writer, indent string, list []attachment) {
+func printAttachments(w io.Writer, indent string, list []attachment, photo *attachment) {
 	if len(list) == 0 {
 		return
 	}
 	fmt.Fprintf(w, "%sAttachments:\n", indent)
 	t := newTable(w)
 	for _, a := range list {
-		caption := ""
-		if a.Caption != nil {
-			caption = *a.Caption
+		note := ""
+		if photo != nil && photo.ID == a.ID {
+			note = "photo"
 		}
-		photo := ""
-		if a.PrimaryPhoto {
-			photo = "primary photo"
-		}
-		t.row(indent+"  "+a.ID, a.FileName, a.ContentType, formatSize(a.Size), caption, photo)
+		t.row(indent+"  "+a.ID, a.Title, a.Type, note)
 	}
 	t.flush()
 }

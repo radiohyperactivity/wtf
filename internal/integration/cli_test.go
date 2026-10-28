@@ -166,12 +166,18 @@ func TestCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	var att struct{ ID string }
-	c.json(&att, "attachment", "add", "item", "M4 screw", file, "--caption", "a note")
-	contains(t, c.ok("attachment", "list", "item", "M4 screw"), "note.txt", "a note")
+	c.json(&att, "attachment", "add", "item", "M4 screw", file, "--title", "A note")
+	contains(t, c.ok("attachment", "list", "item", "M4 screw"), att.ID, "A note", "text/plain")
 	out, _ := c.run(0, "", "attachment", "download", att.ID, "-o", "-")
 	if out != "hello" {
 		t.Errorf("download = %q", out)
 	}
+	contains(t, c.ok("attachment", "set", att.ID, "--title", "Notes"), "Title:", "Notes")
+	_, stderr = c.run(1, "", "attachment", "photo", "item", "M4 screw", att.ID)
+	contains(t, stderr, "must be an image")
+	contains(t, c.ok("attachment", "remove", "item", "M4 screw", att.ID), "Removed attachment")
+	_, stderr = c.run(1, "", "attachment", "get", att.ID)
+	contains(t, stderr, "not found")
 
 	// History.
 	contains(t, c.ok("item", "history", "M4 screw"), "admin@test.local", "insert item", "insert stock")

@@ -251,7 +251,7 @@ func getenv(name, fallback string) string {
 func (e *environment) reset(t *testing.T) {
 	t.Helper()
 	_, err := e.dba.Exec(context.Background(),
-		"TRUNCATE history, attachment, file, stock_value, stock, value, item, class_attribute, attribute_option, attribute, class, location")
+		"TRUNCATE history, item_attachment, stock_attachment, location_attachment, class_attachment, attachment, stock_value, stock, value, item, class_attribute, attribute_option, attribute, class, location")
 	if err != nil {
 		t.Fatal(err)
 	}

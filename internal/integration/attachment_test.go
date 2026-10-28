@@ -75,21 +75,21 @@ func TestAttachments(t *testing.T) {
 	van := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Van")).body, "id")
 	stockID := str(t, e.expect(t, 201, "POST", "/stock", obj("item", itemID, "location", garage, "quantity", 2)).body, "id")
 
-	// Upload a primary photo.
+	// Upload a photo, with a title.
 	r := e.upload(t, 201, "/items/"+itemID+"/attachments", "front.png", "image/png", pngBytes,
-		"caption", "Front", "primary_photo", "true")
+		"title", "Front", "photo", "true")
 	photo := r.body
 	photoID := str(t, photo, "id")
-	if r.header.Get("Location") != "/api/v1/attachments/"+photoID || get(t, photo, "primary_photo") != true ||
-		str(t, photo, "caption") != "Front" || num(t, photo, "size") != float64(len(pngBytes)) {
+	if r.header.Get("Location") != "/api/v1/attachments/"+photoID || str(t, photo, "title") != "Front" ||
+		str(t, photo, "type") != "image/png" {
 		t.Fatalf("upload: %v %v", r.header, photo)
 	}
-	pngHash := str(t, photo, "sha256")
+	pngHash := str(t, photo, "hash")
 	if !e.fileExists(t, pngHash) {
 		t.Fatal("the file is not in the files directory")
 	}
 
-	// The primary photo shows on item_get and item_list.
+	// The photo shows on item_get and item_list.
 	item := e.expect(t, 200, "GET", "/items/"+itemID, nil).body
 	if str(t, item, "photo", "id") != photoID || len(get(t, item, "attachments").([]any)) != 1 {
 		t.Errorf("item_get: photo %v, attachments %v", get(t, item, "photo"), get(t, item, "attachments"))
@@ -99,46 +99,62 @@ func TestAttachments(t *testing.T) {
 		t.Errorf("item_list photo: %v", get(t, list, "rows", 0, "photo"))
 	}
 
-	// Content type detection, and a PDF can't be the primary photo.
-	e.upload(t, 422, "/items/"+itemID+"/attachments", "manual.pdf", "", pdfBytes, "primary_photo", "true")
+	// Without a title, the file name is the title; the type is detected; a
+	// PDF can't be a photo (and then nothing is attached).
+	e.upload(t, 422, "/items/"+itemID+"/attachments", "manual.pdf", "", pdfBytes, "photo", "true")
 	manual := e.upload(t, 201, "/items/"+itemID+"/attachments", "manual.pdf", "", pdfBytes).body
-	if str(t, manual, "content_type") != "application/pdf" {
-		t.Errorf("detected content type %q, want application/pdf", str(t, manual, "content_type"))
+	if str(t, manual, "type") != "application/pdf" || str(t, manual, "title") != "manual.pdf" {
+		t.Errorf("manual: %v", manual)
+	}
+	if n := len(get(t, e.expect(t, 200, "GET", "/items/"+itemID, nil).body, "attachments").([]any)); n != 2 {
+		t.Errorf("item has %d attachments, want 2", n)
+	}
+	e.expect(t, 422, "PATCH", "/items/"+itemID, obj("photo", str(t, manual, "id")))
+
+	// The same content uploaded again is a second attachment, stored once.
+	garagePhoto := e.upload(t, 201, "/locations/"+garage+"/attachments", "garage.png", "image/png", pngBytes).body
+	if str(t, garagePhoto, "hash") != pngHash || str(t, garagePhoto, "id") == photoID {
+		t.Errorf("the same content: %v", garagePhoto)
+	}
+	// Only an object's own attachments can be its photo.
+	e.expect(t, 422, "PATCH", "/locations/"+garage, obj("photo", photoID))
+	if loc := e.expect(t, 200, "PATCH", "/locations/"+garage, obj("photo", str(t, garagePhoto, "id"))).body; loc == nil {
+		t.Fatal("no answer")
+	}
+	if str(t, e.expect(t, 200, "GET", "/locations/"+garage, nil).body, "photo", "id") != str(t, garagePhoto, "id") {
+		t.Error("location_get photo is not the one set")
 	}
 
-	// The same content attached elsewhere is stored once.
-	shelfPhoto := e.upload(t, 201, "/locations/"+garage+"/attachments", "garage.png", "image/png", pngBytes).body
-	if str(t, shelfPhoto, "sha256") != pngHash {
-		t.Error("the same content got a different hash")
-	}
-	if n := len(get(t, e.expect(t, 200, "GET", "/locations/"+garage, nil).body, "attachments").([]any)); n != 1 {
-		t.Errorf("location_get has %d attachments, want 1", n)
-	}
-	e.upload(t, 201, "/classes/"+classID+"/attachments", "guide.pdf", "application/pdf", pdfBytes)
-
-	// A new primary photo replaces the old one.
+	// A new photo replaces the old one; the old one stays as an attachment.
 	second := e.upload(t, 201, "/items/"+itemID+"/attachments", "side.png", "image/png",
-		append([]byte(nil), append(pngBytes, 'x')...), "primary_photo", "true").body
-	if get(t, e.expect(t, 200, "GET", "/attachments/"+photoID, nil).body, "primary_photo") != false {
-		t.Error("the old primary photo is still primary")
+		append([]byte(nil), append(pngBytes, 'x')...), "photo", "true").body
+	item = e.expect(t, 200, "GET", "/items/"+itemID, nil).body
+	if str(t, item, "photo", "id") != str(t, second, "id") || len(get(t, item, "attachments").([]any)) != 3 ||
+		str(t, item, "attachments", 0, "id") != str(t, second, "id") {
+		t.Errorf("after a new photo: %v", item)
 	}
-	if str(t, e.expect(t, 200, "GET", "/items/"+itemID, nil).body, "photo", "id") != str(t, second, "id") {
-		t.Error("item_get photo is not the new primary photo")
-	}
-	patched := e.expect(t, 200, "PATCH", "/attachments/"+photoID, obj("caption", nil, "file_name", "front-view.png")).body
-	if get(t, patched, "caption") != nil || str(t, patched, "file_name") != "front-view.png" {
+	patched := e.expect(t, 200, "PATCH", "/attachments/"+photoID, obj("title", " Front view ")).body
+	if str(t, patched, "title") != "Front view" {
 		t.Errorf("patch: %v", patched)
 	}
+	e.expect(t, 400, "PATCH", "/attachments/"+photoID, obj("caption", "x"))
+	e.expect(t, 200, "PATCH", "/items/"+itemID, obj("photo", nil))
+	if get(t, e.expect(t, 200, "GET", "/items/"+itemID, nil).body, "photo") != nil {
+		t.Error("photo: null didn't clear the photo")
+	}
 
-	// Download.
+	// Download, named after the title with an extension for its type.
 	rec := e.raw("GET", "/attachments/"+photoID+"/content")
 	if rec.Code != 200 || !bytes.Equal(rec.Body.Bytes(), pngBytes) {
 		t.Fatalf("download: %d, %d bytes", rec.Code, rec.Body.Len())
 	}
 	if rec.Header().Get("Content-Type") != "image/png" ||
-		!strings.HasPrefix(rec.Header().Get("Content-Disposition"), "inline") ||
+		rec.Header().Get("Content-Disposition") != `inline; filename="Front view.png"` ||
 		rec.Header().Get("X-Content-Type-Options") != "nosniff" {
 		t.Errorf("download headers: %v", rec.Header())
+	}
+	if rec := e.raw("GET", "/attachments/"+str(t, manual, "id")+"/content"); rec.Header().Get("Content-Disposition") != `inline; filename=manual.pdf` {
+		t.Errorf("a title with a fitting extension keeps it: %q", rec.Header().Get("Content-Disposition"))
 	}
 	if rec := e.raw("GET", "/attachments/"+photoID+"/content", "If-None-Match", rec.Header().Get("ETag")); rec.Code != 304 {
 		t.Errorf("If-None-Match: %d, want 304", rec.Code)
@@ -149,27 +165,38 @@ func TestAttachments(t *testing.T) {
 		t.Errorf("HTML must be a download, got %q", rec.Header().Get("Content-Disposition"))
 	}
 
-	// Stock rows: a split copies the attachments; a row with attachments isn't merged away.
-	e.upload(t, 201, "/stock/"+stockID+"/attachments", "receipt.pdf", "application/pdf", pdfBytes)
+	// Stock rows: a split shares the attachments and the photo; a row with
+	// attachments isn't merged away.
+	receipt := e.upload(t, 201, "/stock/"+stockID+"/attachments", "receipt.png", "image/png",
+		append([]byte(nil), append(pngBytes, 'r')...), "photo", "true").body
 	split := e.expect(t, 200, "POST", "/stock/"+stockID+"/move", obj("location", van, "quantity", 1)).body
-	if len(get(t, split, "attachments").([]any)) != 1 {
-		t.Errorf("split-off row attachments: %v", get(t, split, "attachments"))
+	if str(t, split, "attachments", 0, "id") != str(t, receipt, "id") || str(t, split, "photo", "id") != str(t, receipt, "id") {
+		t.Errorf("split-off row: %v", split)
 	}
 	moved := e.expect(t, 200, "POST", "/stock/"+stockID+"/move", obj("location", van)).body
 	if str(t, moved, "id") != stockID {
 		t.Error("a row with attachments was merged away")
 	}
+	// Removed from one row, it stays on the other, with its photo there.
+	e.expect(t, 204, "DELETE", "/stock/"+stockID+"/attachments/"+str(t, receipt, "id"), nil)
+	if s := e.expect(t, 200, "GET", "/stock/"+stockID, nil).body; get(t, s, "photo") != nil || len(get(t, s, "attachments").([]any)) != 0 {
+		t.Errorf("after removing: %v", s)
+	}
+	e.expect(t, 200, "GET", "/attachments/"+str(t, receipt, "id"), nil)
+	e.expect(t, 404, "DELETE", "/stock/"+stockID+"/attachments/"+str(t, receipt, "id"), nil)
 
 	// Limits and format.
 	e.upload(t, 413, "/items/"+itemID+"/attachments", "big.bin", "application/octet-stream",
 		bytes.Repeat([]byte{1}, testMaxAttachment+1))
 	e.expect(t, 415, "POST", "/items/"+itemID+"/attachments", obj("file", "x"))
 	e.upload(t, 404, "/items/"+missing+"/attachments", "x.png", "image/png", pngBytes)
+	e.upload(t, 400, "/items/"+itemID+"/attachments", "x.png", "image/png", pngBytes, "caption", "old")
 
-	// Garbage collection: the HTML file is only referenced by one attachment.
-	// Deleted, it is still referenced; purged, it isn't.
-	htmlHash := str(t, page, "sha256")
-	e.expect(t, 204, "DELETE", "/attachments/"+str(t, page, "id"), nil)
+	// Removing an attachment from its only object deletes it at once; its
+	// file goes at gc once no attachment has its hash.
+	htmlHash := str(t, page, "hash")
+	e.expect(t, 204, "DELETE", "/items/"+itemID+"/attachments/"+str(t, page, "id"), nil)
+	e.expect(t, 404, "GET", "/attachments/"+str(t, page, "id"), nil)
 	gc := func(dryRun bool) files.GCResult {
 		result, err := files.GC(context.Background(), files.GCOptions{
 			ConnConfig: e.dbaConfig,
@@ -182,11 +209,6 @@ func TestAttachments(t *testing.T) {
 		}
 		return result
 	}
-	gc(false)
-	if !e.fileExists(t, htmlHash) {
-		t.Fatal("gc removed the file of a deleted attachment")
-	}
-	purgeDeleted(t, e)
 	if r := gc(true); r.Files == 0 || !e.fileExists(t, htmlHash) {
 		t.Errorf("dry run: %+v, file exists: %v", r, e.fileExists(t, htmlHash))
 	}
@@ -194,10 +216,26 @@ func TestAttachments(t *testing.T) {
 	if e.fileExists(t, htmlHash) {
 		t.Error("gc kept an unreferenced file")
 	}
+	// The PNG is on two attachments; deleting one keeps the file.
+	e.expect(t, 204, "DELETE", "/attachments/"+str(t, garagePhoto, "id"), nil)
+	if get(t, e.expect(t, 200, "GET", "/locations/"+garage, nil).body, "photo") != nil {
+		t.Error("a deleted attachment is still the location's photo")
+	}
+	gc(false)
 	if !e.fileExists(t, pngHash) {
-		t.Error("gc removed a referenced file")
+		t.Error("gc removed a file another attachment has")
 	}
 	if rec := e.raw("GET", "/attachments/"+photoID+"/content"); rec.Code != http.StatusOK {
 		t.Errorf("download after gc: %d", rec.Code)
 	}
+
+	// A deleted object's attachments are frozen; purging it removes them.
+	old := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Old")).body, "id")
+	guide := e.upload(t, 201, "/classes/"+old+"/attachments", "guide.pdf", "application/pdf", pdfBytes).body
+	e.expect(t, 204, "DELETE", "/classes/"+old, nil)
+	e.expect(t, 409, "PATCH", "/attachments/"+str(t, guide, "id"), obj("title", "x"))
+	e.expect(t, 409, "DELETE", "/classes/"+old+"/attachments/"+str(t, guide, "id"), nil)
+	e.expect(t, 409, "DELETE", "/attachments/"+str(t, guide, "id"), nil)
+	purgeDeleted(t, e)
+	e.expect(t, 404, "GET", "/attachments/"+str(t, guide, "id"), nil)
 }

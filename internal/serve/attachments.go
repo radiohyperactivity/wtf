@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/radiohyperactivity/wtf/internal/files"
+	"github.com/radiohyperactivity/wtf/internal/mediatype"
 )
 
 const (
@@ -25,8 +26,9 @@ const (
 )
 
 // upload attaches a multipart/form-data upload to an object of targetType.
-// Parts: "file" (required; its file name and Content-Type are kept),
-// "caption" and "primary_photo" (true/false).
+// Parts: "file" (required; its Content-Type is kept, and its file name is
+// the title unless a "title" part gives one) and "photo" (true/false: make
+// it the object's photo).
 func (s *server) upload(targetType string) handlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		target := r.PathValue("id")
@@ -50,12 +52,12 @@ func (s *server) upload(targetType string) handlerFunc {
 		}
 
 		var (
-			staged       *files.Staged
-			placed       bool
-			fileName     string
-			contentType  string
-			caption      *string
-			primaryPhoto bool
+			staged      *files.Staged
+			placed      bool
+			fileName    string
+			contentType string
+			title       string
+			photo       bool
 		)
 		defer func() {
 			if staged != nil && !placed {
@@ -93,19 +95,17 @@ func (s *server) upload(targetType string) handlerFunc {
 				if err != nil {
 					return err
 				}
-			case "caption":
+			case "title":
+				if title, err = readField(part); err != nil {
+					return err
+				}
+			case "photo":
 				text, err := readField(part)
 				if err != nil {
 					return err
 				}
-				caption = &text
-			case "primary_photo":
-				text, err := readField(part)
-				if err != nil {
-					return err
-				}
-				if primaryPhoto, err = strconv.ParseBool(text); err != nil {
-					return invalidInput("primary_photo must be true or false")
+				if photo, err = strconv.ParseBool(text); err != nil {
+					return invalidInput("photo must be true or false")
 				}
 			default:
 				return invalidInput("unknown part %q", part.FormName())
@@ -121,9 +121,8 @@ func (s *server) upload(targetType string) handlerFunc {
 			contentType, _, _ = mime.ParseMediaType(http.DetectContentType(staged.Head))
 		}
 
-		var captionArg any
-		if caption != nil {
-			captionArg = *caption
+		if strings.TrimSpace(title) == "" {
+			title = fileName
 		}
 		var result string
 		sess, _ := r.Context().Value(sessionKey{}).(session)
@@ -141,12 +140,10 @@ func (s *server) upload(targetType string) handlerFunc {
 			sql, values := callSQL("attachment_create", []arg{
 				{name: "p_target_type", typ: "text", value: targetType},
 				{name: "p_target", typ: "uuid", value: target},
-				{name: "p_sha256", typ: "text", value: staged.Hash},
-				{name: "p_size", typ: "bigint", value: staged.Size},
-				{name: "p_file_name", typ: "text", value: fileName},
-				{name: "p_content_type", typ: "text", value: contentType},
-				{name: "p_caption", typ: "text", value: captionArg},
-				{name: "p_primary_photo", typ: "boolean", value: primaryPhoto},
+				{name: "p_hash", typ: "text", value: staged.Hash},
+				{name: "p_type", typ: "text", value: contentType},
+				{name: "p_title", typ: "text", value: title},
+				{name: "p_photo", typ: "boolean", value: photo},
 			})
 			return tx.QueryRow(r.Context(), sql+"::text", values...).Scan(&result)
 		})
@@ -178,9 +175,10 @@ func readField(part io.Reader) (string, error) {
 	return string(data), nil
 }
 
-// download sends an attachment's content. Only content types that can't run
-// scripts in a browser are shown inline; everything else is a download. The
-// content of an attachment never changes, so it can be cached for good.
+// download sends an attachment's content, named after its title (see
+// mediatype.DownloadName). Only content types that can't run scripts in a browser are
+// shown inline; everything else is a download. The content of an attachment
+// never changes, so it can be cached for good.
 func (s *server) download(w http.ResponseWriter, r *http.Request) error {
 	args, err := collect(r, []param{path("p_id", "id")})
 	if err != nil {
@@ -191,17 +189,17 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var a struct {
-		FileName    string `json:"file_name"`
-		ContentType string `json:"content_type"`
-		SHA256      string `json:"sha256"`
+		Title string `json:"title"`
+		Type  string `json:"type"`
+		Hash  string `json:"hash"`
 	}
 	if err := json.Unmarshal(result, &a); err != nil {
 		return err
 	}
 
-	f, err := s.files.OpenFile(a.SHA256)
+	f, err := s.files.OpenFile(a.Hash)
 	if errors.Is(err, fs.ErrNotExist) {
-		s.log.Error("attachment file missing", "attachment", r.PathValue("id"), "sha256", a.SHA256)
+		s.log.Error("attachment file missing", "attachment", r.PathValue("id"), "sha256", a.Hash)
 		return &problem{
 			Type:   "/problems/internal",
 			Title:  "Attachment file missing",
@@ -216,13 +214,13 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) error {
 
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(transferTimeout))
 	disposition := "attachment"
-	if inlineSafe(a.ContentType) {
+	if inlineSafe(a.Type) {
 		disposition = "inline"
 	}
 	h := w.Header()
-	h.Set("Content-Type", a.ContentType)
-	h.Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": a.FileName}))
-	h.Set("ETag", `"`+a.SHA256+`"`)
+	h.Set("Content-Type", a.Type)
+	h.Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": mediatype.DownloadName(a.Title, a.Type)}))
+	h.Set("ETag", `"`+a.Hash+`"`)
 	h.Set("Cache-Control", "private, max-age=31536000, immutable")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Content-Security-Policy", "sandbox")

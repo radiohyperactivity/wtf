@@ -38,7 +38,9 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM location WHERE id = p_id) THEN
         PERFORM util.raise_not_found('location', p_id);
     END IF;
-    RETURN util.location_json(p_id) || jsonb_build_object('attachments', util.attachments_json(NULL, NULL, p_id, NULL));
+    RETURN util.location_json(p_id) || jsonb_build_object(
+        'photo',       util.attachment_json((SELECT photo FROM location WHERE id = p_id)),
+        'attachments', util.attachments_json(NULL, NULL, p_id, NULL));
 END;
 $$;
 
@@ -100,16 +102,17 @@ END;
 $$;
 
 -- Changes the fields present in p_patch: name, parent (null = make it a
--- root), container. Moving a location takes everything in and below it
--- along. Moving is rejected if it would create a cycle; becoming a container
--- is rejected while the location has stock.
+-- root), container, photo (one of its own image attachments, or null).
+-- Moving a location takes everything in and below it along. Moving is
+-- rejected if it would create a cycle; becoming a container is rejected
+-- while the location has stock.
 CREATE FUNCTION location_patch(p_id uuid, p_patch jsonb) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.require('data', 'write');
-    PERFORM util.check_patch(p_patch, ARRAY['name', 'parent', 'container'], ARRAY['name', 'container']);
+    PERFORM util.check_patch(p_patch, ARRAY['name', 'parent', 'container', 'photo'], ARRAY['name', 'container']);
 
     UPDATE location
     SET name      = CASE WHEN p_patch ? 'name'
@@ -123,6 +126,7 @@ BEGIN
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('location', p_id);
     END IF;
+    PERFORM util.set_photo('location', p_id, p_patch);
     RETURN util.location_json(p_id);
 END;
 $$;
@@ -396,7 +400,7 @@ END;
 $$;
 
 -- Changes the fields present in p_patch: item, location, quantity
--- (null = not counted). Use stock_move to move things; this is for
+-- (null = not counted), photo (one of its own image attachments, or null). Use stock_move to move things; this is for
 -- corrections. Changing the item is rejected if the row's per-unit values
 -- don't apply to the new item's class.
 CREATE FUNCTION stock_patch(p_id uuid, p_patch jsonb) RETURNS jsonb
@@ -405,7 +409,7 @@ SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.require('data', 'write');
-    PERFORM util.check_patch(p_patch, ARRAY['item', 'location', 'quantity'], ARRAY['item', 'location']);
+    PERFORM util.check_patch(p_patch, ARRAY['item', 'location', 'quantity', 'photo'], ARRAY['item', 'location']);
 
     UPDATE stock
     SET item     = CASE WHEN p_patch ? 'item'
@@ -419,6 +423,7 @@ BEGIN
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('stock', p_id);
     END IF;
+    PERFORM util.set_photo('stock', p_id, p_patch);
     RETURN util.stock_detail_json(p_id);
 END;
 $$;
@@ -429,9 +434,10 @@ $$;
 -- If the destination already holds exactly one counted row of the same item
 -- with exactly the same per-unit values, and the moved row has no
 -- attachments, the moved amount is added to that row (a whole row is then
--- marked deleted, merged_into that row). Otherwise a whole row simply changes location, and a partial
--- amount is split off into a new row at the destination, with a copy of the
--- per-unit values and attachments (the files themselves are not copied).
+-- marked deleted, merged_into that row). Otherwise a whole row simply changes
+-- location, and a partial amount is split off into a new row at the
+-- destination, with a copy of the per-unit values; the new row shares the
+-- attachments and the photo.
 -- Returns the stock row at the destination.
 CREATE FUNCTION stock_move(p_id uuid, p_location uuid, p_quantity numeric DEFAULT NULL)
 RETURNS jsonb
@@ -483,7 +489,7 @@ BEGIN
         );
         IF cardinality(v_candidates) = 1
            AND util.stock_values_equal(p_id, v_candidates[1])
-           AND NOT EXISTS (SELECT 1 FROM attachment WHERE stock = p_id AND NOT deleted)
+           AND NOT EXISTS (SELECT 1 FROM stock_attachment WHERE stock = p_id)
         THEN
             v_target := v_candidates[1];
         END IF;
@@ -519,10 +525,12 @@ BEGIN
     FROM stock_value
     WHERE stock = p_id;
 
-    INSERT INTO attachment (file, file_name, content_type, caption, primary_photo, stock)
-    SELECT file, file_name, content_type, caption, primary_photo, v_target
-    FROM attachment
-    WHERE stock = p_id AND NOT deleted;
+    -- The new row shares the attachments, and the photo.
+    INSERT INTO stock_attachment (stock, attachment)
+    SELECT v_target, attachment
+    FROM stock_attachment
+    WHERE stock = p_id;
+    UPDATE stock SET photo = (SELECT photo FROM stock WHERE id = p_id) WHERE id = v_target;
 
     RETURN util.stock_detail_json(v_target);
 END;

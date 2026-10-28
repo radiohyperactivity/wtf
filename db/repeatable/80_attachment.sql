@@ -5,97 +5,114 @@
 -- transaction: attachment_lock, then wtfd puts the file in place, then
 -- attachment_create. "wtfd gc" takes the same lock before removing a file.
 --
+-- An attachment is linked to items, stock rows, locations and classes
+-- through mapping tables (item_attachment, …). One that nothing links to any
+-- more is deleted at once (a trigger), and its file goes at the next
+-- "wtfd gc" when no attachment has its hash.
+--
 -- Attachments of classes belong to the model (model privilege); all others
 -- belong to the data (data privilege).
 
--- Checks access to an existing attachment at p_level ('read' or 'write').
+-- The privilege area of an object kind.
+CREATE FUNCTION util.attachment_area(p_kind text) RETURNS text
+LANGUAGE plpgsql IMMUTABLE AS $$
+BEGIN
+    RETURN CASE WHEN p_kind = 'class' THEN 'model' ELSE 'data' END;
+END;
+$$;
+
+-- Checks access to an existing attachment at p_level ('read' or 'write'):
+-- reading needs model or data read; changing needs write on whatever it is
+-- linked to.
 CREATE FUNCTION util.attachment_access(p_id uuid, p_level text) RETURNS void
 LANGUAGE plpgsql STABLE AS $$
-DECLARE
-    v_is_class boolean;
 BEGIN
     PERFORM util.require_login();
-    SELECT class IS NOT NULL INTO v_is_class FROM attachment WHERE id = p_id;
-    IF NOT FOUND THEN
+    IF NOT EXISTS (SELECT 1 FROM attachment WHERE id = p_id) THEN
         PERFORM util.raise_not_found('attachment', p_id);
     END IF;
-    IF NOT v_is_class THEN
-        PERFORM util.require('data', p_level);
-    ELSIF p_level = 'read' THEN
+    IF p_level = 'read' THEN
         PERFORM util.require_model_read();
-    ELSE
+        RETURN;
+    END IF;
+    IF util.attachment_linked(p_id, 'class') THEN
         PERFORM util.require('model', 'write');
+    END IF;
+    IF util.attachment_linked(p_id, 'item') OR util.attachment_linked(p_id, 'stock')
+       OR util.attachment_linked(p_id, 'location')
+    THEN
+        PERFORM util.require('data', 'write');
+    END IF;
+END;
+$$;
+
+-- Raises unless p_kind is one of the kinds attachments are linked to, and
+-- the object p_id of it exists.
+CREATE FUNCTION util.check_attachment_target(p_kind text, p_id uuid) RETURNS void
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    v_exists boolean;
+BEGIN
+    IF p_kind IS NULL OR p_kind NOT IN ('item', 'stock', 'location', 'class') THEN
+        PERFORM util.raise_invalid(format('%L is not something attachments can be attached to', p_kind));
+    END IF;
+    EXECUTE format('SELECT EXISTS (SELECT 1 FROM %I WHERE id = $1)', p_kind) INTO v_exists USING p_id;
+    IF NOT v_exists THEN
+        PERFORM util.raise_not_found(p_kind, p_id);
     END IF;
 END;
 $$;
 
 -- Locks a file hash (hex) until the end of the transaction.
-CREATE FUNCTION attachment_lock(p_sha256 text) RETURNS void
+CREATE FUNCTION attachment_lock(p_hash text) RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.require_login();
-    PERFORM pg_advisory_xact_lock(file_lock_key(decode(p_sha256, 'hex')));
+    PERFORM pg_advisory_xact_lock(file_lock_key(lower(p_hash)));
 END;
 $$;
 
 -- Attaches a file to an object. p_target_type is 'item', 'stock',
--- 'location' or 'class'. p_sha256 is the hex hash of the file, which wtfd has
--- already stored. Marking it as the primary photo replaces any previous one.
+-- 'location' or 'class'. p_hash is the hex SHA-256 of the file, which wtfd
+-- has already stored. p_title defaults to the uploaded file's name (wtfd
+-- passes it). With p_photo, the attachment becomes the object's photo; it
+-- must be an image.
 CREATE FUNCTION attachment_create(
-    p_target_type   text,
-    p_target        uuid,
-    p_sha256        text,
-    p_size          bigint,
-    p_file_name     text,
-    p_content_type  text,
-    p_caption       text    DEFAULT NULL,
-    p_primary_photo boolean DEFAULT false
+    p_target_type text,
+    p_target      uuid,
+    p_hash        text,
+    p_type        text,
+    p_title       text,
+    p_photo       boolean DEFAULT false
 ) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_hash   bytea := decode(p_sha256, 'hex');
-    v_id     uuid;
+    v_id uuid;
 BEGIN
-    IF p_target_type NOT IN ('item', 'stock', 'location', 'class') THEN
-        PERFORM util.raise_invalid(format('%L is not something attachments can be attached to', p_target_type));
-    END IF;
-    PERFORM util.require(CASE WHEN p_target_type = 'class' THEN 'model' ELSE 'data' END, 'write');
+    PERFORM util.check_attachment_target(p_target_type, p_target);
+    PERFORM util.require(util.attachment_area(p_target_type), 'write');
 
-    IF (p_target_type = 'item'     AND NOT EXISTS (SELECT 1 FROM item     WHERE id = p_target))
-       OR (p_target_type = 'stock'    AND NOT EXISTS (SELECT 1 FROM stock    WHERE id = p_target))
-       OR (p_target_type = 'location' AND NOT EXISTS (SELECT 1 FROM location WHERE id = p_target))
-       OR (p_target_type = 'class'    AND NOT EXISTS (SELECT 1 FROM class    WHERE id = p_target))
-    THEN
-        PERFORM util.raise_not_found(p_target_type, p_target);
-    END IF;
-
-    INSERT INTO file (sha256, size)
-    VALUES (v_hash, p_size)
-    ON CONFLICT (sha256) DO NOTHING;
-
-    INSERT INTO attachment (file, file_name, content_type, caption, primary_photo,
-                            item, stock, location, class)
-    VALUES (v_hash, util.clean_name(p_file_name), p_content_type, NULLIF(btrim(p_caption), ''), false,
-            CASE WHEN p_target_type = 'item'     THEN p_target END,
-            CASE WHEN p_target_type = 'stock'    THEN p_target END,
-            CASE WHEN p_target_type = 'location' THEN p_target END,
-            CASE WHEN p_target_type = 'class'    THEN p_target END)
+    INSERT INTO attachment (hash, type, title)
+    VALUES (lower(p_hash), p_type, util.clean_name(p_title))
     RETURNING id INTO v_id;
 
-    IF p_primary_photo THEN
-        PERFORM util.attachment_clear_primary(v_id);
-        UPDATE attachment SET primary_photo = true WHERE id = v_id;
+    EXECUTE format('INSERT INTO %I (%I, attachment) VALUES ($1, $2)',
+                   p_target_type || '_attachment', p_target_type)
+        USING p_target, v_id;
+
+    IF p_photo THEN
+        EXECUTE format('UPDATE %I SET photo = $1 WHERE id = $2', p_target_type)
+            USING v_id, p_target;
     END IF;
 
     RETURN util.attachment_json(v_id);
 END;
 $$;
 
--- A deleted attachment is returned too, with deleted: true.
 CREATE FUNCTION attachment_get(p_id uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
@@ -106,71 +123,76 @@ BEGIN
 END;
 $$;
 
--- Changes the fields present in p_patch: file_name, caption (null clears it),
--- primary_photo (true replaces any previous primary photo of the object).
+-- Changes the fields present in p_patch: title. Not while it is on a
+-- deleted object (deleted objects are frozen).
 CREATE FUNCTION attachment_patch(p_id uuid, p_patch jsonb) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.attachment_access(p_id, 'write');
-    PERFORM util.check_patch(p_patch,
-                             ARRAY['file_name', 'caption', 'primary_photo'],
-                             ARRAY['file_name', 'primary_photo']);
-
-    IF (p_patch ->> 'primary_photo')::boolean THEN
-        PERFORM util.attachment_clear_primary(p_id);
-    END IF;
+    PERFORM util.check_patch(p_patch, ARRAY['title'], ARRAY['title']);
+    PERFORM util.check_attachment_owners_live(p_id);
 
     UPDATE attachment
-    SET file_name     = CASE WHEN p_patch ? 'file_name'
-                             THEN util.clean_name(p_patch ->> 'file_name') ELSE file_name END,
-        caption       = CASE WHEN p_patch ? 'caption'
-                             THEN NULLIF(btrim(p_patch ->> 'caption'), '') ELSE caption END,
-        primary_photo = CASE WHEN p_patch ? 'primary_photo'
-                             THEN (p_patch ->> 'primary_photo')::boolean ELSE primary_photo END
+    SET title = CASE WHEN p_patch ? 'title' THEN util.clean_name(p_patch ->> 'title') ELSE title END
     WHERE id = p_id;
 
     RETURN util.attachment_json(p_id);
 END;
 $$;
 
--- Marks an attachment deleted. Its file stays on disk while it is referenced,
--- until the attachment is purged and "wtfd gc" finds the file unreferenced.
+-- Raises "… is deleted" (55000) when an attachment is on a deleted object,
+-- whose attachments can't change.
+CREATE FUNCTION util.check_attachment_owners_live(p_id uuid) RETURNS void
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_owner record;
+BEGIN
+    FOR v_owner IN
+        SELECT 'item' AS kind, item AS id FROM item_attachment WHERE attachment = p_id
+        UNION ALL SELECT 'stock', stock FROM stock_attachment WHERE attachment = p_id
+        UNION ALL SELECT 'location', location FROM location_attachment WHERE attachment = p_id
+        UNION ALL SELECT 'class', class FROM class_attachment WHERE attachment = p_id
+    LOOP
+        PERFORM check_live(v_owner.kind, v_owner.id);
+    END LOOP;
+END;
+$$;
+
+-- Removes an attachment from object p_target (of p_target_type). If it was
+-- the object's photo, the object has no photo any more. An attachment left
+-- on nothing is deleted, for good.
+CREATE FUNCTION attachment_unlink(p_target_type text, p_target uuid, p_attachment uuid) RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_removed integer;
+BEGIN
+    PERFORM util.check_attachment_target(p_target_type, p_target);
+    PERFORM util.require(util.attachment_area(p_target_type), 'write');
+    PERFORM check_live(p_target_type, p_target);
+
+    EXECUTE format('DELETE FROM %I WHERE %I = $1 AND attachment = $2',
+                   p_target_type || '_attachment', p_target_type)
+        USING p_target, p_attachment;
+    GET DIAGNOSTICS v_removed = ROW_COUNT; -- EXECUTE doesn't set FOUND
+    IF v_removed = 0 THEN
+        PERFORM util.raise_not_found('attachment', p_attachment);
+    END IF;
+END;
+$$;
+
+-- Deletes an attachment, for good: it is removed from every object it is
+-- on. Not while one of them is deleted.
 CREATE FUNCTION attachment_delete(p_id uuid) RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.attachment_access(p_id, 'write');
-    UPDATE attachment SET deleted = true WHERE id = p_id;
-END;
-$$;
-
--- Restores a deleted attachment; its object must be live. If it was the
--- primary photo and the object has another one by now, it comes back as an
--- ordinary attachment.
-CREATE FUNCTION attachment_restore(p_id uuid, p_options jsonb DEFAULT '{}') RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = public, pg_temp
-AS $$
-DECLARE
-    v_attachment attachment;
-BEGIN
-    PERFORM util.attachment_access(p_id, 'write');
-    PERFORM util.check_patch(p_options, ARRAY[]::text[], ARRAY[]::text[]);
-    SELECT * INTO v_attachment FROM attachment WHERE id = p_id FOR UPDATE;
-    IF NOT v_attachment.deleted THEN
-        PERFORM util.raise_not_deleted('attachment', p_id);
-    END IF;
-
-    UPDATE attachment a
-    SET deleted       = false,
-        primary_photo = a.primary_photo AND NOT EXISTS (
-            SELECT 1 FROM attachment o
-            WHERE o.id <> a.id AND o.primary_photo AND NOT o.deleted
-              AND (o.item = a.item OR o.stock = a.stock OR o.location = a.location OR o.class = a.class))
-    WHERE a.id = p_id;
-    RETURN util.attachment_json(p_id);
+    PERFORM util.check_attachment_owners_live(p_id);
+    DELETE FROM attachment WHERE id = p_id;
 END;
 $$;

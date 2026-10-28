@@ -534,6 +534,7 @@ paths:
                 name: { type: string }
                 unit: { type: integer, description: Another unit of the same quantity; a unit can't be added or removed. }
                 unit_lock: { type: boolean }
+                photo: { oneOf: [{ $ref: "#/components/schemas/Uuid" }, { type: "null" }], description: "One of its own image attachments, or null for none." }
       responses:
         "200": { $ref: "#/components/responses/Item" }
         default: { $ref: "#/components/responses/Problem" }
@@ -724,6 +725,7 @@ paths:
                 item: { $ref: "#/components/schemas/Uuid" }
                 location: { $ref: "#/components/schemas/Uuid" }
                 quantity: { type: [number, "null"] }
+                photo: { oneOf: [{ $ref: "#/components/schemas/Uuid" }, { type: "null" }], description: "One of its own image attachments, or null for none." }
       responses:
         "200": { $ref: "#/components/responses/Stock" }
         default: { $ref: "#/components/responses/Problem" }
@@ -785,14 +787,38 @@ paths:
         "200": { $ref: "#/components/responses/Stock" }
         default: { $ref: "#/components/responses/Problem" }
 
+  /items/{id}/attachments/{attachment}:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+      - { name: attachment, in: path, required: true, schema: { $ref: "#/components/schemas/Uuid" } }
+    delete:
+      summary: Remove an attachment from an item
+      description: If it was the photo, there is no photo any more. An attachment left on nothing is deleted for good.
+      operationId: itemAttachmentRemove
+      responses:
+        "204": { description: Removed. }
+        default: { $ref: "#/components/responses/Problem" }
+
   /items/{id}/attachments:
     parameters: [{ $ref: "#/components/parameters/Id" }]
     post:
-      summary: Attach a file to a item
+      summary: Attach a file to an item
       operationId: itemAttachmentCreate
       requestBody: { $ref: "#/components/requestBodies/Upload" }
       responses:
         "201": { $ref: "#/components/responses/AttachmentCreated" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /stock/{id}/attachments/{attachment}:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+      - { name: attachment, in: path, required: true, schema: { $ref: "#/components/schemas/Uuid" } }
+    delete:
+      summary: Remove an attachment from a stock row
+      description: If it was the photo, there is no photo any more. An attachment left on nothing is deleted for good.
+      operationId: stockAttachmentRemove
+      responses:
+        "204": { description: Removed. }
         default: { $ref: "#/components/responses/Problem" }
 
   /stock/{id}/attachments:
@@ -805,6 +831,18 @@ paths:
         "201": { $ref: "#/components/responses/AttachmentCreated" }
         default: { $ref: "#/components/responses/Problem" }
 
+  /locations/{id}/attachments/{attachment}:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+      - { name: attachment, in: path, required: true, schema: { $ref: "#/components/schemas/Uuid" } }
+    delete:
+      summary: Remove an attachment from a location
+      description: If it was the photo, there is no photo any more. An attachment left on nothing is deleted for good.
+      operationId: locationAttachmentRemove
+      responses:
+        "204": { description: Removed. }
+        default: { $ref: "#/components/responses/Problem" }
+
   /locations/{id}/attachments:
     parameters: [{ $ref: "#/components/parameters/Id" }]
     post:
@@ -813,6 +851,18 @@ paths:
       requestBody: { $ref: "#/components/requestBodies/Upload" }
       responses:
         "201": { $ref: "#/components/responses/AttachmentCreated" }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /classes/{id}/attachments/{attachment}:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+      - { name: attachment, in: path, required: true, schema: { $ref: "#/components/schemas/Uuid" } }
+    delete:
+      summary: Remove an attachment from a class
+      description: If it was the photo, there is no photo any more. An attachment left on nothing is deleted for good.
+      operationId: classAttachmentRemove
+      responses:
+        "204": { description: Removed. }
         default: { $ref: "#/components/responses/Problem" }
 
   /classes/{id}/attachments:
@@ -834,7 +884,7 @@ paths:
         "200": { $ref: "#/components/responses/Attachment" }
         default: { $ref: "#/components/responses/Problem" }
     patch:
-      summary: Change an attachment's file name, caption or primary photo flag
+      summary: Change an attachment's title
       operationId: attachmentPatch
       requestBody:
         required: true
@@ -844,14 +894,13 @@ paths:
               type: object
               additionalProperties: false
               properties:
-                file_name: { type: string }
-                caption: { type: [string, "null"] }
-                primary_photo: { type: boolean, description: true replaces any previous primary photo of the object; images only. }
+                title: { type: string }
       responses:
         "200": { $ref: "#/components/responses/Attachment" }
         default: { $ref: "#/components/responses/Problem" }
     delete:
-      summary: Mark an attachment deleted (the file stays until it is purged)
+      summary: Delete an attachment for good, from every object it is on
+      description: Not while one of them is deleted. The file goes at the next "wtfd gc" when no attachment has its hash.
       operationId: attachmentDelete
       responses:
         "204": { description: Deleted. }
@@ -863,8 +912,9 @@ paths:
       summary: An attachment's content
       description: |
         Images (except SVG), PDF and plain text are sent inline, everything
-        else as a download. The ETag is the SHA-256 of the content, which never
-        changes; Range requests are supported.
+        else as a download, named after the title with an extension for the
+        type. The ETag is the SHA-256 of the content, which never changes;
+        Range requests are supported.
       operationId: attachmentContent
       responses:
         "200":
@@ -1275,15 +1325,6 @@ paths:
         "200": { $ref: "#/components/responses/Option" }
         default: { $ref: "#/components/responses/Problem" }
 
-  /attachments/{id}/restore:
-    parameters: [{ $ref: "#/components/parameters/Id" }]
-    post:
-      summary: Restore a deleted attachment (its object must not be deleted)
-      operationId: attachmentRestore
-      responses:
-        "200": { $ref: "#/components/responses/Attachment" }
-        default: { $ref: "#/components/responses/Problem" }
-
 components:
   securitySchemes:
     session:
@@ -1350,9 +1391,9 @@ components:
               file:
                 type: string
                 format: binary
-                description: The file; its file name and Content-Type are kept (the type is detected when missing or application/octet-stream).
-              caption: { type: string }
-              primary_photo: { type: boolean, description: Make it the object's primary photo (images only). }
+                description: The file; its Content-Type is kept (and detected when missing or application/octet-stream).
+              title: { type: string, description: "Default: the file's name." }
+              photo: { type: boolean, description: "Make it the object's photo (images only)." }
     TreeNodeCreate:
       required: true
       content:
@@ -1404,6 +1445,7 @@ components:
               container:
                 type: boolean
                 description: Rejected (422) while the class has items or the location has stock.
+              photo: { oneOf: [{ $ref: "#/components/schemas/Uuid" }, { type: "null" }], description: "One of its own image attachments, or null for none." }
 
   responses:
     History:
@@ -1673,17 +1715,13 @@ components:
       type: object
       properties:
         id: { $ref: "#/components/schemas/Uuid" }
-        file_name: { type: string }
-        content_type: { type: string }
-        size: { type: integer }
-        sha256: { type: string, description: Hex SHA-256 of the content. }
-        caption: { type: [string, "null"] }
-        primary_photo: { type: boolean }
-        deleted: { $ref: "#/components/schemas/Deleted" }
+        title: { type: string }
+        type: { type: string, description: MIME type. }
+        hash: { type: string, description: Hex SHA-256 of the content. }
 
     Attachments:
       type: array
-      description: The primary photo first, then by file name.
+      description: The photo first, then by title.
       items: { $ref: "#/components/schemas/Attachment" }
 
     Values:
@@ -1770,6 +1808,7 @@ components:
               default_display: { $ref: "#/components/schemas/Display" }
               per_unit: { type: boolean }
               required: { type: boolean }
+        photo: { oneOf: [{ $ref: "#/components/schemas/Attachment" }, { type: "null" }] }
         attachments: { $ref: "#/components/schemas/Attachments" }
 
     Location:
@@ -1782,6 +1821,9 @@ components:
         container: { type: boolean, description: Holds only other locations, no stock. }
         path: { type: array, items: { $ref: "#/components/schemas/PathEntry" } }
         deleted: { $ref: "#/components/schemas/Deleted" }
+        photo:
+          { oneOf: [{ $ref: "#/components/schemas/Attachment" }, { type: "null" }] }
+          description: Only in GET /locations/{id}.
         attachments:
           $ref: "#/components/schemas/Attachments"
           description: Only in GET /locations/{id}.
@@ -1839,6 +1881,7 @@ components:
               display: { $ref: "#/components/schemas/Display" }
               values: { $ref: "#/components/schemas/Values" }
               missing: { $ref: "#/components/schemas/Missing" }
+              photo: { oneOf: [{ $ref: "#/components/schemas/Attachment" }, { type: "null" }] }
               attachments: { $ref: "#/components/schemas/Attachments" }
 
     Stock:
@@ -1864,6 +1907,9 @@ components:
           description: Not in GET /stock list rows.
         missing:
           $ref: "#/components/schemas/Missing"
+          description: Not in GET /stock list rows.
+        photo:
+          { oneOf: [{ $ref: "#/components/schemas/Attachment" }, { type: "null" }] }
           description: Not in GET /stock list rows.
         attachments:
           $ref: "#/components/schemas/Attachments"

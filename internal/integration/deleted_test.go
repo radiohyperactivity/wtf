@@ -308,22 +308,19 @@ func TestDeletedRules(t *testing.T) {
 	}
 	e.expect(t, 200, "POST", "/items/"+item+"/restore", nil)
 
-	// Attachments: a restored primary photo stays primary, unless the object
-	// has a new one by then.
-	first := str(t, e.upload(t, 201, "/items/"+item+"/attachments", "a.png", "image/png", pngBytes,
-		"primary_photo", "true").body, "id")
-	e.expect(t, 204, "DELETE", "/attachments/"+first, nil)
-	if get(t, e.expect(t, 200, "GET", "/items/"+item, nil).body, "photo") != nil {
-		t.Error("a deleted attachment is still the photo")
+	// Attachments stay with a deleted item, photo included, and come back
+	// with it; purging it removes them for good.
+	photo := str(t, e.upload(t, 201, "/items/"+item+"/attachments", "a.png", "image/png", pngBytes,
+		"photo", "true").body, "id")
+	e.expect(t, 204, "DELETE", "/items/"+item, nil)
+	e.expect(t, 409, "DELETE", "/items/"+item+"/attachments/"+photo, nil)
+	e.expect(t, 200, "POST", "/items/"+item+"/restore", nil)
+	if str(t, e.expect(t, 200, "GET", "/items/"+item, nil).body, "photo", "id") != photo {
+		t.Error("the restored item lost its photo")
 	}
-	if a := e.expect(t, 200, "POST", "/attachments/"+first+"/restore", nil).body; get(t, a, "primary_photo") != true {
-		t.Errorf("restored photo: %v", a)
-	}
-	e.expect(t, 204, "DELETE", "/attachments/"+first, nil)
-	e.upload(t, 201, "/items/"+item+"/attachments", "b.png", "image/png", pngBytes, "primary_photo", "true")
-	if a := e.expect(t, 200, "POST", "/attachments/"+first+"/restore", nil).body; get(t, a, "primary_photo") != false {
-		t.Errorf("restored next to a new photo: %v", a)
-	}
+	e.expect(t, 204, "DELETE", "/items/"+item, nil)
+	purgeDeleted(t, e)
+	e.expect(t, 404, "GET", "/attachments/"+photo, nil)
 }
 
 // The top level of the trees and the list of attributes have a history of

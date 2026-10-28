@@ -389,7 +389,7 @@ func (e *env) printLocationJSON(data json.RawMessage) error {
 		"Container", yesNo(l.Container),
 		"Path", pathNames(l.Path),
 		"Id", l.ID)
-	printAttachments(e.stdout, "", l.Attachments)
+	printAttachments(e.stdout, "", l.Attachments, l.Photo)
 	return nil
 }
 
@@ -503,7 +503,7 @@ func (e *env) printClassJSON(data json.RawMessage) error {
 		}
 		t.flush()
 	}
-	printAttachments(w, "", c.Attachments)
+	printAttachments(w, "", c.Attachments, c.Photo)
 	return nil
 }
 

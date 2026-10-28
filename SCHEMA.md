@@ -26,8 +26,8 @@ All data access goes through the functions described in [API.md](API.md). The ER
 | `account`         | A user: email, bcrypt password hash, and the data, model, account and history privileges (see [ACCOUNTS.md](ACCOUNTS.md)). |
 | `session`         | A login: the SHA-256 of its token, its account and when it was last used. |
 | `history`         | One entry per changed row of data: when, transaction, account, table, operation, the row, and the changed columns (see [api/history.md](api/history.md)). |
-| `file`            | A stored file content, by SHA-256 hash and size. The bytes live on disk in `wtfd`'s files directory (see [api/attachment.md](api/attachment.md)). |
-| `attachment`      | A file attached to exactly one item, stock row, location or class, with file name, content type, caption and a primary photo flag. |
+| `attachment`      | A file: the SHA-256 hash of its content, its MIME type and a title. The bytes live on disk in `wtfd`'s files directory, named by the hash (see [api/attachment.md](api/attachment.md)). |
+| `item_attachment`, `stock_attachment`, `location_attachment`, `class_attachment` | Which attachments are on which item, stock row, location and class; primary key (object, attachment). |
 | `data_version`    | A change counter per tree (`class`, `location`), so clients can cheaply check whether their cached tree is still current. |
 
 ### Conventions
@@ -68,14 +68,14 @@ All data access goes through the functions described in [API.md](API.md). The ER
 - **History** is written by one row-level trigger (`record_history`) on every data table and `account`. Password hashes are never logged, and updates that only touch the lockout counters aren't either. History copies past states on purpose; the current data never depends on it. Only restoring reads it, to find what was deleted together, and without that history it restores the object alone.
 - **Accounts are never deleted,** only marked `deleted`, so history can always refer to them. Email uniqueness only applies to accounts that aren't deleted.
 - **Deleting marks rows** (see [api/deleting.md](api/deleting.md)): items, stock rows, locations, classes, attributes, options and attachments have `deleted`, and only a purge removes them. Their values, assignments and attachments aren't marked; they stay with them. The rules in this list apply between live (not deleted) rows only:
-  - Sibling names, attribute names, option names and primary photos are unique among live rows (partial unique indexes). Label codes stay unique across all rows.
+  - Sibling names, attribute names and option names are unique among live rows (partial unique indexes). Label codes stay unique across all rows.
   - A live row only refers to live rows: a stock row's item and location, an item's class, a parent, an option's attribute; a value's, default's or attachment's owner, attribute and option (triggers, which lock the referenced row).
   - A row can only be marked deleted while nothing live depends on it (triggers, 23001).
   - A deleted row is frozen: any change other than restoring it is refused (trigger, 55000). So are changes to its values, assignments and attachments.
   - Containers, required attributes, value scopes and datatype changes only count live rows. Restoring a row checks it again, required attributes included (deferred constraint triggers).
   - A stock row merged into another by a move is deleted, with `merged_into` pointing to that row (CHECK: only on deleted rows; cleared when that row is purged).
-- Stored `file` contents are shared: the same content attached twice is stored once.
-- An attachment belongs to exactly one item, stock row, location or class: four nullable foreign keys, exactly one set (CHECK). It stays with its object when that is deleted, and is purged with it. At most one live attachment per object is the primary photo (partial unique indexes), and it must be an image (CHECK).
+- **Attachments** (migration `0004_attachments.sql`) are linked to their objects through the four mapping tables, so one can be on several objects. An attachment that nothing links to any more is deleted at once (trigger); attachments aren't marked deleted. A deleted object keeps its links, frozen; purging it removes them. The same content is stored once on disk, however many attachments have its hash.
+- **Photos:** items, stock rows, locations and classes have a nullable `photo`, an attachment that must be an image and one of the object's own (trigger). Removing that link clears the photo (trigger).
 - Every location, item and stock row has a `code`, the next number from `code_sequence`. One sequence for all three tables makes codes globally unique by construction, and a unique index per table guards it. The API renders codes in Crockford Base32 (`1000`, `1A7K`, …).
 - Every statement that changes `class` or `location` increments that table's counter in `data_version` (statement-level triggers). The counter row is locked until commit, so concurrent changes are serialised and every committed change produces a new value.
 

@@ -41,6 +41,7 @@ BEGIN
     END IF;
     RETURN util.class_json(p_id) || jsonb_build_object(
         'attributes',  util.class_attributes_json(p_id),
+        'photo',       util.attachment_json((SELECT photo FROM class WHERE id = p_id)),
         'attachments', util.attachments_json(NULL, NULL, NULL, p_id)
     );
 END;
@@ -63,16 +64,17 @@ END;
 $$;
 
 -- Changes the fields present in p_patch: name, parent (null = make it a
--- root), container. Moving is rejected if it would create a cycle or leave
--- item values without a matching attribute; becoming a container is rejected
--- while the class has items.
+-- root), container, photo (one of its own image attachments, or null).
+-- Moving is rejected if it would create a cycle or leave item values without
+-- a matching attribute; becoming a container is rejected while the class has
+-- items.
 CREATE FUNCTION class_patch(p_id uuid, p_patch jsonb) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.require('model', 'write');
-    PERFORM util.check_patch(p_patch, ARRAY['name', 'parent', 'container'], ARRAY['name', 'container']);
+    PERFORM util.check_patch(p_patch, ARRAY['name', 'parent', 'container', 'photo'], ARRAY['name', 'container']);
 
     UPDATE class
     SET name      = CASE WHEN p_patch ? 'name'
@@ -86,6 +88,7 @@ BEGIN
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('class', p_id);
     END IF;
+    PERFORM util.set_photo('class', p_id, p_patch);
     RETURN class_get(p_id);
 END;
 $$;

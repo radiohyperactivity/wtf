@@ -71,7 +71,7 @@ wtf item add            # asks for everything, with Tab completion
 | `wtf class tree` / `get` / `add` / `set` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` / `restore` / `history [class]` / `assign <class> <attribute> [--default V] [--per-unit] [--required]` / `unassign` | `/classes`, `/classes/{id}/attributes/{attribute}` |
 | `wtf attribute list` / `get` / `add <name> [--type T] [--unit U [--unit-lock]] [--edit]` (with a unit, the type follows from it) / `set` / `edit` / `delete` / `restore` / `history [attribute]` | `/attributes` |
 | `wtf option list <attribute>` / `get` / `add <attribute> <name>…` / `set --name N` / `delete` / `restore` | `/attributes/{id}/options`, `/options/{id}` |
-| `wtf attachment list <type> <ref>` / `add <type> <ref> <file> [--caption C] [--primary]` / `get` / `download [-o FILE\ / `restore`|-]` / `set` / `edit` / `delete` | attachments |
+| `wtf attachment list <type> <ref>` / `add <type> <ref> <file> [--title T] [--photo]` / `get` / `download [-o FILE\|-]` / `set --title T` / `edit` / `photo <type> <ref> <id\|none>` / `remove <type> <ref> <id>` / `delete <id>` | attachments |
 | `wtf quantity list` / `get`, `wtf unit-family list [--quantity Q]` / `get`, `wtf unit list [--quantity Q] [--family F]` / `get` / `import <file> [--dry-run]` | system data |
 | `wtf account list` / `get` / `add <email> [--password] [--data P] [--model P] [--account P] [--history P] [--edit]` / `set` / `edit` / `delete` / `history` | `/accounts` |
 
@@ -326,3 +326,12 @@ These follow your answers: all attributes offered, a picker on Tab Tab, bash, zs
 ### Importing units
 
 50. **`wtf unit import FILE [--dry-run]`** sends a unit file ([seed/units-format.md](seed/units-format.md)) and tells what was added (or would be, with `--dry-run`), how much was there already, and every conflict. With conflicts nothing is imported, and the exit code is 1. `--json` prints the server's report. The CLI's cached units are dropped at once, so the new units can be used straight away.
+
+### Attachments, redone
+
+51. **Attachments follow the new model** ([api/attachment.md](api/attachment.md)): a title instead of a file name and caption, and a photo per object instead of a primary photo flag.
+    - **`add … [--title T] [--photo]`:** the title defaults to the file name.
+    - **`photo TYPE REF ID|none`** sets or clears an object's photo, which must be one of its own image attachments.
+    - **`remove TYPE REF ID`** takes an attachment off one object; **`delete ID`** deletes it everywhere. Either way, an attachment left on nothing is gone for good: there is no `restore` any more.
+    - **`download`** names the file as the server does: the title, with an extension for the type if it lacks one (`internal/mediatype`).
+    - **Sizes aren't shown any more,** since the database no longer stores them.
