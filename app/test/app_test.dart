@@ -910,6 +910,37 @@ void main() {
     expect(find.textContaining('Empty: no default'), findsOneWidget);
   });
 
+  testWidgets('a table wider than the screen says so', (tester) async {
+    setSize(tester, 1200);
+    await startApp(tester, FakeServer());
+    await search(tester, 'drill');
+    // Room for all columns: no scrollbar shown, no fade.
+    expect(
+      tester
+          .widgetList<Scrollbar>(find.byType(Scrollbar))
+          .where((s) => s.thumbVisibility == true),
+      isEmpty,
+    );
+    expect(find.byKey(const ValueKey('more-columns')), findsNothing);
+
+    // Narrower: the horizontal scrollbar shows, and the right edge fades
+    // until the last column is in sight.
+    setSize(tester, 900);
+    await tester.pumpAndSettle();
+    final bar = tester
+        .widgetList<Scrollbar>(find.byType(Scrollbar))
+        .where((s) => s.thumbVisibility == true);
+    expect(bar, hasLength(1));
+    expect(bar.single.trackVisibility, isTrue);
+    double fade() => tester
+        .widget<AnimatedOpacity>(find.byKey(const ValueKey('more-columns')))
+        .opacity;
+    expect(fade(), 1);
+    await tester.drag(find.text('Garage/Shelf 1'), const Offset(-300, 0));
+    await tester.pumpAndSettle();
+    expect(fade(), 0);
+  });
+
   testWidgets('a label code finds its object', (tester) async {
     setSize(tester, 1000);
     await startApp(tester, FakeServer());

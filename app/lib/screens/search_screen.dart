@@ -461,6 +461,9 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
   static const _tableWidth = 720.0;
 
   final _scroll = ScrollController();
+
+  /// The table's, sideways.
+  final _hScroll = ScrollController();
   final List<ItemListed> _rows = [];
   int _total = 0;
   bool _loading = false;
@@ -518,6 +521,7 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
   void dispose() {
     _treeChanges?.cancel();
     _scroll.dispose();
+    _hScroll.dispose();
     super.dispose();
   }
 
@@ -789,33 +793,90 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
     }
 
     final extra = codeTile == null ? 0 : 1;
+    final overflows = width > c.maxWidth;
+    // Both scrollbars on the screen's edges, not the table's: the vertical
+    // one belongs to the rows inside the horizontal scroll, so it is set up
+    // out here (and the rows' own, at the table's far right, is off). The
+    // horizontal one always shows when columns are out of sight, and the
+    // right edge fades while there are more of them.
     return Scrollbar(
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: SizedBox(
-          width: width,
-          height: c.maxHeight,
-          child: Column(
+      controller: _hScroll,
+      thumbVisibility: overflows,
+      trackVisibility: overflows,
+      child: Scrollbar(
+        controller: _scroll,
+        notificationPredicate: (n) => n.depth == 1,
+        child: ScrollConfiguration(
+          behavior: ScrollConfiguration.of(context).copyWith(scrollbars: false),
+          child: Stack(
             children: [
-              header,
-              Expanded(
-                child: ListView.builder(
-                  controller: _scroll,
-                  padding: const EdgeInsets.only(bottom: 16),
-                  itemCount: extra + _rows.length + (_hasMore ? 1 : 0),
-                  itemBuilder: (context, i) {
-                    if (codeTile != null && i == 0) {
-                      return Align(
-                        alignment: Alignment.centerLeft,
-                        child: SizedBox(width: 600, child: codeTile),
-                      );
-                    }
-                    i -= extra;
-                    if (i >= _rows.length) return _progress;
-                    return row(_rows[i]);
-                  },
+              SingleChildScrollView(
+                controller: _hScroll,
+                scrollDirection: Axis.horizontal,
+                child: SizedBox(
+                  width: width,
+                  height: c.maxHeight,
+                  child: Column(
+                    children: [
+                      header,
+                      Expanded(
+                        child: ListView.builder(
+                          controller: _scroll,
+                          // Room for the horizontal scrollbar.
+                          padding: EdgeInsets.only(bottom: overflows ? 32 : 16),
+                          itemCount: extra + _rows.length + (_hasMore ? 1 : 0),
+                          itemBuilder: (context, i) {
+                            if (codeTile != null && i == 0) {
+                              return Align(
+                                alignment: Alignment.centerLeft,
+                                child: SizedBox(width: 600, child: codeTile),
+                              );
+                            }
+                            i -= extra;
+                            if (i >= _rows.length) return _progress;
+                            return row(_rows[i]);
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
+              if (overflows)
+                Positioned(
+                  top: 0,
+                  right: 0,
+                  bottom: 0,
+                  width: 48,
+                  child: IgnorePointer(
+                    child: ListenableBuilder(
+                      listenable: _hScroll,
+                      builder: (context, _) {
+                        final offset = _hScroll.hasClients
+                            ? _hScroll.offset
+                            : 0.0;
+                        final more = width - c.maxWidth - offset > 1;
+                        return AnimatedOpacity(
+                          key: const ValueKey('more-columns'),
+                          opacity: more ? 1 : 0,
+                          duration: const Duration(milliseconds: 150),
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [
+                                  theme.colorScheme.surface.withValues(
+                                    alpha: 0,
+                                  ),
+                                  theme.colorScheme.surface,
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
