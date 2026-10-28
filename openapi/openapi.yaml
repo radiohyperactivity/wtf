@@ -1934,6 +1934,9 @@ components:
         name: { type: string }
         parent: { oneOf: [{ $ref: "#/components/schemas/Uuid" }, { type: "null" }] }
         container: { type: boolean }
+        photo:
+          description: The class or location photo, or null.
+          oneOf: [{ $ref: "#/components/schemas/Attachment" }, { type: "null" }]
         children: { type: array, items: { $ref: "#/components/schemas/TreeNode" } }
 
     Tree:

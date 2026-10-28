@@ -194,7 +194,8 @@ END;
 $$;
 
 -- The classes below p_parent (the roots when NULL) as a nested tree:
--- [{id, name, parent, children: [...]}, ...], alphabetically per level.
+-- [{id, name, parent, container, photo, children: [...]}, ...], alphabetically
+-- per level. photo is the class photo (util.attachment_json) or null.
 CREATE FUNCTION util.class_tree(p_parent uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
@@ -206,6 +207,7 @@ BEGIN
                     'name',      c.name,
                     'parent',    c.parent,
                     'container', c.container,
+                    'photo',     util.attachment_json('class', c.photo),
                     'children',  util.class_tree(c.id)
                 )
                 ORDER BY util.natural_key(c.name), c.id
@@ -219,7 +221,8 @@ BEGIN
 END;
 $$;
 
--- The locations below p_parent (the roots when NULL) as a nested tree.
+-- The locations below p_parent (the roots when NULL) as a nested tree, like
+-- util.class_tree, each with its code.
 CREATE FUNCTION util.location_tree(p_parent uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
@@ -232,6 +235,7 @@ BEGIN
                     'name',      l.name,
                     'parent',    l.parent,
                     'container', l.container,
+                    'photo',     util.attachment_json('location', l.photo),
                     'children',  util.location_tree(l.id)
                 )
                 ORDER BY util.natural_key(l.name), l.id

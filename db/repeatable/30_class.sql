@@ -5,7 +5,7 @@
 -- ---------------------------------------------------------------------------
 
 -- The whole class tree: {version, unchanged, tree}. tree is a nested list of
--- {id, name, parent, children}, alphabetically per level.
+-- {id, name, parent, container, photo, children}, alphabetically per level.
 -- When p_known_version is the current version, the tree is left out and
 -- unchanged is true (the REST layer answers 304 Not Modified).
 CREATE FUNCTION class_list(p_known_version bigint DEFAULT NULL) RETURNS jsonb

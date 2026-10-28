@@ -76,7 +76,7 @@ All data access goes through the functions described in [API.md](API.md). The ER
 - **Attachments** (migrations `0005_attachments.sql`, `0006_attachment_deleted.sql`) belong to exactly one object, in the table of its kind; nothing is shared. Deleting one marks it deleted; a deleted attachment can't be a photo (trigger). A deleted object keeps its attachments, frozen (trigger); purging it removes them. The same content is stored once on disk, however many attachments have its hash.
 - **Photos:** items, stock rows, locations and classes have a nullable `photo`. The foreign key `(id, photo) → <kind>_attachment (<kind>, id)` makes it one of the object's own attachments, and clears it when that is deleted; a trigger checks that it is an image.
 - Every location, item and stock row has a `code`, the next number from `code_sequence`. One sequence for all three tables makes codes globally unique by construction, and a unique index per table guards it. The API renders codes in Crockford Base32 (`1000`, `1A7K`, …).
-- Every statement that changes `class` or `location` increments that table's counter in `data_version` (statement-level triggers). The counter row is locked until commit, so concurrent changes are serialised and every committed change produces a new value.
+- Every statement that changes `class` or `location` increments that table's counter in `data_version` (statement-level triggers). So does every statement that changes `class_attachment` or `location_attachment` (`0007_tree_photos.sql`), because the tree nodes include their photo, whose title can change. The counter row is locked until commit, so concurrent changes are serialised and every committed change produces a new value.
 
 ## DDL
 

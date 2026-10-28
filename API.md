@@ -55,7 +55,7 @@ The files are applied by `wtfd schema` (see [WTFD.md](WTFD.md)). Migrations run 
     { "total": 42, "limit": 100, "offset": 0, "rows": [ ... ] }
     ```
 - **Trees.**
-  - `class_list` and `location_list` always return the whole tree, as nested `{id, name, parent, children}` nodes.
+  - `class_list` and `location_list` always return the whole tree, as nested `{id, name, parent, container, photo, children}` nodes (locations with their `code` too).
   - Each tree has a version counter that changes with every change to that table. The response is `{version, unchanged, tree}`.
   - A client that sends the version it already has (`p_known_version`) gets `{version, unchanged: true}` without the tree. This costs a single row lookup.
   - The REST layer maps this to `ETag` / `If-None-Match` and `304 Not Modified`.

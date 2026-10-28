@@ -129,6 +129,25 @@ func TestAttachments(t *testing.T) {
 	if str(t, e.expect(t, 200, "GET", "/locations/"+garage, nil).body, "photo", "id") != str(t, garagePhoto, "id") {
 		t.Error("location_get photo is not the one set")
 	}
+	// The tree shows it too, and a new title is a new tree version.
+	treePhoto := func() (any, string) {
+		r := e.expect(t, 200, "GET", "/locations", nil)
+		for _, n := range get(t, r.body, "tree").([]any) {
+			if str(t, n, "id") == garage {
+				return get(t, n, "photo"), r.header.Get("ETag")
+			}
+		}
+		t.Fatal("the garage is not in the tree")
+		return nil, ""
+	}
+	inTree, etag := treePhoto()
+	if str(t, inTree, "id") != str(t, garagePhoto, "id") {
+		t.Errorf("tree photo: %v", inTree)
+	}
+	e.expect(t, 200, "PATCH", "/locations/"+garage+"/attachments/"+str(t, garagePhoto, "id"), obj("title", "Garage door"))
+	if inTree, newTag := treePhoto(); str(t, inTree, "title") != "Garage door" || newTag == etag {
+		t.Errorf("after a new title: %v, ETag %q (was %q)", inTree, newTag, etag)
+	}
 
 	// A new photo replaces the old one; the old one stays as an attachment.
 	second := e.upload(t, 201, item, "side.png", "image/png",
