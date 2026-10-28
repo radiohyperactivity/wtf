@@ -136,13 +136,13 @@ func TestLockout(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close(context.Background())
-	password, err := admin.SetPassword(context.Background(), conn, "LockMe@test.local")
+	password, err := admin.SetPassword(context.Background(), conn, testHost, "LockMe@test.local")
 	if err != nil {
 		t.Fatal(err)
 	}
 	e.loginAs(t, 401, "lockme@test.local", "right-password")
 	e.loginAs(t, 200, "lockme@test.local", password)
-	if _, err := admin.SetPassword(context.Background(), conn, "nobody@test.local"); err == nil {
+	if _, err := admin.SetPassword(context.Background(), conn, testHost, "nobody@test.local"); err == nil {
 		t.Error("a new password for an unknown account")
 	}
 }
@@ -158,6 +158,7 @@ func TestLoginLog(t *testing.T) {
 	login := func(password string) int {
 		data, _ := json.Marshal(map[string]string{"email": email, "password": password})
 		req := httptest.NewRequest("POST", "/api/v1/login", bytes.NewReader(data))
+		req.Host = testHostname
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		return rec.Code
@@ -170,9 +171,9 @@ func TestLoginLog(t *testing.T) {
 	}
 	log := buf.String()
 	for _, want := range []string{
-		`level=WARN msg="login failed" email=` + email + " remote=",
+		`level=WARN msg="login failed" host=test email=` + email + " remote=",
 		"reason=invalid",
-		`level=INFO msg=login email=` + email + " remote=",
+		`level=INFO msg=login host=test email=` + email + " remote=",
 		"account=",
 		"remote=",
 	} {

@@ -26,19 +26,21 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_where jsonb := '[]'::jsonb;
+    v_tenant uuid;
+    v_where  jsonb := '[]'::jsonb;
 BEGIN
     PERFORM util.require('data', 'read');
+    v_tenant := util.tenant();
     PERFORM util.check_paging(p_limit, p_offset);
 
-    IF p_class IS NOT NULL AND NOT EXISTS (SELECT 1 FROM class WHERE id = p_class) THEN
+    IF p_class IS NOT NULL AND NOT EXISTS (SELECT 1 FROM class WHERE id = p_class AND tenant = v_tenant) THEN
         PERFORM util.raise_not_found('class', p_class);
     END IF;
     IF p_where IS NOT NULL THEN
         IF jsonb_typeof(p_where) <> 'array' THEN
             PERFORM util.raise_invalid('where must be a list of filters');
         END IF;
-        SELECT COALESCE(jsonb_agg(util.check_item_filter(f)), '[]'::jsonb) INTO v_where
+        SELECT COALESCE(jsonb_agg(util.check_item_filter(v_tenant, f)), '[]'::jsonb) INTO v_where
         FROM jsonb_array_elements(p_where) AS f;
     END IF;
 
@@ -51,7 +53,8 @@ BEGIN
         matching AS (
             SELECT i.id, i.name
             FROM item i
-            WHERE NOT i.deleted
+            WHERE i.tenant = v_tenant
+              AND NOT i.deleted
               AND (p_class IS NULL OR i.class IN (SELECT util.class_subtree(p_class)))
               -- every word occurs in at least one of the item's search texts
               AND NOT EXISTS (
@@ -100,7 +103,7 @@ SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.require('data', 'read');
-    IF NOT EXISTS (SELECT 1 FROM item WHERE id = p_id) THEN
+    IF NOT EXISTS (SELECT 1 FROM item WHERE id = p_id AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('item', p_id);
     END IF;
     RETURN util.item_json(p_id);
@@ -113,12 +116,13 @@ $$;
 -- given as JSON null gets no value. Class defaults are never stored on the
 -- item; item_get shows them for attributes without a value. Required
 -- attributes without a default must be given (checked at commit).
--- p_unit is the unit stock is measured in (NULL = pieces); with
--- p_unit_lock, stock is always shown in it, as for attributes.
+-- p_unit is the unit stock is measured in (NULL = pieces), and must be
+-- available; with p_unit_lock, stock is always shown in it, as for
+-- attributes.
 CREATE FUNCTION item_create(
     p_class     uuid,
     p_name      text,
-    p_unit      integer DEFAULT NULL,
+    p_unit      uuid    DEFAULT NULL,
     p_unit_lock boolean DEFAULT false,
     p_values    jsonb   DEFAULT NULL
 ) RETURNS jsonb
@@ -126,11 +130,17 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
+    v_tenant uuid;
     v_id     uuid;
 BEGIN
     PERFORM util.require('data', 'write');
-    INSERT INTO item (class, name, unit, unit_lock)
-    VALUES (p_class, util.clean_name(p_name), p_unit, COALESCE(p_unit_lock, false))
+    v_tenant := util.tenant();
+    IF NOT EXISTS (SELECT 1 FROM class WHERE id = p_class AND tenant = v_tenant) THEN
+        PERFORM util.raise_bad_reference('class', p_class);
+    END IF;
+    PERFORM util.check_unit_choosable(v_tenant, p_unit);
+    INSERT INTO item (tenant, code, class, name, unit, unit_lock)
+    VALUES (v_tenant, next_code(v_tenant), p_class, util.clean_name(p_name), p_unit, COALESCE(p_unit_lock, false))
     RETURNING id INTO v_id;
 
     PERFORM util.values_upsert(false, v_id, p_values);
@@ -143,15 +153,31 @@ $$;
 -- (one of its own image attachments, or null).
 -- Changing the class is rejected if existing values would no longer have a
 -- matching attribute. The unit can only change to another unit of the same
--- quantity; nothing is converted. A unit can't be added or removed (see
--- SCHEMA.md).
+-- quantity, and an available one; nothing is converted. A unit can't be
+-- added or removed (see SCHEMA.md).
 CREATE FUNCTION item_patch(p_id uuid, p_patch jsonb) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
+DECLARE
+    v_tenant uuid;
 BEGIN
     PERFORM util.require('data', 'write');
+    v_tenant := util.tenant();
     PERFORM util.check_patch(p_patch, ARRAY['class', 'name', 'unit', 'unit_lock', 'photo'], ARRAY['class', 'name', 'unit_lock']);
+    IF NOT EXISTS (SELECT 1 FROM item WHERE id = p_id AND tenant = v_tenant) THEN
+        PERFORM util.raise_not_found('item', p_id);
+    END IF;
+    IF p_patch ? 'class'
+       AND NOT EXISTS (SELECT 1 FROM class WHERE id = (p_patch ->> 'class')::uuid AND tenant = v_tenant)
+    THEN
+        PERFORM util.raise_bad_reference('class', (p_patch ->> 'class')::uuid);
+    END IF;
+    IF p_patch ? 'unit'
+       AND (p_patch ->> 'unit')::uuid IS DISTINCT FROM (SELECT unit FROM item WHERE id = p_id)
+    THEN
+        PERFORM util.check_unit_choosable(v_tenant, (p_patch ->> 'unit')::uuid);
+    END IF;
 
     UPDATE item
     SET class     = CASE WHEN p_patch ? 'class'
@@ -159,14 +185,10 @@ BEGIN
         name      = CASE WHEN p_patch ? 'name'
                          THEN util.clean_name(p_patch ->> 'name') ELSE name END,
         unit      = CASE WHEN p_patch ? 'unit'
-                         THEN (p_patch ->> 'unit')::integer ELSE unit END,
+                         THEN (p_patch ->> 'unit')::uuid ELSE unit END,
         unit_lock = CASE WHEN p_patch ? 'unit_lock'
                          THEN (p_patch ->> 'unit_lock')::boolean ELSE unit_lock END
-    WHERE id = p_id;
-
-    IF NOT FOUND THEN
-        PERFORM util.raise_not_found('item', p_id);
-    END IF;
+    WHERE id = p_id AND tenant = v_tenant;
     PERFORM util.set_photo('item', p_id, p_patch);
     RETURN util.item_json(p_id);
 END;
@@ -180,7 +202,7 @@ SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.require('data', 'write');
-    UPDATE item SET deleted = true WHERE id = p_id;
+    UPDATE item SET deleted = true WHERE id = p_id AND tenant = util.tenant();
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('item', p_id);
@@ -207,7 +229,7 @@ DECLARE
 BEGIN
     PERFORM util.require('data', 'write');
     PERFORM util.check_patch(p_options, ARRAY['name', 'class', 'with_parents'], ARRAY['name', 'class', 'with_parents']);
-    SELECT * INTO v_item FROM item WHERE id = p_id FOR UPDATE;
+    SELECT * INTO v_item FROM item WHERE id = p_id AND tenant = util.tenant() FOR UPDATE;
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('item', p_id);
     END IF;
@@ -216,6 +238,9 @@ BEGIN
     END IF;
 
     v_class := COALESCE((p_options ->> 'class')::uuid, v_item.class);
+    IF NOT EXISTS (SELECT 1 FROM class WHERE id = v_class AND tenant = v_item.tenant) THEN
+        PERFORM util.raise_bad_reference('class', v_class);
+    END IF;
     IF (SELECT deleted FROM class WHERE id = v_class) THEN
         IF p_options ? 'class' THEN
             PERFORM raise_deleted('class', v_class);
@@ -257,7 +282,7 @@ SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.require('data', 'write');
-    IF NOT EXISTS (SELECT 1 FROM item WHERE id = p_item) THEN
+    IF NOT EXISTS (SELECT 1 FROM item WHERE id = p_item AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('item', p_item);
     END IF;
 
@@ -273,6 +298,9 @@ SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.require('data', 'write');
+    IF NOT EXISTS (SELECT 1 FROM item WHERE id = p_item AND tenant = util.tenant()) THEN
+        PERFORM util.raise_not_found('item', p_item);
+    END IF;
     PERFORM check_live('item', p_item);
     DELETE FROM value
     WHERE item = p_item

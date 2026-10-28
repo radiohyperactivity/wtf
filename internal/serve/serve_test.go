@@ -3,6 +3,7 @@ package serve
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -22,7 +23,11 @@ import (
 )
 
 func testServer() *server {
-	return &server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), maxBody: 1 << 20}
+	return &server{
+		log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		maxBody:     1 << 20,
+		tenantKnown: func(context.Context, string) (bool, error) { return true, nil },
+	}
 }
 
 // Every route must be documented in openapi.yaml, and vice versa.
@@ -322,6 +327,30 @@ func TestWebApp(t *testing.T) {
 		rec.ServeHTTP(r, httptest.NewRequest(http.MethodGet, "/", nil))
 		if r.Code != 404 {
 			t.Errorf("no web root: %d, want 404", r.Code)
+		}
+	}
+}
+
+// The first label of the hostname, without the port, picks the tenant; an
+// IP address never does (TENANTS.md).
+func TestHostLabel(t *testing.T) {
+	for host, want := range map[string]string{
+		"bob.wtf.example":         "bob",
+		"Bob.WTF.example:8443":    "bob",
+		"bob.192.168.1.10.nip.io": "bob",
+		"localhost:8080":          "localhost",
+		"192.168.1.10:8080":       "192",
+		"[::1]:8080":              "::1",
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.Host = host
+		if got := hostLabel(r); got != want {
+			t.Errorf("%s: %q, want %q", host, got, want)
+		}
+	}
+	for _, label := range []string{"192", "::1", "", "-bob", "bob-", "b_b"} {
+		if hostPattern.MatchString(label) {
+			t.Errorf("%q can be a tenant's host", label)
 		}
 	}
 }

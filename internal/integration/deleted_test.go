@@ -24,7 +24,7 @@ func purgeDeleted(t *testing.T, e *environment) map[string]int64 {
 		t.Fatal(err)
 	}
 	defer conn.Close(context.Background())
-	counts, err := admin.PurgeDeleted(context.Background(), conn, 0, false)
+	counts, err := admin.PurgeDeleted(context.Background(), conn, "", 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}

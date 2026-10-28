@@ -30,12 +30,14 @@ func (s *server) routes() []route {
 		{"GET /openapi.yaml", s.openAPI},
 
 		{"GET /quantities", s.read("quantity_list")},
-		{"GET /quantities/{id}", s.read("quantity_get", pathInt("p_id", "id"))},
-		{"GET /unit-families", s.read("unit_family_list", query("p_quantity", "quantity", "integer"))},
-		{"GET /unit-families/{id}", s.read("unit_family_get", pathInt("p_id", "id"))},
+		{"GET /quantities/{id}", s.read("quantity_get", id)},
+		{"PATCH /quantities/{id}", s.update("quantity_patch", id, patch("p_patch"))},
+		{"GET /unit-families", s.read("unit_family_list", query("p_quantity", "quantity", "uuid"))},
+		{"GET /unit-families/{id}", s.read("unit_family_get", id)},
+		{"PATCH /unit-families/{id}", s.update("unit_family_patch", id, patch("p_patch"))},
 		{"GET /units", s.read("unit_list",
-			query("p_quantity", "quantity", "integer"), query("p_family", "family", "integer"))},
-		{"GET /units/{id}", s.read("unit_get", pathInt("p_id", "id"))},
+			query("p_quantity", "quantity", "uuid"), query("p_family", "family", "uuid"))},
+		{"GET /units/{id}", s.read("unit_get", id)},
 		{"POST /units/import", s.update("unit_import", patch("p_data"),
 			query("p_dry_run", "dry_run", "boolean"))},
 
@@ -43,7 +45,7 @@ func (s *server) routes() []route {
 		{"POST /attributes", s.create("attribute_create", "/attributes/", body(
 			field{key: "name", name: "p_name", typ: "text"},
 			field{key: "datatype", name: "p_datatype", typ: "datatype"},
-			field{key: "unit", name: "p_unit", typ: "integer"},
+			field{key: "unit", name: "p_unit", typ: "uuid"},
 			field{key: "unit_lock", name: "p_unit_lock", typ: "boolean", optional: true},
 		))},
 		{"GET /attributes/{id}", s.read("attribute_get", id)},
@@ -89,7 +91,7 @@ func (s *server) routes() []route {
 		{"POST /items", s.create("item_create", "/items/", body(
 			field{key: "class", name: "p_class", typ: "uuid"},
 			field{key: "name", name: "p_name", typ: "text"},
-			field{key: "unit", name: "p_unit", typ: "integer"},
+			field{key: "unit", name: "p_unit", typ: "uuid"},
 			field{key: "unit_lock", name: "p_unit_lock", typ: "boolean", optional: true},
 			field{key: "values", name: "p_values", typ: "jsonb"},
 		))},

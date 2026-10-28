@@ -1,15 +1,36 @@
--- API: sessions, logging in and out, and accounts. Explained in api/account.md
--- and ACCOUNTS.md.
+-- API: tenants by host, sessions, logging in and out, and accounts. Explained
+-- in api/account.md, ACCOUNTS.md and TENANTS.md.
 
 -- ---------------------------------------------------------------------------
--- Sessions
+-- Tenants and sessions (see TENANTS.md)
 -- ---------------------------------------------------------------------------
+
+-- The tenant whose host is p_host, the first label of a request's hostname
+-- ("bob" for bob.wtf.example); NULL when there is none.
+CREATE FUNCTION util.tenant_of_host(p_host text) RETURNS uuid
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+    RETURN (SELECT id FROM tenant WHERE host = lower(p_host));
+END;
+$$;
+
+-- Whether a tenant has host p_host. wtfd answers 404 to every request whose
+-- hostname picks no tenant.
+CREATE FUNCTION tenant_known(p_host text) RETURNS boolean
+LANGUAGE plpgsql STABLE
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+    RETURN util.tenant_of_host(p_host) IS NOT NULL;
+END;
+$$;
 
 -- Starts using a session for the current transaction: checks that p_token
--- is a session that hasn't been unused for 30 days, renews it (at most once
--- a minute) and remembers the token until the end of the transaction. wtfd
--- calls this before every API function except login.
-CREATE FUNCTION session_use(p_token text) RETURNS void
+-- is a session of the tenant of p_host that hasn't been unused for 30 days,
+-- renews it (at most once a minute) and remembers the token until the end
+-- of the transaction. wtfd calls this before every API function except
+-- login.
+CREATE FUNCTION session_use(p_token text, p_host text) RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
@@ -20,6 +41,7 @@ BEGIN
     SELECT s.last_used INTO v_last_used
     FROM session s
     WHERE s.token_hash = v_hash
+      AND s.tenant = util.tenant_of_host(p_host)
       AND s.last_used > now() - interval '30 days';
     IF NOT FOUND THEN
         PERFORM util.raise_unauthenticated('Not logged in, or the session has expired');
@@ -32,13 +54,13 @@ BEGIN
 END;
 $$;
 
--- Logs in with email and password. Returns {ok: true, token, account}, or
--- {ok: false, reason} with reason
+-- Logs in to the tenant of p_host with email and password. Returns {ok:
+-- true, token, account}, or {ok: false, reason} with reason
 -- 'invalid' (unknown email or wrong password) or 'locked' (after 5 failed
 -- attempts, one attempt per minute is allowed until a login succeeds).
 -- Failures are returned rather than raised, so the failed-login count is
 -- committed.
-CREATE FUNCTION login(p_email text, p_password text) RETURNS jsonb
+CREATE FUNCTION login(p_host text, p_email text, p_password text) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
@@ -48,7 +70,8 @@ DECLARE
 BEGIN
     SELECT a.* INTO v_account
     FROM account a
-    WHERE lower(a.email) = lower(btrim(p_email))
+    WHERE a.tenant = util.tenant_of_host(p_host)
+      AND lower(a.email) = lower(btrim(p_email))
       AND NOT a.deleted
     FOR UPDATE;
 
@@ -77,8 +100,8 @@ BEGIN
     DELETE FROM session WHERE account = v_account.id AND last_used <= now() - interval '30 days';
 
     v_token := rtrim(translate(encode(extensions.gen_random_bytes(32), 'base64'), '+/', '-_'), '=');
-    INSERT INTO session (token_hash, account)
-    VALUES (util.token_hash(v_token), v_account.id);
+    INSERT INTO session (token_hash, tenant, account)
+    VALUES (util.token_hash(v_token), v_account.tenant, v_account.id);
 
     RETURN jsonb_build_object(
         'ok',      true,
@@ -146,7 +169,8 @@ BEGIN
     RETURN (
         SELECT COALESCE(jsonb_agg(util.account_json(a.id) ORDER BY lower(a.email), a.id), '[]'::jsonb)
         FROM account a
-        WHERE NOT a.deleted
+        WHERE a.tenant = util.tenant()
+          AND NOT a.deleted
     );
 END;
 $$;
@@ -159,7 +183,7 @@ SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.require('account', 'read');
-    IF NOT EXISTS (SELECT 1 FROM account WHERE id = p_id) THEN
+    IF NOT EXISTS (SELECT 1 FROM account WHERE id = p_id AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('account', p_id);
     END IF;
     RETURN util.account_json(p_id);
@@ -194,9 +218,9 @@ DECLARE
 BEGIN
     PERFORM util.require('account', 'write');
     PERFORM util.check_email(p_email);
-    INSERT INTO account (email, password_hash,
+    INSERT INTO account (tenant, email, password_hash,
                          data_privilege, model_privilege, account_privilege, history_privilege)
-    VALUES (btrim(p_email), util.password_hash(p_password),
+    VALUES (util.tenant(), btrim(p_email), util.password_hash(p_password),
             p_data_privilege, p_model_privilege, p_account_privilege, p_history_privilege)
     RETURNING id INTO v_id;
 
@@ -221,7 +245,7 @@ BEGIN
         ARRAY['email', 'password', 'data_privilege', 'model_privilege', 'account_privilege', 'history_privilege'],
         ARRAY['email', 'data_privilege', 'model_privilege', 'account_privilege', 'history_privilege']);
 
-    IF NOT EXISTS (SELECT 1 FROM account WHERE id = p_id AND NOT deleted) THEN
+    IF NOT EXISTS (SELECT 1 FROM account WHERE id = p_id AND tenant = util.tenant() AND NOT deleted) THEN
         PERFORM util.raise_not_found('account', p_id);
     END IF;
     IF p_id = v_self AND p_patch ? 'account_privilege'
@@ -279,6 +303,7 @@ BEGIN
         account_privilege = 'none',
         history_privilege = 'none'
     WHERE id = p_id
+      AND tenant = util.tenant()
       AND NOT deleted;
 
     IF NOT FOUND THEN

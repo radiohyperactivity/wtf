@@ -45,8 +45,13 @@ type environment struct {
 	token string
 }
 
-// The account of every test run.
-const adminEmail = "admin@test.local"
+// The tenant of every test run, and its first account. Requests reach it
+// by testHostname, whose first label is its host.
+const (
+	testHost     = "test"
+	testHostname = "test.wtf.example"
+	adminEmail   = "admin@test.local"
+)
 
 // Attachments in tests are limited to 1 MiB.
 const testMaxAttachment = 1 << 20
@@ -156,13 +161,14 @@ func connect() (*environment, string, error) {
 		files:     store,
 	}
 
-	// The first account, as "wtfd account create" makes it, logged in.
+	// The tenant and its first account, as "wtfd tenant create" makes
+	// them, logged in.
 	conn, err := admin.Connect(ctx, dbaConfig)
 	if err != nil {
 		return nil, "", err
 	}
 	defer conn.Close(ctx)
-	password, err := admin.CreateAccount(ctx, conn, adminEmail)
+	password, err := admin.CreateTenant(ctx, conn, testHost, adminEmail)
 	if err != nil {
 		return nil, "", err
 	}
@@ -172,11 +178,17 @@ func connect() (*environment, string, error) {
 	return e, "", nil
 }
 
-// login logs in through the API and returns the session token, which the
-// API sends as the session cookie.
+// login logs in to the test tenant through the API and returns the session
+// token, which the API sends as the session cookie.
 func (e *environment) login(email, password string) (string, error) {
+	return e.loginTo(testHostname, email, password)
+}
+
+// loginTo logs in at hostname (and so to its tenant).
+func (e *environment) loginTo(hostname, email, password string) (string, error) {
 	data, _ := json.Marshal(map[string]string{"email": email, "password": password})
 	req := httptest.NewRequest("POST", "/api/v1/login", bytes.NewReader(data))
+	req.Host = hostname
 	rec := httptest.NewRecorder()
 	e.handler.ServeHTTP(rec, req)
 	token := sessionCookie(rec.Result())
@@ -205,14 +217,18 @@ func apiPath(path string) string {
 	return "/api/v1" + path
 }
 
-// newRequest builds a request logged in as the admin. headers override that:
-// "Cookie" another login ("" sends none). path is relative to /api/v1 unless
-// it starts with /api/.
+// newRequest builds a request to the test tenant, logged in as the admin.
+// headers override that: "Cookie" another login ("" sends none), "Host"
+// another hostname. path is relative to /api/v1 unless it starts with
+// /api/.
 func (e *environment) newRequest(method, path string, body io.Reader, headers ...string) *http.Request {
 	req := httptest.NewRequest(method, apiPath(path), body)
+	req.Host = testHostname
 	req.Header.Set("Cookie", "wtf_session="+e.token)
 	for i := 0; i+1 < len(headers); i += 2 {
 		switch {
+		case headers[i] == "Host":
+			req.Host = headers[i+1]
 		case headers[i+1] == "":
 			req.Header.Del(headers[i])
 		default:
@@ -246,12 +262,12 @@ func getenv(name, fallback string) string {
 	return fallback
 }
 
-// reset deletes all user data. System data (quantities, unit families,
-// units) and accounts stay.
+// reset deletes all user data, of every tenant, and the tenants' choices
+// of units. Tenants, units and accounts stay.
 func (e *environment) reset(t *testing.T) {
 	t.Helper()
 	_, err := e.dba.Exec(context.Background(),
-		"TRUNCATE history, item_attachment, stock_attachment, location_attachment, class_attachment, stock_value, stock, value, item, class_attribute, attribute_option, attribute, class, location")
+		"TRUNCATE history, item_attachment, stock_attachment, location_attachment, class_attachment, stock_value, stock, value, item, class_attribute, attribute_option, attribute, class, location, tenant_quantity, tenant_unit_family")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,8 +359,9 @@ func num(t *testing.T, v any, path ...any) float64 {
 	return n
 }
 
-// unit returns the id of a seeded unit by family name and symbol.
-func (e *environment) unit(t *testing.T, family, symbol string) int {
+// unit returns the id of a unit the test tenant sees, by family name and
+// symbol.
+func (e *environment) unit(t *testing.T, family, symbol string) string {
 	t.Helper()
 	for _, f := range e.expect(t, 200, "GET", "/unit-families", nil).body.([]any) {
 		if str(t, f, "name") != family {
@@ -352,10 +369,39 @@ func (e *environment) unit(t *testing.T, family, symbol string) int {
 		}
 		for _, u := range get(t, f, "units").([]any) {
 			if str(t, u, "symbol") == symbol {
-				return int(num(t, u, "id"))
+				return str(t, u, "id")
 			}
 		}
 	}
 	t.Fatalf("unit %s of %s not found", symbol, family)
-	return 0
+	return ""
+}
+
+// tenantStore is the test tenant's directory in the files directory.
+func (e *environment) tenantStore(t *testing.T) *files.Store {
+	t.Helper()
+	store, err := e.files.Tenant(testHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+// dropTenantUnits removes the units, families and quantities tenants have
+// imported, and the attributes and items that use them, so other tests see
+// only the global ones.
+func (e *environment) dropTenantUnits(t *testing.T) {
+	t.Helper()
+	for _, sql := range []string{
+		"DELETE FROM value v USING attribute a, unit u WHERE v.attribute = a.id AND a.unit = u.id AND u.tenant IS NOT NULL",
+		"DELETE FROM attribute a USING unit u WHERE a.unit = u.id AND u.tenant IS NOT NULL",
+		"DELETE FROM item i USING unit u WHERE i.unit = u.id AND u.tenant IS NOT NULL",
+		"DELETE FROM unit WHERE tenant IS NOT NULL",
+		"DELETE FROM unit_family WHERE tenant IS NOT NULL",
+		"DELETE FROM quantity WHERE tenant IS NOT NULL",
+	} {
+		if _, err := e.dba.Exec(context.Background(), sql); err != nil {
+			t.Error(err)
+		}
+	}
 }

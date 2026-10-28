@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -24,7 +25,12 @@ type cliEnv struct {
 
 func (e *environment) cli(t *testing.T) *cliEnv {
 	t.Helper()
-	server := httptest.NewServer(e.handler)
+	// The test server's address is an IP address, which picks no tenant;
+	// requests arrive as if at the test tenant's hostname.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Host = testHostname
+		e.handler.ServeHTTP(w, r)
+	}))
 	t.Cleanup(server.Close)
 	return &cliEnv{t: t, config: filepath.Join(t.TempDir(), "config.json"), vars: map[string]string{
 		"WTF_SERVER":    server.URL,

@@ -84,7 +84,11 @@ func (s *server) upload(kind, kindPath string) handlerFunc {
 					return invalidInput("the \"file\" part needs a file name")
 				}
 				contentType = part.Header.Get("Content-Type")
-				staged, err = s.files.Stage(part, s.maxAttachment)
+				store, err := s.files.Tenant(tenantOf(r.Context()))
+				if err != nil {
+					return err
+				}
+				staged, err = store.Stage(part, s.maxAttachment)
 				if errors.Is(err, files.ErrTooLarge) {
 					return &problem{
 						Type:   "/problems/body-too-large",
@@ -128,7 +132,7 @@ func (s *server) upload(kind, kindPath string) handlerFunc {
 		var result string
 		sess, _ := r.Context().Value(sessionKey{}).(session)
 		err = pgx.BeginFunc(r.Context(), s.pool, func(tx pgx.Tx) error {
-			if err := useSession(r.Context(), tx, sess); err != nil {
+			if err := useSession(r.Context(), tx, sess, tenantOf(r.Context())); err != nil {
 				return err
 			}
 			if _, err := tx.Exec(r.Context(), "SELECT attachment_lock($1)", staged.Hash); err != nil {
@@ -205,7 +209,11 @@ func (s *server) sendAttachment(w http.ResponseWriter, r *http.Request, kind str
 		return err
 	}
 
-	f, err := s.files.OpenFile(a.Hash)
+	store, err := s.files.Tenant(tenantOf(r.Context()))
+	if err != nil {
+		return err
+	}
+	f, err := store.OpenFile(a.Hash)
 	if errors.Is(err, fs.ErrNotExist) {
 		s.log.Error("attachment file missing", "attachment", r.PathValue("attachment"), "sha256", a.Hash)
 		return &problem{

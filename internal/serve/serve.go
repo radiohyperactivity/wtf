@@ -38,9 +38,13 @@ type server struct {
 	pool          *pgxpool.Pool
 	log           *slog.Logger
 	maxBody       int64
-	files         *files.Store
+	files         *files.Store // every tenant's directory is in it
 	maxAttachment int64
 	webRoot       string
+
+	// tenantKnown replaces the database's tenant_known in tests without a
+	// database.
+	tenantKnown func(ctx context.Context, host string) (bool, error)
 }
 
 // Run serves the API until ctx is cancelled, then shuts down gracefully.
@@ -171,7 +175,7 @@ func (s *server) handler() http.Handler {
 		writeProblem(w, notFound)
 	})
 
-	return s.logRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return s.logRequests(s.withTenant(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		switch {
 		case path == healthPath || path == apiPrefix || strings.HasPrefix(path, apiPrefix+"/"):
@@ -188,7 +192,7 @@ func (s *server) handler() http.Handler {
 		default:
 			web.ServeHTTP(w, r)
 		}
-	}))
+	})))
 }
 
 // wrap turns a handlerFunc into an http.Handler: it requires the session

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/url"
@@ -283,14 +282,15 @@ func TestUnitChange(t *testing.T) {
 func TestUnitFamilies(t *testing.T) {
 	e := setup(t)
 
-	// The bootstrap set, with integer ids from 1000.
+	// The bootstrap set: global units.
 	families := e.expect(t, 200, "GET", "/unit-families", nil).body.([]any)
 	byName := map[string]any{}
 	for _, f := range families {
 		byName[str(t, f, "name")] = f
 	}
 	binary := byName["Binary bytes"]
-	if binary == nil || str(t, binary, "quantity", "name") != "Bytes" || num(t, binary, "id") < 1000 {
+	if binary == nil || str(t, binary, "quantity", "name") != "Bytes" || get(t, binary, "global") != true ||
+		get(t, binary, "available") != true || get(t, binary, "choice") != nil {
 		t.Fatalf("Binary bytes: %v", binary)
 	}
 	var symbols []string
@@ -308,27 +308,30 @@ func TestUnitFamilies(t *testing.T) {
 		t.Errorf("bits are a quantity of their own: %v", byName["Bits"])
 	}
 
-	length := int(num(t, byName["Metric length"], "quantity", "id"))
-	q := e.expect(t, 200, "GET", fmt.Sprintf("/quantities/%d", length), nil).body
-	if n := len(get(t, q, "families").([]any)); n != 2 || str(t, q, "families", 0, "name") != "Metric length" {
+	length := str(t, byName["Metric length"], "quantity", "id")
+	q := e.expect(t, 200, "GET", "/quantities/"+length, nil).body
+	// Families by name.
+	if n := len(get(t, q, "families").([]any)); n != 2 || str(t, q, "families", 0, "name") != "Imperial length" {
 		t.Errorf("Length families: %v", get(t, q, "families"))
 	}
-	units := e.expect(t, 200, "GET", fmt.Sprintf("/units?quantity=%d", length), nil).body.([]any)
-	if len(units) != 10 || str(t, units[0], "symbol") != "nm" {
+	units := e.expect(t, 200, "GET", "/units?quantity="+length, nil).body.([]any)
+	if len(units) != 10 || str(t, units[0], "symbol") != "mil" {
 		t.Errorf("length units: %d, first %v", len(units), units[0])
 	}
-	mm := e.expect(t, 200, "GET", fmt.Sprintf("/units/%d", e.unit(t, "Metric length", "mm")), nil).body
-	if str(t, mm, "family", "name") != "Metric length" || num(t, mm, "base_factor") != 0.001 {
+	mm := e.expect(t, 200, "GET", "/units/"+e.unit(t, "Metric length", "mm"), nil).body
+	if str(t, mm, "family", "name") != "Metric length" || num(t, mm, "base_factor") != 0.001 || get(t, mm, "global") != true {
 		t.Errorf("mm: %v", mm)
 	}
-	e.expect(t, 404, "GET", "/units/1", nil)
+	const unknown = "00000000-0000-0000-0000-000000000001"
+	e.expect(t, 404, "GET", "/units/"+unknown, nil)
+	e.expect(t, 400, "GET", "/units/1", nil)
 	e.expect(t, 400, "GET", "/units/mm", nil)
-	e.expect(t, 404, "GET", "/unit-families?quantity=1", nil)
+	e.expect(t, 404, "GET", "/unit-families?quantity="+unknown, nil)
 
 	// Within a quantity, a symbol means one unit.
 	_, err := e.dba.Exec(context.Background(),
 		"INSERT INTO unit (family, name, symbol, base_factor) VALUES ($1, 'bit', 'B', 0.125)",
-		int(num(t, binary, "id")))
+		str(t, binary, "id"))
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
 		t.Errorf("a second meaning of B: %v", err)
@@ -338,28 +341,9 @@ func TestUnitFamilies(t *testing.T) {
 func TestUnitImport(t *testing.T) {
 	e := setup(t)
 	e.reset(t)
-	// What this test adds goes again, so other tests see the bootstrap set.
-	ctx := context.Background()
-	var maxQ, maxF, maxU int
-	if err := e.dba.QueryRow(ctx, "SELECT (SELECT max(id) FROM quantity), (SELECT max(id) FROM unit_family), (SELECT max(id) FROM unit)").
-		Scan(&maxQ, &maxF, &maxU); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		for _, del := range []struct {
-			sql string
-			max int
-		}{
-			{"DELETE FROM attribute WHERE unit > $1", maxU},
-			{"DELETE FROM unit WHERE id > $1", maxU},
-			{"DELETE FROM unit_family WHERE id > $1", maxF},
-			{"DELETE FROM quantity WHERE id > $1", maxQ},
-		} {
-			if _, err := e.dba.Exec(ctx, del.sql, del.max); err != nil {
-				t.Error(err)
-			}
-		}
-	})
+	// What this test adds is the tenant's own, and goes again, so other tests
+	// see only the global bootstrap set.
+	t.Cleanup(func() { e.dropTenantUnits(t) })
 	count := func(report any, kind, which string) int {
 		return len(get(t, report, kind, which).([]any))
 	}
@@ -408,8 +392,11 @@ func TestUnitImport(t *testing.T) {
 	if get(t, r, "applied") != true || count(r, "units", "added") != 6 {
 		t.Fatalf("import: %v", r)
 	}
-	if e.unit(t, "Pascals", "kPa") <= maxU || e.unit(t, "Imperial length", "yd") <= maxU {
-		t.Error("imported units should get new ids")
+	// Imported units are the tenant's own, also in a global family.
+	for _, id := range []string{e.unit(t, "Pascals", "kPa"), e.unit(t, "Imperial length", "yd")} {
+		if get(t, e.expect(t, 200, "GET", "/units/"+id, nil).body, "global") != false {
+			t.Errorf("unit %s should be the tenant's own", id)
+		}
 	}
 	var q any
 	for _, x := range e.expect(t, 200, "GET", "/quantities", nil).body.([]any) {

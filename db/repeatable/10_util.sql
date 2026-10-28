@@ -15,12 +15,15 @@ BEGIN
 END;
 $$;
 
--- The same for the integer ids of quantities, unit families and units.
-CREATE FUNCTION util.raise_not_found(p_entity text, p_id integer) RETURNS void
+-- Raises the error for a reference, in a request's body, to something that
+-- isn't there (or is another tenant's): SQLSTATE 23503, as a foreign key
+-- would, which the REST layer maps to 422. A missing object in the path is
+-- raise_not_found's (404).
+CREATE FUNCTION util.raise_bad_reference(p_entity text, p_id uuid) RETURNS void
 LANGUAGE plpgsql AS $$
 BEGIN
     RAISE EXCEPTION '% % not found', p_entity, p_id
-        USING ERRCODE = 'no_data_found';
+        USING ERRCODE = 'foreign_key_violation';
 END;
 $$;
 
@@ -193,10 +196,11 @@ BEGIN
 END;
 $$;
 
--- The classes below p_parent (the roots when NULL) as a nested tree:
--- [{id, name, parent, container, photo, children: [...]}, ...], alphabetically
--- per level. photo is the class photo (util.attachment_json) or null.
-CREATE FUNCTION util.class_tree(p_parent uuid) RETURNS jsonb
+-- The classes of tenant p_tenant below p_parent (the roots when NULL) as a
+-- nested tree: [{id, name, parent, container, photo, children: [...]}, ...],
+-- alphabetically per level. photo is the class photo (util.attachment_json)
+-- or null.
+CREATE FUNCTION util.class_tree(p_tenant uuid, p_parent uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (
@@ -208,22 +212,23 @@ BEGIN
                     'parent',    c.parent,
                     'container', c.container,
                     'photo',     util.attachment_json('class', c.photo),
-                    'children',  util.class_tree(c.id)
+                    'children',  util.class_tree(p_tenant, c.id)
                 )
                 ORDER BY util.natural_key(c.name), c.id
             ),
             '[]'::jsonb
         )
         FROM class c
-        WHERE NOT c.deleted
+        WHERE c.tenant = p_tenant
+          AND NOT c.deleted
           AND ((p_parent IS NULL AND c.parent IS NULL) OR c.parent = p_parent)
     );
 END;
 $$;
 
--- The locations below p_parent (the roots when NULL) as a nested tree, like
--- util.class_tree, each with its code.
-CREATE FUNCTION util.location_tree(p_parent uuid) RETURNS jsonb
+-- The locations of tenant p_tenant below p_parent (the roots when NULL) as a
+-- nested tree, like util.class_tree, each with its code.
+CREATE FUNCTION util.location_tree(p_tenant uuid, p_parent uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (
@@ -236,24 +241,26 @@ BEGIN
                     'parent',    l.parent,
                     'container', l.container,
                     'photo',     util.attachment_json('location', l.photo),
-                    'children',  util.location_tree(l.id)
+                    'children',  util.location_tree(p_tenant, l.id)
                 )
                 ORDER BY util.natural_key(l.name), l.id
             ),
             '[]'::jsonb
         )
         FROM location l
-        WHERE NOT l.deleted
+        WHERE l.tenant = p_tenant
+          AND NOT l.deleted
           AND ((p_parent IS NULL AND l.parent IS NULL) OR l.parent = p_parent)
     );
 END;
 $$;
 
--- Current change counter of a tracked table (see data_version in SCHEMA.md).
-CREATE FUNCTION util.data_version(p_name text) RETURNS bigint
+-- Current change counter of a tenant's tree (see data_version in
+-- SCHEMA.md): 1 until its first change.
+CREATE FUNCTION util.data_version(p_tenant uuid, p_name text) RETURNS bigint
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
-    RETURN (SELECT version FROM data_version WHERE name = p_name);
+    RETURN COALESCE((SELECT version FROM data_version WHERE tenant = p_tenant AND name = p_name), 1);
 END;
 $$;
 
@@ -387,7 +394,8 @@ $$;
 -- Attribute filters of item_list (see api/item.md)
 -- ---------------------------------------------------------------------------
 
--- Checks one filter of item_list and returns it ready for
+-- Checks one filter of item_list, on an attribute of tenant p_tenant, and
+-- returns it ready for
 -- util.item_matches: {attribute, datatype, op, value}, with numbers as JSON
 -- numbers, dates as YYYY-MM-DD and choices as option ids (given by id or
 -- name). Raises 22023 for a filter that doesn't fit its attribute.
@@ -395,7 +403,7 @@ $$;
 --   text, url:            op = (ignoring case) or contains
 --   choice:               op = with one option, or in with a list of them
 --   boolean:              op = with true or false
-CREATE FUNCTION util.check_item_filter(p_filter jsonb) RETURNS jsonb
+CREATE FUNCTION util.check_item_filter(p_tenant uuid, p_filter jsonb) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 DECLARE
     v_attribute attribute;
@@ -411,7 +419,8 @@ BEGIN
     IF NOT (p_filter ->> 'attribute') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
         PERFORM util.raise_invalid('A filter needs the id of an attribute');
     END IF;
-    SELECT * INTO v_attribute FROM attribute a WHERE a.id = (p_filter ->> 'attribute')::uuid AND NOT a.deleted;
+    SELECT * INTO v_attribute FROM attribute a
+    WHERE a.id = (p_filter ->> 'attribute')::uuid AND a.tenant = p_tenant AND NOT a.deleted;
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('attribute', (p_filter ->> 'attribute')::uuid);
     END IF;
@@ -725,27 +734,29 @@ $$;
 -- ---------------------------------------------------------------------------
 -- Each returns SQL NULL when the row does not exist.
 
-CREATE FUNCTION util.quantity_json(p_quantity integer) RETURNS jsonb
+CREATE FUNCTION util.quantity_json(p_quantity uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (
         SELECT jsonb_build_object('id', q.id, 'name', q.name, 'datatype', q.datatype,
-                                  'base_unit', jsonb_build_object('symbol', q.base_symbol, 'name', q.base_name))
+                                  'base_unit', jsonb_build_object('symbol', q.base_symbol, 'name', q.base_name),
+                                  'global', q.tenant IS NULL)
         FROM quantity q
         WHERE q.id = p_quantity
     );
 END;
 $$;
 
--- Short form used inside other objects: {id, name, quantity}.
-CREATE FUNCTION util.unit_family_json(p_family integer) RETURNS jsonb
+-- Short form used inside other objects: {id, name, quantity, global}.
+CREATE FUNCTION util.unit_family_json(p_family uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (
         SELECT jsonb_build_object(
             'id',       f.id,
             'name',     f.name,
-            'quantity', util.quantity_json(f.quantity)
+            'quantity', util.quantity_json(f.quantity),
+            'global',   f.tenant IS NULL
         )
         FROM unit_family f
         WHERE f.id = p_family
@@ -755,7 +766,7 @@ $$;
 
 -- Includes the conversion to the base unit, so clients can convert
 -- themselves, and the unit's family and quantity.
-CREATE FUNCTION util.unit_json(p_unit integer) RETURNS jsonb
+CREATE FUNCTION util.unit_json(p_unit uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (
@@ -766,7 +777,8 @@ BEGIN
             'family',      jsonb_build_object('id', f.id, 'name', f.name),
             'quantity',    util.quantity_json(f.quantity),
             'base_factor', u.base_factor,
-            'base_offset', u.base_offset
+            'base_offset', u.base_offset,
+            'global',      u.tenant IS NULL
         )
         FROM unit u
         JOIN unit_family f ON f.id = u.family
@@ -775,14 +787,16 @@ BEGIN
 END;
 $$;
 
--- The units of a family, from smallest to largest.
-CREATE FUNCTION util.family_units_json(p_family integer) RETURNS jsonb
+-- The units of a family that the session's tenant sees (the global ones and
+-- its own), from smallest to largest.
+CREATE FUNCTION util.family_units_json(p_family uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (
         SELECT COALESCE(jsonb_agg(util.unit_json(u.id) ORDER BY u.base_factor, u.id), '[]'::jsonb)
         FROM unit u
         WHERE u.family = p_family
+          AND (u.tenant IS NULL OR u.tenant = util.tenant())
     );
 END;
 $$;
@@ -790,12 +804,13 @@ $$;
 -- p_value (in the base unit) as it is shown for an attribute or item with
 -- unit p_unit: in that unit with p_lock, otherwise in the unit of its family
 -- that scales best, i.e. the largest unit in which |value| >= 1, or else the
--- smallest. Zero is shown in p_unit.
+-- smallest, among the units the session's tenant sees. Zero is shown in
+-- p_unit.
 -- Returns {value, unit}, or SQL NULL when there is no number or no unit.
-CREATE FUNCTION util.display_json(p_value numeric, p_unit integer, p_lock boolean) RETURNS jsonb
+CREATE FUNCTION util.display_json(p_value numeric, p_unit uuid, p_lock boolean) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 DECLARE
-    v_unit integer := p_unit;
+    v_unit uuid := p_unit;
 BEGIN
     IF p_value IS NULL OR p_unit IS NULL THEN
         RETURN NULL;
@@ -805,6 +820,7 @@ BEGIN
         SELECT u.id INTO v_unit
         FROM unit u
         WHERE u.family = (SELECT family FROM unit WHERE id = p_unit)
+          AND (u.tenant IS NULL OR u.tenant = util.tenant())
         ORDER BY
             (abs((p_value - u.base_offset) / u.base_factor) >= 1) DESC,
             CASE WHEN abs((p_value - u.base_offset) / u.base_factor) >= 1
@@ -1137,21 +1153,23 @@ $$;
 -- Writes shared by several API functions
 -- ---------------------------------------------------------------------------
 
--- Inserts or replaces the value of one attribute for one item.
+-- Inserts or replaces the value of one attribute for one item. The item is
+-- checked by the caller; the attribute must be of the item's tenant.
 CREATE FUNCTION util.value_upsert(p_item uuid, p_attribute uuid, p_value jsonb) RETURNS void
 LANGUAGE plpgsql AS $$
 DECLARE
+    v_tenant uuid := (SELECT tenant FROM item WHERE id = p_item);
     v_parsed record;
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_attribute) THEN
+    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_attribute AND tenant = v_tenant) THEN
         PERFORM util.raise_not_found('attribute', p_attribute);
     END IF;
     SELECT * INTO v_parsed FROM util.parse_typed_value(p_attribute, p_value);
 
-    INSERT INTO value (item, attribute,
+    INSERT INTO value (tenant, item, attribute,
                        text_value, integer_value, float_value,
                        date_value, boolean_value, option_value)
-    VALUES (p_item, p_attribute,
+    VALUES (v_tenant, p_item, p_attribute,
             v_parsed.text_v, v_parsed.integer_v, v_parsed.float_v,
             v_parsed.date_v, v_parsed.boolean_v, v_parsed.option_v)
     ON CONFLICT (item, attribute) DO UPDATE SET
@@ -1165,20 +1183,23 @@ END;
 $$;
 
 -- Inserts or replaces the value of one per-unit attribute for one stock row.
+-- The stock row is checked by the caller; the attribute must be of its
+-- tenant.
 CREATE FUNCTION util.stock_value_upsert(p_stock uuid, p_attribute uuid, p_value jsonb) RETURNS void
 LANGUAGE plpgsql AS $$
 DECLARE
+    v_tenant uuid := (SELECT tenant FROM stock WHERE id = p_stock);
     v_parsed record;
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_attribute) THEN
+    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_attribute AND tenant = v_tenant) THEN
         PERFORM util.raise_not_found('attribute', p_attribute);
     END IF;
     SELECT * INTO v_parsed FROM util.parse_typed_value(p_attribute, p_value);
 
-    INSERT INTO stock_value (stock, attribute,
+    INSERT INTO stock_value (tenant, stock, attribute,
                              text_value, integer_value, float_value,
                              date_value, boolean_value, option_value)
-    VALUES (p_stock, p_attribute,
+    VALUES (v_tenant, p_stock, p_attribute,
             v_parsed.text_v, v_parsed.integer_v, v_parsed.float_v,
             v_parsed.date_v, v_parsed.boolean_v, v_parsed.option_v)
     ON CONFLICT (stock, attribute) DO UPDATE SET
@@ -1462,9 +1483,12 @@ BEGIN
 END;
 $$;
 
--- The session of the current transaction (set by session_use): account and
--- privileges. Raises 28000 without a valid session.
+-- The session of the current transaction (set by session_use): tenant,
+-- account and privileges. Raises 28000 without a valid session. The tenant
+-- comes from the session (found by its secret token), never from a setting
+-- a caller could change.
 CREATE FUNCTION util.current_session(
+    OUT tenant            uuid,
     OUT account           uuid,
     OUT data_privilege    privilege,
     OUT model_privilege   privilege,
@@ -1479,10 +1503,10 @@ BEGIN
         PERFORM util.raise_unauthenticated('Not logged in');
     END IF;
 
-    SELECT a.id, a.data_privilege, a.model_privilege, a.account_privilege, a.history_privilege
-    INTO account, data_privilege, model_privilege, account_privilege, history_privilege
+    SELECT s.tenant, a.id, a.data_privilege, a.model_privilege, a.account_privilege, a.history_privilege
+    INTO tenant, account, data_privilege, model_privilege, account_privilege, history_privilege
     FROM session s
-    JOIN account a ON a.id = s.account
+    JOIN account a ON a.tenant = s.tenant AND a.id = s.account
     WHERE s.token_hash = util.token_hash(v_token)
       AND s.last_used > now() - interval '30 days'
       AND NOT a.deleted;
@@ -1490,6 +1514,15 @@ BEGIN
     IF NOT FOUND THEN
         PERFORM util.raise_unauthenticated('Session expired or invalid');
     END IF;
+END;
+$$;
+
+-- The tenant of the current session. Every API function filters by it (see
+-- TENANTS.md, "Isolation").
+CREATE FUNCTION util.tenant() RETURNS uuid
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+    RETURN (SELECT tenant FROM util.current_session());
 END;
 $$;
 

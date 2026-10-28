@@ -18,8 +18,12 @@ info:
       base unit of the unit's quantity; responses add a `display` value in the
       best-scaling unit of the unit's family, or in the unit itself when
       `unit_lock` is set.
-    - Quantities, unit families and units have integer ids; everything else
-      has UUIDs.
+    - The hostname picks the inventory: its first label is a tenant's host
+      ("bob" for bob.wtf.example), see TENANTS.md. A hostname that picks none
+      gets 404, except for /api/health.
+    - Everything has UUIDs as ids. Quantities, unit families and units are
+      global (every tenant sees them) or the tenant's own, and a tenant can
+      turn quantities and families off.
     - Errors are RFC 9457 problem details (`application/problem+json`).
     - `GET /classes` and `GET /locations` support `ETag` / `If-None-Match`.
     - POST /login sets the session cookie `wtf_session` (HttpOnly,
@@ -66,7 +70,7 @@ paths:
 
   /quantities:
     get:
-      summary: All quantities
+      summary: The quantities the tenant sees
       operationId: quantityList
       responses:
         "200":
@@ -77,38 +81,43 @@ paths:
         default: { $ref: "#/components/responses/Problem" }
 
   /quantities/{id}:
-    parameters: [{ $ref: "#/components/parameters/IntId" }]
+    parameters: [{ $ref: "#/components/parameters/Id" }]
     get:
-      summary: One quantity with its unit families, each with its units
+      summary: One quantity with the unit families the tenant sees, each with its units
       operationId: quantityGet
       responses:
         "200":
           description: The quantity.
           content:
             application/json:
-              schema:
-                allOf:
-                  - $ref: "#/components/schemas/Quantity"
-                  - type: object
-                    properties:
-                      families:
-                        type: array
-                        description: In the order they were created.
-                        items:
-                          type: object
-                          properties:
-                            id: { type: integer }
-                            name: { type: string }
-                            units: { type: array, items: { $ref: "#/components/schemas/Unit" }, description: Smallest first. }
+              schema: { $ref: "#/components/schemas/QuantityDetail" }
+        default: { $ref: "#/components/responses/Problem" }
+    patch:
+      summary: Turn a quantity on or off for the tenant (model write privilege)
+      operationId: quantityPatch
+      description: |
+        Turning a quantity off turns its families off too. A quantity whose
+        units live attributes or items use can't be turned off (409).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AvailabilityPatch" }
+      responses:
+        "200":
+          description: The quantity.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QuantityDetail" }
         default: { $ref: "#/components/responses/Problem" }
 
   /units:
     get:
-      summary: All units
+      summary: The units the tenant sees
       operationId: unitList
       parameters:
-        - { name: quantity, in: query, schema: { type: integer }, description: Only units of this quantity. }
-        - { name: family, in: query, schema: { type: integer }, description: Only units of this family. }
+        - { name: quantity, in: query, schema: { $ref: "#/components/schemas/Uuid" }, description: Only units of this quantity. }
+        - { name: family, in: query, schema: { $ref: "#/components/schemas/Uuid" }, description: Only units of this family. }
       responses:
         "200":
           description: Units, by family, smallest first.
@@ -118,7 +127,7 @@ paths:
         default: { $ref: "#/components/responses/Problem" }
 
   /units/{id}:
-    parameters: [{ $ref: "#/components/parameters/IntId" }]
+    parameters: [{ $ref: "#/components/parameters/Id" }]
     get:
       summary: One unit
       operationId: unitGet
@@ -132,11 +141,12 @@ paths:
 
   /units/import:
     post:
-      summary: Import quantities, unit families and units from a unit file (model write privilege)
+      summary: Import quantities, unit families and units from a unit file, as the tenant's own (model write privilege)
       operationId: unitImport
       description: |
-        The body is a unit file (seed/units-format.md). What isn't there yet is
-        added; what is there must be the same, or it is a conflict. Nothing
+        The body is a unit file (seed/units-format.md). What the tenant doesn't
+        see yet is added, as its own; what it sees (global or its own) must
+        be the same, or it is a conflict. Nothing
         that exists is changed or removed. All or nothing: with a conflict, or
         with dry_run, nothing is kept. A body that isn't a valid unit file is
         refused with 400.
@@ -171,10 +181,10 @@ paths:
 
   /unit-families:
     get:
-      summary: All unit families with their units
+      summary: The unit families the tenant sees, with their units
       operationId: unitFamilyList
       parameters:
-        - { name: quantity, in: query, schema: { type: integer }, description: Only families of this quantity. }
+        - { name: quantity, in: query, schema: { $ref: "#/components/schemas/Uuid" }, description: Only families of this quantity. }
       responses:
         "200":
           description: Unit families, by quantity.
@@ -184,10 +194,28 @@ paths:
         default: { $ref: "#/components/responses/Problem" }
 
   /unit-families/{id}:
-    parameters: [{ $ref: "#/components/parameters/IntId" }]
+    parameters: [{ $ref: "#/components/parameters/Id" }]
     get:
       summary: One unit family with its units, smallest first
       operationId: unitFamilyGet
+      responses:
+        "200":
+          description: The unit family.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UnitFamilyDetail" }
+        default: { $ref: "#/components/responses/Problem" }
+    patch:
+      summary: Turn a unit family on or off for the tenant (model write privilege)
+      operationId: unitFamilyPatch
+      description: |
+        A family of a quantity that is turned off stays off. A family whose
+        units live attributes or items use can't be turned off (409).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AvailabilityPatch" }
       responses:
         "200":
           description: The unit family.
@@ -222,8 +250,8 @@ paths:
                 name: { type: string }
                 datatype: { $ref: "#/components/schemas/Datatype" }
                 unit:
-                  type: [integer, "null"]
-                  description: With a unit, the datatype must be the unit's quantity's datatype.
+                  oneOf: [{ $ref: "#/components/schemas/Uuid" }, { type: "null" }]
+                  description: With a unit, the datatype must be the unit's quantity's datatype; the unit must be available.
                 unit_lock: { type: boolean, default: false, description: Always show values in the unit, instead of scaling them within its family. }
       responses:
         "201": { $ref: "#/components/responses/AttributeCreated" }
@@ -250,7 +278,7 @@ paths:
               properties:
                 name: { type: string }
                 datatype: { $ref: "#/components/schemas/Datatype" }
-                unit: { type: integer, description: Another unit of the same quantity; a unit can't be added or removed. }
+                unit: { $ref: "#/components/schemas/Uuid", description: Another available unit of the same quantity; a unit can't be added or removed. }
                 unit_lock: { type: boolean }
       responses:
         "200": { $ref: "#/components/responses/Attribute" }
@@ -494,8 +522,8 @@ paths:
                 class: { $ref: "#/components/schemas/Uuid" }
                 name: { type: string }
                 unit:
-                  type: [integer, "null"]
-                  description: Unit stock is measured in; none means pieces.
+                  oneOf: [{ $ref: "#/components/schemas/Uuid" }, { type: "null" }]
+                  description: Unit stock is measured in, an available one; none means pieces.
                 unit_lock: { type: boolean, default: false, description: Always show stock in the unit, instead of scaling it within its family. }
                 values:
                   type: object
@@ -532,7 +560,7 @@ paths:
               properties:
                 class: { $ref: "#/components/schemas/Uuid" }
                 name: { type: string }
-                unit: { type: integer, description: Another unit of the same quantity; a unit can't be added or removed. }
+                unit: { $ref: "#/components/schemas/Uuid", description: Another available unit of the same quantity; a unit can't be added or removed. }
                 unit_lock: { type: boolean }
                 photo: { oneOf: [{ $ref: "#/components/schemas/Uuid" }, { type: "null" }], description: "One of its own image attachments, or null for none." }
       responses:
@@ -1489,11 +1517,6 @@ components:
       in: path
       required: true
       schema: { $ref: "#/components/schemas/Uuid" }
-    IntId:
-      name: id
-      in: path
-      required: true
-      schema: { type: integer }
     Attribute:
       name: attribute
       in: path
@@ -1787,7 +1810,7 @@ components:
     Quantity:
       type: object
       properties:
-        id: { type: integer }
+        id: { $ref: "#/components/schemas/Uuid" }
         name: { type: string }
         datatype: { type: string, enum: [integer, float] }
         base_unit:
@@ -1796,6 +1819,25 @@ components:
           properties:
             symbol: { type: string }
             name: { type: string }
+        global: { type: boolean, description: "Every tenant sees it; otherwise it is the tenant's own." }
+        available: { type: boolean, description: "Lists and gets of quantities only: whether the tenant can choose its units." }
+        default_available: { type: boolean, description: "Lists and gets of quantities only: available when the tenant hasn't chosen (always true for its own)." }
+        choice: { type: [boolean, "null"], description: "Lists and gets of quantities only: the tenant's choice; null follows the default." }
+
+    QuantityDetail:
+      allOf:
+        - $ref: "#/components/schemas/Quantity"
+        - type: object
+          properties:
+            families:
+              type: array
+              description: By name, without their quantity.
+              items: { $ref: "#/components/schemas/UnitFamilyDetail" }
+
+    AvailabilityPatch:
+      type: object
+      properties:
+        available: { type: [boolean, "null"], description: "true or false; null follows the default again." }
 
     ImportSection:
       type: object
@@ -1807,13 +1849,14 @@ components:
       type: object
       description: base = value × base_factor + base_offset.
       properties:
-        id: { type: integer }
+        id: { $ref: "#/components/schemas/Uuid" }
         name: { type: string }
         symbol: { type: string }
+        global: { type: boolean, description: "Every tenant sees it; otherwise it is the tenant's own." }
         family:
           type: object
           properties:
-            id: { type: integer }
+            id: { $ref: "#/components/schemas/Uuid" }
             name: { type: string }
         quantity: { $ref: "#/components/schemas/Quantity" }
         base_factor: { type: number }
@@ -1822,10 +1865,14 @@ components:
     UnitFamilyDetail:
       type: object
       properties:
-        id: { type: integer }
+        id: { $ref: "#/components/schemas/Uuid" }
         name: { type: string }
         quantity: { $ref: "#/components/schemas/Quantity" }
-        units: { type: array, items: { $ref: "#/components/schemas/Unit" }, description: Smallest first. }
+        global: { type: boolean, description: "Every tenant sees it; otherwise it is the tenant's own." }
+        available: { type: boolean, description: Whether the tenant can choose its units; never while its quantity is off. }
+        default_available: { type: boolean, description: "Available when the tenant hasn't chosen (always true for its own)." }
+        choice: { type: [boolean, "null"], description: "The tenant's choice; null follows the default." }
+        units: { type: array, items: { $ref: "#/components/schemas/Unit" }, description: The ones the tenant sees, smallest first. }
 
     HistoryEntry:
       type: object

@@ -299,29 +299,33 @@ func completeQuantities(e *env, _ []string, _ string, _ bool) []string {
 // completeUnits completes units as resolveUnit takes them: by symbol, with
 // the family where several families share it ("B (Binary bytes)").
 func completeUnits(e *env, _ []string, _ string, _ bool) []string {
-	return e.unitRefs(0)
+	return e.unitRefs("")
 }
 
 // completeQuantityUnits completes the units of one quantity, for changing an
 // attribute's or item's unit.
-func completeQuantityUnits(quantityID int) completer {
+func completeQuantityUnits(quantityID string) completer {
 	return func(e *env, _ []string, _ string, _ bool) []string { return e.unitRefs(quantityID) }
 }
 
-// unitRefs are the units of a quantity (0: of all), named as unitRef does.
-func (e *env) unitRefs(quantityID int) []string {
+// unitRefs are the available units of a quantity ("": of all), named as
+// unitRef does.
+func (e *env) unitRefs(quantityID string) []string {
 	families, err := e.unitFamilies()
 	if err != nil {
 		return nil
 	}
-	var all []unit
+	var all, available []unit
 	for _, f := range families {
 		all = append(all, f.Units...)
+		if isAvailable(f.Available) {
+			available = append(available, f.Units...)
+		}
 	}
 	var out []string
-	for i := range all {
-		if quantityID == 0 || all[i].Quantity.ID == quantityID {
-			out = append(out, unitRef(all, &all[i]))
+	for i := range available {
+		if quantityID == "" || available[i].Quantity.ID == quantityID {
+			out = append(out, unitRef(all, &available[i]))
 		}
 	}
 	return out

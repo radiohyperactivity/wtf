@@ -1,7 +1,8 @@
 // Package admin implements the operator's actions that bypass the REST API:
-// "wtfd account" (creating an account with every privilege, setting a
-// password), "wtfd history purge" and "wtfd deleted purge". It connects as
-// the DBA role. See WTFD.md and ACCOUNTS.md.
+// "wtfd tenant" (creating, listing and renaming tenants), "wtfd account"
+// (creating an account with every privilege, setting a password), "wtfd
+// unit" (global units), "wtfd history purge" and "wtfd deleted purge". It
+// connects as the DBA role. See WTFD.md, ACCOUNTS.md and TENANTS.md.
 package admin
 
 import (
@@ -22,50 +23,66 @@ func Connect(ctx context.Context, cfg *pgx.ConnConfig) (*pgx.Conn, error) {
 }
 
 // CreateAccount creates an account with every privilege (read-write data,
-// model and account; read history), such as the first one of a new
-// database. It returns the account's generated password.
-func CreateAccount(ctx context.Context, conn *pgx.Conn, email string) (string, error) {
+// model and account; read history) in the tenant with host host, such as
+// its first one. It returns the account's generated password.
+func CreateAccount(ctx context.Context, conn *pgx.Conn, host, email string) (string, error) {
+	var password string
+	err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+		var err error
+		password, err = createAccount(ctx, tx, host, email)
+		return err
+	})
+	return password, err
+}
+
+// createAccount is CreateAccount in a transaction of the caller's.
+func createAccount(ctx context.Context, tx pgx.Tx, host, email string) (string, error) {
+	tenant, err := tenantID(ctx, tx, host)
+	if err != nil {
+		return "", err
+	}
 	password, err := generatePassword(16)
 	if err != nil {
 		return "", err
 	}
-	err = pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "SELECT util.check_email($1)", email); err != nil {
-			return err
-		}
-		_, err := tx.Exec(ctx, `
-			INSERT INTO account (email, password_hash,
-			                     data_privilege, model_privilege, account_privilege, history_privilege)
-			VALUES (btrim($1), extensions.crypt($2, extensions.gen_salt('bf')),
-			        'read_write', 'read_write', 'read_write', 'read_only')`,
-			email, password)
-		return err
-	})
+	if _, err := tx.Exec(ctx, "SELECT util.check_email($1)", email); err != nil {
+		return "", err
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO account (tenant, email, password_hash,
+		                     data_privilege, model_privilege, account_privilege, history_privilege)
+		VALUES ($1, btrim($2), extensions.crypt($3, extensions.gen_salt('bf')),
+		        'read_write', 'read_write', 'read_write', 'read_only')`,
+		tenant, email, password)
 	if err != nil {
 		return "", err
 	}
 	return password, nil
 }
 
-// SetPassword gives an account a new generated password, lifts a lockout
-// and ends the account's sessions: the way back in when the password is lost.
-// It returns the password.
-func SetPassword(ctx context.Context, conn *pgx.Conn, email string) (string, error) {
+// SetPassword gives an account of the tenant with host host a new generated
+// password, lifts a lockout and ends the account's sessions: the way back
+// in when the password is lost. It returns the password.
+func SetPassword(ctx context.Context, conn *pgx.Conn, host, email string) (string, error) {
 	password, err := generatePassword(16)
 	if err != nil {
 		return "", err
 	}
 	err = pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+		tenant, err := tenantID(ctx, tx, host)
+		if err != nil {
+			return err
+		}
 		var id string
-		err := tx.QueryRow(ctx, `
+		err = tx.QueryRow(ctx, `
 			UPDATE account
-			SET password_hash = extensions.crypt($2, extensions.gen_salt('bf')),
+			SET password_hash = extensions.crypt($3, extensions.gen_salt('bf')),
 			    failed_logins = 0, last_failed_login = NULL
-			WHERE lower(email) = lower(btrim($1)) AND NOT deleted
+			WHERE tenant = $1 AND lower(email) = lower(btrim($2)) AND NOT deleted
 			RETURNING id`,
-			email, password).Scan(&id)
+			tenant, email, password).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("no account with email %q", email)
+			return fmt.Errorf("no account with email %q in tenant %s", email, host)
 		}
 		if err != nil {
 			return err

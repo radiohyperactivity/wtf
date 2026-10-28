@@ -13,9 +13,12 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_version bigint := util.data_version('location');
+    v_tenant  uuid;
+    v_version bigint;
 BEGIN
     PERFORM util.require('data', 'read');
+    v_tenant := util.tenant();
+    v_version := util.data_version(v_tenant, 'location');
     IF p_known_version IS NOT DISTINCT FROM v_version THEN
         RETURN jsonb_build_object('version', v_version, 'unchanged', true);
     END IF;
@@ -23,7 +26,7 @@ BEGIN
     RETURN jsonb_build_object(
         'version',   v_version,
         'unchanged', false,
-        'tree',      util.location_tree(NULL)
+        'tree',      util.location_tree(v_tenant, NULL)
     );
 END;
 $$;
@@ -35,7 +38,7 @@ SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.require('data', 'read');
-    IF NOT EXISTS (SELECT 1 FROM location WHERE id = p_id) THEN
+    IF NOT EXISTS (SELECT 1 FROM location WHERE id = p_id AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('location', p_id);
     END IF;
     RETURN util.location_json(p_id) || jsonb_build_object(
@@ -57,12 +60,17 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
+    v_tenant  uuid;
     v_id      uuid;
     v_columns integer;
     v_rows    integer;
     v_total   bigint;
 BEGIN
     PERFORM util.require('data', 'write');
+    v_tenant := util.tenant();
+    IF p_parent IS NOT NULL AND NOT EXISTS (SELECT 1 FROM location WHERE id = p_parent AND tenant = v_tenant) THEN
+        PERFORM util.raise_bad_reference('location', p_parent);
+    END IF;
     IF p_grid IS NOT NULL AND jsonb_typeof(p_grid) <> 'null' THEN
         IF jsonb_typeof(p_grid) <> 'object'
            OR NOT (p_grid ?& ARRAY['columns', 'rows'])
@@ -84,17 +92,21 @@ BEGIN
         END IF;
     END IF;
 
-    INSERT INTO location (name, parent, container)
-    VALUES (util.clean_path_name(p_name, 'location'), p_parent,
+    INSERT INTO location (tenant, code, name, parent, container)
+    VALUES (v_tenant, next_code(v_tenant), util.clean_path_name(p_name, 'location'), p_parent,
             COALESCE(p_container, false) OR v_columns IS NOT NULL)
     RETURNING id INTO v_id;
 
+    -- Codes in the order of the cells: A1, A2, …, B1, …
     IF v_columns IS NOT NULL THEN
-        INSERT INTO location (name, parent)
-        SELECT util.column_label(c) || r, v_id
-        FROM generate_series(1, v_columns) AS c
-        CROSS JOIN generate_series(1, v_rows) AS r
-        ORDER BY c, r;
+        INSERT INTO location (tenant, code, name, parent)
+        SELECT v_tenant, next_code(v_tenant), g.name, v_id
+        FROM (
+            SELECT util.column_label(c) || r AS name
+            FROM generate_series(1, v_columns) AS c
+            CROSS JOIN generate_series(1, v_rows) AS r
+            ORDER BY c, r
+        ) g;
     END IF;
 
     RETURN util.location_json(v_id);
@@ -110,9 +122,20 @@ CREATE FUNCTION location_patch(p_id uuid, p_patch jsonb) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
+DECLARE
+    v_tenant uuid;
 BEGIN
     PERFORM util.require('data', 'write');
+    v_tenant := util.tenant();
     PERFORM util.check_patch(p_patch, ARRAY['name', 'parent', 'container', 'photo'], ARRAY['name', 'container']);
+    IF NOT EXISTS (SELECT 1 FROM location WHERE id = p_id AND tenant = v_tenant) THEN
+        PERFORM util.raise_not_found('location', p_id);
+    END IF;
+    IF p_patch ? 'parent' AND p_patch ->> 'parent' IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM location WHERE id = (p_patch ->> 'parent')::uuid AND tenant = v_tenant)
+    THEN
+        PERFORM util.raise_bad_reference('location', (p_patch ->> 'parent')::uuid);
+    END IF;
 
     UPDATE location
     SET name      = CASE WHEN p_patch ? 'name'
@@ -121,11 +144,7 @@ BEGIN
                          THEN (p_patch ->> 'parent')::uuid ELSE parent END,
         container = CASE WHEN p_patch ? 'container'
                          THEN (p_patch ->> 'container')::boolean ELSE container END
-    WHERE id = p_id;
-
-    IF NOT FOUND THEN
-        PERFORM util.raise_not_found('location', p_id);
-    END IF;
+    WHERE id = p_id AND tenant = v_tenant;
     PERFORM util.set_photo('location', p_id, p_patch);
     RETURN util.location_json(p_id);
 END;
@@ -139,7 +158,7 @@ SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.require('data', 'write');
-    UPDATE location SET deleted = true WHERE id = p_id;
+    UPDATE location SET deleted = true WHERE id = p_id AND tenant = util.tenant();
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('location', p_id);
@@ -170,7 +189,7 @@ DECLARE
     v_result    jsonb;
 BEGIN
     PERFORM util.require('data', 'write');
-    IF NOT EXISTS (SELECT 1 FROM location WHERE id = p_id) THEN
+    IF NOT EXISTS (SELECT 1 FROM location WHERE id = p_id AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('location', p_id);
     END IF;
     PERFORM check_live('location', p_id);
@@ -254,7 +273,7 @@ DECLARE
 BEGIN
     PERFORM util.require('data', 'write');
     PERFORM util.check_patch(p_options, ARRAY['name', 'parent', 'with_parents'], ARRAY['name', 'with_parents']);
-    SELECT * INTO v_location FROM location WHERE id = p_id FOR UPDATE;
+    SELECT * INTO v_location FROM location WHERE id = p_id AND tenant = util.tenant() FOR UPDATE;
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('location', p_id);
     END IF;
@@ -263,6 +282,9 @@ BEGIN
     END IF;
 
     v_parent := CASE WHEN p_options ? 'parent' THEN (p_options ->> 'parent')::uuid ELSE v_location.parent END;
+    IF v_parent IS NOT NULL AND NOT EXISTS (SELECT 1 FROM location WHERE id = v_parent AND tenant = v_location.tenant) THEN
+        PERFORM util.raise_bad_reference('location', v_parent);
+    END IF;
     IF v_parent IS NOT NULL AND (SELECT deleted FROM location WHERE id = v_parent) THEN
         IF p_options ? 'parent' THEN
             PERFORM raise_deleted('location', v_parent);
@@ -319,14 +341,17 @@ CREATE FUNCTION stock_list(
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
+DECLARE
+    v_tenant uuid;
 BEGIN
     PERFORM util.require('data', 'read');
+    v_tenant := util.tenant();
     PERFORM util.check_paging(p_limit, p_offset);
 
-    IF p_item IS NOT NULL AND NOT EXISTS (SELECT 1 FROM item WHERE id = p_item) THEN
+    IF p_item IS NOT NULL AND NOT EXISTS (SELECT 1 FROM item WHERE id = p_item AND tenant = v_tenant) THEN
         PERFORM util.raise_not_found('item', p_item);
     END IF;
-    IF p_location IS NOT NULL AND NOT EXISTS (SELECT 1 FROM location WHERE id = p_location) THEN
+    IF p_location IS NOT NULL AND NOT EXISTS (SELECT 1 FROM location WHERE id = p_location AND tenant = v_tenant) THEN
         PERFORM util.raise_not_found('location', p_location);
     END IF;
 
@@ -335,7 +360,8 @@ BEGIN
             SELECT s.id, i.name AS item_name
             FROM stock s
             JOIN item i ON i.id = s.item
-            WHERE NOT s.deleted
+            WHERE s.tenant = v_tenant
+              AND NOT s.deleted
               AND (p_item IS NULL OR s.item = p_item)
               AND (p_location IS NULL OR s.location IN (SELECT util.location_subtree(p_location)))
         )
@@ -365,7 +391,7 @@ SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.require('data', 'read');
-    IF NOT EXISTS (SELECT 1 FROM stock WHERE id = p_id) THEN
+    IF NOT EXISTS (SELECT 1 FROM stock WHERE id = p_id AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('stock', p_id);
     END IF;
     RETURN util.stock_detail_json(p_id);
@@ -386,11 +412,19 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
+    v_tenant uuid;
     v_id     uuid;
 BEGIN
     PERFORM util.require('data', 'write');
-    INSERT INTO stock (item, location, quantity)
-    VALUES (p_item, p_location, p_quantity)
+    v_tenant := util.tenant();
+    IF NOT EXISTS (SELECT 1 FROM item WHERE id = p_item AND tenant = v_tenant) THEN
+        PERFORM util.raise_bad_reference('item', p_item);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM location WHERE id = p_location AND tenant = v_tenant) THEN
+        PERFORM util.raise_bad_reference('location', p_location);
+    END IF;
+    INSERT INTO stock (tenant, code, item, location, quantity)
+    VALUES (v_tenant, next_code(v_tenant), p_item, p_location, p_quantity)
     RETURNING id INTO v_id;
 
     PERFORM util.values_upsert(true, v_id, p_values);
@@ -407,9 +441,25 @@ CREATE FUNCTION stock_patch(p_id uuid, p_patch jsonb) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
+DECLARE
+    v_tenant uuid;
 BEGIN
     PERFORM util.require('data', 'write');
+    v_tenant := util.tenant();
     PERFORM util.check_patch(p_patch, ARRAY['item', 'location', 'quantity', 'photo'], ARRAY['item', 'location']);
+    IF NOT EXISTS (SELECT 1 FROM stock WHERE id = p_id AND tenant = v_tenant) THEN
+        PERFORM util.raise_not_found('stock', p_id);
+    END IF;
+    IF p_patch ? 'item'
+       AND NOT EXISTS (SELECT 1 FROM item WHERE id = (p_patch ->> 'item')::uuid AND tenant = v_tenant)
+    THEN
+        PERFORM util.raise_bad_reference('item', (p_patch ->> 'item')::uuid);
+    END IF;
+    IF p_patch ? 'location'
+       AND NOT EXISTS (SELECT 1 FROM location WHERE id = (p_patch ->> 'location')::uuid AND tenant = v_tenant)
+    THEN
+        PERFORM util.raise_bad_reference('location', (p_patch ->> 'location')::uuid);
+    END IF;
 
     UPDATE stock
     SET item     = CASE WHEN p_patch ? 'item'
@@ -418,11 +468,7 @@ BEGIN
                         THEN (p_patch ->> 'location')::uuid ELSE location END,
         quantity = CASE WHEN p_patch ? 'quantity'
                         THEN (p_patch ->> 'quantity')::numeric ELSE quantity END
-    WHERE id = p_id;
-
-    IF NOT FOUND THEN
-        PERFORM util.raise_not_found('stock', p_id);
-    END IF;
+    WHERE id = p_id AND tenant = v_tenant;
     PERFORM util.set_photo('stock', p_id, p_patch);
     RETURN util.stock_detail_json(p_id);
 END;
@@ -454,12 +500,15 @@ DECLARE
     v_copy       uuid;
 BEGIN
     PERFORM util.require('data', 'write');
-    SELECT * INTO v_stock FROM stock WHERE id = p_id FOR UPDATE;
+    SELECT * INTO v_stock FROM stock WHERE id = p_id AND tenant = util.tenant() FOR UPDATE;
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('stock', p_id);
     END IF;
     IF v_stock.deleted THEN
         PERFORM raise_deleted('stock', p_id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM location WHERE id = p_location AND tenant = v_stock.tenant) THEN
+        PERFORM util.raise_bad_reference('location', p_location);
     END IF;
     PERFORM check_live('location', p_location);
 
@@ -514,14 +563,14 @@ BEGIN
 
     UPDATE stock SET quantity = quantity - v_amount WHERE id = p_id;
 
-    INSERT INTO stock (item, location, quantity)
-    VALUES (v_stock.item, p_location, v_amount)
+    INSERT INTO stock (tenant, code, item, location, quantity)
+    VALUES (v_stock.tenant, next_code(v_stock.tenant), v_stock.item, p_location, v_amount)
     RETURNING id INTO v_target;
 
-    INSERT INTO stock_value (stock, attribute,
+    INSERT INTO stock_value (tenant, stock, attribute,
                              text_value, integer_value, float_value,
                              date_value, boolean_value, option_value)
-    SELECT v_target, attribute,
+    SELECT v_stock.tenant, v_target, attribute,
            text_value, integer_value, float_value,
            date_value, boolean_value, option_value
     FROM stock_value
@@ -530,8 +579,8 @@ BEGIN
     -- The new row gets copies of the attachments (the same files on disk),
     -- and the copy of the photo as its photo.
     FOR v_attachment IN SELECT * FROM stock_attachment WHERE stock = p_id ORDER BY id LOOP
-        INSERT INTO stock_attachment (stock, type, hash, size, title)
-        VALUES (v_target, v_attachment.type, v_attachment.hash, v_attachment.size, v_attachment.title)
+        INSERT INTO stock_attachment (tenant, stock, type, hash, size, title)
+        VALUES (v_stock.tenant, v_target, v_attachment.type, v_attachment.hash, v_attachment.size, v_attachment.title)
         RETURNING id INTO v_copy;
         IF v_attachment.id = v_stock.photo THEN
             UPDATE stock SET photo = v_copy WHERE id = v_target;
@@ -549,7 +598,7 @@ SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.require('data', 'write');
-    UPDATE stock SET deleted = true WHERE id = p_id;
+    UPDATE stock SET deleted = true WHERE id = p_id AND tenant = util.tenant();
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('stock', p_id);
@@ -574,7 +623,7 @@ DECLARE
 BEGIN
     PERFORM util.require('data', 'write');
     PERFORM util.check_patch(p_options, ARRAY['location', 'with_parents'], ARRAY['location', 'with_parents']);
-    SELECT * INTO v_stock FROM stock WHERE id = p_id FOR UPDATE;
+    SELECT * INTO v_stock FROM stock WHERE id = p_id AND tenant = util.tenant() FOR UPDATE;
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('stock', p_id);
     END IF;
@@ -594,6 +643,9 @@ BEGIN
     END IF;
 
     v_location := COALESCE((p_options ->> 'location')::uuid, v_stock.location);
+    IF NOT EXISTS (SELECT 1 FROM location WHERE id = v_location AND tenant = v_stock.tenant) THEN
+        PERFORM util.raise_bad_reference('location', v_location);
+    END IF;
     IF (SELECT deleted FROM location WHERE id = v_location) THEN
         IF p_options ? 'location' THEN
             PERFORM raise_deleted('location', v_location);
@@ -623,7 +675,7 @@ SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.require('data', 'write');
-    IF NOT EXISTS (SELECT 1 FROM stock WHERE id = p_stock) THEN
+    IF NOT EXISTS (SELECT 1 FROM stock WHERE id = p_stock AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('stock', p_stock);
     END IF;
 
@@ -640,6 +692,9 @@ SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.require('data', 'write');
+    IF NOT EXISTS (SELECT 1 FROM stock WHERE id = p_stock AND tenant = util.tenant()) THEN
+        PERFORM util.raise_not_found('stock', p_stock);
+    END IF;
     PERFORM check_live('stock', p_stock);
     DELETE FROM stock_value
     WHERE stock = p_stock

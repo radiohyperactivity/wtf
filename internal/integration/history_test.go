@@ -116,10 +116,10 @@ func TestHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close(context.Background())
-	if n, err := admin.PurgeHistory(context.Background(), conn, 0, true); err != nil || n == 0 {
+	if n, err := admin.PurgeHistory(context.Background(), conn, "", 0, true); err != nil || n == 0 {
 		t.Errorf("dry-run purge: %d, %v", n, err)
 	}
-	if n, err := admin.PurgeHistory(context.Background(), conn, 24*time.Hour, false); err != nil || n != 0 {
+	if n, err := admin.PurgeHistory(context.Background(), conn, "", 24*time.Hour, false); err != nil || n != 0 {
 		t.Errorf("purge of entries older than a day: %d, %v", n, err)
 	}
 }

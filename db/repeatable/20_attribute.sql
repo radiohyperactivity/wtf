@@ -1,94 +1,325 @@
 -- API: quantities, unit families, units, attributes and options. Explained in
--- api/attribute.md.
+-- api/attribute.md, and for global units and availability in TENANTS.md.
 
 -- ---------------------------------------------------------------------------
--- quantity (read-only)
+-- What a tenant sees and has available
 -- ---------------------------------------------------------------------------
+-- A tenant sees the global quantities, families and units (tenant NULL) and
+-- its own. Whether it has one available is its choice (tenant_quantity,
+-- tenant_unit_family) or else the default: default_available for global
+-- ones, available for its own. A family is available only while its
+-- quantity is.
 
--- All quantities, alphabetically.
-CREATE FUNCTION quantity_list() RETURNS jsonb
-LANGUAGE plpgsql STABLE
-SECURITY DEFINER SET search_path = public, pg_temp
-AS $$
+-- Whether quantity p_quantity is available to tenant p_tenant.
+CREATE FUNCTION util.quantity_available(p_tenant uuid, p_quantity uuid) RETURNS boolean
+LANGUAGE plpgsql STABLE AS $$
 BEGIN
-    PERFORM util.require_login();
     RETURN (
-        SELECT COALESCE(jsonb_agg(util.quantity_json(q.id) ORDER BY lower(q.name), q.id), '[]'::jsonb)
+        SELECT COALESCE(c.available, CASE WHEN q.tenant IS NULL THEN q.default_available ELSE true END)
         FROM quantity q
+        LEFT JOIN tenant_quantity c ON c.quantity = q.id AND c.tenant = p_tenant
+        WHERE q.id = p_quantity
     );
 END;
 $$;
 
--- The quantity with its unit families, each with its units.
-CREATE FUNCTION quantity_get(p_id integer) RETURNS jsonb
+-- Whether unit family p_family is available to tenant p_tenant.
+CREATE FUNCTION util.family_available(p_tenant uuid, p_family uuid) RETURNS boolean
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+    RETURN (
+        SELECT util.quantity_available(p_tenant, f.quantity)
+               AND COALESCE(c.available, CASE WHEN f.tenant IS NULL THEN f.default_available ELSE true END)
+        FROM unit_family f
+        LEFT JOIN tenant_unit_family c ON c.family = f.id AND c.tenant = p_tenant
+        WHERE f.id = p_family
+    );
+END;
+$$;
+
+-- A quantity as tenant p_tenant sees it: util.quantity_json, plus whether
+-- it is available, what the default is, and the tenant's own choice (null:
+-- it follows the default).
+CREATE FUNCTION util.quantity_entry_json(p_tenant uuid, p_quantity uuid) RETURNS jsonb
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+    RETURN (
+        SELECT util.quantity_json(q.id) || jsonb_build_object(
+            'available',         util.quantity_available(p_tenant, q.id),
+            'default_available', CASE WHEN q.tenant IS NULL THEN q.default_available ELSE true END,
+            'choice',            c.available
+        )
+        FROM quantity q
+        LEFT JOIN tenant_quantity c ON c.quantity = q.id AND c.tenant = p_tenant
+        WHERE q.id = p_quantity
+    );
+END;
+$$;
+
+-- A unit family as tenant p_tenant sees it, with the units it sees.
+CREATE FUNCTION util.family_entry_json(p_tenant uuid, p_family uuid) RETURNS jsonb
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+    RETURN (
+        SELECT util.unit_family_json(f.id) || jsonb_build_object(
+            'available',         util.family_available(p_tenant, f.id),
+            'default_available', CASE WHEN f.tenant IS NULL THEN f.default_available ELSE true END,
+            'choice',            c.available,
+            'units',             util.family_units_json(f.id)
+        )
+        FROM unit_family f
+        LEFT JOIN tenant_unit_family c ON c.family = f.id AND c.tenant = p_tenant
+        WHERE f.id = p_family
+    );
+END;
+$$;
+
+-- Raises 404 unless tenant p_tenant sees unit p_unit, and 409 unless its
+-- family is available: a unit chosen for an attribute or an item. NULL (no
+-- unit) is fine.
+CREATE FUNCTION util.check_unit_choosable(p_tenant uuid, p_unit uuid) RETURNS void
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    v_unit record;
+BEGIN
+    IF p_unit IS NULL THEN
+        RETURN;
+    END IF;
+    SELECT u.symbol, u.family, f.name AS family_name INTO v_unit
+    FROM unit u JOIN unit_family f ON f.id = u.family
+    WHERE u.id = p_unit AND (u.tenant IS NULL OR u.tenant = p_tenant);
+    IF NOT FOUND THEN
+        PERFORM util.raise_bad_reference('unit', p_unit);
+    END IF;
+    IF NOT util.family_available(p_tenant, v_unit.family) THEN
+        RAISE EXCEPTION 'The unit % (%) isn''t available: its family or quantity is turned off', v_unit.symbol, v_unit.family_name
+            USING ERRCODE = 'object_not_in_prerequisite_state';
+    END IF;
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- quantity
+-- ---------------------------------------------------------------------------
+
+-- The quantities the tenant sees, alphabetically.
+CREATE FUNCTION quantity_list() RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_result jsonb;
+    v_tenant uuid;
 BEGIN
     PERFORM util.require_login();
-    v_result := util.quantity_json(p_id);
-    IF v_result IS NULL THEN
+    v_tenant := util.tenant();
+    RETURN (
+        SELECT COALESCE(jsonb_agg(util.quantity_entry_json(v_tenant, q.id) ORDER BY lower(q.name), q.id), '[]'::jsonb)
+        FROM quantity q
+        WHERE q.tenant IS NULL OR q.tenant = v_tenant
+    );
+END;
+$$;
+
+-- The quantity with the unit families the tenant sees, each with its units.
+CREATE FUNCTION quantity_get(p_id uuid) RETURNS jsonb
+LANGUAGE plpgsql STABLE
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_tenant uuid;
+BEGIN
+    PERFORM util.require_login();
+    v_tenant := util.tenant();
+    IF NOT EXISTS (SELECT 1 FROM quantity WHERE id = p_id AND (tenant IS NULL OR tenant = v_tenant)) THEN
         PERFORM util.raise_not_found('quantity', p_id);
     END IF;
 
-    RETURN v_result || jsonb_build_object(
+    RETURN util.quantity_entry_json(v_tenant, p_id) || jsonb_build_object(
         'families', (
             SELECT COALESCE(
-                jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'units', util.family_units_json(f.id))
-                          ORDER BY f.id),
+                jsonb_agg(util.family_entry_json(v_tenant, f.id) - 'quantity' ORDER BY lower(f.name), f.id),
                 '[]'::jsonb
             )
             FROM unit_family f
             WHERE f.quantity = p_id
+              AND (f.tenant IS NULL OR f.tenant = v_tenant)
         )
     );
 END;
 $$;
 
+-- What uses the units of a quantity (p_quantity) or a family (p_family) in
+-- tenant p_tenant: the names of live attributes and items, for the refusal
+-- to turn them off. NULL when nothing does.
+CREATE FUNCTION util.units_used_by(p_tenant uuid, p_quantity uuid, p_family uuid) RETURNS text
+LANGUAGE plpgsql STABLE AS $$
+BEGIN
+    RETURN (
+        WITH used (what) AS (
+            SELECT format('attribute "%s"', a.name)
+            FROM attribute a
+            JOIN unit u ON u.id = a.unit
+            JOIN unit_family f ON f.id = u.family
+            WHERE a.tenant = p_tenant AND NOT a.deleted
+              AND (f.quantity = p_quantity OR f.id = p_family)
+            UNION ALL
+            SELECT format('item "%s"', i.name)
+            FROM item i
+            JOIN unit u ON u.id = i.unit
+            JOIN unit_family f ON f.id = u.family
+            WHERE i.tenant = p_tenant AND NOT i.deleted
+              AND (f.quantity = p_quantity OR f.id = p_family)
+        )
+        -- At most five, and how many more.
+        SELECT CASE WHEN count(*) = 0 THEN NULL
+                    WHEN count(*) <= 5 THEN string_agg(what, ', ' ORDER BY what)
+                    ELSE (SELECT string_agg(f.what, ', ' ORDER BY f.what)
+                          FROM (SELECT what FROM used ORDER BY what LIMIT 5) f)
+                         || format(' and %s more', count(*) - 5)
+               END
+        FROM used
+    );
+END;
+$$;
+
+-- Sets the tenant's choice of whether a quantity or a unit family is
+-- available, from p_patch's "available": true, false, or null to follow the
+-- default again. Something in use can't be turned off (23001, 409).
+CREATE FUNCTION util.set_availability(p_kind text, p_id uuid, p_patch jsonb) RETURNS void
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_tenant uuid := util.tenant();
+    v_choice boolean;
+    v_name   text;
+    v_used   text;
+BEGIN
+    PERFORM util.check_patch(p_patch, ARRAY['available'], ARRAY[]::text[]);
+    IF NOT p_patch ? 'available' THEN
+        RETURN;
+    END IF;
+    IF jsonb_typeof(p_patch -> 'available') NOT IN ('boolean', 'null') THEN
+        PERFORM util.raise_invalid('available must be true, false or null');
+    END IF;
+    v_choice := (p_patch ->> 'available')::boolean;
+
+    IF p_kind = 'quantity' THEN
+        SELECT name INTO v_name FROM quantity WHERE id = p_id;
+        IF v_choice IS NULL THEN
+            DELETE FROM tenant_quantity WHERE tenant = v_tenant AND quantity = p_id;
+        ELSE
+            INSERT INTO tenant_quantity (tenant, quantity, available) VALUES (v_tenant, p_id, v_choice)
+            ON CONFLICT (tenant, quantity) DO UPDATE SET available = EXCLUDED.available;
+        END IF;
+        IF NOT util.quantity_available(v_tenant, p_id) THEN
+            v_used := util.units_used_by(v_tenant, p_id, NULL);
+        END IF;
+    ELSE
+        SELECT name INTO v_name FROM unit_family WHERE id = p_id;
+        IF v_choice IS NULL THEN
+            DELETE FROM tenant_unit_family WHERE tenant = v_tenant AND family = p_id;
+        ELSE
+            INSERT INTO tenant_unit_family (tenant, family, available) VALUES (v_tenant, p_id, v_choice)
+            ON CONFLICT (tenant, family) DO UPDATE SET available = EXCLUDED.available;
+        END IF;
+        IF NOT util.family_available(v_tenant, p_id) THEN
+            v_used := util.units_used_by(v_tenant, NULL, p_id);
+        END IF;
+    END IF;
+
+    IF v_used IS NOT NULL THEN
+        RAISE EXCEPTION '% can''t be turned off: % use% it', v_name, v_used,
+            CASE WHEN strpos(v_used, ', ') > 0 THEN '' ELSE 's' END
+            USING ERRCODE = 'restrict_violation',
+                  HINT = 'Change the unit of what uses it first.';
+    END IF;
+END;
+$$;
+
+-- Turns a quantity on or off for the tenant: {"available": true | false |
+-- null}. Turning a quantity off turns its families off too.
+CREATE FUNCTION quantity_patch(p_id uuid, p_patch jsonb) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_tenant uuid;
+BEGIN
+    PERFORM util.require('model', 'write');
+    v_tenant := util.tenant();
+    IF NOT EXISTS (SELECT 1 FROM quantity WHERE id = p_id AND (tenant IS NULL OR tenant = v_tenant)) THEN
+        PERFORM util.raise_not_found('quantity', p_id);
+    END IF;
+    PERFORM util.set_availability('quantity', p_id, p_patch);
+    RETURN quantity_get(p_id);
+END;
+$$;
+
 -- ---------------------------------------------------------------------------
--- unit_family (read-only)
+-- unit_family
 -- ---------------------------------------------------------------------------
 
--- All unit families, by quantity, optionally only those of one quantity.
--- Each comes with its units, from smallest to largest.
-CREATE FUNCTION unit_family_list(p_quantity integer DEFAULT NULL) RETURNS jsonb
+-- The unit families the tenant sees, by quantity, optionally only those of
+-- one quantity. Each comes with its units, from smallest to largest.
+CREATE FUNCTION unit_family_list(p_quantity uuid DEFAULT NULL) RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
+DECLARE
+    v_tenant uuid;
 BEGIN
     PERFORM util.require_login();
-    IF p_quantity IS NOT NULL AND NOT EXISTS (SELECT 1 FROM quantity WHERE id = p_quantity) THEN
+    v_tenant := util.tenant();
+    IF p_quantity IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM quantity WHERE id = p_quantity AND (tenant IS NULL OR tenant = v_tenant))
+    THEN
         PERFORM util.raise_not_found('quantity', p_quantity);
     END IF;
 
     RETURN (
         SELECT COALESCE(
-            jsonb_agg(util.unit_family_json(f.id) || jsonb_build_object('units', util.family_units_json(f.id))
-                      ORDER BY lower(q.name), f.id),
+            jsonb_agg(util.family_entry_json(v_tenant, f.id) ORDER BY lower(q.name), lower(f.name), f.id),
             '[]'::jsonb
         )
         FROM unit_family f
         JOIN quantity q ON q.id = f.quantity
-        WHERE p_quantity IS NULL OR f.quantity = p_quantity
+        WHERE (f.tenant IS NULL OR f.tenant = v_tenant)
+          AND (p_quantity IS NULL OR f.quantity = p_quantity)
     );
 END;
 $$;
 
-CREATE FUNCTION unit_family_get(p_id integer) RETURNS jsonb
+CREATE FUNCTION unit_family_get(p_id uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_result jsonb;
+    v_tenant uuid;
 BEGIN
     PERFORM util.require_login();
-    v_result := util.unit_family_json(p_id);
-    IF v_result IS NULL THEN
+    v_tenant := util.tenant();
+    IF NOT EXISTS (SELECT 1 FROM unit_family WHERE id = p_id AND (tenant IS NULL OR tenant = v_tenant)) THEN
         PERFORM util.raise_not_found('unit family', p_id);
     END IF;
-    RETURN v_result || jsonb_build_object('units', util.family_units_json(p_id));
+    RETURN util.family_entry_json(v_tenant, p_id);
+END;
+$$;
+
+-- Turns a unit family on or off for the tenant: {"available": true | false
+-- | null}. A family of a quantity that is off stays off.
+CREATE FUNCTION unit_family_patch(p_id uuid, p_patch jsonb) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_tenant uuid;
+BEGIN
+    PERFORM util.require('model', 'write');
+    v_tenant := util.tenant();
+    IF NOT EXISTS (SELECT 1 FROM unit_family WHERE id = p_id AND (tenant IS NULL OR tenant = v_tenant)) THEN
+        PERFORM util.raise_not_found('unit family', p_id);
+    END IF;
+    PERFORM util.set_availability('family', p_id, p_patch);
+    RETURN unit_family_get(p_id);
 END;
 $$;
 
@@ -96,44 +327,49 @@ $$;
 -- unit (read-only)
 -- ---------------------------------------------------------------------------
 
--- All units, by family and size, optionally only those of one quantity or
--- one family.
-CREATE FUNCTION unit_list(p_quantity integer DEFAULT NULL, p_family integer DEFAULT NULL) RETURNS jsonb
+-- The units the tenant sees, by family and size, optionally only those of
+-- one quantity or one family.
+CREATE FUNCTION unit_list(p_quantity uuid DEFAULT NULL, p_family uuid DEFAULT NULL) RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
+DECLARE
+    v_tenant uuid;
 BEGIN
     PERFORM util.require_login();
-    IF p_quantity IS NOT NULL AND NOT EXISTS (SELECT 1 FROM quantity WHERE id = p_quantity) THEN
+    v_tenant := util.tenant();
+    IF p_quantity IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM quantity WHERE id = p_quantity AND (tenant IS NULL OR tenant = v_tenant))
+    THEN
         PERFORM util.raise_not_found('quantity', p_quantity);
     END IF;
-    IF p_family IS NOT NULL AND NOT EXISTS (SELECT 1 FROM unit_family WHERE id = p_family) THEN
+    IF p_family IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM unit_family WHERE id = p_family AND (tenant IS NULL OR tenant = v_tenant))
+    THEN
         PERFORM util.raise_not_found('unit family', p_family);
     END IF;
 
     RETURN (
-        SELECT COALESCE(jsonb_agg(util.unit_json(u.id) ORDER BY f.id, u.base_factor, u.id), '[]'::jsonb)
+        SELECT COALESCE(jsonb_agg(util.unit_json(u.id) ORDER BY lower(f.name), f.id, u.base_factor, u.id), '[]'::jsonb)
         FROM unit u
         JOIN unit_family f ON f.id = u.family
-        WHERE (p_quantity IS NULL OR f.quantity = p_quantity)
+        WHERE (u.tenant IS NULL OR u.tenant = v_tenant)
+          AND (p_quantity IS NULL OR f.quantity = p_quantity)
           AND (p_family IS NULL OR u.family = p_family)
     );
 END;
 $$;
 
-CREATE FUNCTION unit_get(p_id integer) RETURNS jsonb
+CREATE FUNCTION unit_get(p_id uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
-DECLARE
-    v_result jsonb;
 BEGIN
     PERFORM util.require_login();
-    v_result := util.unit_json(p_id);
-    IF v_result IS NULL THEN
+    IF NOT EXISTS (SELECT 1 FROM unit WHERE id = p_id AND (tenant IS NULL OR tenant = util.tenant())) THEN
         PERFORM util.raise_not_found('unit', p_id);
     END IF;
-    RETURN v_result;
+    RETURN util.unit_json(p_id);
 END;
 $$;
 
@@ -211,12 +447,14 @@ BEGIN
 END;
 $$;
 
--- Imports a unit file (seed/units-format.md): adds the quantities, unit
--- families and units in it that aren't there yet. Things are matched by
--- name: quantities and families ignoring case, units by symbol within their
--- family. What is there already must be the same (datatype and base unit;
--- quantity; name, factor and offset), or it is a conflict. Nothing that
--- exists is ever changed or removed.
+-- Imports a unit file (seed/units-format.md) for tenant p_tenant, or as
+-- global units with p_tenant NULL (the operator's "wtfd unit import
+-- --global"): adds the quantities, unit families and units in it that
+-- aren't there yet. Things are matched by name among what the tenant sees
+-- (only global ones for a global import): quantities and families ignoring
+-- case, units by symbol within their family. What is there already must be
+-- the same (datatype and base unit; quantity; name, factor and offset), or
+-- it is a conflict. Nothing that exists is ever changed or removed.
 --
 -- All or nothing: with any conflict, or with p_dry_run, nothing is kept.
 -- Returns what was (or would be) added, what was there already, and the
@@ -227,10 +465,8 @@ $$;
 --    units:      {added: [{quantity, family, symbol, name}], existing: [...]},
 --    conflicts:  [{where, message}]}
 -- A file that isn't a valid unit file raises 22023, naming where.
-CREATE FUNCTION unit_import(p_data jsonb, p_dry_run boolean DEFAULT false) RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = public, pg_temp
-AS $$
+CREATE FUNCTION util.unit_import(p_tenant uuid, p_data jsonb, p_dry_run boolean) RETURNS jsonb
+LANGUAGE plpgsql AS $$
 DECLARE
     v_dry_run     boolean := COALESCE(p_dry_run, false);
     v_version     numeric;
@@ -264,8 +500,6 @@ DECLARE
     v_existing_u  jsonb := '[]';
     v_conflicts   jsonb := '[]';
 BEGIN
-    PERFORM util.require('model', 'write');
-
     PERFORM util.check_unit_file_object(p_data, 'The file',
         ARRAY['format', 'version', 'name', 'description', 'quantities'],
         ARRAY['format', 'version', 'quantities']);
@@ -309,7 +543,9 @@ BEGIN
             v_base_name := util.unit_file_text(v_q -> 'base_unit', 'name', v_where || ': "base_unit"');
             v_families := util.unit_file_list(v_q, 'families', v_where);
 
-            SELECT * INTO v_quantity FROM quantity q WHERE lower(q.name) = lower(v_qname);
+            SELECT * INTO v_quantity FROM quantity q
+            WHERE lower(q.name) = lower(v_qname)
+              AND (q.tenant IS NULL OR q.tenant = p_tenant);
             IF FOUND THEN
                 IF v_quantity.datatype::text <> v_datatype OR v_quantity.base_symbol <> v_base_symbol THEN
                     v_conflicts := v_conflicts || jsonb_build_object('where', v_where, 'message', format(
@@ -319,9 +555,15 @@ BEGIN
                 END IF;
                 v_existing_q := v_existing_q || jsonb_build_object('name', v_quantity.name);
             ELSE
-                INSERT INTO quantity (name, datatype, base_symbol, base_name)
-                VALUES (v_qname, v_datatype::datatype, v_base_symbol, v_base_name)
-                RETURNING * INTO v_quantity;
+                BEGIN
+                    INSERT INTO quantity (tenant, name, datatype, base_symbol, base_name)
+                    VALUES (p_tenant, v_qname, v_datatype::datatype, v_base_symbol, v_base_name)
+                    RETURNING * INTO v_quantity;
+                EXCEPTION WHEN unique_violation THEN
+                    -- A global import: some tenant has a quantity of this name.
+                    v_conflicts := v_conflicts || jsonb_build_object('where', v_where, 'message', SQLERRM);
+                    CONTINUE;
+                END;
                 v_added_q := v_added_q || jsonb_build_object('name', v_quantity.name);
             END IF;
 
@@ -334,7 +576,9 @@ BEGIN
                 v_where := v_quantity.name || ' › ' || v_fname;
                 v_units := util.unit_file_list(v_f, 'units', v_where);
 
-                SELECT * INTO v_family FROM unit_family f WHERE lower(f.name) = lower(v_fname);
+                SELECT * INTO v_family FROM unit_family f
+                WHERE lower(f.name) = lower(v_fname)
+                  AND (f.tenant IS NULL OR f.tenant = p_tenant);
                 IF FOUND THEN
                     IF v_family.quantity <> v_quantity.id THEN
                         v_conflicts := v_conflicts || jsonb_build_object('where', v_where, 'message', format(
@@ -344,8 +588,13 @@ BEGIN
                     END IF;
                     v_existing_f := v_existing_f || jsonb_build_object('quantity', v_quantity.name, 'name', v_family.name);
                 ELSE
-                    INSERT INTO unit_family (quantity, name) VALUES (v_quantity.id, v_fname)
-                    RETURNING * INTO v_family;
+                    BEGIN
+                        INSERT INTO unit_family (tenant, quantity, name) VALUES (p_tenant, v_quantity.id, v_fname)
+                        RETURNING * INTO v_family;
+                    EXCEPTION WHEN unique_violation THEN
+                        v_conflicts := v_conflicts || jsonb_build_object('where', v_where, 'message', SQLERRM);
+                        CONTINUE;
+                    END;
                     v_added_f := v_added_f || jsonb_build_object('quantity', v_quantity.name, 'name', v_family.name);
                 END IF;
 
@@ -370,7 +619,9 @@ BEGIN
                             '%s is the base unit of %s, so its factor must be 1 and its offset 0', v_where, v_quantity.name));
                     END IF;
 
-                    SELECT * INTO v_unit FROM unit u WHERE u.family = v_family.id AND u.symbol = v_symbol;
+                    SELECT * INTO v_unit FROM unit u
+                    WHERE u.family = v_family.id AND u.symbol = v_symbol
+                      AND (u.tenant IS NULL OR u.tenant = p_tenant);
                     IF FOUND THEN
                         IF lower(v_unit.name) <> lower(v_uname)
                            OR v_unit.base_factor <> v_factor OR v_unit.base_offset <> v_offset
@@ -387,18 +638,16 @@ BEGIN
                         CONTINUE;
                     END IF;
                     BEGIN
-                        INSERT INTO unit (family, name, symbol, base_factor, base_offset)
-                        VALUES (v_family.id, v_uname, v_symbol, v_factor, v_offset);
+                        INSERT INTO unit (tenant, family, name, symbol, base_factor, base_offset)
+                        VALUES (p_tenant, v_family.id, v_uname, v_symbol, v_factor, v_offset);
                         v_added_u := v_added_u || jsonb_build_object(
                             'quantity', v_quantity.name, 'family', v_family.name,
                             'symbol', v_symbol, 'name', v_uname);
                     EXCEPTION WHEN unique_violation OR check_violation THEN
-                        -- Another unit of the family has this name, or the
+                        -- Another unit of the family has this name (or, for
+                        -- a global import, some tenant's unit has), or the
                         -- symbol means another unit elsewhere in the quantity.
-                        v_conflicts := v_conflicts || jsonb_build_object('where', v_where, 'message',
-                            CASE WHEN SQLSTATE = '23505'
-                                 THEN format('The family %s has a unit named %s already', v_family.name, v_uname)
-                                 ELSE SQLERRM END);
+                        v_conflicts := v_conflicts || jsonb_build_object('where', v_where, 'message', SQLERRM);
                     END;
                 END LOOP;
             END LOOP;
@@ -422,6 +671,17 @@ BEGIN
 END;
 $$;
 
+-- Imports a unit file as the tenant's own units (util.unit_import).
+CREATE FUNCTION unit_import(p_data jsonb, p_dry_run boolean DEFAULT false) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+    PERFORM util.require('model', 'write');
+    RETURN util.unit_import(util.tenant(), p_data, p_dry_run);
+END;
+$$;
+
 -- ---------------------------------------------------------------------------
 -- attribute
 -- ---------------------------------------------------------------------------
@@ -436,7 +696,8 @@ BEGIN
     RETURN (
         SELECT COALESCE(jsonb_agg(util.attribute_json(a.id) ORDER BY lower(a.name), a.id), '[]'::jsonb)
         FROM attribute a
-        WHERE NOT a.deleted
+        WHERE a.tenant = util.tenant()
+          AND NOT a.deleted
     );
 END;
 $$;
@@ -451,7 +712,7 @@ DECLARE
     v_result jsonb;
 BEGIN
     PERFORM util.require_model_read();
-    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_id) THEN
+    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_id AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('attribute', p_id);
     END IF;
     v_result := util.attribute_json(p_id);
@@ -476,12 +737,13 @@ END;
 $$;
 
 -- With a unit, p_datatype must be the unit's quantity's datatype (integer
--- for counts, float otherwise). With p_unit_lock, values are always shown in
--- that unit instead of being scaled within its family.
+-- for counts, float otherwise), and the unit must be available. With
+-- p_unit_lock, values are always shown in that unit instead of being scaled
+-- within its family.
 CREATE FUNCTION attribute_create(
     p_name      text,
     p_datatype  datatype,
-    p_unit      integer DEFAULT NULL,
+    p_unit      uuid    DEFAULT NULL,
     p_unit_lock boolean DEFAULT false
 )
 RETURNS jsonb
@@ -489,11 +751,14 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
+    v_tenant uuid;
     v_id     uuid;
 BEGIN
     PERFORM util.require('model', 'write');
-    INSERT INTO attribute (name, datatype, unit, unit_lock)
-    VALUES (util.clean_name(p_name), p_datatype, p_unit, COALESCE(p_unit_lock, false))
+    v_tenant := util.tenant();
+    PERFORM util.check_unit_choosable(v_tenant, p_unit);
+    INSERT INTO attribute (tenant, name, datatype, unit, unit_lock)
+    VALUES (v_tenant, util.clean_name(p_name), p_datatype, p_unit, COALESCE(p_unit_lock, false))
     RETURNING id INTO v_id;
 
     RETURN attribute_get(v_id);
@@ -503,16 +768,28 @@ $$;
 -- Changes the fields present in p_patch: name, datatype, unit, unit_lock.
 -- The unit can only change to another unit of the same quantity, in any of
 -- its families; numbers are stored in the base unit, so nothing is
--- converted. A unit can't be added or removed (see SCHEMA.md).
+-- converted. A unit can't be added or removed (see SCHEMA.md). A new unit
+-- must be available.
 CREATE FUNCTION attribute_patch(p_id uuid, p_patch jsonb) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
+DECLARE
+    v_tenant uuid;
 BEGIN
     PERFORM util.require('model', 'write');
+    v_tenant := util.tenant();
     PERFORM util.check_patch(p_patch,
                          ARRAY['name', 'datatype', 'unit', 'unit_lock'],
                          ARRAY['name', 'datatype', 'unit_lock']);
+    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_id AND tenant = v_tenant) THEN
+        PERFORM util.raise_not_found('attribute', p_id);
+    END IF;
+    IF p_patch ? 'unit'
+       AND (p_patch ->> 'unit')::uuid IS DISTINCT FROM (SELECT unit FROM attribute WHERE id = p_id)
+    THEN
+        PERFORM util.check_unit_choosable(v_tenant, (p_patch ->> 'unit')::uuid);
+    END IF;
 
     UPDATE attribute
     SET name      = CASE WHEN p_patch ? 'name'
@@ -520,14 +797,10 @@ BEGIN
         datatype  = CASE WHEN p_patch ? 'datatype'
                          THEN (p_patch ->> 'datatype')::datatype ELSE datatype END,
         unit      = CASE WHEN p_patch ? 'unit'
-                         THEN (p_patch ->> 'unit')::integer ELSE unit END,
+                         THEN (p_patch ->> 'unit')::uuid ELSE unit END,
         unit_lock = CASE WHEN p_patch ? 'unit_lock'
                          THEN (p_patch ->> 'unit_lock')::boolean ELSE unit_lock END
-    WHERE id = p_id;
-
-    IF NOT FOUND THEN
-        PERFORM util.raise_not_found('attribute', p_id);
-    END IF;
+    WHERE id = p_id AND tenant = v_tenant;
     RETURN attribute_get(p_id);
 END;
 $$;
@@ -540,7 +813,7 @@ SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.require('model', 'write');
-    UPDATE attribute SET deleted = true WHERE id = p_id;
+    UPDATE attribute SET deleted = true WHERE id = p_id AND tenant = util.tenant();
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('attribute', p_id);
@@ -559,7 +832,7 @@ DECLARE
 BEGIN
     PERFORM util.require('model', 'write');
     PERFORM util.check_patch(p_options, ARRAY['name'], ARRAY['name']);
-    SELECT deleted INTO v_deleted FROM attribute WHERE id = p_id FOR UPDATE;
+    SELECT deleted INTO v_deleted FROM attribute WHERE id = p_id AND tenant = util.tenant() FOR UPDATE;
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('attribute', p_id);
     END IF;
@@ -586,7 +859,7 @@ SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.require_model_read();
-    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_attribute) THEN
+    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_attribute AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('attribute', p_attribute);
     END IF;
 
@@ -605,7 +878,7 @@ SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.require_model_read();
-    IF NOT EXISTS (SELECT 1 FROM attribute_option WHERE id = p_id) THEN
+    IF NOT EXISTS (SELECT 1 FROM attribute_option WHERE id = p_id AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('attribute option', p_id);
     END IF;
     RETURN util.option_json(p_id);
@@ -617,15 +890,17 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 DECLARE
+    v_tenant uuid;
     v_id     uuid;
 BEGIN
     PERFORM util.require('model', 'write');
-    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_attribute) THEN
+    v_tenant := util.tenant();
+    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_attribute AND tenant = v_tenant) THEN
         PERFORM util.raise_not_found('attribute', p_attribute);
     END IF;
 
-    INSERT INTO attribute_option (attribute, name)
-    VALUES (p_attribute, util.clean_name(p_name))
+    INSERT INTO attribute_option (tenant, attribute, name)
+    VALUES (v_tenant, p_attribute, util.clean_name(p_name))
     RETURNING id INTO v_id;
 
     RETURN util.option_json(v_id);
@@ -645,7 +920,7 @@ BEGIN
     UPDATE attribute_option
     SET name = CASE WHEN p_patch ? 'name'
                     THEN util.clean_name(p_patch ->> 'name') ELSE name END
-    WHERE id = p_id;
+    WHERE id = p_id AND tenant = util.tenant();
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('attribute option', p_id);
@@ -661,7 +936,7 @@ SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
     PERFORM util.require('model', 'write');
-    UPDATE attribute_option SET deleted = true WHERE id = p_id;
+    UPDATE attribute_option SET deleted = true WHERE id = p_id AND tenant = util.tenant();
 
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('attribute option', p_id);
@@ -680,7 +955,7 @@ DECLARE
 BEGIN
     PERFORM util.require('model', 'write');
     PERFORM util.check_patch(p_options, ARRAY['name'], ARRAY['name']);
-    SELECT deleted INTO v_deleted FROM attribute_option WHERE id = p_id FOR UPDATE;
+    SELECT deleted INTO v_deleted FROM attribute_option WHERE id = p_id AND tenant = util.tenant() FOR UPDATE;
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('attribute option', p_id);
     END IF;

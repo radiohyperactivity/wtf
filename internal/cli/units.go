@@ -80,15 +80,15 @@ func sameConversion(a, b *unit) bool {
 }
 
 // unitsOf returns the units of a quantity, by family and size.
-func (e *env) unitsOf(quantityID int) ([]unit, error) {
+func (e *env) unitsOf(quantityID string) ([]unit, error) {
 	if e.cache.units == nil {
-		e.cache.units = map[int][]unit{}
+		e.cache.units = map[string][]unit{}
 	}
 	if us, ok := e.cache.units[quantityID]; ok {
 		return us, nil
 	}
 	var us []unit
-	if err := e.get("/units", map[string][]string{"quantity": {strconv.Itoa(quantityID)}}, &us); err != nil {
+	if err := e.get("/units", map[string][]string{"quantity": {quantityID}}, &us); err != nil {
 		return nil, err
 	}
 	e.cache.units[quantityID] = us

@@ -31,23 +31,24 @@ type querier interface {
 }
 
 // inSession runs fn in a transaction that first starts the request's session
-// (session_use), so the database knows the account. Anonymous requests run
-// fn directly.
+// (session_use), so the database knows the account and its tenant, which
+// must be the tenant of the request's hostname. Anonymous requests run fn
+// directly.
 func (s *server) inSession(ctx context.Context, fn func(q querier) error) error {
 	sess, ok := ctx.Value(sessionKey{}).(session)
 	if !ok {
 		return fn(s.pool)
 	}
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := useSession(ctx, tx, sess); err != nil {
+		if err := useSession(ctx, tx, sess, tenantOf(ctx)); err != nil {
 			return err
 		}
 		return fn(tx)
 	})
 }
 
-func useSession(ctx context.Context, tx pgx.Tx, sess session) error {
-	_, err := tx.Exec(ctx, "SELECT session_use($1)", sess.token)
+func useSession(ctx context.Context, tx pgx.Tx, sess session, host string) error {
+	_, err := tx.Exec(ctx, "SELECT session_use($1, $2)", sess.token, host)
 	return err
 }
 
@@ -102,7 +103,8 @@ var unauthenticated = &problem{
 	Detail: "Log in with POST " + apiPrefix + "/login, which sets the session cookie \"" + sessionCookie + "\", and send it with every request.",
 }
 
-// login: POST /login {email, password}.
+// login: POST /login {email, password}, to the tenant of the request's
+// hostname.
 func (s *server) login(w http.ResponseWriter, r *http.Request) error {
 	args, err := collect(r, []param{body(
 		field{key: "email", name: "p_email", typ: "text"},
@@ -112,6 +114,7 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	email := args[0].value
+	args = append(args, arg{name: "p_host", typ: "text", value: tenantOf(r.Context())})
 	result, err := s.callJSON(r.Context(), "login", args)
 	if err != nil {
 		return err
@@ -123,7 +126,7 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) error {
 	}
 	// Every login attempt is logged: who and from where. Passwords never
 	// are.
-	attrs := []any{"email", email, "remote", r.RemoteAddr}
+	attrs := []any{"host", tenantOf(r.Context()), "email", email, "remote", r.RemoteAddr}
 	if string(outcome["ok"]) != "true" {
 		var reason string
 		_ = json.Unmarshal(outcome["reason"], &reason)

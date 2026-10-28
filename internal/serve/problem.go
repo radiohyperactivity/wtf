@@ -91,8 +91,8 @@ func problemFor(err error, method string) (*problem, bool) {
 		p.Type, p.Title, p.Status = "/problems/rule-violation", "Rule violation", http.StatusUnprocessableEntity
 	case "23505":
 		p.Type, p.Title, p.Status = "/problems/unique-violation", "Duplicate", http.StatusConflict
-	case "23503", "23001": // foreign_key_violation; restrict_violation (ON DELETE RESTRICT)
-		if method == http.MethodDelete {
+	case "23503", "23001": // foreign_key_violation; restrict_violation (still in use)
+		if method == http.MethodDelete || pgErr.Code == "23001" {
 			p.Type, p.Title, p.Status = "/problems/in-use", "Still in use", http.StatusConflict
 		} else {
 			p.Type, p.Title, p.Status = "/problems/invalid-reference", "Invalid reference", http.StatusUnprocessableEntity

@@ -34,14 +34,20 @@ var errDryRun = errors.New("dry run")
 // deleted long ago. An object something else still refers to stays until
 // that is purged too: an item while it has stock rows, a location or class
 // while something is in it, an attribute or option while values or classes
-// of deleted objects use it. With dryRun nothing is removed. It returns the
-// number of objects (that would be) removed per table.
-func PurgeDeleted(ctx context.Context, conn *pgx.Conn, olderThan time.Duration, dryRun bool) (map[string]int64, error) {
+// of deleted objects use it. Only the tenant with host host, or every tenant
+// when host is "". With dryRun nothing is removed. It returns the number of
+// objects (that would be) removed per table.
+func PurgeDeleted(ctx context.Context, conn *pgx.Conn, host string, olderThan time.Duration, dryRun bool) (map[string]int64, error) {
+	tenant, err := optionalTenant(ctx, conn, host)
+	if err != nil {
+		return nil, err
+	}
 	age := fmt.Sprintf("%d seconds", int64(olderThan.Seconds()))
-	// Deleted, and not deleted recently.
+	// Of the tenant, deleted, and not deleted recently.
 	old := func(table string) string {
 		return fmt.Sprintf(`
-			r.deleted
+			($2::uuid IS NULL OR r.tenant = $2)
+			AND r.deleted
 			AND NOT EXISTS (
 				SELECT 1 FROM history h
 				WHERE (h.data ->> 'id') = r.id::text
@@ -79,10 +85,10 @@ func PurgeDeleted(ctx context.Context, conn *pgx.Conn, olderThan time.Duration, 
 	}
 
 	counts := map[string]int64{}
-	err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+	err = pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
 		for _, kind := range PurgedKinds {
 			for {
-				tag, err := tx.Exec(ctx, statements[kind.Table], age)
+				tag, err := tx.Exec(ctx, statements[kind.Table], age, tenant)
 				if err != nil {
 					return fmt.Errorf("purge %s: %w", kind.Name, err)
 				}

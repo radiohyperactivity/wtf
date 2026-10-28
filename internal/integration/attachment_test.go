@@ -57,7 +57,7 @@ func (e *environment) raw(method, path string, headers ...string) *httptest.Resp
 
 func (e *environment) fileExists(t *testing.T, hash string) bool {
 	t.Helper()
-	f, err := e.files.OpenFile(hash)
+	f, err := e.tenantStore(t).OpenFile(hash)
 	if err != nil {
 		return false
 	}

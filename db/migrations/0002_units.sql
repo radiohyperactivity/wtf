@@ -1,24 +1,29 @@
--- System data: the bootstrap set of quantities, unit families and units.
--- Explained in seed/units.md. Ids are given in order from 1000, so every
--- installation has the same ids for the same units.
+-- The bootstrap set of global quantities, unit families and units: every
+-- tenant sees them, and has them available unless it turns them off
+-- (TENANTS.md). Explained in seed/units.md.
+--
+-- Every quantity names its base unit: the unit with factor 1 and offset 0
+-- that numbers are stored in and all factors refer to: metre, kilogram,
+-- cubic metre, volt, ampere, ohm, farad, henry, hertz, watt, joule, coulomb,
+-- kelvin, byte, bit, piece.
 
-INSERT INTO quantity (name, datatype) VALUES
-    ('Length',      'float'),
-    ('Weight',      'float'),
-    ('Volume',      'float'),
-    ('Voltage',     'float'),
-    ('Current',     'float'),
-    ('Resistance',  'float'),
-    ('Capacitance', 'float'),
-    ('Inductance',  'float'),
-    ('Frequency',   'float'),
-    ('Power',       'float'),
-    ('Energy',      'float'),
-    ('Charge',      'float'),
-    ('Temperature', 'float'),
-    ('Bytes',       'float'),
-    ('Bits',        'float'),
-    ('Count',       'integer');
+INSERT INTO quantity (name, datatype, base_symbol, base_name) VALUES
+    ('Length',      'float',   'm',    'metre'),
+    ('Weight',      'float',   'kg',   'kilogram'),
+    ('Volume',      'float',   'm³',   'cubic metre'),
+    ('Voltage',     'float',   'V',    'volt'),
+    ('Current',     'float',   'A',    'ampere'),
+    ('Resistance',  'float',   'Ω',    'ohm'),
+    ('Capacitance', 'float',   'F',    'farad'),
+    ('Inductance',  'float',   'H',    'henry'),
+    ('Frequency',   'float',   'Hz',   'hertz'),
+    ('Power',       'float',   'W',    'watt'),
+    ('Energy',      'float',   'J',    'joule'),
+    ('Charge',      'float',   'C',    'coulomb'),
+    ('Temperature', 'float',   'K',    'kelvin'),
+    ('Bytes',       'float',   'B',    'byte'),
+    ('Bits',        'float',   'bit',  'bit'),
+    ('Count',       'integer', 'pcs',  'piece');
 
 INSERT INTO unit_family (quantity, name)
 SELECT q.id, f.name
@@ -52,9 +57,8 @@ FROM (VALUES
 JOIN quantity q ON q.name = f.quantity
 ORDER BY f.ord;
 
--- Base units: metre, kilogram, cubic metre, volt, ampere, ohm, farad, henry,
--- hertz, watt, joule, coulomb, kelvin, byte, bit, piece. Factors are exact
--- where the unit is defined exactly (inch = 0.0254 m, pound = 0.45359237 kg).
+-- Factors are exact where the unit is defined exactly (inch = 0.0254 m,
+-- pound = 0.45359237 kg).
 INSERT INTO unit (family, name, symbol, base_factor, base_offset)
 SELECT f.id, u.name, u.symbol, u.base_factor, u.base_offset
 FROM (VALUES

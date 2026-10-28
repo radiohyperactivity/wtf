@@ -10,19 +10,31 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// PurgeHistory deletes history entries older than olderThan. With dryRun
-// nothing is deleted. It returns the number of entries (that would be)
-// deleted.
-func PurgeHistory(ctx context.Context, conn *pgx.Conn, olderThan time.Duration, dryRun bool) (int64, error) {
-	const where = ` WHERE happened_at < now() - $1::interval`
+// PurgeHistory deletes history entries older than olderThan, of the tenant
+// with host host, or of every tenant when host is "". With dryRun nothing is
+// deleted. It returns the number of entries (that would be) deleted.
+func PurgeHistory(ctx context.Context, conn *pgx.Conn, host string, olderThan time.Duration, dryRun bool) (int64, error) {
+	tenant, err := optionalTenant(ctx, conn, host)
+	if err != nil {
+		return 0, err
+	}
+	const where = ` WHERE happened_at < now() - $1::interval AND ($2::uuid IS NULL OR tenant = $2)`
 	age := fmt.Sprintf("%d seconds", int64(olderThan.Seconds()))
 	if dryRun {
 		var n int64
-		err := conn.QueryRow(ctx, "SELECT count(*) FROM history"+where, age).Scan(&n)
+		err := conn.QueryRow(ctx, "SELECT count(*) FROM history"+where, age, tenant).Scan(&n)
 		return n, err
 	}
-	tag, err := conn.Exec(ctx, "DELETE FROM history"+where, age)
+	tag, err := conn.Exec(ctx, "DELETE FROM history"+where, age, tenant)
 	return tag.RowsAffected(), err
+}
+
+// optionalTenant returns the id of the tenant with host host, or nil for "".
+func optionalTenant(ctx context.Context, q querier, host string) (any, error) {
+	if host == "" {
+		return nil, nil
+	}
+	return tenantID(ctx, q, host)
 }
 
 // ParseAge parses a duration that may also be given in days ("730d"), as

@@ -1,4 +1,5 @@
--- Types, tables, views and integrity triggers. Explained in SCHEMA.md.
+-- Types, tables, views and integrity triggers. Explained in SCHEMA.md and,
+-- for tenants, TENANTS.md.
 
 -- ---------------------------------------------------------------------------
 -- Types
@@ -55,7 +56,8 @@ LANGUAGE sql IMMUTABLE AS $$
 $$;
 
 -- Rejects a parent change that would make a row its own ancestor.
--- Used by every self-referencing tree table (class, location).
+-- Used by every self-referencing tree table (class, location). A parent is
+-- always in the row's own tenant (the composite foreign key).
 CREATE FUNCTION prevent_tree_cycle() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE
@@ -94,14 +96,17 @@ CREATE FUNCTION row_label(p_table text, p_id uuid) RETURNS text
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN CASE p_table
-        WHEN 'class'            THEN (SELECT format('Class "%s"', name) FROM class WHERE id = p_id)
-        WHEN 'location'         THEN (SELECT format('Location "%s"', name) FROM location WHERE id = p_id)
-        WHEN 'item'             THEN (SELECT format('Item "%s"', name) FROM item WHERE id = p_id)
-        WHEN 'stock'            THEN (SELECT format('The stock row of "%s"', i.name)
-                                      FROM stock s JOIN item i ON i.id = s.item WHERE s.id = p_id)
-        WHEN 'attribute'        THEN (SELECT format('Attribute "%s"', name) FROM attribute WHERE id = p_id)
-        WHEN 'attribute_option' THEN (SELECT format('Option "%s"', name) FROM attribute_option WHERE id = p_id)
-        WHEN 'attachment'       THEN (SELECT format('Attachment "%s"', file_name) FROM attachment WHERE id = p_id)
+        WHEN 'class'               THEN (SELECT format('Class "%s"', name) FROM class WHERE id = p_id)
+        WHEN 'location'            THEN (SELECT format('Location "%s"', name) FROM location WHERE id = p_id)
+        WHEN 'item'                THEN (SELECT format('Item "%s"', name) FROM item WHERE id = p_id)
+        WHEN 'stock'               THEN (SELECT format('The stock row of "%s"', i.name)
+                                         FROM stock s JOIN item i ON i.id = s.item WHERE s.id = p_id)
+        WHEN 'attribute'           THEN (SELECT format('Attribute "%s"', name) FROM attribute WHERE id = p_id)
+        WHEN 'attribute_option'    THEN (SELECT format('Option "%s"', name) FROM attribute_option WHERE id = p_id)
+        WHEN 'item_attachment'     THEN (SELECT format('Attachment "%s"', title) FROM item_attachment WHERE id = p_id)
+        WHEN 'stock_attachment'    THEN (SELECT format('Attachment "%s"', title) FROM stock_attachment WHERE id = p_id)
+        WHEN 'location_attachment' THEN (SELECT format('Attachment "%s"', title) FROM location_attachment WHERE id = p_id)
+        WHEN 'class_attachment'    THEN (SELECT format('Attachment "%s"', title) FROM class_attachment WHERE id = p_id)
     END;
 END;
 $$;
@@ -151,82 +156,260 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- Quantities, unit families and units (system data, see seed/units.md)
+-- Tenants (see TENANTS.md)
+-- ---------------------------------------------------------------------------
+
+-- An independent inventory. The first label of a request's hostname picks
+-- it: "bob" for bob.wtf.example. The label starts with a letter, so an IP
+-- address never picks a tenant.
+CREATE TABLE tenant (
+    id        uuid   NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+    host      text   NOT NULL CHECK (host ~ '^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$'),
+    -- The next label code of the tenant's items, locations and stock rows.
+    -- 32768 = 32^3, the smallest number whose Crockford Base32 rendering has
+    -- four characters ("1000"); codes grow to five characters after "ZZZZ"
+    -- (1048575).
+    next_code bigint NOT NULL DEFAULT 32768 CHECK (next_code >= 0)
+);
+
+CREATE UNIQUE INDEX tenant_host_unique ON tenant (host);
+
+-- Takes the next code of a tenant, for a new item, location or stock row.
+-- One counter for all three tables, so a code is unique across them within
+-- the tenant. The row lock makes concurrent inserts of one tenant wait for
+-- each other until commit.
+CREATE FUNCTION next_code(p_tenant uuid) RETURNS bigint
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_code bigint;
+BEGIN
+    UPDATE tenant SET next_code = next_code + 1 WHERE id = p_tenant
+    RETURNING next_code - 1 INTO v_code;
+    IF v_code IS NULL THEN
+        RAISE EXCEPTION 'Tenant % doesn''t exist', p_tenant
+            USING ERRCODE = 'foreign_key_violation';
+    END IF;
+    RETURN v_code;
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Quantities, unit families and units (see seed/units.md and TENANTS.md)
 -- ---------------------------------------------------------------------------
 -- Numbers of a quantity are stored in its base unit: the unit with factor 1
 -- and offset 0, usually the SI unit. A family is a set of units of one
 -- quantity that are used together (Metric length: nm … km), and numbers are
 -- scaled between them on output. Every unit is in exactly one family; the
 -- base unit need not be in any.
+--
+-- tenant NULL = global: every tenant sees it. Otherwise only that tenant
+-- does. A tenant's family may be in a global quantity, and a tenant's unit
+-- in a global family, but nothing global is in anything of a tenant's.
 
 CREATE TABLE quantity (
-    id       integer  NOT NULL PRIMARY KEY GENERATED BY DEFAULT AS IDENTITY (START WITH 1000),
-    name     text     NOT NULL CHECK (btrim(name) <> ''),
+    id                uuid     NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant            uuid     NULL     REFERENCES tenant (id) ON DELETE RESTRICT,
+    name              text     NOT NULL CHECK (btrim(name) <> ''),
     -- Datatype of numbers of this quantity: integer for counts, float otherwise.
-    datatype datatype NOT NULL CHECK (datatype IN ('integer', 'float'))
+    datatype          datatype NOT NULL CHECK (datatype IN ('integer', 'float')),
+    -- The base unit, which a unit file states too, so units imported into an
+    -- existing quantity are known to mean the same base.
+    base_symbol       text     NOT NULL CHECK (btrim(base_symbol) <> ''),
+    base_name         text     NOT NULL CHECK (btrim(base_name) <> ''),
+    -- Global ones only: whether a tenant has it without having chosen.
+    default_available boolean  NOT NULL DEFAULT true
 );
 
-CREATE UNIQUE INDEX quantity_name_unique ON quantity (lower(name));
+CREATE UNIQUE INDEX quantity_global_name_unique ON quantity (lower(name)) WHERE tenant IS NULL;
+CREATE UNIQUE INDEX quantity_tenant_name_unique ON quantity (tenant, lower(name)) WHERE tenant IS NOT NULL;
 
 CREATE TABLE unit_family (
-    id       integer NOT NULL PRIMARY KEY GENERATED BY DEFAULT AS IDENTITY (START WITH 1000),
-    quantity integer NOT NULL REFERENCES quantity (id) ON DELETE RESTRICT,
-    name     text    NOT NULL CHECK (btrim(name) <> '')
+    id                uuid    NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant            uuid    NULL     REFERENCES tenant (id) ON DELETE RESTRICT,
+    quantity          uuid    NOT NULL REFERENCES quantity (id) ON DELETE RESTRICT,
+    name              text    NOT NULL CHECK (btrim(name) <> ''),
+    default_available boolean NOT NULL DEFAULT true
 );
 
-CREATE UNIQUE INDEX unit_family_name_unique ON unit_family (lower(name));
+CREATE UNIQUE INDEX unit_family_global_name_unique ON unit_family (lower(name)) WHERE tenant IS NULL;
+CREATE UNIQUE INDEX unit_family_tenant_name_unique ON unit_family (tenant, lower(name)) WHERE tenant IS NOT NULL;
 CREATE INDEX unit_family_quantity_id_idx ON unit_family (quantity);
 
 -- base = value × base_factor + base_offset converts a value in this unit to
 -- the quantity's base unit. The offset is only non-zero for temperature
 -- scales (°C, °F).
 CREATE TABLE unit (
-    id          integer NOT NULL PRIMARY KEY GENERATED BY DEFAULT AS IDENTITY (START WITH 1000),
-    family      integer NOT NULL REFERENCES unit_family (id) ON DELETE RESTRICT,
+    id          uuid    NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant      uuid    NULL     REFERENCES tenant (id) ON DELETE RESTRICT,
+    family      uuid    NOT NULL REFERENCES unit_family (id) ON DELETE RESTRICT,
     name        text    NOT NULL CHECK (btrim(name) <> ''),
     symbol      text    NOT NULL CHECK (btrim(symbol) <> ''),
     base_factor numeric NOT NULL CHECK (base_factor > 0),
     base_offset numeric NOT NULL DEFAULT 0
 );
 
--- Case-sensitive: mS (millisiemens) and ms (millisecond) are different.
-CREATE UNIQUE INDEX unit_symbol_unique ON unit (family, symbol);
-CREATE UNIQUE INDEX unit_name_unique   ON unit (family, lower(name));
+-- Symbols are case-sensitive: mS (millisiemens) and ms (millisecond) are
+-- different.
+CREATE UNIQUE INDEX unit_global_symbol_unique ON unit (family, symbol) WHERE tenant IS NULL;
+CREATE UNIQUE INDEX unit_global_name_unique   ON unit (family, lower(name)) WHERE tenant IS NULL;
+CREATE UNIQUE INDEX unit_tenant_symbol_unique ON unit (tenant, family, symbol) WHERE tenant IS NOT NULL;
+CREATE UNIQUE INDEX unit_tenant_name_unique   ON unit (tenant, family, lower(name)) WHERE tenant IS NOT NULL;
 CREATE INDEX unit_family_id_idx ON unit (family);
 
--- The same symbol may appear in several families of a quantity (B in decimal
--- and binary bytes), but then it must mean the same unit, so a number typed
--- with that symbol converts the same whichever unit is picked.
-CREATE FUNCTION unit_check_symbol() RETURNS trigger
+-- Whether something of tenant p_tenant (NULL: global) may be in a parent of
+-- tenant p_parent: a global parent takes anything, a tenant's parent only
+-- that tenant's things.
+CREATE FUNCTION unit_tenant_fits(p_tenant uuid, p_parent uuid) RETURNS boolean
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT p_parent IS NULL OR p_parent = p_tenant;
+$$;
+
+-- A family's quantity, and a unit's family, are global or the row's own
+-- tenant's. Names (and symbols) are unique among what a tenant sees: its
+-- own and the global ones. A new global name must not be any tenant's.
+CREATE FUNCTION unit_family_check() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE
-    v_other record;
+    v_hosts text;
 BEGIN
+    IF NOT unit_tenant_fits(NEW.tenant, (SELECT tenant FROM quantity WHERE id = NEW.quantity)) THEN
+        RAISE EXCEPTION 'Unit family "%" can''t be in another tenant''s quantity', NEW.name
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT string_agg(DISTINCT COALESCE(t.host, 'global'), ', ') INTO v_hosts
+    FROM unit_family f
+    LEFT JOIN tenant t ON t.id = f.tenant
+    WHERE lower(f.name) = lower(NEW.name)
+      AND f.id <> NEW.id
+      AND (NEW.tenant IS NULL OR f.tenant IS NULL OR f.tenant = NEW.tenant);
+    IF v_hosts IS NOT NULL THEN
+        RAISE EXCEPTION 'A unit family named "%" already exists (%)', NEW.name, v_hosts
+            USING ERRCODE = 'unique_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER unit_family_check
+    BEFORE INSERT OR UPDATE OF tenant, quantity, name ON unit_family
+    FOR EACH ROW EXECUTE FUNCTION unit_family_check();
+
+CREATE FUNCTION quantity_check() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_hosts text;
+BEGIN
+    SELECT string_agg(DISTINCT COALESCE(t.host, 'global'), ', ') INTO v_hosts
+    FROM quantity q
+    LEFT JOIN tenant t ON t.id = q.tenant
+    WHERE lower(q.name) = lower(NEW.name)
+      AND q.id <> NEW.id
+      AND (NEW.tenant IS NULL OR q.tenant IS NULL OR q.tenant = NEW.tenant);
+    IF v_hosts IS NOT NULL THEN
+        RAISE EXCEPTION 'A quantity named "%" already exists (%)', NEW.name, v_hosts
+            USING ERRCODE = 'unique_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER quantity_check
+    BEFORE INSERT OR UPDATE OF tenant, name ON quantity
+    FOR EACH ROW EXECUTE FUNCTION quantity_check();
+
+-- A unit's family is global or its tenant's, and its name and symbol are
+-- unique in the family among what its tenant sees. The same symbol may
+-- appear in several families of a quantity (B in decimal and binary bytes),
+-- but then it must mean the same unit, so a number typed with that symbol
+-- converts the same whichever unit is picked. A unit with the base unit's
+-- symbol must be the base unit.
+CREATE FUNCTION unit_check() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_family record;
+    v_other  record;
+BEGIN
+    SELECT f.tenant, f.quantity, q.base_symbol INTO v_family
+    FROM unit_family f JOIN quantity q ON q.id = f.quantity
+    WHERE f.id = NEW.family;
+    IF NOT unit_tenant_fits(NEW.tenant, v_family.tenant) THEN
+        RAISE EXCEPTION 'Unit "%" can''t be in another tenant''s family', NEW.symbol
+            USING ERRCODE = 'check_violation';
+    END IF;
+
     SELECT u.base_factor, u.base_offset, f.name AS family INTO v_other
     FROM unit u
     JOIN unit_family f ON f.id = u.family
     WHERE u.symbol = NEW.symbol
       AND u.id <> NEW.id
-      AND f.quantity = (SELECT quantity FROM unit_family WHERE id = NEW.family)
+      AND f.quantity = v_family.quantity
+      AND (NEW.tenant IS NULL OR u.tenant IS NULL OR u.tenant = NEW.tenant)
       AND (u.base_factor <> NEW.base_factor OR u.base_offset <> NEW.base_offset)
     LIMIT 1;
     IF FOUND THEN
         RAISE EXCEPTION 'Unit symbol "%" already means a different unit in family "%"', NEW.symbol, v_other.family
             USING ERRCODE = 'check_violation';
     END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM unit u
+        WHERE u.family = NEW.family
+          AND u.id <> NEW.id
+          AND (u.symbol = NEW.symbol OR lower(u.name) = lower(NEW.name))
+          AND (NEW.tenant IS NULL OR u.tenant IS NULL OR u.tenant = NEW.tenant)
+    ) THEN
+        RAISE EXCEPTION 'Its family already has a unit named "%" or "%"', NEW.name, NEW.symbol
+            USING ERRCODE = 'unique_violation';
+    END IF;
+
+    IF NEW.symbol = v_family.base_symbol AND (NEW.base_factor <> 1 OR NEW.base_offset <> 0) THEN
+        RAISE EXCEPTION 'Unit "%" is the base unit of its quantity, so its factor must be 1 and its offset 0', NEW.symbol
+            USING ERRCODE = 'check_violation';
+    END IF;
     RETURN NEW;
 END;
 $$;
 
-CREATE TRIGGER unit_check_symbol
-    BEFORE INSERT OR UPDATE OF family, symbol, base_factor, base_offset ON unit
-    FOR EACH ROW EXECUTE FUNCTION unit_check_symbol();
+CREATE TRIGGER unit_check
+    BEFORE INSERT OR UPDATE ON unit
+    FOR EACH ROW EXECUTE FUNCTION unit_check();
+
+-- A tenant's choices of which quantities and families it uses: only where it
+-- differs from the default (see TENANTS.md). Only quantities and families
+-- the tenant sees; the API functions check that.
+CREATE TABLE tenant_quantity (
+    tenant    uuid    NOT NULL REFERENCES tenant (id) ON DELETE CASCADE,
+    quantity  uuid    NOT NULL REFERENCES quantity (id) ON DELETE CASCADE,
+    available boolean NOT NULL,
+    PRIMARY KEY (tenant, quantity)
+);
+
+CREATE TABLE tenant_unit_family (
+    tenant    uuid    NOT NULL REFERENCES tenant (id) ON DELETE CASCADE,
+    family    uuid    NOT NULL REFERENCES unit_family (id) ON DELETE CASCADE,
+    available boolean NOT NULL,
+    PRIMARY KEY (tenant, family)
+);
 
 -- The quantity of a unit, through its family.
-CREATE FUNCTION unit_quantity(p_unit integer) RETURNS integer
+CREATE FUNCTION unit_quantity(p_unit uuid) RETURNS uuid
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (SELECT f.quantity FROM unit u JOIN unit_family f ON f.id = u.family WHERE u.id = p_unit);
+END;
+$$;
+
+-- An attribute's or item's unit is global or its own tenant's.
+CREATE FUNCTION check_unit_tenant() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.unit IS NOT NULL
+       AND NOT unit_tenant_fits(NEW.tenant, (SELECT tenant FROM unit WHERE id = NEW.unit))
+    THEN
+        RAISE EXCEPTION 'The unit of % % is another tenant''s', TG_TABLE_NAME, NEW.id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
 END;
 $$;
 
@@ -253,9 +436,10 @@ $$;
 -- Accounts and sessions (see ACCOUNTS.md)
 -- ---------------------------------------------------------------------------
 
--- A user. The email address is the user name.
+-- A user of one tenant. The email address is the user name.
 CREATE TABLE account (
     id                uuid        NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant            uuid        NOT NULL REFERENCES tenant (id) ON DELETE RESTRICT,
     email             text        NOT NULL CHECK (btrim(email) <> ''),
     -- bcrypt hash (pgcrypto); NULL = the account can't log in.
     password_hash     text        NULL,
@@ -268,50 +452,51 @@ CREATE TABLE account (
     last_failed_login timestamptz NULL,
     -- A deleted account keeps its row, so history can still say who did
     -- what. It can't log in, and its email can be used again.
-    deleted           boolean     NOT NULL DEFAULT false
+    deleted           boolean     NOT NULL DEFAULT false,
+
+    CONSTRAINT account_tenant_id_unique UNIQUE (tenant, id)
 );
 
-CREATE UNIQUE INDEX account_email_unique ON account (lower(email)) WHERE NOT deleted;
+CREATE UNIQUE INDEX account_email_unique ON account (tenant, lower(email)) WHERE NOT deleted;
 
--- A login. Only the SHA-256 hash of the token is stored.
+-- A login, to one tenant. Only the SHA-256 hash of the token is stored.
 CREATE TABLE session (
     token_hash bytea       NOT NULL PRIMARY KEY CHECK (length(token_hash) = 32),
-    account    uuid        NOT NULL REFERENCES account (id) ON DELETE CASCADE,
-    last_used  timestamptz NOT NULL DEFAULT now()
+    tenant     uuid        NOT NULL,
+    account    uuid        NOT NULL,
+    last_used  timestamptz NOT NULL DEFAULT now(),
+
+    FOREIGN KEY (tenant, account) REFERENCES account (tenant, id) ON DELETE CASCADE
 );
 
 CREATE INDEX session_account_id_idx ON session (account);
 
 -- ---------------------------------------------------------------------------
--- Codes
--- ---------------------------------------------------------------------------
-
--- Short codes for labels on locations, items and stock rows. One sequence for
--- all three tables, so every code is unique across all of them by
--- construction. It starts at 32768 = 32^3, the smallest number whose
--- Crockford Base32 rendering has four characters ("1000"); codes grow to five
--- characters after "ZZZZ" (1048575).
-CREATE SEQUENCE code_sequence START WITH 32768;
-
--- ---------------------------------------------------------------------------
 -- class
 -- ---------------------------------------------------------------------------
+-- Every table of tenant data has a tenant column, UNIQUE (tenant, id), and
+-- composite foreign keys (tenant, x) -> (tenant, id), so a row never refers
+-- to another tenant's.
 
 CREATE TABLE class (
     id        uuid    NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
-    parent    uuid    NULL     REFERENCES class (id) ON DELETE RESTRICT,
+    tenant    uuid    NOT NULL REFERENCES tenant (id) ON DELETE RESTRICT,
+    parent    uuid    NULL,
     -- "/" separates the names in a path ("Tools/Drills"), so a path always
     -- means one thing.
     name      text    NOT NULL CHECK (btrim(name) <> '' AND strpos(name, '/') = 0),
     -- A container holds only other classes, no items.
     container boolean NOT NULL DEFAULT false,
     deleted   boolean NOT NULL DEFAULT false,
-    CHECK (parent <> id)
+    CHECK (parent <> id),
+
+    CONSTRAINT class_tenant_id_unique UNIQUE (tenant, id),
+    FOREIGN KEY (tenant, parent) REFERENCES class (tenant, id) ON DELETE RESTRICT
 );
 
 -- Names are unique among live siblings.
 CREATE UNIQUE INDEX class_sibling_name_unique
-    ON class (parent, lower(name)) NULLS NOT DISTINCT WHERE NOT deleted;
+    ON class (tenant, parent, lower(name)) NULLS NOT DISTINCT WHERE NOT deleted;
 CREATE INDEX class_parent_id_idx ON class (parent);
 
 CREATE TRIGGER class_prevent_cycle
@@ -324,18 +509,21 @@ CREATE TRIGGER class_prevent_cycle
 
 CREATE TABLE attribute (
     id        uuid     NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant    uuid     NOT NULL REFERENCES tenant (id) ON DELETE RESTRICT,
     name      text     NOT NULL CHECK (btrim(name) <> ''),
     datatype  datatype NOT NULL,
     -- Numbers of this attribute are stored in the base unit of the unit's
     -- quantity. They are entered in this unit by default, and shown in it
     -- with unit_lock; otherwise scaled between the units of its family.
-    unit      integer  NULL     REFERENCES unit (id) ON DELETE RESTRICT,
+    unit      uuid     NULL     REFERENCES unit (id) ON DELETE RESTRICT,
     unit_lock boolean  NOT NULL DEFAULT false,
     deleted   boolean  NOT NULL DEFAULT false,
-    CHECK (unit IS NOT NULL OR NOT unit_lock)
+    CHECK (unit IS NOT NULL OR NOT unit_lock),
+
+    CONSTRAINT attribute_tenant_id_unique UNIQUE (tenant, id)
 );
 
-CREATE UNIQUE INDEX attribute_name_unique ON attribute (lower(name)) WHERE NOT deleted;
+CREATE UNIQUE INDEX attribute_name_unique ON attribute (tenant, lower(name)) WHERE NOT deleted;
 CREATE INDEX attribute_unit_id_idx ON attribute (unit);
 
 -- An attribute with a unit must have its quantity's datatype.
@@ -356,6 +544,10 @@ CREATE TRIGGER attribute_check_unit
     BEFORE INSERT OR UPDATE OF datatype, unit ON attribute
     FOR EACH ROW EXECUTE FUNCTION attribute_check_unit();
 
+CREATE TRIGGER attribute_check_unit_tenant
+    BEFORE INSERT OR UPDATE OF tenant, unit ON attribute
+    FOR EACH ROW EXECUTE FUNCTION check_unit_tenant();
+
 CREATE TRIGGER attribute_check_unit_change
     BEFORE UPDATE OF unit ON attribute
     FOR EACH ROW
@@ -368,13 +560,15 @@ CREATE TRIGGER attribute_check_unit_change
 
 CREATE TABLE attribute_option (
     id        uuid    NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
-    attribute uuid    NOT NULL REFERENCES attribute (id) ON DELETE CASCADE,
+    tenant    uuid    NOT NULL,
+    attribute uuid    NOT NULL,
     name      text    NOT NULL CHECK (btrim(name) <> ''),
     deleted   boolean NOT NULL DEFAULT false,
 
+    FOREIGN KEY (tenant, attribute) REFERENCES attribute (tenant, id) ON DELETE CASCADE,
     -- Target for the composite FKs from value, stock_value and
     -- class_attribute, which keep an option within its own attribute.
-    CONSTRAINT attribute_option_attribute_id_unique UNIQUE (attribute, id)
+    CONSTRAINT attribute_option_attribute_id_unique UNIQUE (tenant, attribute, id)
 );
 
 CREATE UNIQUE INDEX attribute_option_name_unique
@@ -402,8 +596,9 @@ CREATE TRIGGER attribute_option_check_choice
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE class_attribute (
-    class           uuid             NOT NULL REFERENCES class (id) ON DELETE CASCADE,
-    attribute       uuid             NOT NULL REFERENCES attribute (id) ON DELETE RESTRICT,
+    tenant          uuid             NOT NULL,
+    class           uuid             NOT NULL,
+    attribute       uuid             NOT NULL,
     -- Optional default value. At most one column is set, and the trigger
     -- below checks it matches the attribute's datatype.
     text_default    text             NULL,
@@ -420,8 +615,10 @@ CREATE TABLE class_attribute (
 
     PRIMARY KEY (class, attribute),
 
-    FOREIGN KEY (attribute, option_default)
-        REFERENCES attribute_option (attribute, id)
+    FOREIGN KEY (tenant, class) REFERENCES class (tenant, id) ON DELETE CASCADE,
+    FOREIGN KEY (tenant, attribute) REFERENCES attribute (tenant, id) ON DELETE RESTRICT,
+    FOREIGN KEY (tenant, attribute, option_default)
+        REFERENCES attribute_option (tenant, attribute, id)
         ON UPDATE RESTRICT ON DELETE RESTRICT,
 
     CHECK (num_nonnulls(text_default, integer_default, float_default,
@@ -516,20 +713,29 @@ $$;
 
 CREATE TABLE item (
     id        uuid    NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
-    code      bigint  NOT NULL DEFAULT nextval('code_sequence'),
-    class     uuid    NOT NULL REFERENCES class (id) ON DELETE RESTRICT,
+    tenant    uuid    NOT NULL REFERENCES tenant (id) ON DELETE RESTRICT,
+    -- The label code, from next_code(tenant).
+    code      bigint  NOT NULL,
+    class     uuid    NOT NULL,
     name      text    NOT NULL CHECK (btrim(name) <> ''),
     -- Stock quantities are stored in the base unit of this unit's quantity,
     -- and entered and shown as for an attribute's unit. NULL = pieces.
-    unit      integer NULL     REFERENCES unit (id) ON DELETE RESTRICT,
+    unit      uuid    NULL     REFERENCES unit (id) ON DELETE RESTRICT,
     unit_lock boolean NOT NULL DEFAULT false,
     deleted   boolean NOT NULL DEFAULT false,
-    CHECK (unit IS NOT NULL OR NOT unit_lock)
+    CHECK (unit IS NOT NULL OR NOT unit_lock),
+
+    CONSTRAINT item_tenant_id_unique UNIQUE (tenant, id),
+    FOREIGN KEY (tenant, class) REFERENCES class (tenant, id) ON DELETE RESTRICT
 );
 
-CREATE UNIQUE INDEX item_code_unique ON item (code);
+CREATE UNIQUE INDEX item_code_unique ON item (tenant, code);
 CREATE INDEX item_class_id_idx ON item (class);
 CREATE INDEX item_unit_id_idx  ON item (unit);
+
+CREATE TRIGGER item_check_unit_tenant
+    BEFORE INSERT OR UPDATE OF tenant, unit ON item
+    FOR EACH ROW EXECUTE FUNCTION check_unit_tenant();
 
 CREATE TRIGGER item_check_unit_change
     BEFORE UPDATE OF unit ON item
@@ -598,8 +804,9 @@ CREATE TRIGGER class_check_container
 
 CREATE TABLE value (
     id            uuid             NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
-    item          uuid             NOT NULL REFERENCES item (id) ON DELETE CASCADE,
-    attribute     uuid             NOT NULL REFERENCES attribute (id) ON DELETE RESTRICT,
+    tenant        uuid             NOT NULL,
+    item          uuid             NOT NULL,
+    attribute     uuid             NOT NULL,
     -- Exactly one column is set, and the trigger below checks it matches the
     -- attribute's datatype. Numbers with a unit are in the base unit.
     text_value    text             NULL,
@@ -609,8 +816,10 @@ CREATE TABLE value (
     boolean_value boolean          NULL,
     option_value  uuid             NULL,
 
-    FOREIGN KEY (attribute, option_value)
-        REFERENCES attribute_option (attribute, id)
+    FOREIGN KEY (tenant, item) REFERENCES item (tenant, id) ON DELETE CASCADE,
+    FOREIGN KEY (tenant, attribute) REFERENCES attribute (tenant, id) ON DELETE RESTRICT,
+    FOREIGN KEY (tenant, attribute, option_value)
+        REFERENCES attribute_option (tenant, attribute, id)
         ON UPDATE RESTRICT ON DELETE RESTRICT,
 
     CONSTRAINT value_item_attribute_unique UNIQUE (item, attribute),
@@ -664,19 +873,24 @@ CREATE TRIGGER value_check_applicable
 
 CREATE TABLE location (
     id        uuid    NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
-    code      bigint  NOT NULL DEFAULT nextval('code_sequence'),
-    parent    uuid    NULL     REFERENCES location (id) ON DELETE RESTRICT,
+    tenant    uuid    NOT NULL REFERENCES tenant (id) ON DELETE RESTRICT,
+    -- The label code, from next_code(tenant).
+    code      bigint  NOT NULL,
+    parent    uuid    NULL,
     -- "/" separates the names in a path ("Garage/Shelf 2").
     name      text    NOT NULL CHECK (btrim(name) <> '' AND strpos(name, '/') = 0),
     -- A container holds only other locations, no stock.
     container boolean NOT NULL DEFAULT false,
     deleted   boolean NOT NULL DEFAULT false,
-    CHECK (parent <> id)
+    CHECK (parent <> id),
+
+    CONSTRAINT location_tenant_id_unique UNIQUE (tenant, id),
+    FOREIGN KEY (tenant, parent) REFERENCES location (tenant, id) ON DELETE RESTRICT
 );
 
-CREATE UNIQUE INDEX location_code_unique ON location (code);
+CREATE UNIQUE INDEX location_code_unique ON location (tenant, code);
 CREATE UNIQUE INDEX location_sibling_name_unique
-    ON location (parent, lower(name)) NULLS NOT DISTINCT WHERE NOT deleted;
+    ON location (tenant, parent, lower(name)) NULLS NOT DISTINCT WHERE NOT deleted;
 CREATE INDEX location_parent_id_idx ON location (parent);
 
 CREATE TRIGGER location_prevent_cycle
@@ -694,18 +908,25 @@ CREATE TRIGGER location_prevent_cycle
 -- quantity 0    = none left, but this is where they belong.
 CREATE TABLE stock (
     id          uuid    NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
-    code        bigint  NOT NULL DEFAULT nextval('code_sequence'),
-    item        uuid    NOT NULL REFERENCES item (id) ON DELETE RESTRICT,
-    location    uuid    NOT NULL REFERENCES location (id) ON DELETE RESTRICT,
+    tenant      uuid    NOT NULL REFERENCES tenant (id) ON DELETE RESTRICT,
+    -- The label code, from next_code(tenant).
+    code        bigint  NOT NULL,
+    item        uuid    NOT NULL,
+    location    uuid    NOT NULL,
     quantity    numeric NULL     CHECK (quantity >= 0),
     deleted     boolean NOT NULL DEFAULT false,
     -- A row merged into another by a move: deleted, and pointing to the row
     -- its quantity went into, so its label still leads somewhere.
-    merged_into uuid    NULL     REFERENCES stock (id) ON DELETE SET NULL,
-    CHECK (merged_into IS NULL OR deleted)
+    merged_into uuid    NULL,
+    CHECK (merged_into IS NULL OR deleted),
+
+    CONSTRAINT stock_tenant_id_unique UNIQUE (tenant, id),
+    FOREIGN KEY (tenant, item) REFERENCES item (tenant, id) ON DELETE RESTRICT,
+    FOREIGN KEY (tenant, location) REFERENCES location (tenant, id) ON DELETE RESTRICT,
+    FOREIGN KEY (tenant, merged_into) REFERENCES stock (tenant, id) ON DELETE SET NULL (merged_into)
 );
 
-CREATE UNIQUE INDEX stock_code_unique ON stock (code);
+CREATE UNIQUE INDEX stock_code_unique ON stock (tenant, code);
 CREATE INDEX stock_item_id_idx        ON stock (item);
 CREATE INDEX stock_location_id_idx    ON stock (location);
 CREATE INDEX stock_merged_into_id_idx ON stock (merged_into) WHERE merged_into IS NOT NULL;
@@ -770,8 +991,9 @@ CREATE TRIGGER location_check_container
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE stock_value (
-    stock         uuid             NOT NULL REFERENCES stock (id) ON DELETE CASCADE,
-    attribute     uuid             NOT NULL REFERENCES attribute (id) ON DELETE RESTRICT,
+    tenant        uuid             NOT NULL,
+    stock         uuid             NOT NULL,
+    attribute     uuid             NOT NULL,
     -- Exactly one column is set, matching the attribute's datatype; numbers
     -- with a unit are in the base unit. Same rules as value.
     text_value    text             NULL,
@@ -783,8 +1005,10 @@ CREATE TABLE stock_value (
 
     PRIMARY KEY (stock, attribute),
 
-    FOREIGN KEY (attribute, option_value)
-        REFERENCES attribute_option (attribute, id)
+    FOREIGN KEY (tenant, stock) REFERENCES stock (tenant, id) ON DELETE CASCADE,
+    FOREIGN KEY (tenant, attribute) REFERENCES attribute (tenant, id) ON DELETE RESTRICT,
+    FOREIGN KEY (tenant, attribute, option_value)
+        REFERENCES attribute_option (tenant, attribute, id)
         ON UPDATE RESTRICT ON DELETE RESTRICT,
 
     CHECK (num_nonnulls(text_value, integer_value, float_value,
@@ -819,54 +1043,114 @@ CREATE TRIGGER stock_value_check_applicable
     FOR EACH ROW EXECUTE FUNCTION stock_value_check_applicable();
 
 -- ---------------------------------------------------------------------------
--- Attachments
+-- Attachments (see api/attachment.md)
 -- ---------------------------------------------------------------------------
-
--- A stored file, identified by its content. The bytes live on disk, in
--- wtfd's files directory, named by the SHA-256 hash; the same content is
--- stored once however often it is attached.
-CREATE TABLE file (
-    sha256 bytea  NOT NULL PRIMARY KEY CHECK (length(sha256) = 32),
-    size   bigint NOT NULL CHECK (size >= 0)
-);
-
--- A file attached to exactly one item, stock row, location or class.
-CREATE TABLE attachment (
-    id            uuid    NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
-    file          bytea   NOT NULL REFERENCES file (sha256) ON DELETE RESTRICT,
-    file_name     text    NOT NULL CHECK (btrim(file_name) <> ''),
-    content_type  text    NOT NULL CHECK (btrim(content_type) <> ''),
-    caption       text    NULL,
-    -- The main picture of its object; at most one live one per object, and
-    -- an image.
-    primary_photo boolean NOT NULL DEFAULT false,
-    item          uuid    NULL     REFERENCES item (id) ON DELETE CASCADE,
-    stock         uuid    NULL     REFERENCES stock (id) ON DELETE CASCADE,
-    location      uuid    NULL     REFERENCES location (id) ON DELETE CASCADE,
-    class         uuid    NULL     REFERENCES class (id) ON DELETE CASCADE,
-    deleted       boolean NOT NULL DEFAULT false,
-
-    CHECK (num_nonnulls(item, stock, location, class) = 1),
-    CHECK (NOT primary_photo OR content_type LIKE 'image/%')
-);
-
-CREATE INDEX attachment_file_id_idx     ON attachment (file);
-CREATE INDEX attachment_item_id_idx     ON attachment (item);
-CREATE INDEX attachment_stock_id_idx    ON attachment (stock);
-CREATE INDEX attachment_location_id_idx ON attachment (location);
-CREATE INDEX attachment_class_id_idx    ON attachment (class);
-
-CREATE UNIQUE INDEX attachment_item_primary_photo_unique     ON attachment (item)     WHERE primary_photo AND NOT deleted;
-CREATE UNIQUE INDEX attachment_stock_primary_photo_unique    ON attachment (stock)    WHERE primary_photo AND NOT deleted;
-CREATE UNIQUE INDEX attachment_location_primary_photo_unique ON attachment (location) WHERE primary_photo AND NOT deleted;
-CREATE UNIQUE INDEX attachment_class_primary_photo_unique    ON attachment (class)    WHERE primary_photo AND NOT deleted;
+-- Items, stock rows, locations and classes each have attachments of their
+-- own, in item_attachment, stock_attachment, location_attachment and
+-- class_attachment: the MIME type, the SHA-256 hash of the content, its size
+-- and a title. The contents are in the tenant's directory of wtfd's files
+-- directory, named by their hash, so the same content is stored once per
+-- tenant however often it is attached. Each object can name one of its own
+-- image attachments as its photo.
 
 -- Key of the advisory lock that serialises uploads and "wtfd gc" per file:
--- the first 8 bytes of the hash.
-CREATE FUNCTION file_lock_key(p_sha256 bytea) RETURNS bigint
+-- the first 16 hex digits (8 bytes) of the hash. Tenants share the key
+-- space, which at worst makes two uploads of the same content wait for each
+-- other.
+CREATE FUNCTION file_lock_key(p_hash text) RETURNS bigint
 LANGUAGE plpgsql IMMUTABLE AS $$
 BEGIN
-    RETURN ('x' || encode(substr(p_sha256, 1, 8), 'hex'))::bit(64)::bigint;
+    RETURN ('x' || substr(p_hash, 1, 16))::bit(64)::bigint;
+END;
+$$;
+
+-- An attachment is added to or changed on a live object only. TG_ARGV[0] is
+-- the owner's table, which is also the column naming it.
+CREATE FUNCTION attachment_check_live() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_owner text := TG_ARGV[0];
+BEGIN
+    PERFORM check_live(v_owner, (to_jsonb(NEW) ->> v_owner)::uuid);
+    RETURN NEW;
+END;
+$$;
+
+-- A photo is an image, and not deleted. (That it is one of the object's own
+-- attachments is the photo's foreign key.)
+CREATE FUNCTION check_photo() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_type    text;
+    v_title   text;
+    v_deleted boolean;
+BEGIN
+    IF NEW.photo IS NULL THEN
+        RETURN NEW;
+    END IF;
+    EXECUTE format('SELECT type, title, deleted FROM %I WHERE id = $1', TG_TABLE_NAME || '_attachment')
+        INTO v_type, v_title, v_deleted USING NEW.photo;
+    IF v_type NOT LIKE 'image/%' THEN
+        RAISE EXCEPTION 'A photo must be an image; "%" is %', v_title, v_type
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF v_deleted THEN
+        RAISE EXCEPTION 'Attachment "%" is deleted', v_title
+            USING ERRCODE = 'object_not_in_prerequisite_state';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DO $$
+DECLARE
+    v_owner text;
+BEGIN
+    FOREACH v_owner IN ARRAY ARRAY['item', 'stock', 'location', 'class'] LOOP
+        EXECUTE format($sql$
+            CREATE TABLE %1$I (
+                id      uuid    NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+                tenant  uuid    NOT NULL,
+                %2$I    uuid    NOT NULL,
+                -- MIME type
+                type    text    NOT NULL CHECK (btrim(type) <> ''),
+                -- hex SHA-256 of the content: its name in the files directory
+                hash    text    NOT NULL CHECK (hash ~ '^[0-9a-f]{64}$'),
+                size    bigint  NOT NULL CHECK (size >= 0),
+                title   text    NOT NULL CHECK (btrim(title) <> ''),
+                -- Deleted like the objects themselves (see api/deleting.md):
+                -- it can be restored until the operator purges it.
+                deleted boolean NOT NULL DEFAULT false,
+                FOREIGN KEY (tenant, %2$I) REFERENCES %2$I (tenant, id) ON DELETE CASCADE,
+                -- for the photo's foreign key
+                UNIQUE (%2$I, id)
+            )$sql$, v_owner || '_attachment', v_owner);
+        EXECUTE format('CREATE INDEX %I ON %I (%I)',
+                       v_owner || '_attachment_' || v_owner || '_id_idx', v_owner || '_attachment', v_owner);
+        -- "wtfd gc" looks files up by tenant and hash.
+        EXECUTE format('CREATE INDEX %I ON %I (tenant, hash)',
+                       v_owner || '_attachment_hash_idx', v_owner || '_attachment');
+
+        -- The photo is one of the object's own attachments (the foreign key)
+        -- and an image (the trigger below). Removing the attachment clears it.
+        EXECUTE format('ALTER TABLE %1$I ADD COLUMN photo uuid NULL, '
+                       'ADD FOREIGN KEY (id, photo) REFERENCES %2$I (%1$I, id) ON DELETE SET NULL (photo)',
+                       v_owner, v_owner || '_attachment');
+        EXECUTE format('CREATE INDEX %I ON %I (photo)', v_owner || '_photo_id_idx', v_owner);
+
+        -- Attachments are added to and changed on live objects only; a
+        -- deleted object's attachments are frozen with it, and a deleted
+        -- attachment is frozen until it is restored.
+        EXECUTE format('CREATE TRIGGER %I BEFORE INSERT OR UPDATE ON %I '
+                       'FOR EACH ROW EXECUTE FUNCTION attachment_check_live(%L)',
+                       v_owner || '_attachment_check_live', v_owner || '_attachment', v_owner);
+        EXECUTE format('CREATE TRIGGER %I BEFORE UPDATE ON %I '
+                       'FOR EACH ROW EXECUTE FUNCTION block_change_when_deleted()',
+                       v_owner || '_attachment_block_change_when_deleted', v_owner || '_attachment');
+        EXECUTE format('CREATE TRIGGER %I BEFORE INSERT OR UPDATE OF photo ON %I '
+                       'FOR EACH ROW EXECUTE FUNCTION check_photo()',
+                       v_owner || '_check_photo', v_owner);
+    END LOOP;
 END;
 $$;
 
@@ -1193,14 +1477,15 @@ CREATE CONSTRAINT TRIGGER stock_value_check_required_removal
 -- ---------------------------------------------------------------------------
 -- Items, stock rows, locations, classes, attributes, options and attachments
 -- are deleted by marking them. Rules apply between live rows only; deleted
--- rows are frozen until they are restored or purged.
+-- rows are frozen until they are restored or purged. (The attachment tables
+-- got their trigger above.)
 
 DO $$
 DECLARE
     v_table text;
 BEGIN
     FOREACH v_table IN ARRAY ARRAY[
-        'class', 'location', 'item', 'stock', 'attribute', 'attribute_option', 'attachment'
+        'class', 'location', 'item', 'stock', 'attribute', 'attribute_option'
     ] LOOP
         EXECUTE format(
             'CREATE TRIGGER %I BEFORE UPDATE ON %I '
@@ -1283,24 +1568,8 @@ CREATE TRIGGER attribute_option_check_live
     BEFORE INSERT OR UPDATE ON attribute_option
     FOR EACH ROW EXECUTE FUNCTION attribute_option_check_live();
 
--- Attachments, values and assignments are never marked deleted themselves:
--- they stay as they are while their owner is deleted, and can't be changed
--- then.
-CREATE FUNCTION attachment_check_live() RETURNS trigger
-LANGUAGE plpgsql AS $$
-BEGIN
-    PERFORM check_live('item', NEW.item);
-    PERFORM check_live('stock', NEW.stock);
-    PERFORM check_live('location', NEW.location);
-    PERFORM check_live('class', NEW.class);
-    RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER attachment_check_live
-    BEFORE INSERT OR UPDATE ON attachment
-    FOR EACH ROW EXECUTE FUNCTION attachment_check_live();
-
+-- Values and assignments are never marked deleted themselves: they stay as
+-- they are while their owner is deleted, and can't be changed then.
 CREATE FUNCTION value_check_live() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -1459,58 +1728,77 @@ CREATE TRIGGER attribute_option_check_deletable
 -- data_version
 -- ---------------------------------------------------------------------------
 
--- One change counter per tracked table. The REST layer exposes it as the
--- version of the class and location trees.
+-- One change counter per tenant and tracked tree. The REST layer exposes it
+-- as the version of the class and location trees. A tenant's row appears
+-- with its first change; until then the version is 1 (util.data_version).
 CREATE TABLE data_version (
-    name    text   NOT NULL PRIMARY KEY,
-    version bigint NOT NULL DEFAULT 1
+    tenant  uuid   NOT NULL REFERENCES tenant (id) ON DELETE CASCADE,
+    name    text   NOT NULL,
+    version bigint NOT NULL DEFAULT 2,
+    PRIMARY KEY (tenant, name)
 );
 
-INSERT INTO data_version (name) VALUES ('class'), ('location');
-
+-- Moves the tree TG_ARGV[0] of the changed row's tenant on. The class and
+-- location tree nodes include their photo, whose title can change without
+-- the class or location changing, so changes to their attachments move the
+-- tree on too, and a cached tree is never stale.
 CREATE FUNCTION bump_data_version() RETURNS trigger
 LANGUAGE plpgsql AS $$
+DECLARE
+    v_tenant uuid := CASE TG_OP WHEN 'DELETE' THEN OLD.tenant ELSE NEW.tenant END;
 BEGIN
-    UPDATE data_version
-    SET version = version + 1
-    WHERE name = TG_TABLE_NAME;
+    INSERT INTO data_version (tenant, name) VALUES (v_tenant, TG_ARGV[0])
+    ON CONFLICT (tenant, name) DO UPDATE SET version = data_version.version + 1;
     RETURN NULL;
 END;
 $$;
 
 CREATE TRIGGER class_bump_data_version
-    AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON class
-    FOR EACH STATEMENT EXECUTE FUNCTION bump_data_version();
+    AFTER INSERT OR UPDATE OR DELETE ON class
+    FOR EACH ROW EXECUTE FUNCTION bump_data_version('class');
 
 CREATE TRIGGER location_bump_data_version
-    AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON location
-    FOR EACH STATEMENT EXECUTE FUNCTION bump_data_version();
+    AFTER INSERT OR UPDATE OR DELETE ON location
+    FOR EACH ROW EXECUTE FUNCTION bump_data_version('location');
+
+CREATE TRIGGER class_attachment_bump_data_version
+    AFTER INSERT OR UPDATE OR DELETE ON class_attachment
+    FOR EACH ROW EXECUTE FUNCTION bump_data_version('class');
+
+CREATE TRIGGER location_attachment_bump_data_version
+    AFTER INSERT OR UPDATE OR DELETE ON location_attachment
+    FOR EACH ROW EXECUTE FUNCTION bump_data_version('location');
 
 -- ---------------------------------------------------------------------------
 -- history (see api/history.md)
 -- ---------------------------------------------------------------------------
 
--- One entry per changed row.
+-- One entry per changed row, in the row's tenant.
 CREATE TABLE history (
     id          bigint            NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant      uuid              NOT NULL REFERENCES tenant (id) ON DELETE RESTRICT,
     -- Start of the transaction, so all changes of one API call share it.
     happened_at timestamptz       NOT NULL DEFAULT now(),
     -- Groups the entries of one transaction (e.g. a stock_move).
     transaction xid8              NOT NULL DEFAULT pg_current_xact_id(),
     -- The logged-in account; NULL for changes outside the API ("system").
-    account     uuid              NULL     REFERENCES account (id) ON DELETE RESTRICT,
+    account     uuid              NULL,
     table_name  text              NOT NULL,
     operation   history_operation NOT NULL,
-    -- The row after the change (before it, for a delete).
+    -- The row after the change (before it, for a delete), without its
+    -- tenant.
     data        jsonb             NOT NULL,
     -- Updates only: {column: {old, new}} for every changed column.
-    changes     jsonb             NULL
+    changes     jsonb             NULL,
+
+    FOREIGN KEY (tenant, account) REFERENCES account (tenant, id) ON DELETE RESTRICT
 );
 
 CREATE INDEX history_happened_at_idx ON history (happened_at);
 CREATE INDEX history_account_id_idx  ON history (account);
 -- Restoring finds what was deleted together through history.
 CREATE INDEX history_data_id_idx     ON history ((data ->> 'id'));
+CREATE INDEX history_tenant_table_idx ON history (tenant, table_name, id);
 
 -- Row-level trigger on every data table and on account. Password hashes are
 -- never logged (only whether there is one, and that it changed); updates
@@ -1523,13 +1811,14 @@ DECLARE
     v_changes          jsonb;
     v_password_changed boolean := false;
     v_token            text := current_setting('wtf.token', true);
+    v_tenant           uuid := CASE TG_OP WHEN 'DELETE' THEN OLD.tenant ELSE NEW.tenant END;
     v_account          uuid;
 BEGIN
     IF TG_OP <> 'INSERT' THEN
-        v_old := to_jsonb(OLD);
+        v_old := to_jsonb(OLD) - 'tenant';
     END IF;
     IF TG_OP <> 'DELETE' THEN
-        v_new := to_jsonb(NEW);
+        v_new := to_jsonb(NEW) - 'tenant';
     END IF;
 
     IF TG_TABLE_NAME = 'account' THEN
@@ -1554,14 +1843,18 @@ BEGIN
         END IF;
     END IF;
 
+    -- The session's account, if it is of the row's tenant (it always is,
+    -- through the API).
     IF v_token IS NOT NULL AND v_token <> '' THEN
         SELECT s.account INTO v_account
         FROM session s
-        WHERE s.token_hash = sha256(convert_to(v_token, 'UTF8'));
+        WHERE s.token_hash = sha256(convert_to(v_token, 'UTF8'))
+          AND s.tenant = v_tenant;
     END IF;
 
-    INSERT INTO history (account, table_name, operation, data, changes)
-    VALUES (v_account,
+    INSERT INTO history (tenant, account, table_name, operation, data, changes)
+    VALUES (v_tenant,
+            v_account,
             TG_TABLE_NAME,
             lower(TG_OP)::history_operation,
             COALESCE(v_new, v_old),
@@ -1576,7 +1869,8 @@ DECLARE
 BEGIN
     FOREACH v_table IN ARRAY ARRAY[
         'class', 'attribute', 'attribute_option', 'class_attribute', 'item', 'value',
-        'location', 'stock', 'stock_value', 'attachment', 'account'
+        'location', 'stock', 'stock_value', 'account',
+        'item_attachment', 'stock_attachment', 'location_attachment', 'class_attachment'
     ] LOOP
         EXECUTE format(
             'CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE ON %I '

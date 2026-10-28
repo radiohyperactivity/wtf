@@ -349,7 +349,7 @@ func codeCommand() command {
 func quantityGroup() group {
 	return group{
 		name:    "quantity",
-		summary: "Physical quantities (system data)",
+		summary: "Physical quantities, global or your own",
 		commands: []command{
 			{
 				name:    "list",
@@ -367,9 +367,9 @@ func quantityGroup() group {
 						if err := decode(data, &list); err != nil {
 							return err
 						}
-						t := newTable(e.stdout, "NAME", "TYPE")
+						t := newTable(e.stdout, "NAME", "TYPE", "AVAILABLE")
 						for _, q := range list {
-							t.row(q.Name, q.Datatype)
+							t.row(q.Name, q.Datatype, availability(q.Available, q.Choice))
 						}
 						t.flush()
 						return nil
@@ -389,7 +389,7 @@ func quantityGroup() group {
 					if err != nil {
 						return err
 					}
-					data, err := e.api.Get(e.ctx, "/quantities/"+strconv.Itoa(id), nil)
+					data, err := e.api.Get(e.ctx, "/quantities/"+id, nil)
 					if err != nil {
 						return err
 					}
@@ -398,7 +398,7 @@ func quantityGroup() group {
 						if err := decode(data, &q); err != nil {
 							return err
 						}
-						fields(e.stdout, "Name", q.Name, "Type", q.Datatype)
+						fields(e.stdout, "Name", q.Name, "Type", q.Datatype, "Available", availability(q.Available, q.Choice))
 						var units []unit
 						for _, f := range q.Families {
 							units = append(units, f.Units...)
@@ -408,6 +408,7 @@ func quantityGroup() group {
 					})
 				}),
 			},
+			availableCommand("quantity"),
 		},
 	}
 }
@@ -427,7 +428,7 @@ func printUnits(e *env, units []unit) {
 func unitsGroup() group {
 	return group{
 		name:    "unit",
-		summary: "Units of measurement (system data)",
+		summary: "Units of measurement, global or your own",
 		commands: []command{
 			{
 				name:    "list",
@@ -450,14 +451,14 @@ func unitsGroup() group {
 							if err != nil {
 								return err
 							}
-							v.Set("quantity", strconv.Itoa(id))
+							v.Set("quantity", id)
 						}
 						if *f != "" {
 							id, err := e.resolveFamily(*f)
 							if err != nil {
 								return err
 							}
-							v.Set("family", strconv.Itoa(id))
+							v.Set("family", id)
 						}
 						data, err := e.api.Get(e.ctx, "/units", v)
 						if err != nil {
@@ -487,7 +488,7 @@ func unitsGroup() group {
 					if err != nil {
 						return err
 					}
-					data, err := e.api.Get(e.ctx, "/units/"+strconv.Itoa(u.ID), nil)
+					data, err := e.api.Get(e.ctx, "/units/"+u.ID, nil)
 					if err != nil {
 						return err
 					}
@@ -614,7 +615,7 @@ func printImport(e *env, r importReport) {
 func unitFamilyGroup() group {
 	return group{
 		name:    "unit-family",
-		summary: "Unit families: units used together, such as mm, cm and m (system data)",
+		summary: "Unit families: units used together, such as mm, cm and m",
 		commands: []command{
 			{
 				name:    "list",
@@ -633,7 +634,7 @@ func unitFamilyGroup() group {
 							if err != nil {
 								return err
 							}
-							v = url.Values{"quantity": {strconv.Itoa(id)}}
+							v = url.Values{"quantity": {id}}
 						}
 						data, err := e.api.Get(e.ctx, "/unit-families", v)
 						if err != nil {
@@ -644,9 +645,9 @@ func unitFamilyGroup() group {
 							if err := decode(data, &list); err != nil {
 								return err
 							}
-							t := newTable(e.stdout, "NAME", "QUANTITY", "UNITS")
+							t := newTable(e.stdout, "NAME", "QUANTITY", "UNITS", "AVAILABLE")
 							for _, f := range list {
-								t.row(f.Name, f.Quantity.Name, unitSymbols(f.Units))
+								t.row(f.Name, f.Quantity.Name, unitSymbols(f.Units), availability(f.Available, f.Choice))
 							}
 							t.flush()
 							return nil
@@ -667,7 +668,7 @@ func unitFamilyGroup() group {
 					if err != nil {
 						return err
 					}
-					data, err := e.api.Get(e.ctx, "/unit-families/"+strconv.Itoa(id), nil)
+					data, err := e.api.Get(e.ctx, "/unit-families/"+id, nil)
 					if err != nil {
 						return err
 					}
@@ -676,12 +677,13 @@ func unitFamilyGroup() group {
 						if err := decode(data, &f); err != nil {
 							return err
 						}
-						fields(e.stdout, "Name", f.Name, "Quantity", f.Quantity.Name)
+						fields(e.stdout, "Name", f.Name, "Quantity", f.Quantity.Name, "Available", availability(f.Available, f.Choice))
 						printUnits(e, f.Units)
 						return nil
 					})
 				}),
 			},
+			availableCommand("unit-family"),
 		},
 	}
 }
@@ -888,4 +890,66 @@ func printAccountJSON(e *env, data json.RawMessage) error {
 		"State", state,
 		"Id", a.ID)
 	return nil
+}
+
+// availability says whether a quantity or unit family is available, and
+// whether that is the tenant's own choice or the default.
+func availability(available, choice *bool) string {
+	text := "yes"
+	if !isAvailable(available) {
+		text = "no"
+	}
+	if choice != nil {
+		text += " (chosen)"
+	}
+	return text
+}
+
+// availableCommand turns a quantity (kind "quantity") or unit family
+// ("unit-family") on or off, or back to its default: PATCH {available}.
+func availableCommand(kind string) command {
+	label, complete, path := "Quantity", completer(completeQuantities), "/quantities/"
+	resolve := (*env).resolveQuantity
+	if kind == "unit-family" {
+		label, complete, path = "Unit family", completer(completeFamilies), "/unit-families/"
+		resolve = (*env).resolveFamily
+	}
+	return command{
+		name:    "available",
+		args:    "<" + kind + "> on|off|default",
+		summary: "Turn a " + strings.ReplaceAll(kind, "-", " ") + " on or off for choosing units, or back to its default.",
+		params:  []param{arg(label, complete), arg("on, off or default", words("on", "off", "default"))},
+		setup: simple(func(e *env, args []string) error {
+			if err := wantArgs(args, 2, 2); err != nil {
+				return err
+			}
+			var value any
+			switch strings.ToLower(args[1]) {
+			case "on", "yes", "true":
+				value = true
+			case "off", "no", "false":
+				value = false
+			case "default":
+				value = nil
+			default:
+				return usagef("%q: use on, off or default", args[1])
+			}
+			id, err := resolve(e, args[0])
+			if err != nil {
+				return err
+			}
+			data, err := e.do(http.MethodPatch, path+id, object{"available": value})
+			if err != nil {
+				return err
+			}
+			return e.emit(data, func() error {
+				var f unitFamily // a quantity has the same fields that are shown
+				if err := decode(data, &f); err != nil {
+					return err
+				}
+				fmt.Fprintf(e.stdout, "%s: available %s.\n", f.Name, availability(f.Available, f.Choice))
+				return nil
+			})
+		}),
+	}
 }

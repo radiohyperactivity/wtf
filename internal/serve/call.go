@@ -75,18 +75,6 @@ func path(name, key string) param {
 	}
 }
 
-// pathInt passes the path segment {key} as an integer argument: the ids of
-// quantities, unit families and units.
-func pathInt(name, key string) param {
-	return func(r *http.Request) ([]arg, error) {
-		v := r.PathValue(key)
-		if _, err := strconv.ParseInt(v, 10, 32); err != nil {
-			return nil, invalidInput("%q in the path is not a whole number", v)
-		}
-		return []arg{{name: name, typ: "integer", value: v}}, nil
-	}
-}
-
 // pathText passes the path segment {key} as a text argument.
 func pathText(name, key string) param {
 	return func(r *http.Request) ([]arg, error) {

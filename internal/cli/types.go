@@ -13,28 +13,46 @@ type ref struct {
 	Name string `json:"name"`
 }
 
-// Quantities, unit families and units have integer ids.
+// Quantities, unit families and units are global (every tenant sees them)
+// or the tenant's own; a tenant can turn quantities and families on and off
+// (TENANTS.md). Lists and gets say whether they are available, what the
+// default is, and the tenant's own choice (nil: it follows the default).
 
 type quantity struct {
-	ID       int          `json:"id"`
-	Name     string       `json:"name"`
-	Datatype string       `json:"datatype"`
-	Families []unitFamily `json:"families"`
+	ID               string       `json:"id"`
+	Name             string       `json:"name"`
+	Datatype         string       `json:"datatype"`
+	Global           bool         `json:"global"`
+	Available        *bool        `json:"available"`
+	DefaultAvailable bool         `json:"default_available"`
+	Choice           *bool        `json:"choice"`
+	Families         []unitFamily `json:"families"`
 }
 
 type unitFamily struct {
-	ID       int      `json:"id"`
-	Name     string   `json:"name"`
-	Quantity quantity `json:"quantity"`
-	Units    []unit   `json:"units"`
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	Quantity         quantity `json:"quantity"`
+	Global           bool     `json:"global"`
+	Available        *bool    `json:"available"`
+	DefaultAvailable bool     `json:"default_available"`
+	Choice           *bool    `json:"choice"`
+	Units            []unit   `json:"units"`
+}
+
+// isAvailable tells whether a quantity or family (by its available field)
+// can be chosen; nil, from inside another object, counts as available.
+func isAvailable(available *bool) bool {
+	return available == nil || *available
 }
 
 type unit struct {
-	ID     int    `json:"id"`
+	ID     string `json:"id"`
 	Name   string `json:"name"`
 	Symbol string `json:"symbol"`
+	Global bool   `json:"global"`
 	Family struct {
-		ID   int    `json:"id"`
+		ID   string `json:"id"`
 		Name string `json:"name"`
 	} `json:"family"`
 	Quantity   quantity    `json:"quantity"`

@@ -27,28 +27,30 @@ BEGIN
 END;
 $$;
 
--- A page of the history entries that p_match selects. p_match is
--- a SQL condition on the history row "h", built only by the functions below.
+-- A page of the session's tenant's history entries that p_match selects.
+-- p_match is a SQL condition on the history row "h", built only by the
+-- functions below.
 CREATE FUNCTION util.history_page(p_match text, p_limit integer, p_offset integer)
 RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 DECLARE
-    v_total bigint;
-    v_rows  jsonb;
+    v_tenant uuid := util.tenant();
+    v_total  bigint;
+    v_rows   jsonb;
 BEGIN
     PERFORM util.check_paging(p_limit, p_offset);
-    EXECUTE format('SELECT count(*) FROM history h WHERE %s', p_match)
-        INTO v_total;
+    EXECUTE format('SELECT count(*) FROM history h WHERE h.tenant = $1 AND (%s)', p_match)
+        INTO v_total USING v_tenant;
     EXECUTE format($q$
         SELECT jsonb_agg(util.history_json(page.id) ORDER BY page.id DESC)
         FROM (
             SELECT h.id
             FROM history h
-            WHERE %s
+            WHERE h.tenant = $3 AND (%s)
             ORDER BY h.id DESC
             LIMIT $1 OFFSET $2
         ) page
-    $q$, p_match) INTO v_rows USING p_limit, p_offset;
+    $q$, p_match) INTO v_rows USING p_limit, p_offset, v_tenant;
     RETURN util.page(v_total, p_limit, p_offset, v_rows);
 END;
 $$;
@@ -68,7 +70,7 @@ BEGIN
     -- The item's stock rows, including deleted ones.
     v_stock := format($q$(
         SELECT s.data ->> 'id' FROM history s
-        WHERE s.table_name = 'stock' AND s.data ->> 'item' = %s
+        WHERE s.tenant = h.tenant AND s.table_name = 'stock' AND s.data ->> 'item' = %s
     )$q$, v_id);
     RETURN util.history_page(format($q$
            (h.table_name = 'item'        AND h.data ->> 'id'    = %1$s)

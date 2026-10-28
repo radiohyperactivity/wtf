@@ -90,7 +90,8 @@ func (e *env) wrote(path string) {
 		if dir := e.cacheDir(); dir != "" {
 			_ = os.Remove(filepath.Join(dir, "attributes.json"))
 		}
-	case strings.HasPrefix(path, "/units/import"):
+	case strings.HasPrefix(path, "/units/import"), strings.HasPrefix(path, "/quantities"),
+		strings.HasPrefix(path, "/unit-families"):
 		e.cache.families, e.cache.quantities = nil, nil
 		if dir := e.cacheDir(); dir != "" {
 			_ = os.Remove(filepath.Join(dir, "unit-families.json"))

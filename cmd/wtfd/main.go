@@ -3,7 +3,9 @@
 //	wtfd schema [flags]    create or upgrade the database schema
 //	wtfd serve [flags]     run the REST API
 //	wtfd gc [flags]        remove attachment files nothing refers to any more
+//	wtfd tenant <command>  create, list or rename tenants
 //	wtfd account <command> create an account, or set a lost password
+//	wtfd unit <command>    import global units, or set their defaults
 //	wtfd history purge     delete old history entries
 //	wtfd deleted purge     remove what was deleted long ago
 //
@@ -42,7 +44,9 @@ Actions:
   schema    create or upgrade the database schema and function grants
   serve     run the REST API
   gc        remove attachment files nothing refers to any more
+  tenant    create, list or rename tenants
   account   create an account, or set a lost password
+  unit      import global units, or set whether they are available by default
   history   delete old history entries (purge)
   deleted   remove what was deleted long ago (purge)
 
@@ -65,8 +69,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runServe(args[1:], stderr)
 	case "gc":
 		return runGC(args[1:], stderr)
+	case "tenant":
+		return runTenant(args[1:], stdout, stderr)
 	case "account":
 		return runAccount(args[1:], stdout, stderr)
+	case "unit":
+		return runUnit(args[1:], stdout, stderr)
 	case "deleted":
 		return runDeleted(args[1:], stdout, stderr)
 	case "history":
@@ -251,10 +259,10 @@ func runGC(args []string, stderr io.Writer) int {
 }
 
 const accountUsage = `Usage:
-  wtfd account create --email EMAIL [database flags]
-  wtfd account password --email EMAIL [database flags]
+  wtfd account create --host HOST --email EMAIL [database flags]
+  wtfd account password --host HOST --email EMAIL [database flags]
 
-create makes an account with every privilege, such as the first one;
+create makes an account with every privilege in the tenant with host HOST;
 password gives an account a new password, when it is lost. Both print a
 generated password once.
 `
@@ -277,6 +285,7 @@ func runAccount(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("wtfd account "+command, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	database := config.RegisterDatabase(fs)
+	host := fs.String("host", "", "the tenant's host (required)")
 	email := fs.String("email", "", "the account's email (required)")
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -288,8 +297,8 @@ func runAccount(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "wtfd account %s: unexpected argument %q\n", command, fs.Arg(0))
 		return exitUsage
 	}
-	if *email == "" {
-		fmt.Fprintf(stderr, "wtfd account %s: --email is required\n", command)
+	if *host == "" || *email == "" {
+		fmt.Fprintf(stderr, "wtfd account %s: --host and --email are required\n", command)
 		return exitUsage
 	}
 	if err := database.Validate(); err != nil {
@@ -313,9 +322,9 @@ func runAccount(args []string, stdout, stderr io.Writer) int {
 
 	var password string
 	if command == "create" {
-		password, err = admin.CreateAccount(ctx, conn, *email)
+		password, err = admin.CreateAccount(ctx, conn, *host, *email)
 	} else {
-		password, err = admin.SetPassword(ctx, conn, *email)
+		password, err = admin.SetPassword(ctx, conn, *host, *email)
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "wtfd account %s: %v\n", command, err)
@@ -332,9 +341,10 @@ func runAccount(args []string, stdout, stderr io.Writer) int {
 }
 
 const historyUsage = `Usage:
-  wtfd history purge --older-than AGE [--dry-run] [database flags]
+  wtfd history purge --older-than AGE [--host HOST] [--dry-run] [database flags]
 
-AGE is a number of days (730d) or a Go duration (36h).
+AGE is a number of days (730d) or a Go duration (36h). Every tenant's
+history, or only that of the tenant with host HOST.
 `
 
 func runHistory(args []string, stdout, stderr io.Writer) int {
@@ -350,6 +360,7 @@ func runHistory(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	database := config.RegisterDatabase(fs)
 	olderThan := fs.String("older-than", "", "delete entries older than this, e.g. 730d (required)")
+	host := fs.String("host", "", "only the tenant with this host")
 	dryRun := fs.Bool("dry-run", false, "count the entries, delete nothing")
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -389,7 +400,7 @@ func runHistory(args []string, stdout, stderr io.Writer) int {
 	}
 	defer conn.Close(context.Background())
 
-	n, err := admin.PurgeHistory(ctx, conn, age, *dryRun)
+	n, err := admin.PurgeHistory(ctx, conn, *host, age, *dryRun)
 	if err != nil {
 		fmt.Fprintf(stderr, "wtfd history purge: %v\n", err)
 		return exitFailure
@@ -403,10 +414,11 @@ func runHistory(args []string, stdout, stderr io.Writer) int {
 }
 
 const deletedUsage = `Usage:
-  wtfd deleted purge --older-than AGE [--dry-run] [database flags]
+  wtfd deleted purge --older-than AGE [--host HOST] [--dry-run] [database flags]
 
 Removes for good what was deleted longer ago than AGE: a number of days
-(730d) or a Go duration (36h).
+(730d) or a Go duration (36h). In every tenant, or only in the tenant with
+host HOST.
 `
 
 func runDeleted(args []string, stdout, stderr io.Writer) int {
@@ -421,6 +433,7 @@ func runDeleted(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	database := config.RegisterDatabase(fs)
 	olderThan := fs.String("older-than", "", "remove what was deleted longer ago than this, e.g. 730d (required)")
+	host := fs.String("host", "", "only the tenant with this host")
 	dryRun := fs.Bool("dry-run", false, "count what would be removed, remove nothing")
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -460,7 +473,7 @@ func runDeleted(args []string, stdout, stderr io.Writer) int {
 	}
 	defer conn.Close(context.Background())
 
-	counts, err := admin.PurgeDeleted(ctx, conn, age, *dryRun)
+	counts, err := admin.PurgeDeleted(ctx, conn, *host, age, *dryRun)
 	if err != nil {
 		fmt.Fprintf(stderr, "wtfd deleted purge: %v\n", err)
 		return exitFailure

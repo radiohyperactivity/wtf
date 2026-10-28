@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -21,7 +20,7 @@ type cache struct {
 	attributes         []attribute
 	families           []unitFamily
 	quantities         []quantity
-	units              map[int][]unit // by quantity id
+	units              map[string][]unit // by quantity id
 }
 
 // treeIndex is a class or location tree with lookups by id.
@@ -472,17 +471,17 @@ func (e *env) unitFamilies() ([]unitFamily, error) {
 }
 
 // resolveFamily returns the id of a unit family given by id or name.
-func (e *env) resolveFamily(ref string) (int, error) {
+func (e *env) resolveFamily(ref string) (string, error) {
 	list, err := e.unitFamilies()
 	if err != nil {
-		return 0, err
+		return "", err
 	}
 	for _, f := range list {
-		if strings.EqualFold(f.Name, strings.TrimSpace(ref)) || strconv.Itoa(f.ID) == strings.TrimSpace(ref) {
+		if strings.EqualFold(f.Name, strings.TrimSpace(ref)) || f.ID == strings.TrimSpace(ref) {
 			return f.ID, nil
 		}
 	}
-	return 0, fmt.Errorf("no unit family named %q (see 'wtf unit-family list')", ref)
+	return "", fmt.Errorf("no unit family named %q (see 'wtf unit-family list')", ref)
 }
 
 func (e *env) loadQuantities() error {
@@ -493,16 +492,16 @@ func (e *env) loadQuantities() error {
 }
 
 // resolveQuantity returns the id of a quantity given by id or name.
-func (e *env) resolveQuantity(ref string) (int, error) {
+func (e *env) resolveQuantity(ref string) (string, error) {
 	if err := e.loadQuantities(); err != nil {
-		return 0, err
+		return "", err
 	}
 	for _, q := range e.cache.quantities {
-		if strings.EqualFold(q.Name, strings.TrimSpace(ref)) || strconv.Itoa(q.ID) == strings.TrimSpace(ref) {
+		if strings.EqualFold(q.Name, strings.TrimSpace(ref)) || q.ID == strings.TrimSpace(ref) {
 			return q.ID, nil
 		}
 	}
-	return 0, fmt.Errorf("no quantity named %q (see 'wtf quantity list')", ref)
+	return "", fmt.Errorf("no quantity named %q (see 'wtf quantity list')", ref)
 }
 
 // resolveUnit returns a unit given by id, symbol or name. A symbol that
@@ -519,7 +518,7 @@ func (e *env) resolveUnit(ref string) (*unit, error) {
 	}
 	ref = strings.TrimSpace(ref)
 	for i := range all {
-		if strconv.Itoa(all[i].ID) == ref || unitRef(all, &all[i]) == ref {
+		if all[i].ID == ref || unitRef(all, &all[i]) == ref {
 			return &all[i], nil
 		}
 	}
