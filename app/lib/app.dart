@@ -22,6 +22,7 @@ import 'screens/stock_form.dart';
 import 'screens/stock_screen.dart';
 import 'screens/tree_screen.dart';
 import 'session.dart';
+import 'theme.dart';
 import 'widgets/attachments.dart';
 
 class WtfApp extends StatefulWidget {
@@ -44,18 +45,14 @@ class _WtfAppState extends State<WtfApp> {
 
   @override
   Widget build(BuildContext context) {
-    const seed = Colors.teal;
     return ChangeNotifierProvider.value(
       value: widget.session,
       child: ListenableBuilder(
         listenable: widget.session,
         builder: (context, _) => MaterialApp.router(
           title: 'WtF',
-          theme: ThemeData(colorSchemeSeed: seed),
-          darkTheme: ThemeData(
-            colorSchemeSeed: seed,
-            brightness: Brightness.dark,
-          ),
+          theme: appTheme(widget.session.colour, Brightness.light),
+          darkTheme: appTheme(widget.session.colour, Brightness.dark),
           themeMode: widget.session.themeMode,
           routerConfig: _router,
         ),

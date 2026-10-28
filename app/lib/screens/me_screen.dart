@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../session.dart';
+import '../theme.dart';
 import '../widgets/common.dart';
 
 /// The logged-in account, like `wtf whoami`: email, server, privileges;
@@ -65,6 +66,27 @@ class MeScreen extends StatelessWidget {
                 ],
                 selected: {session.themeMode},
                 onSelectionChanged: (s) => session.setThemeMode(s.single),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: SegmentedButton<AppColour>(
+                segments: [
+                  for (final c in AppColour.values)
+                    ButtonSegment(
+                      value: c,
+                      icon: Icon(
+                        Icons.circle,
+                        color: appTheme(
+                          c,
+                          Theme.of(context).brightness,
+                        ).colorScheme.primary,
+                      ),
+                      label: Text(c.label),
+                    ),
+                ],
+                selected: {session.colour},
+                onSelectionChanged: (s) => session.setColour(s.single),
               ),
             ),
             const Divider(),

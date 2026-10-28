@@ -18,6 +18,8 @@ abstract class SessionStorage {
   Future<void> writeToken(String? token);
   Future<String?> readTheme();
   Future<void> writeTheme(String theme);
+  Future<String?> readColour();
+  Future<void> writeColour(String colour);
 }
 
 /// The server address and appearance in the settings (in a browser, its
@@ -27,6 +29,7 @@ class DeviceStorage implements SessionStorage {
   static const _serverKey = 'server';
   static const _tokenKey = 'session';
   static const _themeKey = 'theme';
+  static const _colourKey = 'colour';
   final _secure = const FlutterSecureStorage();
 
   @override
@@ -36,6 +39,14 @@ class DeviceStorage implements SessionStorage {
   @override
   Future<void> writeTheme(String theme) async =>
       (await SharedPreferences.getInstance()).setString(_themeKey, theme);
+
+  @override
+  Future<String?> readColour() async =>
+      (await SharedPreferences.getInstance()).getString(_colourKey);
+
+  @override
+  Future<void> writeColour(String colour) async =>
+      (await SharedPreferences.getInstance()).setString(_colourKey, colour);
 
   @override
   Future<String?> readServer() async =>
@@ -56,17 +67,24 @@ class DeviceStorage implements SessionStorage {
 
 /// Storage for tests.
 class MemoryStorage implements SessionStorage {
-  MemoryStorage({this.server, this.token, this.theme});
+  MemoryStorage({this.server, this.token, this.theme, this.colour});
 
   String? server;
   String? token;
   String? theme;
+  String? colour;
 
   @override
   Future<String?> readTheme() async => theme;
 
   @override
   Future<void> writeTheme(String theme) async => this.theme = theme;
+
+  @override
+  Future<String?> readColour() async => colour;
+
+  @override
+  Future<void> writeColour(String colour) async => this.colour = colour;
 
   @override
   Future<String?> readServer() async => server;
@@ -79,6 +97,17 @@ class MemoryStorage implements SessionStorage {
 
   @override
   Future<void> writeToken(String? token) async => this.token = token;
+}
+
+/// The colour the app's theme is built from, light and dark: teal, the
+/// first one, or the logo's orange.
+enum AppColour {
+  teal('Teal'),
+  orange('Orange');
+
+  const AppColour(this.label);
+
+  final String label;
 }
 
 class Session extends ChangeNotifier {
@@ -112,6 +141,15 @@ class Session extends ChangeNotifier {
     await storage.writeTheme(mode.name);
   }
 
+  /// The colours the app's theme is built from; kept per device too.
+  AppColour colour = AppColour.teal;
+
+  Future<void> setColour(AppColour colour) async {
+    this.colour = colour;
+    notifyListeners();
+    await storage.writeColour(colour.name);
+  }
+
   /// The client of the session. Only valid while someone is logged in.
   ApiClient get client => _client!;
 
@@ -120,6 +158,9 @@ class Session extends ChangeNotifier {
     themeMode =
         ThemeMode.values.asNameMap()[await storage.readTheme()] ??
         ThemeMode.system;
+    colour =
+        AppColour.values.asNameMap()[await storage.readColour()] ??
+        AppColour.teal;
     String? token;
     if (isWeb) {
       server = webOrigin;

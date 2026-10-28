@@ -324,3 +324,9 @@ Built for API revision 9: the class and location tree nodes include their `photo
 ### Image memory
 
 48. **Images are decoded at the size they're shown,** not at full size. A 12-megapixel phone photo decoded in full takes about 48 MB, so Flutter's 100 MB image cache held only two. Small photos are decoded at twice their size (so the square crop stays sharp for images up to twice as long as wide), the object's photo at most as large as its box, both in device pixels. Only the full-screen view decodes the original, for zooming. The whole file is still downloaded; smaller files from the server would be the next step.
+
+### Colours
+
+49. **Teal or the logo's orange,** chosen on the Me screen next to Light and Dark, and kept on the device like them. Teal stays the default. Both are Material colour schemes built from one colour, light and dark (`lib/theme.dart`).
+    - **Orange** uses Material's "fidelity" scheme, which keeps the logo's `#ff7828` itself as the container colour (floating buttons, selected items). The usual scheme would turn it brownish. Text and outlines get darker orange in light mode (`#a04100`) and lighter in dark mode (`#ffb692`), so they stay readable.
+    - The web app's browser colour (decision 47) stays orange whichever is chosen: it is fixed in the page, before the app has started.

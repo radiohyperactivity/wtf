@@ -7,6 +7,7 @@ import 'package:wtf/app.dart';
 import 'package:wtf/screens/attribute_screens.dart';
 import 'package:wtf/screens/search_screen.dart';
 import 'package:wtf/session.dart';
+import 'package:wtf/theme.dart';
 import 'package:wtf/widgets/attachments.dart';
 
 import 'fake_server.dart';
@@ -506,10 +507,31 @@ void main() {
     expect(mode(), ThemeMode.light);
     expect(storage.theme, 'light');
 
+    // Teal, or the logo's orange, light and dark.
+    Color primary() => tester
+        .widget<MaterialApp>(find.byType(MaterialApp))
+        .theme!
+        .colorScheme
+        .primary;
+    final teal = primary();
+    await tester.tap(find.text('Orange'));
+    await tester.pumpAndSettle();
+    expect(storage.colour, 'orange');
+    expect(primary(), isNot(teal));
+    expect(
+      tester
+          .widget<MaterialApp>(find.byType(MaterialApp))
+          .darkTheme!
+          .colorScheme
+          .primary,
+      appTheme(AppColour.orange, Brightness.dark).colorScheme.primary,
+    );
+
     // The next start.
     final next = Session(storage: storage, httpClient: fake.client);
     await next.restore();
     expect(next.themeMode, ThemeMode.light);
+    expect(next.colour, AppColour.orange);
   });
 
   testWidgets('a stored session continues, with a rail on wide screens', (
