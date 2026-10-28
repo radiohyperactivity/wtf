@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:io' show HandshakeException;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:http/testing.dart';
 import 'package:wtf/app.dart';
 import 'package:wtf/screens/attribute_screens.dart';
 import 'package:wtf/screens/search_screen.dart';
@@ -43,6 +45,30 @@ Future<void> search(WidgetTester tester, String text) async {
 Finder field(String label) => find.widgetWithText(TextFormField, label);
 
 void main() {
+  testWidgets('not reaching the server says why, at the login', (tester) async {
+    setSize(tester, 400, 800);
+    // An HTTPS request to a server that speaks plain HTTP.
+    final session = Session(
+      storage: MemoryStorage(),
+      httpClient: MockClient(
+        (req) async => throw const HandshakeException('WRONG_VERSION_NUMBER'),
+      ),
+    );
+    await session.restore();
+    await tester.pumpWidget(WtfApp(session: session));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('unless you write http://'), findsOneWidget);
+    await tester.enterText(field('Server'), '192.168.1.10:8080');
+    await tester.enterText(field('Email'), 'anna@example.com');
+    await tester.enterText(field('Password'), 'secret');
+    await tester.tap(find.text('Log in'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('write the address with http://'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('log in, see the account, log out', (tester) async {
     setSize(tester, 400, 800);
     final fake = FakeServer();

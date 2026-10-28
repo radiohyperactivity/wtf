@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../api/client.dart';
 import '../session.dart';
+import '../widgets/common.dart';
 
 /// Logging in. The native apps also ask for the server address; the web app
 /// uses its own.
@@ -50,8 +51,9 @@ class _LoginScreenState extends State<LoginScreen> {
         server: session.isWeb ? null : serverFromInput(_server.text),
       );
       // The router moves on to the app.
-    } on ApiProblem catch (e) {
-      if (mounted) setState(() => _error = e.message);
+    } catch (e) {
+      // The server's refusals, and not reaching it at all.
+      if (mounted) setState(() => _error = errorText(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -90,6 +92,9 @@ class _LoginScreenState extends State<LoginScreen> {
                         decoration: const InputDecoration(
                           labelText: 'Server',
                           hintText: 'wtf.example.com',
+                          helperText:
+                              'HTTPS, unless you write http:// '
+                              '(http://192.168.1.10:8080)',
                           border: OutlineInputBorder(),
                         ),
                         keyboardType: TextInputType.url,

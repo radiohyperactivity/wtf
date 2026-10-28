@@ -14,6 +14,13 @@ import '../session.dart';
 String errorText(Object e) => switch (e) {
   ApiProblem p => p.message,
   InputError i => i.message,
+  // dart:io's errors, by name: dart:io doesn't exist in the web app.
+  _ when '$e'.startsWith('HandshakeException') =>
+    "The server doesn't answer in HTTPS. If it runs without (wtfd speaks "
+        'plain HTTP), write the address with http://.',
+  _ when '$e'.contains('SocketException') =>
+    "Can't reach the server. Check the address and port, and that the "
+        'server listens on the network.',
   _ => '$e',
 };
 
