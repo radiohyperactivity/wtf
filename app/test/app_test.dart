@@ -284,6 +284,21 @@ void main() {
     );
     expect(find.text('Item photo · image/png · 3 B'), findsOneWidget);
 
+    // Images are decoded for the size they're shown at: a small one at
+    // twice its size (to crop sharply), the photo at most as wide as its
+    // box, here 240 by 320.
+    ResizeImage decoded(Finder of) =>
+        tester
+                .widget<Image>(
+                  find.descendant(of: of, matching: find.byType(Image)),
+                )
+                .image
+            as ResizeImage;
+    final small = decoded(find.byType(Thumbnail).first);
+    expect((small.width, small.height), (96, 96));
+    final big = decoded(find.byType(ObjectPhoto));
+    expect((big.width, big.height), (240, 320));
+
     // A stock row is shown as its place, with the location's photo.
     expect(
       find.byWidgetPredicate(

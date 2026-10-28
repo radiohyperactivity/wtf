@@ -314,6 +314,10 @@ Built for API revision 9: the class and location tree nodes include their `photo
 45. **A photo or a framed icon** at the start of every list entry for an object: the object's small photo, or, when it has none, its icon in a frame the same size. That covers attachments (the paperclip), items (narrow list, wide table, a class's items), an item's stock rows (the row's own photo, else its location's), a location's stock (the row's own photo, else its item's), what's inside a location, the classes below a class, and both trees. The frame is the same thin border as the photos', so entries with and without a photo look alike and their names line up.
 46. **The trees use a smaller size,** 36 pixels instead of 48, so they stay compact. Their rows are 48 pixels high instead of 44.
 
+### Image memory
+
+47a. **Images are decoded at the size they're shown,** not at full size. A 12-megapixel phone photo decoded in full takes about 48 MB, so Flutter's 100 MB image cache held only two. Small photos are decoded at twice their size (so the square crop stays sharp for images up to twice as long as wide), the object's photo at most as large as its box, both in device pixels. Only the full-screen view decodes the original, for zooming. The whole file is still downloaded; smaller files from the server would be the next step.
+
 ### App icons
 
 47. **The icons come from [logo/](logo/):** the square icon (`icon.svg`) for the app, not the horizontal or stacked logos.

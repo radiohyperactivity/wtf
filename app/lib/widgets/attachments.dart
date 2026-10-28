@@ -13,25 +13,45 @@ import '../api/units.dart';
 import '../session.dart';
 import 'common.dart';
 
-/// An attached image, loaded from the API with the session.
+/// An attached image, loaded from the API with the session. With [decode]
+/// it is decoded to fit that box (in logical pixels, an infinite side being
+/// no limit) instead of at full size, so a phone photo shown small doesn't
+/// take tens of megabytes of memory.
 class AttachmentImage extends StatelessWidget {
   const AttachmentImage(
     this.attachment, {
     super.key,
     this.fit = BoxFit.cover,
     this.size,
+    this.decode,
   });
 
   final Attachment attachment;
   final BoxFit fit;
   final double? size;
+  final Size? decode;
 
   @override
   Widget build(BuildContext context) {
     final client = context.read<Session>().client;
-    return Image.network(
+    ImageProvider image = NetworkImage(
       client.attachmentUrl(attachment).toString(),
       headers: client.authHeaders,
+    );
+    if (decode case final box?) {
+      final ratio = MediaQuery.devicePixelRatioOf(context);
+      int? pixels(double side) => side.isFinite ? (side * ratio).ceil() : null;
+      if (pixels(box.width) != null || pixels(box.height) != null) {
+        image = ResizeImage(
+          image,
+          width: pixels(box.width),
+          height: pixels(box.height),
+          policy: ResizeImagePolicy.fit,
+        );
+      }
+    }
+    return Image(
+      image: image,
       fit: fit,
       width: size,
       height: size,
@@ -69,9 +89,17 @@ class Thumbnail extends StatelessWidget {
   final Attachment attachment;
   final double size;
 
+  // Cropped to a square, so decoded to twice the size: the shorter side of
+  // an image up to twice as long as wide still covers it sharply.
   @override
-  Widget build(BuildContext context) =>
-      _Framed(radius: 6, child: AttachmentImage(attachment, size: size));
+  Widget build(BuildContext context) => _Framed(
+    radius: 6,
+    child: AttachmentImage(
+      attachment,
+      size: size,
+      decode: Size.square(size * 2),
+    ),
+  );
 }
 
 /// An object's small photo in a list, or when it has none [icon] in a frame
@@ -127,7 +155,13 @@ class ObjectPhoto extends StatelessWidget {
       onTap: () => showPhoto(context, photo),
       child: _Framed(
         radius: 8,
-        child: AttachmentImage(photo, fit: BoxFit.contain),
+        child: LayoutBuilder(
+          builder: (context, c) => AttachmentImage(
+            photo,
+            fit: BoxFit.contain,
+            decode: Size(c.maxWidth, c.maxHeight),
+          ),
+        ),
       ),
     ),
   );
