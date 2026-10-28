@@ -674,6 +674,25 @@ class ApiClient {
     return report;
   }
 
+  /// POST /model/import: imports a model file (seed/model-format.md), sent
+  /// as it is, below class [parent] or at the top. With [dryRun], only
+  /// tells.
+  Future<ModelImport> importModel(
+    String file, {
+    String? parent,
+    bool dryRun = false,
+  }) async {
+    final json = await _call(
+      'POST',
+      '/model/import',
+      query: {'parent': ?parent, if (dryRun) 'dry_run': 'true'},
+      body: RawJson(file),
+    ) as Json;
+    final report = ModelImport.fromJson(json);
+    if (report.applied) await _wrote('/classes'); // the new classes
+    return report;
+  }
+
   /// Turns a quantity on or off for choosing units (null: back to its
   /// default). Refused (409) while attributes or items use its units.
   Future<Quantity> setQuantityAvailable(String id, bool? available) async {

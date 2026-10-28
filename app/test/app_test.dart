@@ -10,6 +10,7 @@ import 'package:http/testing.dart';
 import 'package:wtf/api/models.dart';
 import 'package:wtf/app.dart';
 import 'package:wtf/screens/attribute_screens.dart';
+import 'package:wtf/screens/model_import.dart';
 import 'package:wtf/screens/search_screen.dart';
 import 'package:wtf/session.dart';
 import 'package:wtf/theme.dart';
@@ -247,6 +248,55 @@ void main() {
     expect(find.text('Choose a unit'), findsOneWidget);
     expect(find.text('mm'), findsOneWidget);
     expect(find.text('in'), findsNWidgets(inches));
+  });
+
+  testWidgets('import a model file: a preview first, then the model', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    const file =
+        '{"format": "wtf-model", "version": 1, "name": "Microcontrollers"}';
+    pickModelFile = () async => (name: 'mcu.json', text: file);
+    addTearDown(() => pickModelFile = () async => null);
+    await startApp(tester, fake);
+    await tester.tap(find.text('Classes'));
+    await tester.pumpAndSettle();
+
+    // A dry run first: what it adds, and where.
+    await tester.tap(find.byTooltip('Import a model'));
+    await tester.pumpAndSettle();
+    expect(fake.changes.last, 'POST /api/v1/model/import?dry_run=true $file');
+    expect(find.text('Import Microcontrollers (mcu.json)'), findsOneWidget);
+    expect(
+      find.text('Its classes go at the top of the class tree.'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('MCU: Clock, MCU: Voltage'), findsOneWidget);
+    expect(
+      find.textContaining('1 thing in the file is there already'),
+      findsOneWidget,
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Import'));
+    await tester.pumpAndSettle();
+    expect(fake.changes.last, 'POST /api/v1/model/import $file');
+    expect(find.text('Imported 1 class and 1 attribute.'), findsOneWidget);
+
+    // Below a class, from its menu.
+    GoRouter.of(tester.element(find.byType(Scaffold).first))
+        .push('/classes/c-drills');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(PopupMenuButton<String>).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Import a model here…'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      'POST /api/v1/model/import?parent=c-drills&dry_run=true $file',
+    );
+    expect(find.text('Its classes go below Tools/Drills.'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('import a unit file: a preview first, then the units', (

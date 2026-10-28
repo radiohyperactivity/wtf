@@ -8,6 +8,7 @@ All access to the data goes through the PL/pgSQL functions described here. They 
 |------------------------------------------|------------------------------------------------------------|----------|
 | [SCHEMA.md](SCHEMA.md)                   | [db/migrations/0001_schema.sql](db/migrations/0001_schema.sql) | Types, tables, views, integrity triggers |
 | [seed/units.md](seed/units.md)           | [db/migrations/0002_units.sql](db/migrations/0002_units.sql)   | The global units: quantities, unit families and units |
+| [seed/model-format.md](seed/model-format.md) | [db/repeatable/35_model.sql](db/repeatable/35_model.sql) | Model files: attributes and classes set up for one use |
 | [TENANTS.md](TENANTS.md)                 | [db/migrations/0001_schema.sql](db/migrations/0001_schema.sql) | Tenants: many inventories, picked by hostname |
 | [api/helpers.md](api/helpers.md)         | [db/repeatable/10_util.sql](db/repeatable/10_util.sql)         | Schema `util`: internal helpers for errors, paging, paths, typed values, JSON builders |
 | [api/attribute.md](api/attribute.md)     | [db/repeatable/20_attribute.sql](db/repeatable/20_attribute.sql) | `quantity_*`, `unit_family_*`, `unit_*`, `attribute_*`, `attribute_option_*` |
@@ -172,6 +173,7 @@ Suggested REST routes are only there to show intent. The REST design comes later
 | `unit_list(p_quantity, p_family)` | [unit] | `GET /units?quantity=&family=` |
 | `unit_get(p_id)` | unit | `GET /units/{id}` |
 | `unit_import(p_data, p_dry_run)` | what was added, what was there, conflicts | `POST /units/import?dry_run=` (body: a unit file, [seed/units-format.md](seed/units-format.md)) |
+| `model_import(p_data, p_parent, p_dry_run)` | what was added, what was there, conflicts | `POST /model/import?parent=&dry_run=` (body: a model file, [seed/model-format.md](seed/model-format.md)) |
 | `attribute_list()` | [attribute] | `GET /attributes` |
 | `attribute_get(p_id)` | attribute (+ options) | `GET /attributes/{id}` |
 | `attribute_create(p_name, p_datatype, p_unit, p_unit_lock)` | attribute | `POST /attributes` |

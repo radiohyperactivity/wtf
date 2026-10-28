@@ -521,6 +521,27 @@ class FakeServer {
           }
         }
         return _problem(404, 'Not found');
+      case ('POST', ['model', 'import']):
+        // As the server reports a new MCU model; a dry run keeps nothing.
+        final dryRun = q['dry_run'] == 'true';
+        return _json({
+          'applied': !dryRun,
+          'dry_run': dryRun,
+          'attributes': {
+            'added': ['Clock'],
+            'existing': ['Voltage'],
+          },
+          'options': {'added': <String>[]},
+          'classes': {
+            'added': ['MCU'],
+            'existing': <String>[],
+          },
+          'assignments': {
+            'added': ['MCU: Clock', 'MCU: Voltage'],
+            'existing': <String>[],
+          },
+          'conflicts': <Object>[],
+        });
       case ('POST', ['units', 'import']):
         return _json(
           _importUnits(body!, req.body, dryRun: q['dry_run'] == 'true'),

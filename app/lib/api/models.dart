@@ -182,6 +182,65 @@ class UnitImport {
       quantities.isEmpty && families.isEmpty && units.isEmpty;
 }
 
+/// The answer of POST /model/import (seed/model-format.md): what was (or
+/// would be) added, how much was there already, and the conflicts.
+class ModelImport {
+  const ModelImport({
+    required this.applied,
+    required this.attributes,
+    required this.options,
+    required this.classes,
+    required this.assignments,
+    required this.existing,
+    required this.conflicts,
+  });
+
+  factory ModelImport.fromJson(Json json) {
+    List<String> added(String kind) => [
+      for (final x in ((json[kind] as Json)['added'] as List?) ?? const [])
+        '$x',
+    ];
+    int existing(String kind) =>
+        (((json[kind] as Json)['existing'] as List?) ?? const []).length;
+    return ModelImport(
+      applied: json['applied'] as bool,
+      attributes: added('attributes'),
+      options: added('options'),
+      classes: added('classes'),
+      assignments: added('assignments'),
+      existing:
+          existing('attributes') +
+          existing('classes') +
+          existing('assignments'),
+      conflicts: [
+        for (final c in _list(json['conflicts']))
+          ('${c['where']}', '${c['message']}'),
+      ],
+    );
+  }
+
+  final bool applied;
+
+  /// Attribute names; options as "Attribute: option"; classes as paths
+  /// ("MCU/AVR"); assignments as "path: attribute".
+  final List<String> attributes;
+  final List<String> options;
+  final List<String> classes;
+  final List<String> assignments;
+
+  /// How many attributes, classes and assignments were there already.
+  final int existing;
+
+  /// (where, message) of each conflict.
+  final List<(String, String)> conflicts;
+
+  bool get nothingNew =>
+      attributes.isEmpty &&
+      options.isEmpty &&
+      classes.isEmpty &&
+      assignments.isEmpty;
+}
+
 /// base = value × baseFactor + baseOffset. Each unit is in one family of its
 /// quantity, such as Metric length.
 class Unit {

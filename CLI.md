@@ -343,3 +343,7 @@ Built with the server's tenants ([TENANTS.md](TENANTS.md)), API revision 11.
 52. **A profile is still one server address,** and the hostname in it picks the tenant: `wtf login https://smith.wtf.example`. Nothing else changes for logging in.
 53. **Unit ids are strings** (UUIDs). `--unit` still takes a symbol, a name, `"B (Binary bytes)"`, or an id.
 54. **`wtf quantity available <quantity> on|off|default`** and **`wtf unit-family available <family> on|off|default`** turn units on and off for the tenant (model write privilege); `default` follows the global default again. `list` and `get` have an AVAILABLE column: yes or no, with "(chosen)" when it is the tenant's own choice rather than the default. Completion offers only available units; the server refuses the others, and refuses to turn off what attributes or items use, naming them.
+
+### Model files
+
+55. **`wtf model import FILE [--parent CLASS] [--dry-run]`** imports a model file ([seed/model-format.md](seed/model-format.md)): attributes and a tree of classes. It tells what was added (or would be), how much was there already, and every conflict, as `wtf unit import` does; with conflicts nothing is imported, and the exit code is 1. `--parent` puts the file's classes below a class instead of at the top. The cached class tree and attributes are dropped at once.

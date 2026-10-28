@@ -364,3 +364,7 @@ Built with the server's tenants ([TENANTS.md](TENANTS.md)), API revision 11.
 57. **Unit ids are strings** (UUIDs), and quantities and families say whether they are available, the default, and the inventory's own choice.
 58. **Manage → Units has a switch for each quantity and family** (model write privilege). A quantity that is off keeps its families' switches off. Once a global one is switched, an undo button returns it to the default, with the default in its tooltip. Turning off what attributes or items use is refused, and the message names them. Others see "Off" where something is off. The arrow that says a quantity or family opens sits on the left, turning as it opens, since the switch takes the right (your find).
 59. **Choosing units:** the unit picker offers only units of available families. A number field takes units of available families, and of its own unit's family even when that is off, since its values are already shown in it.
+
+### Model files
+
+60. **Import a model** ([seed/model-format.md](seed/model-format.md)): an Import button on the class tree (model write privilege) puts a model file's classes at the top, and "Import a model here…" in a class's menu puts them below that class. As for unit files, a dry run comes first: the dialog says where the classes go, what would be added (attributes, options, classes, assignments), how much is there already, and every conflict. Import is offered only when there is something to add and nothing in the way.

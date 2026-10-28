@@ -7,6 +7,7 @@ Keeping your shit organised: a database of the things you own (from tiny electro
 | [SCHEMA.md](SCHEMA.md)       | Tables, types, integrity rules and triggers                   |
 | [SCHEMA.html](SCHEMA.html)   | Entity-relationship diagram                                   |
 | [seed/units.md](seed/units.md) | The global units: quantities, unit families and units       |
+| [seed/model-format.md](seed/model-format.md) | Model files: attributes and classes for one use, such as [MCUs](seed/models/mcu.json) |
 | [API.md](API.md)             | The PL/pgSQL functions all data access goes through           |
 | [CLI.md](CLI.md)             | `wtf`, the command-line client                                |
 | [TODO.md](TODO.md)           | Things to come back to later                                  |

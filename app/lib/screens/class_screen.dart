@@ -11,6 +11,7 @@ import '../widgets/pickers.dart';
 import '../widgets/restore.dart';
 import '../widgets/value_fields.dart';
 import 'node_delete.dart';
+import 'model_import.dart';
 
 const _itemsShown = 100;
 
@@ -166,6 +167,13 @@ class ClassScreen extends StatelessWidget {
                         open('/classes/new?parent=${c.id}');
                       case 'assign':
                         assign();
+                      case 'import':
+                        await importModelFile(
+                          context,
+                          parentId: c.id,
+                          parentPath: c.pathText,
+                        );
+                        reload();
                       case 'delete':
                         if (await deleteNode(
                               context,
@@ -187,6 +195,10 @@ class ClassScreen extends StatelessWidget {
                     PopupMenuItem(
                       value: 'assign',
                       child: Text('Assign an attribute'),
+                    ),
+                    PopupMenuItem(
+                      value: 'import',
+                      child: Text('Import a model here…'),
                     ),
                     PopupMenuItem(value: 'delete', child: Text('Delete…')),
                   ],
