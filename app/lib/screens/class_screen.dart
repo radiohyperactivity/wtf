@@ -89,6 +89,58 @@ class ClassScreen extends StatelessWidget {
           }
         }
 
+        Widget attributeTile(ClassAttribute a) => ListTile(
+          dense: true,
+          title: Text(a.required ? '${a.attribute.name} *' : a.attribute.name),
+          subtitle: Text(
+            [
+              a.attribute.datatype,
+              if (a.attribute.unit case final u?)
+                unitLabel(u, lock: a.attribute.unitLock),
+              if (a.required) 'required',
+              if (a.defaultText.isNotEmpty) 'default ${a.defaultText}',
+              if (a.inherited) 'from ${data.tree.pathOf(a.definedOnClass)}',
+            ].join(' · '),
+          ),
+          onTap: write && !a.inherited ? () => assign(a) : null,
+          trailing: write && !a.inherited
+              ? IconButton(
+                  icon: const Icon(Icons.remove_circle_outline),
+                  tooltip: 'Remove from this class',
+                  onPressed: () => unassign(a),
+                )
+              : null,
+        );
+
+        // The item's attributes and the stock rows' (per unit), each under
+        // its own heading when it has any. Assign sits on the first heading,
+        // or on a bare "Attributes" when there are none.
+        List<Widget> attributeSections() {
+          final assignButton = write
+              ? TextButton.icon(
+                  onPressed: assign,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Assign'),
+                )
+              : null;
+          final sections = [
+            ('Item attributes', c.attributes.where((a) => !a.perUnit)),
+            ('Stock attributes', c.attributes.where((a) => a.perUnit)),
+          ].where((s) => s.$2.isNotEmpty).toList();
+          if (sections.isEmpty) {
+            return [
+              if (assignButton != null)
+                SectionTitle('Attributes', trailing: assignButton),
+            ];
+          }
+          return [
+            for (final (i, (title, attributes)) in sections.indexed) ...[
+              SectionTitle(title, trailing: i == 0 ? assignButton : null),
+              for (final a in attributes) attributeTile(a),
+            ],
+          ];
+        }
+
         return Scaffold(
           appBar: AppBar(
             title: Text(c.name),
@@ -186,45 +238,7 @@ class ClassScreen extends StatelessWidget {
                         ),
                     ],
                   ),
-                  SectionTitle(
-                    'Attributes',
-                    trailing: write
-                        ? TextButton.icon(
-                            onPressed: assign,
-                            icon: const Icon(Icons.add),
-                            label: const Text('Assign'),
-                          )
-                        : null,
-                  ),
-                  if (c.attributes.isEmpty) const EmptyNote('No attributes.'),
-                  for (final a in c.attributes)
-                    ListTile(
-                      dense: true,
-                      title: Text(
-                        a.required ? '${a.attribute.name} *' : a.attribute.name,
-                      ),
-                      subtitle: Text(
-                        [
-                          a.attribute.datatype,
-                          if (a.attribute.unit case final u?)
-                            unitLabel(u, lock: a.attribute.unitLock),
-                          if (a.perUnit) 'per unit',
-                          if (a.required) 'required',
-                          if (a.defaultText.isNotEmpty)
-                            'default ${a.defaultText}',
-                          if (a.inherited)
-                            'from ${data.tree.pathOf(a.definedOnClass)}',
-                        ].join(' · '),
-                      ),
-                      onTap: write && !a.inherited ? () => assign(a) : null,
-                      trailing: write && !a.inherited
-                          ? IconButton(
-                              icon: const Icon(Icons.remove_circle_outline),
-                              tooltip: 'Remove from this class',
-                              onPressed: () => unassign(a),
-                            )
-                          : null,
-                    ),
+                  ...attributeSections(),
                   SectionTitle(
                     'Classes below',
                     trailing: write

@@ -776,6 +776,38 @@ void main() {
     expect(find.byType(FoundItemsScreen), findsOneWidget);
   });
 
+  testWidgets('a class lists item and stock attributes apart', (tester) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    await startApp(tester, fake);
+    final router = GoRouter.of(tester.element(find.byType(Scaffold).first));
+    router.push('/classes/c-drills');
+    await tester.pumpAndSettle();
+    // No empty section for the stock rows' attributes.
+    expect(find.text('Item attributes'), findsOneWidget);
+    expect(find.text('Stock attributes'), findsNothing);
+    expect(find.text('Attributes'), findsNothing);
+    expect(find.widgetWithText(TextButton, 'Assign'), findsOneWidget);
+
+    fake.voltagePerUnit = true;
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    router.push('/classes/c-drills');
+    await tester.pumpAndSettle();
+    expect(find.text('Item attributes'), findsNothing);
+    expect(find.text('Stock attributes'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Assign'), findsOneWidget);
+
+    // A class without attributes: only the heading that holds Assign.
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    router.push('/classes/c-tools');
+    await tester.pumpAndSettle();
+    expect(find.text('Attributes'), findsOneWidget);
+    expect(find.text('Item attributes'), findsNothing);
+    expect(find.text('Stock attributes'), findsNothing);
+  });
+
   testWidgets('assigning an attribute asks for its default, not its name', (
     tester,
   ) async {

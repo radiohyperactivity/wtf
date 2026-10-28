@@ -147,6 +147,9 @@ class FakeServer {
     return out;
   }
 
+  /// Whether Drills has Voltage per unit (on stock rows).
+  bool voltagePerUnit = false;
+
   Map<String, dynamic> classJson(String id) {
     final c = classes.firstWhere((c) => c['id'] == id);
     return {
@@ -159,7 +162,7 @@ class FakeServer {
             'defined_on_class': 'c-drills',
             'inherited': false,
             'default': null,
-            'per_unit': false,
+            'per_unit': voltagePerUnit,
             'required': true,
           },
       ],
