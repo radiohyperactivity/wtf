@@ -1821,7 +1821,7 @@ components:
             name: { type: string }
         global: { type: boolean, description: "Every tenant sees it; otherwise it is the tenant's own." }
         available: { type: boolean, description: "Lists and gets of quantities only: whether the tenant can choose its units." }
-        default_available: { type: boolean, description: "Lists and gets of quantities only: available when the tenant hasn't chosen (always true for its own)." }
+        standard: { type: boolean, description: "Lists and gets of quantities only: available when the tenant hasn't chosen (always true for its own)." }
         choice: { type: [boolean, "null"], description: "Lists and gets of quantities only: the tenant's choice; null follows the default." }
 
     QuantityDetail:
@@ -1870,7 +1870,7 @@ components:
         quantity: { $ref: "#/components/schemas/Quantity" }
         global: { type: boolean, description: "Every tenant sees it; otherwise it is the tenant's own." }
         available: { type: boolean, description: Whether the tenant can choose its units; never while its quantity is off. }
-        default_available: { type: boolean, description: "Available when the tenant hasn't chosen (always true for its own)." }
+        standard: { type: boolean, description: "Available when the tenant hasn't chosen (always true for its own)." }
         choice: { type: [boolean, "null"], description: "The tenant's choice; null follows the default." }
         units: { type: array, items: { $ref: "#/components/schemas/Unit" }, description: The ones the tenant sees, smallest first. }
 

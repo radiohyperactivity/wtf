@@ -429,11 +429,11 @@ Global units, which every tenant sees, are the operator's (TENANTS.md, decisions
 
 ```sh
 wtfd unit import --global more-units.json [--dry-run]
-wtfd unit default --family "Imperial length" --available false
-wtfd unit default --quantity Temperature --available true
+wtfd unit standard --family "Imperial length" --available false
+wtfd unit standard --quantity Temperature --available true
 ```
 
-`import` adds what isn't there yet, as `POST /units/import` does, and prints the same report; a name some tenant already has for its own is a conflict. `default` sets whether a global quantity or family is available to tenants that haven't chosen themselves.
+`import` adds what isn't there yet, as `POST /units/import` does, and prints the same report; a name some tenant already has for its own is a conflict. `standard` sets whether a global quantity or family is available to tenants that haven't chosen themselves.
 
 ## The `history` action
 

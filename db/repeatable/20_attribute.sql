@@ -6,7 +6,7 @@
 -- ---------------------------------------------------------------------------
 -- A tenant sees the global quantities, families and units (tenant NULL) and
 -- its own. Whether it has one available is its choice (tenant_quantity,
--- tenant_unit_family) or else the default: default_available for global
+-- tenant_unit_family) or else the default: standard for global
 -- ones, available for its own. A family is available only while its
 -- quantity is.
 
@@ -15,7 +15,7 @@ CREATE FUNCTION util.quantity_available(p_tenant uuid, p_quantity uuid) RETURNS 
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (
-        SELECT COALESCE(c.available, CASE WHEN q.tenant IS NULL THEN q.default_available ELSE true END)
+        SELECT COALESCE(c.available, CASE WHEN q.tenant IS NULL THEN q.standard ELSE true END)
         FROM quantity q
         LEFT JOIN tenant_quantity c ON c.quantity = q.id AND c.tenant = p_tenant
         WHERE q.id = p_quantity
@@ -29,7 +29,7 @@ LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (
         SELECT util.quantity_available(p_tenant, f.quantity)
-               AND COALESCE(c.available, CASE WHEN f.tenant IS NULL THEN f.default_available ELSE true END)
+               AND COALESCE(c.available, CASE WHEN f.tenant IS NULL THEN f.standard ELSE true END)
         FROM unit_family f
         LEFT JOIN tenant_unit_family c ON c.family = f.id AND c.tenant = p_tenant
         WHERE f.id = p_family
@@ -46,7 +46,7 @@ BEGIN
     RETURN (
         SELECT util.quantity_json(q.id) || jsonb_build_object(
             'available',         util.quantity_available(p_tenant, q.id),
-            'default_available', CASE WHEN q.tenant IS NULL THEN q.default_available ELSE true END,
+            'standard', CASE WHEN q.tenant IS NULL THEN q.standard ELSE true END,
             'choice',            c.available
         )
         FROM quantity q
@@ -63,7 +63,7 @@ BEGIN
     RETURN (
         SELECT util.unit_family_json(f.id) || jsonb_build_object(
             'available',         util.family_available(p_tenant, f.id),
-            'default_available', CASE WHEN f.tenant IS NULL THEN f.default_available ELSE true END,
+            'standard', CASE WHEN f.tenant IS NULL THEN f.standard ELSE true END,
             'choice',            c.available,
             'units',             util.family_units_json(f.id)
         )

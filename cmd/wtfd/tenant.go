@@ -113,10 +113,10 @@ func runTenant(args []string, stdout, stderr io.Writer) int {
 
 const unitUsage = `Usage:
   wtfd unit import --global FILE [--dry-run] [database flags]
-  wtfd unit default (--quantity NAME | --family NAME) --available true|false [database flags]
+  wtfd unit standard (--quantity NAME | --family NAME) --available true|false [database flags]
 
 import adds the units of a unit file (seed/units-format.md) as global
-units, which every tenant sees. default sets whether a global quantity or
+units, which every tenant sees. standard sets whether a global quantity or
 unit family is available to tenants that haven't chosen themselves.
 `
 
@@ -127,7 +127,7 @@ func runUnit(args []string, stdout, stderr io.Writer) int {
 	}
 	command := args[0]
 	switch command {
-	case "import", "default":
+	case "import", "standard":
 	case "help", "-h", "-help", "--help":
 		fmt.Fprint(stderr, unitUsage)
 		return exitOK
@@ -183,10 +183,10 @@ func runUnit(args []string, stdout, stderr io.Writer) int {
 		kind, target = "family", *family
 	}
 	return withDBA(database, name, stderr, func(ctx context.Context, conn *pgx.Conn) error {
-		if err := admin.SetUnitDefault(ctx, conn, kind, target, value); err != nil {
+		if err := admin.SetUnitStandard(ctx, conn, kind, target, value); err != nil {
 			return err
 		}
-		fmt.Fprintf(stdout, "%s is now available by default: %t.\n", target, value)
+		fmt.Fprintf(stdout, "%s is now available as standard: %t.\n", target, value)
 		return nil
 	})
 }

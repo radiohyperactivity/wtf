@@ -24,7 +24,7 @@ type quantity struct {
 	Datatype         string       `json:"datatype"`
 	Global           bool         `json:"global"`
 	Available        *bool        `json:"available"`
-	DefaultAvailable bool         `json:"default_available"`
+	Standard         bool         `json:"standard"`
 	Choice           *bool        `json:"choice"`
 	Families         []unitFamily `json:"families"`
 }
@@ -35,7 +35,7 @@ type unitFamily struct {
 	Quantity         quantity `json:"quantity"`
 	Global           bool     `json:"global"`
 	Available        *bool    `json:"available"`
-	DefaultAvailable bool     `json:"default_available"`
+	Standard         bool     `json:"standard"`
 	Choice           *bool    `json:"choice"`
 	Units            []unit   `json:"units"`
 }

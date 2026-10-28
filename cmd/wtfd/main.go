@@ -5,7 +5,7 @@
 //	wtfd gc [flags]        remove attachment files nothing refers to any more
 //	wtfd tenant <command>  create, list or rename tenants
 //	wtfd account <command> create an account, or set a lost password
-//	wtfd unit <command>    import global units, or set their defaults
+//	wtfd unit <command>    import global units, or set their standard
 //	wtfd history purge     delete old history entries
 //	wtfd deleted purge     remove what was deleted long ago
 //
@@ -46,7 +46,7 @@ Actions:
   gc        remove attachment files nothing refers to any more
   tenant    create, list or rename tenants
   account   create an account, or set a lost password
-  unit      import global units, or set whether they are available by default
+  unit      import global units, or set whether they are available as standard
   history   delete old history entries (purge)
   deleted   remove what was deleted long ago (purge)
 

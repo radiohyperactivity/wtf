@@ -1,12 +1,12 @@
 # Tenants – design
 
-Status: **built** (agreed and built 2026-10-28; migrations `0001`–`0002`, API revision 11). One installation holds many independent inventories, called **tenants**. Setting one up is adding a few rows to the database, with no new DNS entries, databases, processes or directories to create by hand.
+Status: **built** (agreed and built 2026-10-28; migrations `0001`–`0003`, API revision 11). One installation holds many independent inventories, called **tenants**. Setting one up is adding a few rows to the database, with no new DNS entries, databases, processes or directories to create by hand.
 
 Decisions marked *(yours)* were made by you; the rest are mine, made while you were away, and are open to change.
 
 ## Tenants and hostnames
 
-1. **A tenant is a row in `tenant`:** `id`, `host` and `next_code` *(yours)*. It has no name of its own, and nothing tells users that other tenants exist: `/me` doesn't mention one *(yours)*.
+1. **A tenant is a row in `tenant`:** `id`, `host` and `code` *(yours)*. It has no name of its own, and nothing tells users that other tenants exist: `/me` doesn't mention one *(yours)*.
 2. **The first label of the request's hostname picks the tenant** *(yours)*. `bob.wtf.example`, `bob.example.org` and `bob.192.168.1.10.nip.io` all reach the tenant whose `host` is `bob`. `wtfd` lower-cases the `Host` header, drops the port, and takes what comes before the first dot.
 3. **`host` is a DNS label that starts with a letter:** `a`–`z`, `0`–`9` and `-`, at most 63 characters, lower case, unique. Because it starts with a letter, an IP address (`192.168.1.10`) never matches a tenant. A single-label name does: `localhost` is a valid `host`.
 4. **A request whose hostname matches no tenant gets 404** *(yours)*, for the API and the web app alike. The one exception is `GET /api/health`, which answers on any hostname, so monitoring and load balancers can check the server by IP address.
@@ -26,7 +26,7 @@ Decisions marked *(yours)* were made by you; the rest are mine, made while you w
 
 ## Codes
 
-11. **Codes are per tenant** *(yours).* `tenant.next_code` holds the next one *(yours)*. A trigger takes it for every new item, location and stock row: `UPDATE tenant SET next_code = next_code + 1 … RETURNING`. New codes within one tenant wait for each other until commit, which is no problem at this scale. Codes start at 32768 ("1000") in every tenant, so two tenants have the same codes for different things. Looking a code up searches only your own tenant.
+11. **Codes are per tenant** *(yours).* `tenant.code` holds the next one *(yours; first named `next_code`)*. `next_code(tenant)` takes it for every new item, location and stock row: `UPDATE tenant SET code = code + 1 … RETURNING`. New codes within one tenant wait for each other until commit, which is no problem at this scale. Codes start at 32768 ("1000") in every tenant, so two tenants have the same codes for different things. Looking a code up searches only your own tenant.
 
 ## Accounts
 
@@ -41,15 +41,15 @@ Decisions marked *(yours)* were made by you; the rest are mine, made while you w
     - **Names and symbols** must be unique among what a tenant sees. A tenant can't import a family named like a global one, and the operator can't add a global one named like some tenant's (the import says which tenants are in the way).
 15. **Keys are UUIDs** *(yours)*, for quantities, families and units alike, as for everything else. Unit files refer to units by name and symbol, so their format doesn't change. The API's ids become strings (a new API revision).
 16. **Turning units on and off, per quantity and per family** *(yours)*:
-    - **Global quantities and families have `default_available`** *(yours)*: whether a tenant has them without having chosen. A new global quantity or family shows up in every tenant, or not, according to this flag, with nothing else to set.
+    - **Global quantities and families have `standard`** *(yours; first named `default_available`)*: whether a tenant has them without having chosen. A new global quantity or family shows up in every tenant, or not, according to this flag, with nothing else to set.
     - **A tenant stores only its choices**, in `tenant_quantity` and `tenant_unit_family`: (tenant, quantity or family, `available`).
-    - **A quantity is available** by the tenant's choice, otherwise by its `default_available`. A tenant's own quantities are available unless it turns them off.
-    - **A family is available** when its quantity is, and then by the tenant's choice, otherwise by its `default_available`.
+    - **A quantity is available** by the tenant's choice, otherwise by its `standard`. A tenant's own quantities are available unless it turns them off.
+    - **A family is available** when its quantity is, and then by the tenant's choice, otherwise by its `standard`.
     - **A new tenant needs no unit rows:** the defaults are its starting point.
     - **Choosing a unit** for an attribute or an item takes only available units. Units of quantities or families that were turned off still show and convert wherever they are already used.
     - **A quantity or family in use can't be turned off.** The refusal (409) names the attributes and items that use it. Otherwise numbers would show in a unit nobody can choose.
-    - **The API:** units, families and quantities say `global`, `available` and (global ones) `default_available`. `PATCH /quantities/{id}` and `PATCH /unit-families/{id}` with `{"available": true | false | null}` set the tenant's choice; `null` goes back to the default.
-17. **The bootstrap set is global and available by default,** all of it. The operator can change `default_available` with `wtfd unit default`.
+    - **The API:** units, families and quantities say `global`, `available` and (global ones) `standard`. `PATCH /quantities/{id}` and `PATCH /unit-families/{id}` with `{"available": true | false | null}` set the tenant's choice; `null` goes back to the default.
+17. **The bootstrap set is global and available by default,** all of it. The operator can change `standard` with `wtfd unit standard`.
 
 ## Files
 
@@ -75,7 +75,7 @@ Run as the DBA role, like the other `wtfd` actions:
 | `wtfd account create --host bob --email …` | Another account with every privilege (as today, now in a tenant). |
 | `wtfd account password --host bob --email …` | A new password for a lost one (as today, now in a tenant). |
 | `wtfd unit import --global FILE [--dry-run]` | Adds global units from a unit file. |
-| `wtfd unit default --quantity NAME \| --family NAME --available true\|false` | Changes whether a global quantity or family is available by default. |
+| `wtfd unit standard --quantity NAME | --family NAME --available true|false` | Changes whether a global quantity or family is available as standard. |\| --family NAME --available true\|false` | Changes whether a global quantity or family is available by default. |
 
 `wtfd tenant create` is the convenient way; three `INSERT`s (tenant, account, with a bcrypt password) do the same.
 
@@ -84,7 +84,7 @@ Run as the DBA role, like the other `wtfd` actions:
 ## The schema
 
 24. **The migrations start again at `0001`** *(yours)*, and existing databases are recreated: they held only test data.
-25. **`0001_schema.sql`** is everything before plus tenants; **`0002_units.sql`** is the global bootstrap set.
+25. **`0001_schema.sql`** is everything before plus tenants; **`0002_units.sql`** is the global bootstrap set; **`0003_renames.sql`** renames `tenant.next_code` to `code` and `default_available` to `standard` (your names), and stays as a migration because the dev database already had `0001`.
 
 ## What changes for clients
 

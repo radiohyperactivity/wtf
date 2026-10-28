@@ -76,7 +76,7 @@ class NamedRef {
 mixin Availability {
   bool get global;
   bool get available;
-  bool get defaultAvailable;
+  bool get standard;
 
   /// The inventory's own choice; null follows the default.
   bool? get choice;
@@ -90,7 +90,7 @@ class Quantity with Availability {
     this.baseSymbol = '',
     this.global = true,
     this.available = true,
-    this.defaultAvailable = true,
+    this.standard = true,
     this.choice,
   });
 
@@ -102,7 +102,7 @@ class Quantity with Availability {
         (_obj(json['base_unit']) ?? const {})['symbol'] as String? ?? '',
     global: json['global'] as bool? ?? true,
     available: json['available'] as bool? ?? true,
-    defaultAvailable: json['default_available'] as bool? ?? true,
+    standard: json['standard'] as bool? ?? true,
     choice: json['choice'] as bool?,
   );
 
@@ -122,7 +122,7 @@ class Quantity with Availability {
   @override
   final bool available;
   @override
-  final bool defaultAvailable;
+  final bool standard;
   @override
   final bool? choice;
 }
@@ -236,7 +236,7 @@ class UnitFamily with Availability {
     this.units = const [],
     this.global = true,
     this.available = true,
-    this.defaultAvailable = true,
+    this.standard = true,
     this.choice,
   });
 
@@ -250,7 +250,7 @@ class UnitFamily with Availability {
     units: _list(json['units']).map(Unit.fromJson).toList(),
     global: json['global'] as bool? ?? true,
     available: json['available'] as bool? ?? true,
-    defaultAvailable: json['default_available'] as bool? ?? true,
+    standard: json['standard'] as bool? ?? true,
     choice: json['choice'] as bool?,
   );
 
@@ -268,7 +268,7 @@ class UnitFamily with Availability {
   @override
   final bool available;
   @override
-  final bool defaultAvailable;
+  final bool standard;
   @override
   final bool? choice;
 }

@@ -175,7 +175,7 @@ func TestTenants(t *testing.T) {
 	}
 	e.expect(t, 204, "DELETE", "/attributes/"+width, nil, b...)
 	f := e.expect(t, 200, "PATCH", "/unit-families/"+imperial, obj("available", false), b...).body
-	if get(t, f, "available") != false || get(t, f, "choice") != false || get(t, f, "default_available") != true {
+	if get(t, f, "available") != false || get(t, f, "choice") != false || get(t, f, "standard") != true {
 		t.Errorf("turned off: %v", f)
 	}
 	e.expect(t, 409, "POST", "/attributes", obj("name", "Width", "datatype", "float", "unit", inch), b...)
@@ -225,7 +225,7 @@ func TestTenants(t *testing.T) {
 	if err != nil || !bytes.Contains(report, []byte(host)) {
 		t.Errorf("a global family named like a tenant's: %s %v", report, err)
 	}
-	if err := admin.SetUnitDefault(context.Background(), conn, "family", "Nautical length", false); err != nil {
+	if err := admin.SetUnitStandard(context.Background(), conn, "family", "Nautical length", false); err != nil {
 		t.Fatal(err)
 	}
 	for _, f := range e.expect(t, 200, "GET", "/unit-families", nil).body.([]any) {

@@ -138,16 +138,16 @@ func ImportGlobalUnits(ctx context.Context, conn *pgx.Conn, data []byte, dryRun 
 	return []byte(report), err
 }
 
-// SetUnitDefault sets whether a global quantity (kind "quantity") or unit
+// SetUnitStandard sets whether a global quantity (kind "quantity") or unit
 // family (kind "family"), named name, is available to tenants that haven't
 // chosen.
-func SetUnitDefault(ctx context.Context, conn *pgx.Conn, kind, name string, available bool) error {
+func SetUnitStandard(ctx context.Context, conn *pgx.Conn, kind, name string, available bool) error {
 	table := map[string]string{"quantity": "quantity", "family": "unit_family"}[kind]
 	if table == "" {
 		return fmt.Errorf("unknown kind %q", kind)
 	}
 	tag, err := conn.Exec(ctx, fmt.Sprintf(
-		"UPDATE %s SET default_available = $2 WHERE tenant IS NULL AND lower(name) = lower($1)", table),
+		"UPDATE %s SET standard = $2 WHERE tenant IS NULL AND lower(name) = lower($1)", table),
 		name, available)
 	if err != nil {
 		return err

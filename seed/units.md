@@ -14,7 +14,7 @@ base = value × base_factor + base_offset
 
 The base unit of each quantity has factor 1 and offset 0. Factors are exact where the unit is defined exactly (inch = 0.0254 m, pound = 0.45359237 kg, calorie = 4.184 J). Otherwise they are given to 20 significant digits (°F).
 
-Quantities, families and units have UUIDs, which differ between installations; unit files name them instead. Everything here is available by default (`default_available`); the operator can change that with `wtfd unit default`.
+Quantities, families and units have UUIDs, which differ between installations; unit files name them instead. Everything here is available as standard (`standard`); the operator can change that with `wtfd unit standard`.
 
 The SQL is in [`db/migrations/0002_units.sql`](../db/migrations/0002_units.sql).
 

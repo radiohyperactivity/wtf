@@ -532,7 +532,7 @@ class _UnitsScreenState extends State<UnitsScreen> {
           IconButton(
             icon: const Icon(Icons.undo),
             tooltip:
-                'Back to the default (${a.defaultAvailable ? 'on' : 'off'})',
+                'Back to the default (${a.standard ? 'on' : 'off'})',
             onPressed: () => set(null),
           ),
         Switch(value: a.available, onChanged: enabled ? (v) => set(v) : null),
