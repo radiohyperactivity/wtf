@@ -1,6 +1,13 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <!-- The app talks to the wtfd server. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- open_filex asks for these, for opening the phone's own files; the
+         app only opens attachments it has downloaded to its own cache. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" tools:node="remove"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" tools:node="remove"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" tools:node="remove"/>
     <!-- wtfd speaks plain HTTP and leaves HTTPS to a proxy, which is optional
          (WTFD.md), so a server on the home network can be reached without
          one. The session token then travels unencrypted. -->

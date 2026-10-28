@@ -12,6 +12,8 @@ import '../api/models.dart';
 import '../api/units.dart';
 import '../session.dart';
 import 'common.dart';
+import 'link.dart';
+import 'open_native.dart' if (dart.library.js_interop) 'open_native_web.dart';
 
 /// An attached image, loaded from the API with the session. With [decode]
 /// it is decoded to fit that box (in logical pixels, an infinite side being
@@ -330,6 +332,8 @@ class AttachmentList extends StatelessWidget {
             if (title != null && title != a.title) {
               run(() => client.patchAttachment(a, title));
             }
+          case 'open':
+            openAttachment(context, a);
           case 'download':
             download(context, a);
           case 'photo':
@@ -345,6 +349,8 @@ class AttachmentList extends StatelessWidget {
         }
       },
       itemBuilder: (context) => [
+        if (canOpen(a, web: context.read<Session>().isWeb))
+          const PopupMenuItem(value: 'open', child: Text('Open')),
         const PopupMenuItem(value: 'download', child: Text('Download…')),
         if (onChanged != null) ...[
           const PopupMenuItem(value: 'title', child: Text('Title…')),
@@ -431,6 +437,101 @@ Future<void> download(BuildContext context, Attachment a) async {
     final (name, bytes) = await client.downloadAttachment(a);
     messenger.hideCurrentSnackBar();
     await saveDownloadedFile(name, bytes);
+  } catch (e) {
+    messenger.hideCurrentSnackBar();
+    if (context.mounted) showError(context, e);
+  }
+}
+
+/// The types the native apps open with the device's own app, with their
+/// extensions (the first is the one a file gets). Documents, pictures,
+/// sound, video and models only: nothing that runs or may run code
+/// (programs, scripts, web pages, SVG, Office files with macros, the old
+/// Office formats) is opened from the app; those are Download only.
+const _openExtensions = <String, List<String>>{
+  'image/jpeg': ['jpg', 'jpeg'],
+  'image/png': ['png'],
+  'image/gif': ['gif'],
+  'image/webp': ['webp'],
+  'image/heic': ['heic'],
+  'application/pdf': ['pdf'],
+  'text/plain': ['txt'],
+  'text/markdown': ['md'],
+  'text/csv': ['csv'],
+  'application/json': ['json'],
+  'application/zip': ['zip'],
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': [
+    'docx',
+  ],
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['xlsx'],
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': [
+    'pptx',
+  ],
+  'application/vnd.oasis.opendocument.text': ['odt'],
+  'application/vnd.oasis.opendocument.spreadsheet': ['ods'],
+  'application/vnd.oasis.opendocument.presentation': ['odp'],
+  'audio/mpeg': ['mp3'],
+  'audio/mp4': ['m4a'],
+  'video/mp4': ['mp4'],
+  'video/quicktime': ['mov'],
+  'model/stl': ['stl'],
+  'model/step': ['step', 'stp'],
+};
+
+/// Whether Open is offered for [a]. The web app offers what the browser
+/// shows itself, in a new tab: what the server sends inline (images but
+/// SVG, PDF and plain text). The native apps offer [_openExtensions].
+bool canOpen(Attachment a, {required bool web}) => web
+    ? a.isImage || a.type == 'application/pdf' || a.type == 'text/plain'
+    : _openExtensions.containsKey(a.type);
+
+/// The name of the file the native apps open: the title, with characters
+/// that file systems or shells treat specially replaced, and always ending
+/// in the type's extension, so the device picks the app by the type.
+String openFileName(Attachment a) {
+  final extensions = _openExtensions[a.type] ?? const ['bin'];
+  var stem = a.title.replaceAll(
+    RegExp(r'[^\p{L}\p{N} ._()-]', unicode: true),
+    '_',
+  );
+  final dot = stem.lastIndexOf('.');
+  if (dot > 0 && extensions.contains(stem.substring(dot + 1).toLowerCase())) {
+    stem = stem.substring(0, dot);
+  }
+  stem = stem.replaceAll(RegExp(r'^[ .]+|[ .]+$'), '');
+  if (stem.length > 100) stem = stem.substring(0, 100).trimRight();
+  if (stem.isEmpty) stem = 'attachment';
+  return '$stem.${extensions.first}';
+}
+
+/// Opens a downloaded attachment with the device's own app; false when
+/// none opens it. Tests replace it.
+Future<bool> Function(Attachment a, String name, Uint8List bytes)
+openDownloadedFile = (a, name, bytes) =>
+    openNative(a.hash.isEmpty ? a.id : a.hash, name, a.type, bytes);
+
+/// Opens an attachment: the web app in a new tab of the browser, the
+/// native apps with the device's own app for its type, from a copy in the
+/// app's temporary files. Offered where [canOpen].
+Future<void> openAttachment(BuildContext context, Attachment a) async {
+  final session = context.read<Session>();
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    final bool opened;
+    if (session.isWeb) {
+      opened = await openLink(session.client.attachmentUrl(a));
+    } else {
+      showMessage(context, 'Opening ${a.title}…');
+      final (_, bytes) = await session.client.downloadAttachment(a);
+      opened = await openDownloadedFile(a, openFileName(a), bytes);
+      messenger.hideCurrentSnackBar();
+    }
+    if (!opened && context.mounted) {
+      showMessage(
+        context,
+        'Nothing on this device opens ${a.type} files. Download it instead.',
+      );
+    }
   } catch (e) {
     messenger.hideCurrentSnackBar();
     if (context.mounted) showError(context, e);
@@ -642,13 +743,31 @@ class _AttachmentScreenState extends State<AttachmentScreen> {
     return Loader<Attachment>(
       title: 'Attachment',
       load: () => client.attachment(widget.ownerPath, widget.id),
+      // Open is the main button where it's offered, with Download beside the
+      // title; otherwise Download is.
       builder: (context, a, reload) => Scaffold(
-        appBar: AppBar(title: Text(a.title)),
-        floatingActionButton: FloatingActionButton.extended(
-          onPressed: () => download(context, a),
-          icon: const Icon(Icons.download),
-          label: const Text('Download'),
+        appBar: AppBar(
+          title: Text(a.title),
+          actions: [
+            if (canOpen(a, web: session.isWeb))
+              IconButton(
+                icon: const Icon(Icons.download),
+                tooltip: 'Download',
+                onPressed: () => download(context, a),
+              ),
+          ],
         ),
+        floatingActionButton: canOpen(a, web: session.isWeb)
+            ? FloatingActionButton.extended(
+                onPressed: () => openAttachment(context, a),
+                icon: const Icon(Icons.open_in_new),
+                label: const Text('Open'),
+              )
+            : FloatingActionButton.extended(
+                onPressed: () => download(context, a),
+                icon: const Icon(Icons.download),
+                label: const Text('Download'),
+              ),
         body: Readable(
           child: ListView(
             padding: const EdgeInsets.only(bottom: 16),

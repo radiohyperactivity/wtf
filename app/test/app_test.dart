@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/testing.dart';
+import 'package:wtf/api/models.dart';
 import 'package:wtf/app.dart';
 import 'package:wtf/screens/attribute_screens.dart';
 import 'package:wtf/screens/search_screen.dart';
@@ -501,13 +502,27 @@ void main() {
         .state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger))
         .clearSnackBars();
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FloatingActionButton, 'Download'));
+    // A PDF opens, so Download is beside the title.
+    await tester.tap(find.byTooltip('Download'));
     await tester.pumpAndSettle();
     expect(saved, hasLength(1));
     expect(saved.single.$1, 'Manual.pdf');
     expect(saved.single.$2, [1, 2, 3]);
 
-    // The menu of a file offers it too.
+    // Open: with the device's own app, from a file named for its type.
+    final opened = <(String, List<int>)>[];
+    openDownloadedFile = (a, name, bytes) async {
+      opened.add((name, bytes));
+      return true;
+    };
+    addTearDown(() => openDownloadedFile = (a, name, bytes) async => false);
+    await tester.tap(find.widgetWithText(FloatingActionButton, 'Open'));
+    await tester.pumpAndSettle();
+    expect(opened, hasLength(1));
+    expect(opened.single.$1, 'Manual.pdf');
+    expect(opened.single.$2, [1, 2, 3]);
+
+    // The menu of a file offers both.
     await tester.pageBack();
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Attachment'));
@@ -515,6 +530,58 @@ void main() {
     await tester.tap(find.text('Download…'));
     await tester.pumpAndSettle();
     expect(saved, hasLength(2));
+    await tester.tap(find.byTooltip('Attachment'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+    expect(opened, hasLength(2));
+
+    // A type nothing should run from here is Download only.
+    a['type'] = 'application/x-msdownload';
+    await tester.tap(find.byTooltip('Edit')); // any change reloads the item
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await search(tester, 'drill');
+    await tester.tap(find.text('Cordless drill'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Attachment'));
+    await tester.pumpAndSettle();
+    expect(find.text('Download…'), findsOneWidget);
+    expect(find.text('Open'), findsNothing);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Manual'));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(FloatingActionButton, 'Download'), findsOne);
+    expect(find.widgetWithText(FloatingActionButton, 'Open'), findsNothing);
+  });
+
+  test('Open: what each app offers, and the file it opens', () {
+    Attachment file(String title, String type) =>
+        Attachment(id: 'x', owner: '/items/i', title: title, type: type);
+    // The web app: what the browser shows itself.
+    expect(canOpen(file('a', 'application/pdf'), web: true), isTrue);
+    expect(canOpen(file('a', 'image/png'), web: true), isTrue);
+    expect(canOpen(file('a', 'image/svg+xml'), web: true), isFalse);
+    expect(canOpen(file('a', 'application/zip'), web: true), isFalse);
+    // The native apps: documents too, nothing that runs.
+    expect(canOpen(file('a', 'application/zip'), web: false), isTrue);
+    expect(canOpen(file('a', 'text/html'), web: false), isFalse);
+    expect(canOpen(file('a', 'image/svg+xml'), web: false), isFalse);
+    expect(canOpen(file('a', 'application/msword'), web: false), isFalse);
+    expect(canOpen(file('a', 'application/x-msdownload'), web: false), isFalse);
+
+    // Always the type's extension, and nothing a shell would act on.
+    expect(openFileName(file('Datasheet', 'application/pdf')), 'Datasheet.pdf');
+    expect(openFileName(file('manual.PDF', 'application/pdf')), 'manual.pdf');
+    expect(openFileName(file('photo.jpeg', 'image/jpeg')), 'photo.jpg');
+    expect(openFileName(file('setup.exe', 'image/png')), 'setup.exe.png');
+    expect(
+      openFileName(file('Tools & "parts"/2.pdf', 'application/pdf')),
+      'Tools _ _parts__2.pdf',
+    );
+    expect(openFileName(file('...', 'text/plain')), 'attachment.txt');
+    expect(openFileName(file('Kühlschrank', 'text/plain')), 'Kühlschrank.txt');
   });
 
   testWidgets('the appearance is kept on the device', (tester) async {
