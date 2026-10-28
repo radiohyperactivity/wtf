@@ -333,12 +333,15 @@ Future<bool> showAssignDialog(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  ValueField(input),
-                  const SizedBox(height: 4),
-                  const Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text('The default, if any.'),
+                  // The attribute is in the title; this is its default.
+                  ValueField(
+                    input,
+                    label: 'Default value',
+                    helper:
+                        'For items (or stock rows) without a value of '
+                        'their own. Empty: no default',
                   ),
+                  const SizedBox(height: 8),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text('Per unit'),

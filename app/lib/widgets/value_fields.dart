@@ -105,11 +105,16 @@ Map<String, String> ownValues(List<Value> values) => {
     if (!v.isDefault) v.attribute.id: v.text,
 };
 
-/// The input for one attribute.
+/// The input for one attribute, labelled with its name unless [label] says
+/// otherwise.
 class ValueField extends StatefulWidget {
-  const ValueField(this.input, {super.key});
+  const ValueField(this.input, {super.key, this.label, this.helper});
 
   final ValueInput input;
+  final String? label;
+
+  /// Under the field; a date's format comes first.
+  final String? helper;
 
   @override
   State<ValueField> createState() => _ValueFieldState();
@@ -118,8 +123,10 @@ class ValueField extends StatefulWidget {
 class _ValueFieldState extends State<ValueField> {
   ValueInput get input => widget.input;
 
-  String get _label =>
-      input.required ? '${input.attribute.name} *' : input.attribute.name;
+  String get _label {
+    final name = widget.label ?? input.attribute.name;
+    return input.required ? '$name *' : name;
+  }
 
   String? get _hint {
     if (input.defaultText.isNotEmpty) return 'Default: ${input.defaultText}';
@@ -133,6 +140,8 @@ class _ValueFieldState extends State<ValueField> {
     final decoration = InputDecoration(
       labelText: _label,
       hintText: _hint,
+      helperText: widget.helper,
+      helperMaxLines: 3,
       border: const OutlineInputBorder(),
     );
     switch (a.datatype) {
@@ -148,7 +157,13 @@ class _ValueFieldState extends State<ValueField> {
             '';
         return DropdownButtonFormField<String>(
           initialValue: current,
-          decoration: decoration.copyWith(hintText: null, helperText: _hint),
+          decoration: decoration.copyWith(
+            hintText: null,
+            helperText: switch ([?_hint, ?widget.helper]) {
+              [] => null,
+              final parts => parts.join('. '),
+            },
+          ),
           items: [
             DropdownMenuItem(
               value: '',
@@ -165,7 +180,10 @@ class _ValueFieldState extends State<ValueField> {
         return TextFormField(
           controller: input.controller,
           decoration: decoration.copyWith(
-            helperText: 'YYYY-MM-DD, today, +3d, -2w, +1m …',
+            helperText: [
+              'YYYY-MM-DD, today, +3d, -2w, +1m …',
+              ?widget.helper,
+            ].join('. '),
             suffixIcon: IconButton(
               icon: const Icon(Icons.calendar_today),
               tooltip: 'Choose a date',

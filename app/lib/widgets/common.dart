@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import '../api/client.dart';
 import '../api/units.dart';
 import '../session.dart';
+import 'link.dart';
 
 /// The text to show for an error.
 String errorText(Object e) => switch (e) {
@@ -261,14 +262,22 @@ class SectionTitle extends StatelessWidget {
   }
 }
 
-/// "Label    value" in a details list.
+/// "Label    value" in a details list. A [link] value is a web address.
 class Field extends StatelessWidget {
-  const Field(this.label, this.value, {super.key, this.onTap, this.note});
+  const Field(
+    this.label,
+    this.value, {
+    super.key,
+    this.onTap,
+    this.note,
+    this.link = false,
+  });
 
   final String label;
   final String value;
   final String? note;
   final VoidCallback? onTap;
+  final bool link;
 
   @override
   Widget build(BuildContext context) {
@@ -290,25 +299,38 @@ class Field extends StatelessWidget {
               ),
             ),
             Expanded(
-              child: Text.rich(
-                TextSpan(
-                  children: [
-                    TextSpan(
-                      text: value,
-                      style: onTap == null
-                          ? null
-                          : TextStyle(color: theme.colorScheme.primary),
-                    ),
-                    if (note != null)
+              child: link
+                  ? Wrap(
+                      children: [
+                        LinkText(value),
+                        if (note != null)
+                          Text(
+                            '  $note',
+                            style: TextStyle(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                      ],
+                    )
+                  : Text.rich(
                       TextSpan(
-                        text: '  $note',
-                        style: TextStyle(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
+                        children: [
+                          TextSpan(
+                            text: value,
+                            style: onTap == null
+                                ? null
+                                : TextStyle(color: theme.colorScheme.primary),
+                          ),
+                          if (note != null)
+                            TextSpan(
+                              text: '  $note',
+                              style: TextStyle(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                        ],
                       ),
-                  ],
-                ),
-              ),
+                    ),
             ),
           ],
         ),

@@ -11,6 +11,7 @@ import '../api/units.dart';
 import '../session.dart';
 import '../widgets/attachments.dart';
 import '../widgets/common.dart';
+import '../widgets/link.dart';
 import '../widgets/pickers.dart';
 import '../widgets/value_fields.dart';
 
@@ -706,14 +707,18 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
     Widget row(ItemListed item) {
       final d = _loaded[item.id];
       String where = '';
-      final values = <String, (String, bool)>{};
+      final values = <String, (String, bool, bool)>{};
       if (d != null) {
         where = d.stock.isEmpty
             ? '(no stock)'
             : {for (final s in d.stock) _locations!.pathOf(s.location)}
                   .join(', ');
         for (final v in d.values) {
-          values[v.attribute.id] = (v.text, v.isDefault);
+          values[v.attribute.id] = (
+            v.text,
+            v.isDefault,
+            v.attribute.datatype == 'url',
+          );
         }
       }
       return InkWell(
@@ -767,15 +772,16 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
               cell(fixed[2].$2, short(item.stockText)),
               cell(fixed[3].$2, short(where, style: muted)),
               for (final (id, _) in columns)
-                cell(
-                  attributeWidth,
-                  short(
-                    values[id]?.$1 ?? '',
-                    style: values[id]?.$2 == true
+                cell(attributeWidth, switch (values[id]) {
+                  (final text, _, true) => LinkText(text, maxLines: 3),
+                  (final text, final isDefault, _) => short(
+                    text,
+                    style: isDefault
                         ? muted.copyWith(fontStyle: FontStyle.italic)
                         : null,
                   ),
-                ),
+                  null => const SizedBox.shrink(),
+                }),
             ],
           ),
         ),

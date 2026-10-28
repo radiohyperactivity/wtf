@@ -13,7 +13,12 @@ import '../widgets/restore.dart';
 /// The values of an item or a stock row; class defaults are marked.
 List<Widget> valueFields(List<Value> values) => [
   for (final v in values)
-    Field(v.attribute.name, v.text, note: v.isDefault ? '(default)' : null),
+    Field(
+      v.attribute.name,
+      v.text,
+      note: v.isDefault ? '(default)' : null,
+      link: v.attribute.datatype == 'url',
+    ),
 ];
 
 /// An item, like `wtf item get`: class, values, stock rows with their

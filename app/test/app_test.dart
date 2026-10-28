@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:io' show HandshakeException;
 
+import 'package:flutter/gestures.dart' show kSecondaryButton;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/testing.dart';
@@ -11,6 +13,7 @@ import 'package:wtf/screens/search_screen.dart';
 import 'package:wtf/session.dart';
 import 'package:wtf/theme.dart';
 import 'package:wtf/widgets/attachments.dart';
+import 'package:wtf/widgets/link.dart';
 
 import 'fake_server.dart';
 
@@ -704,6 +707,90 @@ void main() {
       '[{"attribute":"a-volt","op":"between","value":[20,24]}]',
     );
     expect(find.text('Nothing found.'), findsOneWidget);
+  });
+
+  testWidgets('a URL value is a link: open it, or copy it from its menu', (
+    tester,
+  ) async {
+    setSize(tester, 400);
+    final fake = FakeServer();
+    const url = 'https://example.com/drill.pdf';
+    (fake.items.first['values'] as Map)['a-manual'] = url;
+    final opened = <Uri>[];
+    final before = openLink;
+    openLink = (u) async {
+      opened.add(u);
+      return true;
+    };
+    addTearDown(() => openLink = before);
+    String? copied;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied = (call.arguments as Map)['text'] as String;
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await startApp(tester, fake);
+    await search(tester, 'drill');
+    await tester.tap(find.text('Cordless drill'));
+    await tester.pumpAndSettle();
+
+    // A tap opens it.
+    await tester.tap(find.text(url));
+    await tester.pumpAndSettle();
+    expect(opened, [Uri.parse(url)]);
+
+    // A long press offers to open or copy it.
+    await tester.longPress(find.text(url));
+    await tester.pumpAndSettle();
+    expect(find.text('Open link'), findsOneWidget);
+    await tester.tap(find.text('Copy link'));
+    await tester.pumpAndSettle();
+    expect(copied, url);
+    expect(find.text('Link copied'), findsOneWidget);
+
+    // A right click too; and in the table, a tap on the link opens it rather
+    // than the item.
+    setSize(tester, 1200);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await search(tester, 'drill');
+    expect(find.text('Manual'), findsOneWidget);
+    await tester.tap(find.text(url), buttons: kSecondaryButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open link'));
+    await tester.pumpAndSettle();
+    expect(opened, [Uri.parse(url), Uri.parse(url)]);
+    await tester.tap(find.text(url));
+    await tester.pumpAndSettle();
+    expect(opened, hasLength(3));
+    expect(find.byType(FoundItemsScreen), findsOneWidget);
+  });
+
+  testWidgets('assigning an attribute asks for its default, not its name', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    await startApp(tester, FakeServer());
+    GoRouter.of(tester.element(find.byType(Scaffold).first))
+        .push('/classes/c-drills');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Voltage *'));
+    await tester.pumpAndSettle();
+    expect(find.text('Voltage in Drills'), findsOneWidget);
+    expect(field('Default value *'), findsNothing);
+    expect(field('Default value'), findsOneWidget);
+    expect(field('Voltage'), findsNothing);
+    expect(find.textContaining('Empty: no default'), findsOneWidget);
   });
 
   testWidgets('a label code finds its object', (tester) async {

@@ -59,6 +59,9 @@ class FakeServer {
     'unit_lock': false,
   };
 
+  /// Not in any class; a test gives an item a value of it.
+  final manual = {'id': 'a-manual', 'name': 'Manual', 'datatype': 'url'};
+
   final classes = <Map<String, dynamic>>[
     {'id': 'c-tools', 'name': 'Tools', 'parent': null, 'container': true},
     {
@@ -185,7 +188,14 @@ class FakeServer {
 
   List<Map<String, dynamic>> _values(Map<String, dynamic> i) => [
     for (final MapEntry(:key, :value) in (i['values'] as Map).entries)
-      if (key == 'a-volt')
+      if (key == 'a-manual')
+        {
+          'attribute': manual,
+          'value': value,
+          'display': null,
+          'is_default': false,
+        }
+      else if (key == 'a-volt')
         {
           'attribute': voltage,
           'value': value,
