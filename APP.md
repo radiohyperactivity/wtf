@@ -264,7 +264,7 @@ Built for API revision 4, with `where` on `GET /items` and `--where` in the CLI 
 31. **Results replace the form.** They open on top of it at `/found`, so Back returns to the form with everything still filled in. The URL holds the search, so it can be reloaded or bookmarked; the form itself isn't restored from it.
 32. **Results in two shapes.**
     - **Narrow (under 720 points):** compact rows, as before: name, code, class, stock, and where each stock row is.
-    - **Wide:** a table with the item, its class, stock and locations, and a column for every attribute the found items show, per-unit ones included (their values from all stock rows). Columns appear in the order they are first seen, so they don't move as more rows load. Class defaults are shown in grey italics. The table scrolls sideways when it doesn't fit.
+    - **Wide:** a table with the item, its class, stock and locations, and a column for every attribute the found items have values for. Only the items' own values: per-unit ones belong to stock rows, and are shown on the item and the stock row (your choice, after a long per-unit value stretched rows). Each cell ends after three lines, the rest in a tooltip. Columns appear in the order they are first seen, so they don't move as more rows load. Class defaults are shown in grey italics. The table scrolls sideways when it doesn't fit.
 
 ### Importing units
 

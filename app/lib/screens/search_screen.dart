@@ -629,14 +629,15 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
     );
   }
 
-  /// The attributes the loaded items show, item and per-unit ones, in the
-  /// order they were first seen, so columns don't move as more rows load.
+  /// The attributes the loaded items show, in the order they were first
+  /// seen, so columns don't move as more rows load. Only the items' own
+  /// values: per-unit ones belong to stock rows, shown on the item.
   List<(String, String)> get _attributeColumns {
     final seen = <String, String>{};
     for (final r in _rows) {
       final d = _loaded[r.id];
       if (d == null) continue;
-      for (final v in [...d.values, for (final s in d.stock) ...s.values]) {
+      for (final v in d.values) {
         seen.putIfAbsent(v.attribute.id, () => v.attribute.name);
       }
     }
@@ -713,16 +714,6 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
                   .join(', ');
         for (final v in d.values) {
           values[v.attribute.id] = (v.text, v.isDefault);
-        }
-        // Per-unit values: those of every stock row, each once.
-        final perUnit = <String, Set<String>>{};
-        for (final s in d.stock) {
-          for (final v in s.values) {
-            perUnit.putIfAbsent(v.attribute.id, () => {}).add(v.text);
-          }
-        }
-        for (final MapEntry(:key, :value) in perUnit.entries) {
-          values[key] = (value.join(', '), false);
         }
       }
       return InkWell(
