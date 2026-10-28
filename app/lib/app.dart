@@ -22,6 +22,7 @@ import 'screens/stock_form.dart';
 import 'screens/stock_screen.dart';
 import 'screens/tree_screen.dart';
 import 'session.dart';
+import 'widgets/attachments.dart';
 
 class WtfApp extends StatefulWidget {
   const WtfApp({super.key, required this.session});
@@ -108,6 +109,19 @@ GoRouter buildRouter(Session session) => GoRouter(
           },
         ),
         GoRoute(path: '/me', builder: (context, state) => const MeScreen()),
+        // An attachment, reached from history: /attachment/items/{owner
+        // id}/{id}, and so on for stock, locations and classes.
+        GoRoute(
+          path: '/attachment/:kind/:owner/:id',
+          builder: (context, state) {
+            final p = state.pathParameters;
+            return AttachmentScreen(
+              key: ValueKey(state.uri.toString()),
+              ownerPath: '/${p['kind']}/${p['owner']}',
+              id: p['id']!,
+            );
+          },
+        ),
         GoRoute(
           path: '/manage',
           builder: (context, state) => const ManageScreen(),

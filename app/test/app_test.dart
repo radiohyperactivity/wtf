@@ -6,6 +6,7 @@ import 'package:wtf/app.dart';
 import 'package:wtf/screens/attribute_screens.dart';
 import 'package:wtf/screens/search_screen.dart';
 import 'package:wtf/session.dart';
+import 'package:wtf/widgets/attachments.dart';
 
 import 'fake_server.dart';
 
@@ -269,6 +270,65 @@ void main() {
     await tester.pumpAndSettle();
     expect(fake.changes.last, 'DELETE /api/v1/items/i-drill/attachments/att-1');
     expect(find.text('Datasheet'), findsNothing);
+  });
+
+  testWidgets('attach a file, open it, and restore a deleted one', (
+    tester,
+  ) async {
+    setSize(tester, 700);
+    final fake = FakeServer();
+    pickAttachmentFiles = () async => [
+      ('front.png', () async => [1, 2, 3]),
+    ];
+    addTearDown(() => pickAttachmentFiles = () async => []);
+    await startApp(tester, fake);
+    await search(tester, 'drill');
+    await tester.tap(find.text('Cordless drill'));
+    await tester.pumpAndSettle();
+
+    // One file: a title, and for an image, "make it the photo".
+    await tester.tap(find.text('Add files'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'front.png'),
+      'Front',
+    );
+    await tester.tap(find.text('Make it the photo'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Attach'));
+    await tester.pumpAndSettle();
+    final upload = fake.changes.last;
+    expect(upload, startsWith('POST /api/v1/items/i-drill/attachments'));
+    expect(upload, contains('filename="front.png"'));
+    expect(upload.toLowerCase(), contains('content-type: image/png'));
+    expect(upload, contains('name="title"'));
+    final a = fake.itemAttachments['i-drill']!.single;
+    expect(a['title'], 'Front');
+    expect(fake.items.first['photo'], a['id']);
+    expect(find.text('Attached front.png.'), findsOneWidget);
+
+    // A file opens on its own screen; a deleted one can be restored there.
+    a
+      ..['type'] = 'application/pdf'
+      ..['title'] = 'Manual'
+      ..['deleted'] = true;
+    fake.items.first.remove('photo');
+    await tester.tap(find.byTooltip('Edit')); // any change reloads the item
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await search(tester, 'drill');
+    await tester.tap(find.text('Cordless drill'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Manual'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('This attachment is deleted'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Restore'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      'POST /api/v1/items/i-drill/attachments/${a['id']}/restore {}',
+    );
+    expect(find.textContaining('This attachment is deleted'), findsNothing);
+    expect(find.text('3 B'), findsOneWidget);
   });
 
   testWidgets('the appearance is kept on the device', (tester) async {

@@ -354,6 +354,7 @@ class Attachment {
     required this.type,
     this.size = 0,
     this.hash = '',
+    this.deleted = false,
   });
 
   /// [owner] is the path of the object it belongs to, such as /items/{id}.
@@ -364,6 +365,7 @@ class Attachment {
     type: json['type'] as String? ?? '',
     size: json['size'] as int? ?? 0,
     hash: json['hash'] as String? ?? '',
+    deleted: json['deleted'] as bool? ?? false,
   );
 
   static Attachment? maybe(Object? json, String owner) =>
@@ -387,6 +389,7 @@ class Attachment {
 
   /// The SHA-256 of the content, in hex.
   final String hash;
+  final bool deleted;
 
   String get sizeText {
     if (size >= 1 << 30) return '${(size / (1 << 30)).toStringAsFixed(1)} GiB';

@@ -833,22 +833,42 @@ class _Describer {
   }
 
   /// An attachment of an item, stock row, location or class: added,
-  /// renamed or deleted.
+  /// renamed, deleted, restored or purged. Lines lead to the attachment, so a
+  /// deleted one can be restored from there.
   List<HistoryLine> _attachment(HistoryEntry e) {
     final title = '${e.data['title']}';
     final what = '${e.data['type']}'.startsWith('image/')
         ? 'photo $title'
         : 'file $title';
+    final kind = e.table.replaceFirst('_attachment', '');
+    final path = switch (kind) {
+      'item' => 'items',
+      'stock' => 'stock',
+      'location' => 'locations',
+      _ => 'classes',
+    };
+    final link = '/attachment/$path/${e.data[kind]}/${e.rowId}';
     switch (e.operation) {
       case 'insert':
-        return [HistoryLine('Added $what')];
+        return [HistoryLine('Added $what', link)];
       case 'delete':
-        return [HistoryLine('Deleted $what')];
+        return [HistoryLine('Purged $what')];
+    }
+    final out = <HistoryLine>[];
+    final deleted = e.change('deleted');
+    if (deleted != null) {
+      out.add(
+        HistoryLine(
+          '${deleted.now == true ? 'Deleted' : 'Restored'} $what',
+          link,
+        ),
+      );
     }
     final t = e.change('title');
-    return t == null
-        ? const []
-        : [HistoryLine('Renamed attachment “${t.old}” to “${t.now}”')];
+    if (t != null) {
+      out.add(HistoryLine('Renamed attachment “${t.old}” to “${t.now}”', link));
+    }
+    return out;
   }
 
   List<HistoryLine> _account(HistoryEntry e) {

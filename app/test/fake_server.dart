@@ -378,7 +378,9 @@ class FakeServer {
             .trim(),
       );
     }
-    final body = req.body.isEmpty
+    final multipart =
+        req.headers['content-type']?.startsWith('multipart/') ?? false;
+    final body = req.body.isEmpty || multipart
         ? null
         : jsonDecode(req.body) as Map<String, dynamic>;
     final segments = path.split('/').where((s) => s.isNotEmpty).toList();
@@ -553,6 +555,40 @@ class FakeServer {
         };
         stock.add(row);
         return _json(stockJson(row['id'] as String));
+      case ('POST', ['items', final id, 'attachments']):
+        // The parts of the multipart body, roughly: name="x" ... value.
+        String? part(String name) => RegExp(
+          'name="$name"(?:; filename="([^"]*)")?\r\n(?:[^\r]*\r\n)*?\r\n([^\r]*)',
+        ).firstMatch(req.body)?.let((m) => name == 'file' ? m[1] : m[2]);
+        final type =
+            RegExp(
+              r'content-type: (\S+)',
+              caseSensitive: false,
+            ).allMatches(req.body).lastOrNull?[1] ??
+            '';
+        final a = <String, dynamic>{
+          'id': _id('att'),
+          'title': part('title') ?? part('file'),
+          'type': type,
+          'size': 3,
+          'hash': 'ab',
+          'deleted': false,
+        };
+        (itemAttachments[id] ??= []).add(a);
+        final item = items.firstWhere((i) => i['id'] == id);
+        if (part('photo') == 'true') item['photo'] = a['id'];
+        return _json(a, 201);
+      case ('GET', ['items', final id, 'attachments', final attachment]):
+        return _json(
+          itemAttachments[id]!.firstWhere((a) => a['id'] == attachment),
+        );
+      case (
+        'POST',
+        ['items', final id, 'attachments', final attachment, 'restore'],
+      ):
+        final a = itemAttachments[id]!.firstWhere((a) => a['id'] == attachment);
+        a['deleted'] = false;
+        return _json(a);
       case ('DELETE', ['items', final id, 'attachments', final attachment]):
         itemAttachments[id]?.removeWhere((a) => a['id'] == attachment);
         return http.Response('', 204, headers: _headers);
@@ -679,4 +715,8 @@ class FakeServer {
     }
     return _problem(404, 'Not found: $method $path');
   });
+}
+
+extension<T> on T {
+  R let<R>(R Function(T) f) => f(this);
 }

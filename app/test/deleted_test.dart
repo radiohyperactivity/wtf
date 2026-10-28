@@ -383,10 +383,31 @@ void main() {
         'class': 'c-drills',
       };
       final entries = [
-        entry(5, 't5', 'item_attachment', 'delete', {
+        entry(7, 't7', 'item_attachment', 'delete', {
           ...att,
           'title': 'Front view',
+          'deleted': true,
         }),
+        entry(
+          6,
+          't6',
+          'item_attachment',
+          'update',
+          {...att, 'title': 'Front view'},
+          {
+            'deleted': {'old': true, 'new': false},
+          },
+        ),
+        entry(
+          5,
+          't5',
+          'item_attachment',
+          'update',
+          {...att, 'title': 'Front view', 'deleted': true},
+          {
+            'deleted': {'old': false, 'new': true},
+          },
+        ),
         entry(
           4,
           't4',
@@ -415,8 +436,22 @@ void main() {
         entries,
         names,
         const HistoryFocus('items', 'i-drill'),
-      ).map((e) => e.lines.map((l) => l.text).join(' / '));
-      expect(lines, [
+      );
+      // Lines lead to the attachment, except a purge (and the item's own
+      // photo line, in the item's history).
+      const link = '/attachment/items/i-drill/att-1';
+      expect(lines.map((e) => e.lines.first.link).toList(), [
+        null,
+        link,
+        link,
+        null,
+        link,
+        link,
+      ]);
+      final texts = lines.map((e) => e.lines.map((l) => l.text).join(' / '));
+      expect(texts, [
+        'Purged photo Front view',
+        'Restored photo Front view',
         'Deleted photo Front view',
         'Photo: Front view',
         'Renamed attachment “Front” to “Front view”',

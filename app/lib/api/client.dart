@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 
 import 'models.dart';
 import 'units.dart';
@@ -11,7 +12,7 @@ import 'units.dart';
 /// The API version and revision this app was built for.
 const apiPath = '/api/v1';
 const apiVersion = 1;
-const apiRevision = 7;
+const apiRevision = 8;
 
 const sessionCookie = 'wtf_session';
 
@@ -103,6 +104,35 @@ class ApiProblem implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// The MIME type of a file, by the extension of its [name]; null when it
+/// isn't one of these common ones.
+String? mediaTypeOf(String name) {
+  final dot = name.lastIndexOf('.');
+  if (dot < 0) return null;
+  return const {
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'png': 'image/png',
+    'gif': 'image/gif',
+    'webp': 'image/webp',
+    'heic': 'image/heic',
+    'svg': 'image/svg+xml',
+    'pdf': 'application/pdf',
+    'txt': 'text/plain',
+    'md': 'text/markdown',
+    'csv': 'text/csv',
+    'json': 'application/json',
+    'zip': 'application/zip',
+    'doc': 'application/msword',
+    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'xls': 'application/vnd.ms-excel',
+    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'stl': 'model/stl',
+    'step': 'model/step',
+    'stp': 'model/step',
+  }[name.substring(dot + 1).toLowerCase()];
 }
 
 /// A request body that is JSON text already, sent as it is.
@@ -798,6 +828,55 @@ class ApiClient {
   /// Deletes an attachment, for good.
   Future<void> deleteAttachment(Attachment a) => _call('DELETE', a.path);
 
+  /// The attachment [id] of the object at [ownerPath], also when it is
+  /// deleted.
+  Future<Attachment> attachment(String ownerPath, String id) async =>
+      Attachment.fromJson(
+        await _call('GET', '$ownerPath/attachments/$id') as Json,
+        ownerPath,
+      );
+
+  /// Uploads a file to the object at [ownerPath]: [name] is its file name,
+  /// and the title unless [title] is given. With [photo] it becomes the
+  /// object's photo (images only). The type comes from the name's extension
+  /// when it's a known one; otherwise the server detects it.
+  Future<Attachment> uploadAttachment(
+    String ownerPath, {
+    required String name,
+    required List<int> bytes,
+    String? title,
+    bool photo = false,
+  }) async {
+    final req =
+        http.MultipartRequest(
+            'POST',
+            server.resolve('$apiPath$ownerPath/attachments'),
+          )
+          ..headers['Accept'] = 'application/json'
+          ..fields['photo'] = '$photo';
+    if (title != null && title.trim().isNotEmpty) {
+      req.fields['title'] = title.trim();
+    }
+    final type = mediaTypeOf(name);
+    req.files.add(
+      http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: name,
+        contentType: type == null ? null : MediaType.parse(type),
+      ),
+    );
+    final resp = await _send(req);
+    return Attachment.fromJson(decodeBody(resp.body) as Json, ownerPath);
+  }
+
+  /// Restores a deleted attachment, as an ordinary one.
+  Future<Attachment> restoreAttachment(Attachment a) async =>
+      Attachment.fromJson(
+        await _call('POST', '${a.path}/restore', body: const {}) as Json,
+        a.owner,
+      );
+
   /// Makes one of an object's own image attachments its photo; null for none.
   Future<void> setPhoto(String ownerPath, String? attachmentId) =>
       _call('PATCH', ownerPath, body: {'photo': attachmentId});
@@ -869,6 +948,14 @@ class ApiClient {
       req.headers['Content-Type'] = 'application/json';
       req.body = body is RawJson ? body.text : encodeBody(body);
     }
+    return _send(req, notModifiedOk: notModifiedOk);
+  }
+
+  /// Sends a request with the session, and turns errors into [ApiProblem]s.
+  Future<http.Response> _send(
+    http.BaseRequest req, {
+    bool notModifiedOk = false,
+  }) async {
     req.headers.addAll(authHeaders);
     final http.Response resp;
     try {

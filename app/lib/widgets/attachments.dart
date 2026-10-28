@@ -1,9 +1,15 @@
 // Photos and other attached files.
 
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../api/client.dart';
 import '../api/models.dart';
+import '../api/units.dart';
 import '../session.dart';
 import 'common.dart';
 
@@ -58,8 +64,9 @@ void showPhoto(BuildContext context, Attachment attachment) {
 
 /// The attachments of the object at [ownerPath] (/items/{id}, …): images as
 /// thumbnails, other files by title, [photo] marked. With [onChanged] (when
-/// the account may change the object), each has a menu to change its title,
-/// make it the photo (images) or delete it.
+/// the account may change the object), files can be added (and photos taken,
+/// where there is a camera), and each has a menu to change its title, make it
+/// the photo (images) or delete it.
 class AttachmentList extends StatelessWidget {
   const AttachmentList(
     this.attachments, {
@@ -78,13 +85,34 @@ class AttachmentList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (attachments.isEmpty) return const SizedBox.shrink();
+    final write = onChanged != null;
+    if (attachments.isEmpty && !write) return const SizedBox.shrink();
     final images = attachments.where((a) => a.isImage).toList();
     final files = attachments.where((a) => !a.isImage).toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SectionTitle('Attachments'),
+        SectionTitle(
+          'Attachments',
+          trailing: write
+              ? Wrap(
+                  children: [
+                    if (canTakePhoto(context))
+                      TextButton.icon(
+                        onPressed: () =>
+                            takePhoto(context, ownerPath, onChanged!),
+                        icon: const Icon(Icons.photo_camera_outlined),
+                        label: const Text('Take a photo'),
+                      ),
+                    TextButton.icon(
+                      onPressed: () => addFiles(context, ownerPath, onChanged!),
+                      icon: const Icon(Icons.attach_file),
+                      label: const Text('Add files'),
+                    ),
+                  ],
+                )
+              : null,
+        ),
         if (images.isNotEmpty)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -128,6 +156,7 @@ class AttachmentList extends StatelessWidget {
             leading: const Icon(Icons.attach_file),
             title: Text(a.title),
             subtitle: Text('${a.type} · ${a.sizeText}'),
+            onTap: () => context.push(attachmentRoute(a)),
             trailing: onChanged == null ? null : _menu(context, a),
           ),
       ],
@@ -218,4 +247,256 @@ Future<String?> _titleDialog(BuildContext context, Attachment a) {
       ),
     ),
   );
+}
+
+/// The app's route of an attachment: /attachment/items/{owner id}/{id}, …
+String attachmentRoute(Attachment a) =>
+    '/attachment${a.path.replaceFirst('/attachments/', '/')}';
+
+/// Whether this device can take a photo: phones (and phone browsers, which
+/// offer the camera for a photo upload); not desktops.
+bool canTakePhoto(BuildContext context) {
+  final picker = ImagePicker();
+  if (!picker.supportsImageSource(ImageSource.camera)) return false;
+  if (kIsWeb) return MediaQuery.sizeOf(context).shortestSide < 600;
+  return defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+}
+
+/// A file chosen to upload: its name, and a way to read it.
+typedef PickedFile = (String name, Future<List<int>> Function() read);
+
+/// Lets the user choose one or more files to attach; empty when cancelled.
+/// Tests replace it.
+Future<List<PickedFile>> Function() pickAttachmentFiles = () async {
+  // pickFiles lets the user choose one or more.
+  final files = await FilePicker.pickFiles(dialogTitle: 'Attach files');
+  return [for (final f in files) (f.name, f.readAsBytes)];
+};
+
+/// Lets the user choose files and attaches them to the object at
+/// [ownerPath]: one file with a title and, for an image, "make it the photo";
+/// several with their file names as titles.
+Future<void> addFiles(
+  BuildContext context,
+  String ownerPath,
+  VoidCallback onChanged,
+) async {
+  final List<PickedFile> files;
+  try {
+    files = await pickAttachmentFiles();
+  } catch (e) {
+    if (context.mounted) showError(context, e);
+    return;
+  }
+  if (files.isEmpty || !context.mounted) return;
+  await _upload(context, ownerPath, files, onChanged);
+}
+
+/// Takes a photo with the camera and attaches it to the object at
+/// [ownerPath].
+Future<void> takePhoto(
+  BuildContext context,
+  String ownerPath,
+  VoidCallback onChanged,
+) async {
+  final XFile? shot;
+  try {
+    shot = await ImagePicker().pickImage(source: ImageSource.camera);
+  } catch (e) {
+    if (context.mounted) showError(context, e);
+    return;
+  }
+  if (shot == null || !context.mounted) return;
+  await _upload(context, ownerPath, [(shot.name, shot.readAsBytes)], onChanged);
+}
+
+Future<void> _upload(
+  BuildContext context,
+  String ownerPath,
+  List<PickedFile> files,
+  VoidCallback onChanged,
+) async {
+  final client = context.read<Session>().client;
+  String? title;
+  var photo = false;
+  if (files.length == 1) {
+    final options = await _uploadDialog(context, files.single.$1);
+    if (options == null || !context.mounted) return;
+    (title, photo) = options;
+  }
+  showMessage(
+    context,
+    files.length == 1 ? 'Uploading…' : 'Uploading ${files.length} files…',
+  );
+  final done = <String>[];
+  // The result replaces "Uploading…" at once, rather than queueing behind it.
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    for (final (name, read) in files) {
+      await client.uploadAttachment(
+        ownerPath,
+        name: name,
+        bytes: await read(),
+        title: title,
+        photo: photo,
+      );
+      done.add(name);
+    }
+    if (context.mounted) {
+      messenger.hideCurrentSnackBar();
+      showMessage(
+        context,
+        done.length == 1
+            ? 'Attached ${done.single}.'
+            : 'Attached ${done.length} files.',
+      );
+    }
+  } catch (e) {
+    if (context.mounted) {
+      messenger.hideCurrentSnackBar();
+      showError(
+        context,
+        done.isEmpty
+            ? e
+            : InputError('$e\nAlready attached: ${done.join(', ')}'),
+      );
+    }
+  } finally {
+    if (done.isNotEmpty) onChanged();
+  }
+}
+
+/// The title of one file to upload, and whether to make it the photo; null
+/// when cancelled.
+Future<(String, bool)?> _uploadDialog(BuildContext context, String name) {
+  final title = TextEditingController(text: name);
+  final isImage =
+      (mediaTypeOf(name) ?? '').startsWith('image/') &&
+      mediaTypeOf(name) != 'image/svg+xml';
+  var photo = false;
+  return showDialog<(String, bool)>(
+    context: context,
+    builder: (context) => DisposeWith(
+      onDispose: title.dispose,
+      child: StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Attach'),
+          content: SizedBox(
+            width: 400,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: title,
+                  autofocus: true,
+                  decoration: const InputDecoration(labelText: 'Title'),
+                ),
+                if (isImage)
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Make it the photo'),
+                    value: photo,
+                    onChanged: (v) => setState(() => photo = v ?? false),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.pop(context, (title.text.trim(), photo)),
+              child: const Text('Attach'),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+/// One attachment, reached from history: its title, type and size, the
+/// image itself for an image, and Restore when it is deleted.
+class AttachmentScreen extends StatefulWidget {
+  const AttachmentScreen({
+    super.key,
+    required this.ownerPath,
+    required this.id,
+  });
+
+  /// /items/{id}, /stock/{id}, /locations/{id} or /classes/{id}.
+  final String ownerPath;
+  final String id;
+
+  @override
+  State<AttachmentScreen> createState() => _AttachmentScreenState();
+}
+
+class _AttachmentScreenState extends State<AttachmentScreen> {
+  @override
+  Widget build(BuildContext context) {
+    final session = context.watch<Session>();
+    final client = session.client;
+    final write = widget.ownerPath.startsWith('/classes/')
+        ? session.canWriteModel
+        : session.canWriteData;
+    return Loader<Attachment>(
+      title: 'Attachment',
+      load: () => client.attachment(widget.ownerPath, widget.id),
+      builder: (context, a, reload) => Scaffold(
+        appBar: AppBar(title: Text(a.title)),
+        body: Readable(
+          child: ListView(
+            padding: const EdgeInsets.only(bottom: 16),
+            children: [
+              if (a.deleted)
+                MaterialBanner(
+                  content: const Text(
+                    'This attachment is deleted. Restoring it brings it back '
+                    'as an ordinary attachment, not as a photo.',
+                  ),
+                  leading: const Icon(Icons.delete_outline),
+                  actions: [
+                    if (write)
+                      FilledButton(
+                        onPressed: () async {
+                          try {
+                            await client.restoreAttachment(a);
+                            if (!context.mounted) return;
+                            showMessage(context, 'Restored ${a.title}.');
+                            await reload();
+                          } catch (e) {
+                            if (context.mounted) showError(context, e);
+                          }
+                        },
+                        child: const Text('Restore'),
+                      )
+                    else
+                      const SizedBox.shrink(),
+                  ],
+                ),
+              Field('Title', a.title),
+              Field('Type', a.type),
+              Field('Size', a.sizeText),
+              if (a.isImage)
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: InkWell(
+                    onTap: () => showPhoto(context, a),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: AttachmentImage(a, fit: BoxFit.contain),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
