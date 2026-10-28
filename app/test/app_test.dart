@@ -681,6 +681,14 @@ void main() {
   testWidgets('the location tree, and a box with compartments', (tester) async {
     setSize(tester, 1000);
     final fake = FakeServer();
+    final shelf = fake.locations.firstWhere((l) => l['name'] == 'Shelf 1');
+    shelf['photo'] = {
+      'id': 'att-shelf',
+      'title': 'Shelf',
+      'type': 'image/png',
+      'size': 3,
+      'hash': 'ab',
+    };
     await startApp(tester, fake);
 
     await tester.tap(find.text('Locations'));
@@ -690,6 +698,19 @@ void main() {
     await tester.tap(find.byTooltip('Expand'));
     await tester.pumpAndSettle();
     expect(find.text('Shelf 1'), findsOneWidget);
+
+    // The tree shows a location's photo small, and its icon, framed the
+    // same, when it has none.
+    expect(find.byType(Thumbnail), findsOneWidget);
+    final photo = tester.widget<Thumbnail>(find.byType(Thumbnail));
+    expect(photo.attachment.owner, '/locations/${shelf['id']}');
+    expect(
+      find.descendant(
+        of: find.byType(PhotoOrIcon),
+        matching: find.byIcon(Icons.folder_outlined),
+      ),
+      findsOneWidget,
+    );
 
     await tester.tap(find.text('New location'));
     await tester.pumpAndSettle();

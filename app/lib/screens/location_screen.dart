@@ -183,8 +183,9 @@ class LocationScreen extends StatelessWidget {
                   for (final c in node?.children ?? const <TreeNode>[])
                     ListTile(
                       dense: true,
-                      leading: Icon(
-                        c.container
+                      leading: PhotoOrIcon(
+                        c.photo,
+                        icon: c.container
                             ? Icons.folder_outlined
                             : Icons.place_outlined,
                       ),
@@ -246,7 +247,7 @@ class _StockRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListTile(
       dense: true,
-      leading: const Icon(Icons.inventory_2_outlined),
+      leading: PhotoOrIcon(stock.photo, icon: Icons.layers_outlined),
       title: Text(stock.item.name),
       subtitle: Text([stock.code, ?place].join('  ·  ')),
       trailing: Text(stock.quantityText),

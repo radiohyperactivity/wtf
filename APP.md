@@ -306,3 +306,10 @@ Built for API revision 8: attachments are marked deleted again, and restored ([a
 42. **A thin border around photos,** small and large, in the theme's outline colour, so a photo whose background is just off the app's doesn't look misplaced.
 43. **An item's values are details,** right under Code, Class and Stock in, without a "Values" heading. Stock rows keep the heading, since their own details (item, location, quantity) are of another kind.
 44. **Buttons in a section heading take at most half its width** and wrap onto a second line, so Take a photo and Add files fit on a phone.
+
+### Photos in the trees, and framed icons
+
+Built for API revision 9: the class and location tree nodes include their `photo` ([api/attachment.md](api/attachment.md)).
+
+45. **A photo or a framed icon** at the start of every list entry for an object: the object's small photo, or, when it has none, its icon in a frame the same size. That covers attachments (the paperclip), items (narrow list, wide table, a class's items), an item's stock rows, a location's stock (each row's own photo), what's inside a location, the classes below a class, and both trees. The frame is the same thin border as the photos', so entries with and without a photo look alike and their names line up.
+46. **The trees use a smaller size,** 36 pixels instead of 48, so they stay compact. Their rows are 48 pixels high instead of 44.

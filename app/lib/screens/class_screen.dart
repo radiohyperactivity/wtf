@@ -241,8 +241,9 @@ class ClassScreen extends StatelessWidget {
                   for (final child in node?.children ?? const <TreeNode>[])
                     ListTile(
                       dense: true,
-                      leading: Icon(
-                        child.container
+                      leading: PhotoOrIcon(
+                        child.photo,
+                        icon: child.container
                             ? Icons.folder_outlined
                             : Icons.category_outlined,
                       ),
@@ -258,11 +259,9 @@ class ClassScreen extends StatelessWidget {
                   for (final i in data.items.rows)
                     ListTile(
                       dense: true,
-                      leading: SizedBox(
-                        width: 48,
-                        child: i.photo == null
-                            ? const Icon(Icons.inventory_2_outlined)
-                            : Thumbnail(i.photo!),
+                      leading: PhotoOrIcon(
+                        i.photo,
+                        icon: Icons.inventory_2_outlined,
                       ),
                       title: Text(i.name),
                       subtitle: Text(

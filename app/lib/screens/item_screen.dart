@@ -160,7 +160,7 @@ class ItemScreen extends StatelessWidget {
                   if (item.stock.isEmpty) const EmptyNote('No stock.'),
                   for (final s in item.stock) ...[
                     ListTile(
-                      leading: const Icon(Icons.place_outlined),
+                      leading: PhotoOrIcon(s.photo, icon: Icons.place_outlined),
                       title: Text(paths[s.location] ?? s.location),
                       subtitle: Text(s.code),
                       trailing: Text(

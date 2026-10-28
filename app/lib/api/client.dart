@@ -13,7 +13,7 @@ import 'units.dart';
 /// The API version and revision this app was built for.
 const apiPath = '/api/v1';
 const apiVersion = 1;
-const apiRevision = 8;
+const apiRevision = 9;
 
 const sessionCookie = 'wtf_session';
 
@@ -271,7 +271,11 @@ class ApiClient {
     if (resp.statusCode == 304 && cached != null) return cached;
     final json = jsonDecode(resp.body) as Json;
     if (json['unchanged'] == true && cached != null) return cached;
-    return _trees[kind] = Tree.fromJson(json, etag: resp.headers['etag']);
+    return _trees[kind] = Tree.fromJson(
+      json,
+      kind.path,
+      etag: resp.headers['etag'],
+    );
   }
 
   // --- Label codes ---

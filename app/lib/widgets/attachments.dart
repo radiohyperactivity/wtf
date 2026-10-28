@@ -74,6 +74,38 @@ class Thumbnail extends StatelessWidget {
       _Framed(radius: 6, child: AttachmentImage(attachment, size: size));
 }
 
+/// An object's small photo in a list, or when it has none [icon] in a frame
+/// of the same size, so the names line up: attachments, items, stock rows,
+/// locations and classes.
+class PhotoOrIcon extends StatelessWidget {
+  const PhotoOrIcon(
+    this.photo, {
+    super.key,
+    required this.icon,
+    this.size = 48,
+  });
+
+  final Attachment? photo;
+  final IconData icon;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final photo = this.photo;
+    if (photo != null) return Thumbnail(photo, size: size);
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        border: Border.all(color: scheme.outlineVariant),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Icon(icon, size: size / 2, color: scheme.onSurfaceVariant),
+    );
+  }
+}
+
 /// An object's photo on its screen, framed, as wide as there is room (up
 /// to [maxWidth] and [maxHeight]); tap to zoom.
 class ObjectPhoto extends StatelessWidget {
@@ -222,15 +254,12 @@ class AttachmentList extends StatelessWidget {
         ),
         for (final a in attachments)
           ListTile(
-            leading: SizedBox(
-              width: 48,
-              child: a.isImage
-                  ? InkWell(
-                      onTap: () => showPhoto(context, a),
-                      child: Thumbnail(a),
-                    )
-                  : Icon(attachmentIcon(a)),
-            ),
+            leading: a.isImage
+                ? InkWell(
+                    onTap: () => showPhoto(context, a),
+                    child: Thumbnail(a),
+                  )
+                : PhotoOrIcon(null, icon: attachmentIcon(a)),
             title: Text(a.title),
             subtitle: Text(
               [

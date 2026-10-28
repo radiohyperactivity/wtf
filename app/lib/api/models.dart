@@ -413,16 +413,21 @@ class TreeNode {
     this.code,
     this.parent,
     this.container = false,
+    this.photo,
     this.children = const [],
   });
 
-  factory TreeNode.fromJson(Json json) => TreeNode(
+  /// [kindPath]: /classes or /locations, the paths of its attachments.
+  factory TreeNode.fromJson(Json json, String kindPath) => TreeNode(
     id: json['id'] as String,
     name: json['name'] as String,
     code: json['code'] as String?,
     parent: json['parent'] as String?,
     container: json['container'] as bool? ?? false,
-    children: _list(json['children']).map(TreeNode.fromJson).toList(),
+    photo: Attachment.maybe(json['photo'], '$kindPath/${json['id']}'),
+    children: [
+      for (final c in _list(json['children'])) TreeNode.fromJson(c, kindPath),
+    ],
   );
 
   final String id;
@@ -434,6 +439,9 @@ class TreeNode {
 
   /// Holds only other nodes: classes without items, locations without stock.
   final bool container;
+
+  /// The class or location photo.
+  final Attachment? photo;
   final List<TreeNode> children;
 
   /// Set by [Tree]: the names from the root, joined by "/".
@@ -458,8 +466,8 @@ class Tree {
     walk(roots, '', 0);
   }
 
-  factory Tree.fromJson(Json json, {String? etag}) => Tree(
-    _list(json['tree']).map(TreeNode.fromJson).toList(),
+  factory Tree.fromJson(Json json, String kindPath, {String? etag}) => Tree(
+    [for (final n in _list(json['tree'])) TreeNode.fromJson(n, kindPath)],
     version: json['version'] as int?,
     etag: etag,
   );

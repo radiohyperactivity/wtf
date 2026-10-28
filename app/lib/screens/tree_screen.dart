@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../api/client.dart';
 import '../api/models.dart';
 import '../session.dart';
+import '../widgets/attachments.dart';
 import '../widgets/common.dart';
 import '../widgets/pickers.dart';
 
@@ -202,7 +203,7 @@ class _NodeRow extends StatelessWidget {
           right: 16,
         ),
         child: SizedBox(
-          height: 44,
+          height: 48,
           child: Row(
             children: [
               SizedBox(
@@ -217,16 +218,16 @@ class _NodeRow extends StatelessWidget {
                       )
                     : null,
               ),
-              Icon(
-                node.container
+              PhotoOrIcon(
+                node.photo,
+                size: 36,
+                icon: node.container
                     ? Icons.folder_outlined
                     : (node.code == null
                           ? Icons.category_outlined
                           : Icons.place_outlined),
-                size: 20,
-                color: theme.colorScheme.onSurfaceVariant,
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   node.container ? '$name/' : name,
