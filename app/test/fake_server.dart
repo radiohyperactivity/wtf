@@ -241,7 +241,9 @@ class FakeServer {
         'uncounted': rows.any((s) => s['quantity'] == null),
       },
       'incomplete': false,
-      'photo': null,
+      'photo': (itemAttachments[i['id']] ?? [])
+          .where((a) => a['id'] == i['photo'])
+          .firstOrNull,
     };
   }
 

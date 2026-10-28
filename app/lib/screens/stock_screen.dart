@@ -141,26 +141,31 @@ class StockScreen extends StatelessWidget {
                       onOpenMerged: () =>
                           context.pushReplacement('/stock/${stock.mergedInto}'),
                     ),
-                  const SizedBox(height: 8),
-                  Field(
-                    'Item',
-                    '${stock.item.name}  (${stock.item.code})',
-                    onTap: () => context.push('/items/${stock.item.code}'),
+                  WithPhoto(
+                    photo: stock.photo,
+                    children: [
+                      const SizedBox(height: 8),
+                      Field(
+                        'Item',
+                        '${stock.item.name}  (${stock.item.code})',
+                        onTap: () => context.push('/items/${stock.item.code}'),
+                      ),
+                      Field(
+                        'Location',
+                        path,
+                        onTap: place?.code == null
+                            ? null
+                            : () => context.push('/locations/${place!.code}'),
+                      ),
+                      Field('Quantity', stock.quantityText),
+                      Field('Code', stock.code),
+                      if (stock.values.isNotEmpty) ...[
+                        const SectionTitle('Values'),
+                        ...valueFields(stock.values),
+                      ],
+                      MissingNote(stock.missing.map((m) => m.name).toList()),
+                    ],
                   ),
-                  Field(
-                    'Location',
-                    path,
-                    onTap: place?.code == null
-                        ? null
-                        : () => context.push('/locations/${place!.code}'),
-                  ),
-                  Field('Quantity', stock.quantityText),
-                  Field('Code', stock.code),
-                  if (stock.values.isNotEmpty) ...[
-                    const SectionTitle('Values'),
-                    ...valueFields(stock.values),
-                  ],
-                  MissingNote(stock.missing.map((m) => m.name).toList()),
                   AttachmentList(
                     stock.attachments,
                     ownerPath: '/stock/${stock.id}',

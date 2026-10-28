@@ -245,7 +245,9 @@ class SectionTitle extends StatelessWidget {
                   ?.copyWith(color: Theme.of(context).colorScheme.primary),
             ),
           ),
-          ?trailing,
+          // At most half the row, so buttons wrap rather than overflow on
+          // a phone.
+          if (trailing case final trailing?) Flexible(child: trailing),
         ],
       ),
     );

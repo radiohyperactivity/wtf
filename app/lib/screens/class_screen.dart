@@ -163,21 +163,29 @@ class ClassScreen extends StatelessWidget {
                       canRestore: session.canWriteModel,
                       onRestored: reload,
                     ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                    child: PathLinks(
-                      parts: [
-                        for (final p in c.path)
-                          (p.name, p.id == c.id ? null : '/classes/${p.id}'),
-                      ],
-                    ),
+                  WithPhoto(
+                    photo: c.photo,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                        child: PathLinks(
+                          parts: [
+                            for (final p in c.path)
+                              (
+                                p.name,
+                                p.id == c.id ? null : '/classes/${p.id}',
+                              ),
+                          ],
+                        ),
+                      ),
+                      if (c.container)
+                        const Field(
+                          'Container',
+                          'yes',
+                          note: 'holds only other classes',
+                        ),
+                    ],
                   ),
-                  if (c.container)
-                    const Field(
-                      'Container',
-                      'yes',
-                      note: 'holds only other classes',
-                    ),
                   SectionTitle(
                     'Attributes',
                     trailing: write
@@ -250,7 +258,12 @@ class ClassScreen extends StatelessWidget {
                   for (final i in data.items.rows)
                     ListTile(
                       dense: true,
-                      leading: const Icon(Icons.inventory_2_outlined),
+                      leading: SizedBox(
+                        width: 48,
+                        child: i.photo == null
+                            ? const Icon(Icons.inventory_2_outlined)
+                            : Thumbnail(i.photo!),
+                      ),
                       title: Text(i.name),
                       subtitle: Text(
                         '${i.code}  ·  ${data.tree.pathOf(i.classId)}',

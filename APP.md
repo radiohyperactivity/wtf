@@ -81,7 +81,7 @@ Every screen has a URL. In the web app it shows in the address bar, and it works
 | `/classes` | The class tree. |
 | `/classes/<id>` | A class: its attributes (assign, change, remove), the classes below it and its items. Edit, add a class below, delete. |
 | `/classes/new?parent=…`, `/classes/<id>/edit` | Add or edit a class: name, parent, container. |
-| `/items/1B2C` | An item: values, stock rows with their locations, photos. A stock row's code shows its item too, as in the CLI. |
+| `/items/1B2C` | An item: its details and values, its photo, stock rows with their locations, attachments. A stock row's code shows its item too, as in the CLI. |
 | `/items/new?class=…` | Add an item: class, name, then its attributes (required ones first). Afterwards it offers to add stock, like the CLI. |
 | `/items/1B2C/edit` | Edit an item: name, class, unit and Unit lock, values. |
 | `/stock/1C3D` | A stock row: quantity, location, per-unit values; move it (all or part), edit or delete it. |
@@ -282,7 +282,7 @@ Built for API revision 5, with unit files ([seed/units-format.md](seed/units-for
 Built for API revision 7, with the new attachment model ([api/attachment.md](api/attachment.md)).
 34. **Titles and photos.** An attachment shows its title, and files their type and size. Each attachment's menu has:
     - **Title…** to rename it;
-    - **Make it the item photo** or **No longer the item photo** for images (class photo, location photo, stock row photo for the others), which sets the object's photo (a star marks it);
+    - **Make it the item photo** or **No longer the item photo** for images (class photo, location photo, stock row photo for the others), which sets the object's photo (its list entry says "Item photo", …);
     - **Delete…**, which asks first and warns that it can't be restored.
     - **History** names attachments by their latest title: "Added image Front", "Renamed attachment …", "Item photo: Front view", "Deleted image …". "Photo" only ever means an object's photo; an image file is an "image".
 
@@ -298,3 +298,11 @@ Built for API revision 8: attachments are marked deleted again, and restored ([a
 37. **Deleted attachments are found through history,** as you chose: the lines about an attachment ("Added …", "Deleted …", "Restored …", "Renamed …") lead to an attachment screen. It shows the title, type and size, and an image itself. A deleted one has a banner with **Restore**, which brings it back as an ordinary attachment. A file in an object's list opens the same screen.
 38. **Downloading** an attachment: **Download…** in its menu, and a **Download** button on the attachment screen (a floating button, like Add stock). The app fetches the file with the session and saves it: the browser downloads it on the web, and the native apps ask where to save it (`file_picker`). The file name is the one the server gives, as in the CLI: the title, with an extension for the type when it lacks one. The native apps can't hand the browser a link, because the browser doesn't have their session.
 
+### How photos and attachments look
+
+39. **Small photos in both result views.** The narrow list and the wide table show an item's photo small (48 pixels) beside its name. The table keeps a column for it, so names line up when only some items have photos. A class's list of items shows them too.
+40. **The object's photo on its screen:** to the right of the details on a screen at least 600 pixels wide (at most 240 by 320), and under the details, as wide as the screen, on a narrower one, which puts it just above the next section (Stock on an item). Tapping it opens it full size. Items, stock rows, locations and classes all do this.
+41. **One list of attachments.** Images show their small version where other files show a paperclip, so titles line up; tapping either opens the attachment screen, and tapping the small image opens it full size. The photo's line says "Item photo" (class photo, …) before its type and size, instead of a star. Other file types can get their own icons later (`attachmentIcon`).
+42. **A thin border around photos,** small and large, in the theme's outline colour, so a photo whose background is just off the app's doesn't look misplaced.
+43. **An item's values are details,** right under Code, Class and Stock in, without a "Values" heading. Stock rows keep the heading, since their own details (item, location, quantity) are of another kind.
+44. **Buttons in a section heading take at most half its width** and wrap onto a second line, so Take a photo and Add files fit on a phone.

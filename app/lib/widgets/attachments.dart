@@ -44,6 +44,112 @@ class AttachmentImage extends StatelessWidget {
   }
 }
 
+/// An image with a thin border, so one whose background is just off the
+/// app's doesn't look misplaced.
+class _Framed extends StatelessWidget {
+  const _Framed({required this.radius, required this.child});
+
+  final double radius;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    foregroundDecoration: BoxDecoration(
+      border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+      borderRadius: BorderRadius.circular(radius),
+    ),
+    child: ClipRRect(borderRadius: BorderRadius.circular(radius), child: child),
+  );
+}
+
+/// The small version of an image, as lists show an object's photo.
+class Thumbnail extends StatelessWidget {
+  const Thumbnail(this.attachment, {super.key, this.size = 48});
+
+  final Attachment attachment;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) =>
+      _Framed(radius: 6, child: AttachmentImage(attachment, size: size));
+}
+
+/// An object's photo on its screen, framed, as wide as there is room (up
+/// to [maxWidth] and [maxHeight]); tap to zoom.
+class ObjectPhoto extends StatelessWidget {
+  const ObjectPhoto(
+    this.photo, {
+    super.key,
+    this.maxWidth = double.infinity,
+    this.maxHeight = double.infinity,
+  });
+
+  final Attachment photo;
+  final double maxWidth;
+  final double maxHeight;
+
+  @override
+  Widget build(BuildContext context) => ConstrainedBox(
+    constraints: BoxConstraints(maxWidth: maxWidth, maxHeight: maxHeight),
+    child: InkWell(
+      onTap: () => showPhoto(context, photo),
+      child: _Framed(
+        radius: 8,
+        child: AttachmentImage(photo, fit: BoxFit.contain),
+      ),
+    ),
+  );
+}
+
+/// An object's details with its [photo]: to their right on wide screens,
+/// under them and as wide as the screen on narrow ones (so above the next
+/// section).
+class WithPhoto extends StatelessWidget {
+  const WithPhoto({super.key, required this.photo, required this.children});
+
+  final Attachment? photo;
+  final List<Widget> children;
+
+  /// The narrowest screen with the photo next to the details.
+  static const wide = 600.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final details = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: children,
+    );
+    final photo = this.photo;
+    if (photo == null) return details;
+    return LayoutBuilder(
+      builder: (context, c) => c.maxWidth >= wide
+          ? Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: details),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 12, 16, 0),
+                  child: ObjectPhoto(photo, maxWidth: 240, maxHeight: 320),
+                ),
+              ],
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                details,
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  child: ObjectPhoto(photo),
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+/// The icon of an attachment that isn't an image, by its type.
+IconData attachmentIcon(Attachment a) => Icons.attach_file;
+
 /// Shows an image over the whole screen, to zoom into.
 void showPhoto(BuildContext context, Attachment attachment) {
   showDialog<void>(
@@ -62,8 +168,9 @@ void showPhoto(BuildContext context, Attachment attachment) {
   );
 }
 
-/// The attachments of the object at [ownerPath] (/items/{id}, …): images as
-/// thumbnails, other files by title, [photo] marked. With [onChanged] (when
+/// The attachments of the object at [ownerPath] (/items/{id}, …), in one
+/// list: images with their thumbnail, other files with an icon, [photo]
+/// named ("Item photo", …). With [onChanged] (when
 /// the account may change the object), files can be added (and photos taken,
 /// where there is a camera). Each has a menu to download it and, with
 /// [onChanged], to change its title, make it the object's photo ("Item
@@ -88,8 +195,6 @@ class AttachmentList extends StatelessWidget {
   Widget build(BuildContext context) {
     final write = onChanged != null;
     if (attachments.isEmpty && !write) return const SizedBox.shrink();
-    final images = attachments.where((a) => a.isImage).toList();
-    final files = attachments.where((a) => !a.isImage).toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -97,6 +202,7 @@ class AttachmentList extends StatelessWidget {
           'Attachments',
           trailing: write
               ? Wrap(
+                  alignment: WrapAlignment.end,
                   children: [
                     if (canTakePhoto(context))
                       TextButton.icon(
@@ -114,49 +220,25 @@ class AttachmentList extends StatelessWidget {
                 )
               : null,
         ),
-        if (images.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final a in images)
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Tooltip(
-                        message: a.title,
-                        child: InkWell(
-                          onTap: () => showPhoto(context, a),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: AttachmentImage(a, size: 96),
-                          ),
-                        ),
-                      ),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (_isPhoto(a))
-                            Tooltip(
-                              message: photoName(ownerPath),
-                              child: const Icon(Icons.star, size: 16),
-                            ),
-                          _menu(context, a),
-                        ],
-                      ),
-                    ],
-                  ),
-              ],
-            ),
-          ),
-        for (final a in files)
+        for (final a in attachments)
           ListTile(
-            dense: true,
-            leading: const Icon(Icons.attach_file),
+            leading: SizedBox(
+              width: 48,
+              child: a.isImage
+                  ? InkWell(
+                      onTap: () => showPhoto(context, a),
+                      child: Thumbnail(a),
+                    )
+                  : Icon(attachmentIcon(a)),
+            ),
             title: Text(a.title),
-            subtitle: Text('${a.type} · ${a.sizeText}'),
+            subtitle: Text(
+              [
+                if (_isPhoto(a)) photoName(ownerPath),
+                a.type,
+                a.sizeText,
+              ].join(' · '),
+            ),
             onTap: () => context.push(attachmentRoute(a)),
             trailing: _menu(context, a),
           ),
@@ -541,12 +623,9 @@ class _AttachmentScreenState extends State<AttachmentScreen> {
               if (a.isImage)
                 Padding(
                   padding: const EdgeInsets.all(16),
-                  child: InkWell(
-                    onTap: () => showPhoto(context, a),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: AttachmentImage(a, fit: BoxFit.contain),
-                    ),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: ObjectPhoto(a),
                   ),
                 ),
             ],

@@ -16,7 +16,7 @@ List<Widget> valueFields(List<Value> values) => [
 ];
 
 /// An item, like `wtf item get`: class, values, stock rows with their
-/// locations, photos. The code may also be one of its stock rows' (as in
+/// locations, attachments. The code may also be one of its stock rows' (as in
 /// the CLI's references).
 class ItemScreen extends StatelessWidget {
   const ItemScreen({super.key, required this.code});
@@ -126,38 +126,27 @@ class ItemScreen extends StatelessWidget {
                       canRestore: session.canWriteData,
                       onRestored: reload,
                     ),
-                  if (item.photo != null)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: InkWell(
-                          onTap: () => showPhoto(context, item.photo!),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: AttachmentImage(item.photo!, size: 160),
-                          ),
-                        ),
+                  // The class's values are details like the code and class.
+                  WithPhoto(
+                    photo: item.photo,
+                    children: [
+                      const SizedBox(height: 8),
+                      Field('Code', item.code),
+                      Field(
+                        'Class',
+                        item.cls.pathText,
+                        onTap: () => open('/classes/${item.cls.id}'),
                       ),
-                    ),
-                  const SizedBox(height: 8),
-                  Field('Code', item.code),
-                  Field(
-                    'Class',
-                    item.cls.pathText,
-                    onTap: () => open('/classes/${item.cls.id}'),
+                      Field(
+                        'Stock in',
+                        item.unit == null
+                            ? 'pieces'
+                            : unitLabel(item.unit!, lock: item.unitLock),
+                      ),
+                      ...valueFields(item.values),
+                      MissingNote(item.missing.map((m) => m.name).toList()),
+                    ],
                   ),
-                  Field(
-                    'Stock in',
-                    item.unit == null
-                        ? 'pieces'
-                        : unitLabel(item.unit!, lock: item.unitLock),
-                  ),
-                  if (item.values.isNotEmpty) ...[
-                    const SectionTitle('Values'),
-                    ...valueFields(item.values),
-                  ],
-                  MissingNote(item.missing.map((m) => m.name).toList()),
                   SectionTitle(
                     'Stock',
                     trailing: write

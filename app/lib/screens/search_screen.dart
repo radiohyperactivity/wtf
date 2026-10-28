@@ -651,7 +651,7 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
     final theme = Theme.of(context);
     final columns = _attributeColumns;
     const fixed = [
-      ('Item', 220.0),
+      ('Item', 280.0),
       ('Class', 170.0),
       ('Stock', 90.0),
       ('Where', 200.0),
@@ -725,29 +725,42 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
             children: [
               cell(
                 fixed[0].$2,
-                Column(
+                Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            item.name,
-                            style: theme.textTheme.titleSmall,
-                          ),
-                        ),
-                        if (item.incomplete)
-                          Tooltip(
-                            message: 'A required value is missing',
-                            child: Icon(
-                              Icons.warning_amber,
-                              size: 16,
-                              color: theme.colorScheme.error,
-                            ),
-                          ),
-                      ],
+                    // A column of photos, so the names line up.
+                    SizedBox(
+                      width: 48,
+                      child: item.photo == null ? null : Thumbnail(item.photo!),
                     ),
-                    Text(item.code, style: muted),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  item.name,
+                                  style: theme.textTheme.titleSmall,
+                                ),
+                              ),
+                              if (item.incomplete)
+                                Tooltip(
+                                  message: 'A required value is missing',
+                                  child: Icon(
+                                    Icons.warning_amber,
+                                    size: 16,
+                                    color: theme.colorScheme.error,
+                                  ),
+                                ),
+                            ],
+                          ),
+                          Text(item.code, style: muted),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -884,10 +897,7 @@ class _FoundItem extends StatelessWidget {
             if (item.photo != null)
               Padding(
                 padding: const EdgeInsets.only(right: 12),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: AttachmentImage(item.photo!, size: 48),
-                ),
+                child: Thumbnail(item.photo!),
               ),
             Expanded(
               child: Column(

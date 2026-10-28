@@ -223,6 +223,71 @@ void main() {
     expect(find.text('Pressure'), findsOneWidget);
   });
 
+  testWidgets('the item photo: beside the details, or above the stock', (
+    tester,
+  ) async {
+    final fake = FakeServer();
+    fake.itemAttachments['i-drill'] = [
+      {
+        'id': 'att-1',
+        'title': 'Front',
+        'type': 'image/png',
+        'size': 3,
+        'hash': 'ab',
+      },
+      {
+        'id': 'att-2',
+        'title': 'Manual',
+        'type': 'application/pdf',
+        'size': 2048,
+        'hash': 'cd',
+      },
+    ];
+    fake.items.first['photo'] = 'att-1';
+
+    // Wide: small photos in the results table, the photo right of the
+    // details, which include the values without a header of their own.
+    setSize(tester, 1200);
+    await startApp(tester, fake);
+    await search(tester, 'drill');
+    expect(find.byType(Thumbnail), findsOneWidget);
+    await tester.tap(find.text('Cordless drill'));
+    await tester.pumpAndSettle();
+    expect(find.text('Values'), findsNothing);
+    final photo = tester.getRect(find.byType(ObjectPhoto));
+    final code = tester.getRect(find.text('Code'));
+    expect(photo.left, greaterThan(code.right));
+    expect(photo.top, lessThan(tester.getRect(find.text('Voltage')).bottom));
+
+    // One list of attachments: the image with its small version, named as
+    // the item photo, and the file with a paperclip.
+    final list = find.byType(AttachmentList);
+    expect(
+      find.descendant(of: list, matching: find.byType(Thumbnail)),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.widgetWithText(ListTile, 'Manual'),
+        matching: find.byIcon(Icons.attach_file),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Item photo · image/png · 3 B'), findsOneWidget);
+
+    // Narrow: the photo as wide as the screen, under the values and above
+    // the stock.
+    setSize(tester, 400);
+    await tester.pumpAndSettle();
+    final narrow = tester.getRect(find.byType(ObjectPhoto));
+    expect(
+      narrow.top,
+      greaterThan(tester.getRect(find.text('Voltage')).bottom),
+    );
+    expect(narrow.bottom, lessThan(tester.getRect(find.text('Stock')).top));
+    expect(narrow.width, 400 - 32);
+  });
+
   testWidgets('an attachment: change its title, then delete it', (
     tester,
   ) async {

@@ -140,28 +140,33 @@ class LocationScreen extends StatelessWidget {
                       canRestore: session.canWriteData,
                       onRestored: reload,
                     ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                    child: PathLinks(
-                      parts: [
-                        for (final p in l.path)
-                          (
-                            p.name,
-                            // Deleted ones above it aren't in the tree.
-                            p.id == l.id || tree[p.id]?.code == null
-                                ? null
-                                : '/locations/${tree[p.id]!.code}',
-                          ),
-                      ],
-                    ),
+                  WithPhoto(
+                    photo: l.photo,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                        child: PathLinks(
+                          parts: [
+                            for (final p in l.path)
+                              (
+                                p.name,
+                                // Deleted ones above it aren't in the tree.
+                                p.id == l.id || tree[p.id]?.code == null
+                                    ? null
+                                    : '/locations/${tree[p.id]!.code}',
+                              ),
+                          ],
+                        ),
+                      ),
+                      Field('Code', l.code),
+                      if (l.container)
+                        const Field(
+                          'Container',
+                          'yes',
+                          note: 'holds only other locations',
+                        ),
+                    ],
                   ),
-                  Field('Code', l.code),
-                  if (l.container)
-                    const Field(
-                      'Container',
-                      'yes',
-                      note: 'holds only other locations',
-                    ),
                   SectionTitle(
                     'Inside',
                     trailing: write
