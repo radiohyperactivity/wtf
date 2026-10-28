@@ -40,6 +40,8 @@ func (s *server) routes() []route {
 		{"GET /units/{id}", s.read("unit_get", id)},
 		{"POST /units/import", s.update("unit_import", patch("p_data"),
 			query("p_dry_run", "dry_run", "boolean"))},
+		{"POST /model/import", s.update("model_import", patch("p_data"),
+			query("p_parent", "parent", "uuid"), query("p_dry_run", "dry_run", "boolean"))},
 
 		{"GET /attributes", s.read("attribute_list")},
 		{"POST /attributes", s.create("attribute_create", "/attributes/", body(

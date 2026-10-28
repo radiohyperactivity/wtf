@@ -19,25 +19,25 @@ type ref struct {
 // default is, and the tenant's own choice (nil: it follows the default).
 
 type quantity struct {
-	ID               string       `json:"id"`
-	Name             string       `json:"name"`
-	Datatype         string       `json:"datatype"`
-	Global           bool         `json:"global"`
-	Available        *bool        `json:"available"`
-	Standard         bool         `json:"standard"`
-	Choice           *bool        `json:"choice"`
-	Families         []unitFamily `json:"families"`
+	ID        string       `json:"id"`
+	Name      string       `json:"name"`
+	Datatype  string       `json:"datatype"`
+	Global    bool         `json:"global"`
+	Available *bool        `json:"available"`
+	Standard  bool         `json:"standard"`
+	Choice    *bool        `json:"choice"`
+	Families  []unitFamily `json:"families"`
 }
 
 type unitFamily struct {
-	ID               string   `json:"id"`
-	Name             string   `json:"name"`
-	Quantity         quantity `json:"quantity"`
-	Global           bool     `json:"global"`
-	Available        *bool    `json:"available"`
-	Standard         bool     `json:"standard"`
-	Choice           *bool    `json:"choice"`
-	Units            []unit   `json:"units"`
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Quantity  quantity `json:"quantity"`
+	Global    bool     `json:"global"`
+	Available *bool    `json:"available"`
+	Standard  bool     `json:"standard"`
+	Choice    *bool    `json:"choice"`
+	Units     []unit   `json:"units"`
 }
 
 // isAvailable tells whether a quantity or family (by its available field)

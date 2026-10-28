@@ -179,6 +179,49 @@ paths:
                         message: { type: string }
         default: { $ref: "#/components/responses/Problem" }
 
+  /model/import:
+    post:
+      summary: Import attributes and classes from a model file (model write privilege)
+      operationId: modelImport
+      description: |
+        The body is a model file (seed/model-format.md): attributes, and a tree
+        of classes with their attribute assignments. What is there and the
+        same is used as it is; what isn't is added; what differs is a
+        conflict. All or nothing: with a conflict, or with dry_run, nothing is
+        kept. A body that isn't a valid model file is refused with 400.
+      parameters:
+        - { name: parent, in: query, schema: { $ref: "#/components/schemas/Uuid" }, description: The class to import below; the top of the class tree without it. }
+        - { name: dry_run, in: query, schema: { type: boolean }, description: Only tell what would happen. }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, description: A model file, see seed/model-format.md. }
+      responses:
+        "200":
+          description: What was (or would be) added, what was there already, and the conflicts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  applied: { type: boolean, description: Whether the import was kept. }
+                  dry_run: { type: boolean }
+                  attributes: { $ref: "#/components/schemas/ModelImportSection" }
+                  options:
+                    type: object
+                    properties: { added: { type: array, items: { type: string }, description: '"Attribute: option"' } }
+                  classes: { $ref: "#/components/schemas/ModelImportSection" }
+                  assignments: { $ref: "#/components/schemas/ModelImportSection" }
+                  conflicts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        where: { type: string, description: 'e.g. "Class MCU/AVR: Clock"' }
+                        message: { type: string }
+        default: { $ref: "#/components/responses/Problem" }
+
   /unit-families:
     get:
       summary: The unit families the tenant sees, with their units
@@ -1838,6 +1881,12 @@ components:
       type: object
       properties:
         available: { type: [boolean, "null"], description: "true or false; null follows the default again." }
+
+    ModelImportSection:
+      type: object
+      properties:
+        added: { type: array, items: { type: string }, description: 'Names; classes as paths ("MCU/AVR"); assignments as "path: attribute".' }
+        existing: { type: array, items: { type: string } }
 
     ImportSection:
       type: object

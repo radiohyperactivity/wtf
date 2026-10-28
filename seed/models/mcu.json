@@ -1,0 +1,44 @@
+{
+  "format": "wtf-model",
+  "version": 1,
+  "name": "Microcontrollers",
+  "description": "MCUs by family, with what tells them apart: clock, memory, pins, timers and package.",
+  "attributes": [
+    { "name": "Clock", "unit": "MHz" },
+    { "name": "Flash", "unit": "KiB" },
+    { "name": "RAM", "unit": "KiB" },
+    { "name": "EEPROM", "unit": "B (Binary bytes)" },
+    { "name": "GPIO pins", "datatype": "integer" },
+    { "name": "Timers", "datatype": "integer" },
+    { "name": "ADC channels", "datatype": "integer" },
+    { "name": "Supply voltage", "unit": "V" },
+    { "name": "Core", "datatype": "choice", "options": ["AVR", "Cortex-M0", "Cortex-M0+", "Cortex-M3", "Cortex-M4", "Cortex-M7", "RISC-V", "Xtensa"] },
+    { "name": "Package", "datatype": "choice", "options": ["DIP", "SOIC", "SSOP", "TQFP", "QFN", "BGA", "Module"] },
+    { "name": "Datasheet", "datatype": "url" }
+  ],
+  "classes": [
+    {
+      "name": "MCU",
+      "container": true,
+      "attributes": [
+        { "attribute": "Core", "required": true },
+        { "attribute": "Clock", "required": true },
+        { "attribute": "Flash", "required": true },
+        { "attribute": "RAM" },
+        { "attribute": "EEPROM" },
+        { "attribute": "GPIO pins" },
+        { "attribute": "Timers" },
+        { "attribute": "ADC channels" },
+        { "attribute": "Supply voltage" },
+        { "attribute": "Package" },
+        { "attribute": "Datasheet" }
+      ],
+      "classes": [
+        { "name": "AVR", "attributes": [{ "attribute": "Core", "required": true, "default": "AVR" }] },
+        { "name": "ARM" },
+        { "name": "ESP32", "attributes": [{ "attribute": "Package", "default": "Module" }] },
+        { "name": "RP2040" }
+      ]
+    }
+  ]
+}

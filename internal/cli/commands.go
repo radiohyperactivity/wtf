@@ -18,6 +18,7 @@ var groups = []group{
 	locationGroup(),
 	classGroup(),
 	attributeGroup(),
+	modelGroup(),
 	optionGroup(),
 	attachmentGroup(),
 	quantityGroup(),
