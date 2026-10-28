@@ -533,8 +533,7 @@ class _UnitsScreenState extends State<UnitsScreen> {
         if (a.choice != null && a.choice != a.standard && a.global)
           IconButton(
             icon: const Icon(Icons.undo),
-            tooltip:
-                'Back to the default (${a.standard ? 'on' : 'off'})',
+            tooltip: 'Back to the default (${a.standard ? 'on' : 'off'})',
             onPressed: () => set(null),
           ),
         Switch(value: a.available, onChanged: enabled ? (v) => set(v) : null),
@@ -606,6 +605,8 @@ class _UnitsScreenState extends State<UnitsScreen> {
                       for (final (q, fs) in byQuantity.values)
                         ExpansionTile(
                           key: ValueKey('q${q.id} $filtering'),
+                          // The arrow on the left, since the switch is on the right.
+                          controlAffinity: ListTileControlAffinity.leading,
                           initiallyExpanded: filtering,
                           title: Text(q.name),
                           subtitle: Text(
@@ -626,6 +627,9 @@ class _UnitsScreenState extends State<UnitsScreen> {
                             for (final f in fs)
                               ExpansionTile(
                                 key: ValueKey('f${f.id} $filtering'),
+                                // The arrow on the left, since the switch is on the right.
+                                controlAffinity:
+                                    ListTileControlAffinity.leading,
                                 initiallyExpanded: filtering,
                                 tilePadding: const EdgeInsets.only(
                                   left: 32,

@@ -175,6 +175,19 @@ void main() {
     expect(find.text('Metric length · Imperial length'), findsOneWidget);
     expect(find.text('Voltage'), findsWidgets);
     expect(find.text('millimetre'), findsNothing);
+    // An arrow says a quantity opens, left of its switch.
+    final arrow = find.descendant(
+      of: find.ancestor(
+        of: find.text('Length'),
+        matching: find.byType(ListTile),
+      ),
+      matching: find.byIcon(Icons.expand_more),
+    );
+    expect(arrow, findsOneWidget);
+    expect(
+      tester.getCenter(arrow).dx,
+      lessThan(tester.getCenter(find.text('Length')).dx),
+    );
 
     await tester.tap(find.text('Length'));
     await tester.pumpAndSettle();
