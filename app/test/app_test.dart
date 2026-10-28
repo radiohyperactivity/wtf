@@ -222,7 +222,7 @@ void main() {
     expect(find.text('Pressure'), findsOneWidget);
   });
 
-  testWidgets('an attachment: change its title, then remove it', (
+  testWidgets('an attachment: change its title, then delete it', (
     tester,
   ) async {
     setSize(tester, 700);
@@ -232,6 +232,7 @@ void main() {
         'id': 'att-1',
         'title': 'Manual',
         'type': 'application/pdf',
+        'size': 2048,
         'hash': 'ab',
       },
     ];
@@ -240,7 +241,7 @@ void main() {
     await tester.tap(find.text('Cordless drill'));
     await tester.pumpAndSettle();
     expect(find.text('Manual'), findsOneWidget);
-    expect(find.text('application/pdf'), findsOneWidget);
+    expect(find.text('application/pdf · 2.0 KiB'), findsOneWidget);
 
     await tester.tap(find.byTooltip('Attachment'));
     await tester.pumpAndSettle();
@@ -255,16 +256,16 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       fake.changes.last,
-      'PATCH /api/v1/attachments/att-1 {"title":"Datasheet"}',
+      'PATCH /api/v1/items/i-drill/attachments/att-1 {"title":"Datasheet"}',
     );
     expect(find.text('Datasheet'), findsOneWidget);
 
     await tester.tap(find.byTooltip('Attachment'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Remove…'));
+    await tester.tap(find.text('Delete…'));
     await tester.pumpAndSettle();
     expect(find.text("It can't be restored."), findsOneWidget);
-    await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
     await tester.pumpAndSettle();
     expect(fake.changes.last, 'DELETE /api/v1/items/i-drill/attachments/att-1');
     expect(find.text('Datasheet'), findsNothing);

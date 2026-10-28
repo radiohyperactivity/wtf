@@ -349,36 +349,58 @@ List<NamedRef> _refs(Object? json) =>
 class Attachment {
   const Attachment({
     required this.id,
+    required this.owner,
     required this.title,
     required this.type,
+    this.size = 0,
     this.hash = '',
   });
 
-  factory Attachment.fromJson(Json json) => Attachment(
+  /// [owner] is the path of the object it belongs to, such as /items/{id}.
+  factory Attachment.fromJson(Json json, String owner) => Attachment(
     id: json['id'] as String,
+    owner: owner,
     title: json['title'] as String,
     type: json['type'] as String? ?? '',
+    size: json['size'] as int? ?? 0,
     hash: json['hash'] as String? ?? '',
   );
 
-  static Attachment? maybe(Object? json) =>
-      json == null ? null : Attachment.fromJson(json as Json);
+  static Attachment? maybe(Object? json, String owner) =>
+      json == null ? null : Attachment.fromJson(json as Json, owner);
 
   final String id;
+
+  /// The path of its object: /items/{id}, /stock/{id}, /locations/{id} or
+  /// /classes/{id}. An attachment is only reached through it.
+  final String owner;
+
+  /// Its own path, under its object.
+  String get path => '$owner/attachments/$id';
   final String title;
 
   /// The MIME type.
   final String type;
 
+  /// In bytes.
+  final int size;
+
   /// The SHA-256 of the content, in hex.
   final String hash;
+
+  String get sizeText {
+    if (size >= 1 << 30) return '${(size / (1 << 30)).toStringAsFixed(1)} GiB';
+    if (size >= 1 << 20) return '${(size / (1 << 20)).toStringAsFixed(1)} MiB';
+    if (size >= 1 << 10) return '${(size / (1 << 10)).toStringAsFixed(1)} KiB';
+    return '$size B';
+  }
 
   /// Images the app can show itself (SVG is sent as a download).
   bool get isImage => type.startsWith('image/') && type != 'image/svg+xml';
 }
 
-List<Attachment> _attachments(Object? json) =>
-    _list(json).map(Attachment.fromJson).toList();
+List<Attachment> _attachments(Object? json, String owner) =>
+    _list(json).map((a) => Attachment.fromJson(a, owner)).toList();
 
 /// A node of the class or location tree.
 class TreeNode {
@@ -531,8 +553,8 @@ class ClassDetail {
     container: json['container'] as bool? ?? false,
     path: _refs(json['path']),
     attributes: _list(json['attributes']).map(ClassAttribute.fromJson).toList(),
-    photo: Attachment.maybe(json['photo']),
-    attachments: _attachments(json['attachments']),
+    photo: Attachment.maybe(json['photo'], '/classes/${json['id']}'),
+    attachments: _attachments(json['attachments'], '/classes/${json['id']}'),
     deleted: json['deleted'] as bool? ?? false,
   );
 
@@ -571,8 +593,8 @@ class Location {
     parent: json['parent'] as String?,
     container: json['container'] as bool? ?? false,
     path: _refs(json['path']),
-    photo: Attachment.maybe(json['photo']),
-    attachments: _attachments(json['attachments']),
+    photo: Attachment.maybe(json['photo'], '/locations/${json['id']}'),
+    attachments: _attachments(json['attachments'], '/locations/${json['id']}'),
     deleted: json['deleted'] as bool? ?? false,
   );
 
@@ -652,7 +674,7 @@ class ItemListed extends ItemSummary {
       deleted: s.deleted,
       stockText: _formatTotal(_obj(json['stock'])),
       incomplete: json['incomplete'] as bool? ?? false,
-      photo: Attachment.maybe(json['photo']),
+      photo: Attachment.maybe(json['photo'], '/items/${s.id}'),
     );
   }
 
@@ -683,6 +705,7 @@ class ItemStock {
     this.display,
     this.values = const [],
     this.missing = const [],
+    this.photo,
     this.attachments = const [],
   });
 
@@ -694,7 +717,8 @@ class ItemStock {
     display: Display.fromJson(json['display']),
     values: _values(json['values']),
     missing: _refs(json['missing']),
-    attachments: _attachments(json['attachments']),
+    photo: Attachment.maybe(json['photo'], '/stock/${json['id']}'),
+    attachments: _attachments(json['attachments'], '/stock/${json['id']}'),
   );
 
   final String id;
@@ -704,6 +728,7 @@ class ItemStock {
   final Display? display;
   final List<Value> values;
   final List<NamedRef> missing;
+  final Attachment? photo;
   final List<Attachment> attachments;
 
   String get quantityText => formatQuantity(quantity, display);
@@ -735,8 +760,8 @@ class ItemDetail {
     unitLock: json['unit_lock'] as bool? ?? false,
     values: _values(json['values']),
     missing: _refs(json['missing']),
-    photo: Attachment.maybe(json['photo']),
-    attachments: _attachments(json['attachments']),
+    photo: Attachment.maybe(json['photo'], '/items/${json['id']}'),
+    attachments: _attachments(json['attachments'], '/items/${json['id']}'),
     stock: _list(json['stock']).map(ItemStock.fromJson).toList(),
   );
 
@@ -791,8 +816,8 @@ class Stock {
     display: Display.fromJson(json['display']),
     values: _values(json['values']),
     missing: _refs(json['missing']),
-    photo: Attachment.maybe(json['photo']),
-    attachments: _attachments(json['attachments']),
+    photo: Attachment.maybe(json['photo'], '/stock/${json['id']}'),
+    attachments: _attachments(json['attachments'], '/stock/${json['id']}'),
     deleted: json['deleted'] as bool? ?? false,
     mergedInto: _obj(json['merged_into'])?['code'] as String?,
   );

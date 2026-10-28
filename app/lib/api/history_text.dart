@@ -158,7 +158,10 @@ class HistoryNames {
           attributes.add('${d['attribute']}');
           both(e, 'option_value', options);
           both(e, 'option_default', options);
-        case 'attachment':
+        case 'item_attachment' ||
+            'stock_attachment' ||
+            'location_attachment' ||
+            'class_attachment':
           // Entries come newest first: the latest title wins.
           _attachmentTitle.putIfAbsent('${d['id']}', () => '${d['title']}');
         case 'attribute_option':
@@ -541,11 +544,10 @@ class _Describer {
     'class_attribute' => _assignment(e),
     'attribute' => _attribute(e),
     'attribute_option' => _option(e),
-    'attachment' => _attachment(e),
     'item_attachment' ||
     'stock_attachment' ||
     'location_attachment' ||
-    'class_attachment' => _link(e),
+    'class_attachment' => _attachment(e),
     'account' => _account(e),
     _ => [HistoryLine('${e.operation} ${e.table}')],
   };
@@ -830,16 +832,8 @@ class _Describer {
     ];
   }
 
-  /// The entries of this action that link or unlink [attachment].
-  bool _linkChanged(Object? attachment, String operation) => entries.any(
-    (e) =>
-        e.table.endsWith('_attachment') &&
-        e.operation == operation &&
-        '${e.data['attachment']}' == '$attachment',
-  );
-
-  /// An attachment itself: added with an upload, renamed, or deleted when it
-  /// was left on nothing (said by its link, when that is here too).
+  /// An attachment of an item, stock row, location or class: added,
+  /// renamed or deleted.
   List<HistoryLine> _attachment(HistoryEntry e) {
     final title = '${e.data['title']}';
     final what = '${e.data['type']}'.startsWith('image/')
@@ -849,33 +843,12 @@ class _Describer {
       case 'insert':
         return [HistoryLine('Added $what')];
       case 'delete':
-        return _linkChanged(e.rowId, 'delete')
-            ? const []
-            : [HistoryLine('Deleted $what')];
+        return [HistoryLine('Deleted $what')];
     }
     final t = e.change('title');
     return t == null
         ? const []
         : [HistoryLine('Renamed attachment “${t.old}” to “${t.now}”')];
-  }
-
-  /// An attachment linked to or removed from an object. A link made by an
-  /// upload is said by the attachment ("Added …").
-  List<HistoryLine> _link(HistoryEntry e) {
-    final attachment = e.data['attachment'];
-    final title = n.attachmentTitle(attachment);
-    final uploaded = entries.any(
-      (o) =>
-          o.table == 'attachment' &&
-          o.operation == 'insert' &&
-          o.rowId == '$attachment',
-    );
-    return switch (e.operation) {
-      'insert' when uploaded => const [],
-      'insert' => [HistoryLine('Shares attachment $title')],
-      'delete' => [HistoryLine('Removed attachment $title')],
-      _ => const [],
-    };
   }
 
   List<HistoryLine> _account(HistoryEntry e) {

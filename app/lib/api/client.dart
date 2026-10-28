@@ -11,7 +11,7 @@ import 'units.dart';
 /// The API version and revision this app was built for.
 const apiPath = '/api/v1';
 const apiVersion = 1;
-const apiRevision = 6;
+const apiRevision = 7;
 
 const sessionCookie = 'wtf_session';
 
@@ -788,27 +788,23 @@ class ApiClient {
 
   // --- Attachments ---
 
-  /// PATCH /attachments/{id}: the title.
-  Future<Attachment> patchAttachment(
-    String id,
-    Map<String, Object?> changes,
-  ) async => Attachment.fromJson(
-    await _call('PATCH', '/attachments/$id', body: changes) as Json,
-  );
+  /// Changes an attachment's title.
+  Future<Attachment> patchAttachment(Attachment a, String title) async =>
+      Attachment.fromJson(
+        await _call('PATCH', a.path, body: {'title': title}) as Json,
+        a.owner,
+      );
 
-  /// Removes an attachment from the object at [ownerPath] (/items/{id},
-  /// /stock/{id}, /locations/{id} or /classes/{id}). An attachment left on
-  /// nothing is deleted for good.
-  Future<void> removeAttachment(String ownerPath, String id) =>
-      _call('DELETE', '$ownerPath/attachments/$id');
+  /// Deletes an attachment, for good.
+  Future<void> deleteAttachment(Attachment a) => _call('DELETE', a.path);
 
   /// Makes one of an object's own image attachments its photo; null for none.
   Future<void> setPhoto(String ownerPath, String? attachmentId) =>
       _call('PATCH', ownerPath, body: {'photo': attachmentId});
 
   /// Where an attachment's content is. Native apps send [authHeaders] with it.
-  Uri attachmentUrl(String id) =>
-      server.resolve('$apiPath/attachments/$id/content');
+  Uri attachmentUrl(Attachment a) =>
+      server.resolve('$apiPath${a.path}/content');
 
   /// The session cookie for requests made outside this client, such as
   /// images; empty on the web, where the browser sends it.

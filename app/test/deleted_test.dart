@@ -359,7 +359,7 @@ void main() {
   });
 
   test(
-    'attachments in history: added, renamed, made the photo, removed',
+    'attachments in history: added, renamed, made the photo, deleted',
     () async {
       final fake = FakeServer();
       final client = ApiClient(
@@ -368,12 +368,13 @@ void main() {
         manageCookie: true,
         session: 'tok',
       );
-      const link = {'item': 'i-drill', 'attachment': 'att-1'};
       final att = {
         'id': 'att-1',
         'title': 'Front',
+        'item': 'i-drill',
         'type': 'image/png',
         'hash': 'ab',
+        'size': 5,
       };
       final drill = {
         'id': 'i-drill',
@@ -382,8 +383,10 @@ void main() {
         'class': 'c-drills',
       };
       final entries = [
-        entry(6, 't5', 'attachment', 'delete', {...att, 'title': 'Front view'}),
-        entry(5, 't5', 'item_attachment', 'delete', link),
+        entry(5, 't5', 'item_attachment', 'delete', {
+          ...att,
+          'title': 'Front view',
+        }),
         entry(
           4,
           't4',
@@ -397,15 +400,14 @@ void main() {
         entry(
           3,
           't3',
-          'attachment',
+          'item_attachment',
           'update',
           {...att, 'title': 'Front view'},
           {
             'title': {'old': 'Front', 'new': 'Front view'},
           },
         ),
-        entry(2, 't1', 'item_attachment', 'insert', link),
-        entry(1, 't1', 'attachment', 'insert', att),
+        entry(1, 't1', 'item_attachment', 'insert', att),
       ].map(HistoryEntry.fromJson).toList();
       final names = HistoryNames(client);
       await names.load(entries);
@@ -415,7 +417,7 @@ void main() {
         const HistoryFocus('items', 'i-drill'),
       ).map((e) => e.lines.map((l) => l.text).join(' / '));
       expect(lines, [
-        'Removed attachment Front view',
+        'Deleted photo Front view',
         'Photo: Front view',
         'Renamed attachment “Front” to “Front view”',
         'Added photo Front',

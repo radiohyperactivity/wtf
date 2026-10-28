@@ -556,10 +556,8 @@ class FakeServer {
       case ('DELETE', ['items', final id, 'attachments', final attachment]):
         itemAttachments[id]?.removeWhere((a) => a['id'] == attachment);
         return http.Response('', 204, headers: _headers);
-      case ('PATCH', ['attachments', final id]):
-        final a = itemAttachments.values
-            .expand((list) => list)
-            .firstWhere((a) => a['id'] == id);
+      case ('PATCH', ['items', final id, 'attachments', final attachment]):
+        final a = itemAttachments[id]!.firstWhere((a) => a['id'] == attachment);
         a.addAll(body!);
         return _json(a);
       case ('PATCH', ['items', final id]):

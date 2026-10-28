@@ -24,7 +24,7 @@ class AttachmentImage extends StatelessWidget {
   Widget build(BuildContext context) {
     final client = context.read<Session>().client;
     return Image.network(
-      client.attachmentUrl(attachment.id).toString(),
+      client.attachmentUrl(attachment).toString(),
       headers: client.authHeaders,
       fit: fit,
       width: size,
@@ -59,7 +59,7 @@ void showPhoto(BuildContext context, Attachment attachment) {
 /// The attachments of the object at [ownerPath] (/items/{id}, …): images as
 /// thumbnails, other files by title, [photo] marked. With [onChanged] (when
 /// the account may change the object), each has a menu to change its title,
-/// make it the photo (images) or remove it.
+/// make it the photo (images) or delete it.
 class AttachmentList extends StatelessWidget {
   const AttachmentList(
     this.attachments, {
@@ -127,7 +127,7 @@ class AttachmentList extends StatelessWidget {
             dense: true,
             leading: const Icon(Icons.attach_file),
             title: Text(a.title),
-            subtitle: Text(a.type),
+            subtitle: Text('${a.type} · ${a.sizeText}'),
             trailing: onChanged == null ? null : _menu(context, a),
           ),
       ],
@@ -153,18 +153,17 @@ class AttachmentList extends StatelessWidget {
           case 'title':
             final title = await _titleDialog(context, a);
             if (title != null && title != a.title) {
-              run(() => client.patchAttachment(a.id, {'title': title}));
+              run(() => client.patchAttachment(a, title));
             }
           case 'photo':
             run(() => client.setPhoto(ownerPath, _isPhoto(a) ? null : a.id));
-          case 'remove':
+          case 'delete':
             if (await confirm(
               context,
-              title: 'Remove ${a.title}?',
+              title: 'Delete ${a.title}?',
               message: "It can't be restored.",
-              action: 'Remove',
             )) {
-              run(() => client.removeAttachment(ownerPath, a.id));
+              run(() => client.deleteAttachment(a));
             }
         }
       },
@@ -177,7 +176,7 @@ class AttachmentList extends StatelessWidget {
               _isPhoto(a) ? 'No longer the photo' : 'Make it the photo',
             ),
           ),
-        const PopupMenuItem(value: 'remove', child: Text('Remove…')),
+        const PopupMenuItem(value: 'delete', child: Text('Delete…')),
       ],
     );
   }
