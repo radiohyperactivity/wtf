@@ -17,7 +17,7 @@ It was planned to cover what you do every day. While building it, it grew to cov
 | Move stock, and edit and delete items and stock rows | |
 | Manage classes (with their attributes), locations, attributes and their options, and accounts | |
 | History, and the units | |
-| Captions, file names and the primary photo of attachments | |
+| Titles of attachments, the photo of an object, removing attachments | |
 
 **Platforms, in this order:**
 1. **Web and Windows:** on your PC, where everything is installed.
@@ -231,7 +231,7 @@ Added after review, with the deletion design ([api/deleting.md](api/deleting.md)
     - **A stock row a move merged into another** says so and leads to that row; a label code of one goes there straight from search.
     - **Label codes** of deleted things are shown as "…, deleted" in search.
     - **Privileges:** while building this I noticed that the app tied locations to model write, but the server ties them to data write (ACCOUNTS.md). The location buttons now follow data write.
-    - **Not built:** restoring attachments and options in the app. The CLI can (`wtf attachment restore`, `wtf option restore`); deleted attachments and options have no screen of their own in the app yet.
+    - **Not built:** restoring options in the app. The CLI can (`wtf option restore`); deleted options have no screen of their own in the app yet. (Attachments are no longer restorable at all; see decision 34.)
 
 ### Unit families, and no tenants
 
@@ -275,4 +275,14 @@ Built for API revision 5, with unit files ([seed/units-format.md](seed/units-for
     - **Conflicts** are listed with where they are and why, and then there's only Close: nothing is imported until the file is fixed.
     - **The file is sent as it was chosen,** so factors keep every digit.
     - **A file that isn't a unit file** is refused with the server's reason, such as a missing key or a newer version.
+
+### Attachments, redone
+
+Built for API revision 6, with the new attachment model ([api/attachment.md](api/attachment.md)).
+
+34. **Titles and photos.** An attachment shows its title, and files their type (sizes are no longer stored). Each attachment's menu has:
+    - **Title…** to rename it;
+    - **Make it the photo** or **No longer the photo** for images, which sets the object's photo (a star marks it);
+    - **Remove…**, which asks first and warns that it can't be restored: an attachment on nothing else is deleted for good.
+    - **History** names attachments by their latest title: "Added photo Front", "Renamed attachment …", "Photo: Front view", "Removed attachment …". A link that an upload made isn't repeated, and neither is the deletion of an attachment that was only removed from its object.
 

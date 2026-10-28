@@ -163,6 +163,8 @@ class StockScreen extends StatelessWidget {
                   MissingNote(stock.missing.map((m) => m.name).toList()),
                   AttachmentList(
                     stock.attachments,
+                    ownerPath: '/stock/${stock.id}',
+                    photo: stock.photo,
                     onChanged: write ? reload : null,
                   ),
                 ],

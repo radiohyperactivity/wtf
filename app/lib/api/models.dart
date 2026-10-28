@@ -345,48 +345,36 @@ List<Value> _values(Object? json) => _list(json).map(Value.fromJson).toList();
 List<NamedRef> _refs(Object? json) =>
     _list(json).map(NamedRef.fromJson).toList();
 
+/// A file attached to items, stock rows, locations or classes.
 class Attachment {
   const Attachment({
     required this.id,
-    required this.fileName,
-    required this.contentType,
-    required this.size,
-    this.caption,
-    this.primaryPhoto = false,
-    this.deleted = false,
+    required this.title,
+    required this.type,
+    this.hash = '',
   });
 
   factory Attachment.fromJson(Json json) => Attachment(
     id: json['id'] as String,
-    fileName: json['file_name'] as String,
-    contentType: json['content_type'] as String? ?? '',
-    size: json['size'] as int? ?? 0,
-    caption: json['caption'] as String?,
-    primaryPhoto: json['primary_photo'] as bool? ?? false,
-    deleted: json['deleted'] as bool? ?? false,
+    title: json['title'] as String,
+    type: json['type'] as String? ?? '',
+    hash: json['hash'] as String? ?? '',
   );
 
   static Attachment? maybe(Object? json) =>
       json == null ? null : Attachment.fromJson(json as Json);
 
   final String id;
-  final String fileName;
-  final String contentType;
-  final int size;
-  final String? caption;
-  final bool primaryPhoto;
-  final bool deleted;
+  final String title;
+
+  /// The MIME type.
+  final String type;
+
+  /// The SHA-256 of the content, in hex.
+  final String hash;
 
   /// Images the app can show itself (SVG is sent as a download).
-  bool get isImage =>
-      contentType.startsWith('image/') && contentType != 'image/svg+xml';
-
-  String get sizeText {
-    if (size >= 1 << 30) return '${(size / (1 << 30)).toStringAsFixed(1)} GiB';
-    if (size >= 1 << 20) return '${(size / (1 << 20)).toStringAsFixed(1)} MiB';
-    if (size >= 1 << 10) return '${(size / (1 << 10)).toStringAsFixed(1)} KiB';
-    return '$size B';
-  }
+  bool get isImage => type.startsWith('image/') && type != 'image/svg+xml';
 }
 
 List<Attachment> _attachments(Object? json) =>
@@ -531,6 +519,7 @@ class ClassDetail {
     this.container = false,
     this.path = const [],
     this.attributes = const [],
+    this.photo,
     this.attachments = const [],
     this.deleted = false,
   });
@@ -542,6 +531,7 @@ class ClassDetail {
     container: json['container'] as bool? ?? false,
     path: _refs(json['path']),
     attributes: _list(json['attributes']).map(ClassAttribute.fromJson).toList(),
+    photo: Attachment.maybe(json['photo']),
     attachments: _attachments(json['attachments']),
     deleted: json['deleted'] as bool? ?? false,
   );
@@ -552,6 +542,9 @@ class ClassDetail {
   final bool container;
   final List<NamedRef> path;
   final List<ClassAttribute> attributes;
+
+  /// One of its own image attachments, or null.
+  final Attachment? photo;
   final List<Attachment> attachments;
   final bool deleted;
 
@@ -566,6 +559,7 @@ class Location {
     this.parent,
     this.container = false,
     this.path = const [],
+    this.photo,
     this.attachments = const [],
     this.deleted = false,
   });
@@ -577,6 +571,7 @@ class Location {
     parent: json['parent'] as String?,
     container: json['container'] as bool? ?? false,
     path: _refs(json['path']),
+    photo: Attachment.maybe(json['photo']),
     attachments: _attachments(json['attachments']),
     deleted: json['deleted'] as bool? ?? false,
   );
@@ -587,6 +582,9 @@ class Location {
   final String? parent;
   final bool container;
   final List<NamedRef> path;
+
+  /// One of its own image attachments, or null.
+  final Attachment? photo;
   final List<Attachment> attachments;
   final bool deleted;
 
@@ -778,6 +776,7 @@ class Stock {
     this.display,
     this.values = const [],
     this.missing = const [],
+    this.photo,
     this.attachments = const [],
     this.deleted = false,
     this.mergedInto,
@@ -792,6 +791,7 @@ class Stock {
     display: Display.fromJson(json['display']),
     values: _values(json['values']),
     missing: _refs(json['missing']),
+    photo: Attachment.maybe(json['photo']),
     attachments: _attachments(json['attachments']),
     deleted: json['deleted'] as bool? ?? false,
     mergedInto: _obj(json['merged_into'])?['code'] as String?,
@@ -812,6 +812,9 @@ class Stock {
   /// Not in list rows (GET /stock).
   final List<Value> values;
   final List<NamedRef> missing;
+
+  /// One of its own image attachments, or null.
+  final Attachment? photo;
   final List<Attachment> attachments;
 
   String get quantityText => formatQuantity(quantity, display);

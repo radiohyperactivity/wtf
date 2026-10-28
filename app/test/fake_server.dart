@@ -201,8 +201,10 @@ class FakeServer {
       'class': classJson(i['class'] as String)..remove('attributes'),
       'values': _values(i),
       'missing': [],
-      'photo': null,
-      'attachments': [],
+      'photo': (itemAttachments[id] ?? [])
+          .where((a) => a['id'] == i['photo'])
+          .firstOrNull,
+      'attachments': itemAttachments[id] ?? [],
       'stock': [
         for (final s in stock.where((s) => s['item'] == id))
           {
@@ -335,6 +337,9 @@ class FakeServer {
       'conflicts': conflicts,
     };
   }
+
+  /// The attachments of items, by item id.
+  final Map<String, List<Map<String, dynamic>>> itemAttachments = {};
 
   /// The where filters of the last GET /items, as sent.
   String? lastWhere;
@@ -548,6 +553,15 @@ class FakeServer {
         };
         stock.add(row);
         return _json(stockJson(row['id'] as String));
+      case ('DELETE', ['items', final id, 'attachments', final attachment]):
+        itemAttachments[id]?.removeWhere((a) => a['id'] == attachment);
+        return http.Response('', 204, headers: _headers);
+      case ('PATCH', ['attachments', final id]):
+        final a = itemAttachments.values
+            .expand((list) => list)
+            .firstWhere((a) => a['id'] == id);
+        a.addAll(body!);
+        return _json(a);
       case ('PATCH', ['items', final id]):
         items.firstWhere((i) => i['id'] == id).addAll(body!);
         return _json(itemJson(id));

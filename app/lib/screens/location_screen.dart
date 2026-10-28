@@ -212,6 +212,8 @@ class LocationScreen extends StatelessWidget {
                     ),
                   AttachmentList(
                     l.attachments,
+                    ownerPath: '/locations/${l.id}',
+                    photo: l.photo,
                     onChanged: write ? reload : null,
                   ),
                 ],

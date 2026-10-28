@@ -44,7 +44,7 @@ void showPhoto(BuildContext context, Attachment attachment) {
     context: context,
     builder: (context) => Dialog.fullscreen(
       child: Scaffold(
-        appBar: AppBar(title: Text(attachment.caption ?? attachment.fileName)),
+        appBar: AppBar(title: Text(attachment.title)),
         body: InteractiveViewer(
           maxScale: 8,
           child: Center(
@@ -56,14 +56,25 @@ void showPhoto(BuildContext context, Attachment attachment) {
   );
 }
 
-/// The attachments of an object: images as thumbnails, other files by name.
-/// With [onChanged] (when the account may change the object), each has a
-/// menu to change its caption, file name or primary photo, or delete it.
+/// The attachments of the object at [ownerPath] (/items/{id}, …): images as
+/// thumbnails, other files by title, [photo] marked. With [onChanged] (when
+/// the account may change the object), each has a menu to change its title,
+/// make it the photo (images) or remove it.
 class AttachmentList extends StatelessWidget {
-  const AttachmentList(this.attachments, {super.key, this.onChanged});
+  const AttachmentList(
+    this.attachments, {
+    super.key,
+    required this.ownerPath,
+    this.photo,
+    this.onChanged,
+  });
 
   final List<Attachment> attachments;
+  final String ownerPath;
+  final Attachment? photo;
   final VoidCallback? onChanged;
+
+  bool _isPhoto(Attachment a) => photo?.id == a.id;
 
   @override
   Widget build(BuildContext context) {
@@ -86,7 +97,7 @@ class AttachmentList extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Tooltip(
-                        message: [a.fileName, ?a.caption].join('\n'),
+                        message: a.title,
                         child: InkWell(
                           onTap: () => showPhoto(context, a),
                           child: ClipRRect(
@@ -98,9 +109,9 @@ class AttachmentList extends StatelessWidget {
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          if (a.primaryPhoto)
+                          if (_isPhoto(a))
                             const Tooltip(
-                              message: 'Primary photo',
+                              message: 'The photo',
                               child: Icon(Icons.star, size: 16),
                             ),
                           if (onChanged != null) _menu(context, a),
@@ -115,8 +126,8 @@ class AttachmentList extends StatelessWidget {
           ListTile(
             dense: true,
             leading: const Icon(Icons.attach_file),
-            title: Text(a.fileName),
-            subtitle: Text([a.contentType, a.sizeText, ?a.caption].join(' · ')),
+            title: Text(a.title),
+            subtitle: Text(a.type),
             trailing: onChanged == null ? null : _menu(context, a),
           ),
       ],
@@ -139,71 +150,57 @@ class AttachmentList extends StatelessWidget {
       iconSize: 18,
       onSelected: (action) async {
         switch (action) {
-          case 'edit':
-            final changes = await _editDialog(context, a);
-            if (changes != null && changes.isNotEmpty) {
-              run(() => client.patchAttachment(a.id, changes));
+          case 'title':
+            final title = await _titleDialog(context, a);
+            if (title != null && title != a.title) {
+              run(() => client.patchAttachment(a.id, {'title': title}));
             }
-          case 'primary':
-            run(
-              () => client.patchAttachment(a.id, {
-                'primary_photo': !a.primaryPhoto,
-              }),
-            );
-          case 'delete':
-            if (await confirm(context, title: 'Delete ${a.fileName}?')) {
-              run(() => client.deleteAttachment(a.id));
+          case 'photo':
+            run(() => client.setPhoto(ownerPath, _isPhoto(a) ? null : a.id));
+          case 'remove':
+            if (await confirm(
+              context,
+              title: 'Remove ${a.title}?',
+              message: "It can't be restored.",
+              action: 'Remove',
+            )) {
+              run(() => client.removeAttachment(ownerPath, a.id));
             }
         }
       },
       itemBuilder: (context) => [
-        const PopupMenuItem(
-          value: 'edit',
-          child: Text('Caption and file name'),
-        ),
+        const PopupMenuItem(value: 'title', child: Text('Title…')),
         if (a.isImage)
           PopupMenuItem(
-            value: 'primary',
+            value: 'photo',
             child: Text(
-              a.primaryPhoto
-                  ? 'No longer the primary photo'
-                  : 'Make it the primary photo',
+              _isPhoto(a) ? 'No longer the photo' : 'Make it the photo',
             ),
           ),
-        const PopupMenuItem(value: 'delete', child: Text('Delete…')),
+        const PopupMenuItem(value: 'remove', child: Text('Remove…')),
       ],
     );
   }
 }
 
-/// The caption and file name of an attachment; returns what changed.
-Future<Map<String, Object?>?> _editDialog(BuildContext context, Attachment a) {
-  final caption = TextEditingController(text: a.caption ?? '');
-  final name = TextEditingController(text: a.fileName);
-  return showDialog<Map<String, Object?>>(
+/// Asks for a new title; null when cancelled.
+Future<String?> _titleDialog(BuildContext context, Attachment a) {
+  final title = TextEditingController(text: a.title);
+  return showDialog<String>(
     context: context,
     builder: (context) => DisposeWith(
-      onDispose: () {
-        caption.dispose();
-        name.dispose();
-      },
+      onDispose: title.dispose,
       child: AlertDialog(
         title: const Text('Attachment'),
         content: SizedBox(
           width: 400,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: caption,
-                autofocus: true,
-                decoration: const InputDecoration(labelText: 'Caption'),
-              ),
-              TextField(
-                controller: name,
-                decoration: const InputDecoration(labelText: 'File name'),
-              ),
-            ],
+          child: TextField(
+            controller: title,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: 'Title'),
+            onSubmitted: (t) {
+              if (t.trim().isNotEmpty) Navigator.pop(context, t.trim());
+            },
           ),
         ),
         actions: [
@@ -213,11 +210,8 @@ Future<Map<String, Object?>?> _editDialog(BuildContext context, Attachment a) {
           ),
           FilledButton(
             onPressed: () {
-              final c = caption.text.trim(), n = name.text.trim();
-              Navigator.pop(context, {
-                if (c != (a.caption ?? '')) 'caption': c.isEmpty ? null : c,
-                if (n.isNotEmpty && n != a.fileName) 'file_name': n,
-              });
+              final t = title.text.trim();
+              if (t.isNotEmpty) Navigator.pop(context, t);
             },
             child: const Text('Save'),
           ),

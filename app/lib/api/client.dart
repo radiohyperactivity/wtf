@@ -11,7 +11,7 @@ import 'units.dart';
 /// The API version and revision this app was built for.
 const apiPath = '/api/v1';
 const apiVersion = 1;
-const apiRevision = 5;
+const apiRevision = 6;
 
 const sessionCookie = 'wtf_session';
 
@@ -788,8 +788,7 @@ class ApiClient {
 
   // --- Attachments ---
 
-  /// PATCH /attachments/{id} with any of file_name, caption (null: none) and
-  /// primary_photo (images only; replaces the object's previous one).
+  /// PATCH /attachments/{id}: the title.
   Future<Attachment> patchAttachment(
     String id,
     Map<String, Object?> changes,
@@ -797,14 +796,15 @@ class ApiClient {
     await _call('PATCH', '/attachments/$id', body: changes) as Json,
   );
 
-  /// Marks an attachment deleted; it can be restored.
-  Future<void> deleteAttachment(String id) =>
-      _call('DELETE', '/attachments/$id');
+  /// Removes an attachment from the object at [ownerPath] (/items/{id},
+  /// /stock/{id}, /locations/{id} or /classes/{id}). An attachment left on
+  /// nothing is deleted for good.
+  Future<void> removeAttachment(String ownerPath, String id) =>
+      _call('DELETE', '$ownerPath/attachments/$id');
 
-  /// Restores a deleted attachment; its object must not be deleted.
-  Future<Attachment> restoreAttachment(String id) async => Attachment.fromJson(
-    await _call('POST', '/attachments/$id/restore', body: const {}) as Json,
-  );
+  /// Makes one of an object's own image attachments its photo; null for none.
+  Future<void> setPhoto(String ownerPath, String? attachmentId) =>
+      _call('PATCH', ownerPath, body: {'photo': attachmentId});
 
   /// Where an attachment's content is. Native apps send [authHeaders] with it.
   Uri attachmentUrl(String id) =>

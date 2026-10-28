@@ -358,6 +358,71 @@ void main() {
     expect(find.text('Added location Garage at the top'), findsOneWidget);
   });
 
+  test(
+    'attachments in history: added, renamed, made the photo, removed',
+    () async {
+      final fake = FakeServer();
+      final client = ApiClient(
+        Uri.parse('http://wtf.test:8080'),
+        httpClient: fake.client,
+        manageCookie: true,
+        session: 'tok',
+      );
+      const link = {'item': 'i-drill', 'attachment': 'att-1'};
+      final att = {
+        'id': 'att-1',
+        'title': 'Front',
+        'type': 'image/png',
+        'hash': 'ab',
+      };
+      final drill = {
+        'id': 'i-drill',
+        'name': 'Cordless drill',
+        'code': 32768 + 11 * 32 * 32,
+        'class': 'c-drills',
+      };
+      final entries = [
+        entry(6, 't5', 'attachment', 'delete', {...att, 'title': 'Front view'}),
+        entry(5, 't5', 'item_attachment', 'delete', link),
+        entry(
+          4,
+          't4',
+          'item',
+          'update',
+          {...drill, 'photo': 'att-1'},
+          {
+            'photo': {'old': null, 'new': 'att-1'},
+          },
+        ),
+        entry(
+          3,
+          't3',
+          'attachment',
+          'update',
+          {...att, 'title': 'Front view'},
+          {
+            'title': {'old': 'Front', 'new': 'Front view'},
+          },
+        ),
+        entry(2, 't1', 'item_attachment', 'insert', link),
+        entry(1, 't1', 'attachment', 'insert', att),
+      ].map(HistoryEntry.fromJson).toList();
+      final names = HistoryNames(client);
+      await names.load(entries);
+      final lines = historyEvents(
+        entries,
+        names,
+        const HistoryFocus('items', 'i-drill'),
+      ).map((e) => e.lines.map((l) => l.text).join(' / '));
+      expect(lines, [
+        'Removed attachment Front view',
+        'Photo: Front view',
+        'Renamed attachment “Front” to “Front view”',
+        'Added photo Front',
+      ]);
+    },
+  );
+
   test('the history of all attributes names each attribute', () async {
     final fake = FakeServer();
     final client = ApiClient(

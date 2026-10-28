@@ -320,9 +320,15 @@ void main() {
     };
     expect(calls.length, greaterThan(30));
     for (final (method, path) in calls) {
-      // History: /{kind}/{id}/history for each kind the client allows.
+      // History: /{kind}/{id}/history for each kind the client allows; an
+      // attachment's owner ({}/attachments/…): each kind with attachments.
       final paths = path == '/{}/{}/history'
           ? ApiClient.historyKinds.map((k) => '/$k/{}/history')
+          : path.startsWith('{}/')
+          ? [
+              for (final k in ['items', 'stock', 'locations', 'classes'])
+                '/$k/{}${path.substring(2)}',
+            ]
           : [path];
       for (final p in paths) {
         expect(spec[p], contains(method), reason: '$method $p');

@@ -264,6 +264,8 @@ class ClassScreen extends StatelessWidget {
                     ),
                   AttachmentList(
                     c.attachments,
+                    ownerPath: '/classes/${c.id}',
+                    photo: c.photo,
                     onChanged: write ? reload : null,
                   ),
                 ],

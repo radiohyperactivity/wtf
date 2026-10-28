@@ -194,6 +194,8 @@ class ItemScreen extends StatelessWidget {
                   ],
                   AttachmentList(
                     item.attachments,
+                    ownerPath: '/items/${item.id}',
+                    photo: item.photo,
                     onChanged: write ? reload : null,
                   ),
                 ],

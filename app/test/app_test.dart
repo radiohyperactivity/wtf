@@ -222,6 +222,54 @@ void main() {
     expect(find.text('Pressure'), findsOneWidget);
   });
 
+  testWidgets('an attachment: change its title, then remove it', (
+    tester,
+  ) async {
+    setSize(tester, 700);
+    final fake = FakeServer();
+    fake.itemAttachments['i-drill'] = [
+      {
+        'id': 'att-1',
+        'title': 'Manual',
+        'type': 'application/pdf',
+        'hash': 'ab',
+      },
+    ];
+    await startApp(tester, fake);
+    await search(tester, 'drill');
+    await tester.tap(find.text('Cordless drill'));
+    await tester.pumpAndSettle();
+    expect(find.text('Manual'), findsOneWidget);
+    expect(find.text('application/pdf'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Attachment'));
+    await tester.pumpAndSettle();
+    expect(find.text('Make it the photo'), findsNothing); // not an image
+    await tester.tap(find.text('Title…'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Manual'),
+      'Datasheet',
+    );
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      'PATCH /api/v1/attachments/att-1 {"title":"Datasheet"}',
+    );
+    expect(find.text('Datasheet'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Attachment'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Remove…'));
+    await tester.pumpAndSettle();
+    expect(find.text("It can't be restored."), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
+    await tester.pumpAndSettle();
+    expect(fake.changes.last, 'DELETE /api/v1/items/i-drill/attachments/att-1');
+    expect(find.text('Datasheet'), findsNothing);
+  });
+
   testWidgets('the appearance is kept on the device', (tester) async {
     setSize(tester, 400, 800);
     final fake = FakeServer();
