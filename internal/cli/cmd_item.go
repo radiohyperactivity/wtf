@@ -395,14 +395,14 @@ func (e *env) printItemJSON(data json.RawMessage) error {
 		"Deleted", deletedNote(it.Deleted, "item", it.Code),
 		"Class", pathNames(it.Class.Path),
 		"Unit", unitName(it.Unit, it.UnitLock),
-		"Photo", photo,
+		"Item photo", photo,
 		"Id", it.ID)
 	if len(it.Values) > 0 {
 		fmt.Fprintln(w, "Values:")
 		printValues(w, "  ", it.Values)
 	}
 	printMissing(w, "", it.Missing)
-	printAttachments(w, "", it.Attachments, it.Photo)
+	printAttachments(w, "", it.Attachments, it.Photo, "item photo")
 	if len(it.Stock) == 0 {
 		fmt.Fprintln(w, "Stock: none")
 		return nil
@@ -414,7 +414,7 @@ func (e *env) printItemJSON(data json.RawMessage) error {
 		t.flush()
 		printValues(w, "      ", s.Values)
 		printMissing(w, "      ", s.Missing)
-		printAttachments(w, "      ", s.Attachments, s.Photo)
+		printAttachments(w, "      ", s.Attachments, s.Photo, "stock row photo")
 	}
 	return nil
 }
@@ -696,7 +696,7 @@ func (e *env) printStockJSON(data json.RawMessage) error {
 		printValues(w, "  ", s.Values)
 	}
 	printMissing(w, "", s.Missing)
-	printAttachments(w, "", s.Attachments, s.Photo)
+	printAttachments(w, "", s.Attachments, s.Photo, "stock row photo")
 	return nil
 }
 

@@ -56,12 +56,12 @@ func attachmentGroup() group {
 					if err := decode(obj.Attachments, &list); err != nil {
 						return err
 					}
-					printAttachments(e.stdout, "", list, obj.Photo)
+					printAttachments(e.stdout, "", list, obj.Photo, photoName(args[0]))
 					if args[0] == "item" {
 						for _, s := range obj.Stock {
 							if len(s.Attachments) > 0 {
 								fmt.Fprintf(e.stdout, "Stock %s:\n", s.Code)
-								printAttachments(e.stdout, "  ", s.Attachments, s.Photo)
+								printAttachments(e.stdout, "  ", s.Attachments, s.Photo, "stock row photo")
 							}
 						}
 					}
@@ -205,7 +205,7 @@ func attachmentGroup() group {
 			{
 				name:    "photo",
 				args:    "<item|stock|location|class> <ref> <attachment-id|none>",
-				summary: "Make one of an object's image attachments its photo, or none.",
+				summary: "Make one of an object's image attachments its photo (item photo, …), or none.",
 				params:  withID,
 				setup: simple(func(e *env, args []string) error {
 					if err := wantArgs(args, 3, 3); err != nil {
@@ -227,9 +227,9 @@ func attachmentGroup() group {
 					}
 					if !e.json {
 						if photo == nil {
-							fmt.Fprintln(e.stdout, "No photo.")
+							fmt.Fprintf(e.stdout, "No %s.\n", photoName(args[0]))
 						} else {
-							fmt.Fprintln(e.stdout, "Photo set.")
+							fmt.Fprintf(e.stdout, "%s set.\n", capitalize(photoName(args[0])))
 						}
 					}
 					return nil
@@ -273,6 +273,23 @@ func attachmentGroup() group {
 			},
 		},
 	}
+}
+
+// photoName names the photo of an object of type ("item", …): "item
+// photo", "stock row photo", "location photo" or "class photo".
+func photoName(typ string) string {
+	if typ == "stock" {
+		return "stock row photo"
+	}
+	return typ + " photo"
+}
+
+// capitalize upper-cases the first letter of an ASCII text.
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 // attachmentPath is the path of an attachment named by TYPE REF ID:

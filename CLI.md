@@ -331,7 +331,7 @@ These follow your answers: all attributes offered, a picker on Tab Tab, bash, zs
 51. **Attachments follow the new model** ([api/attachment.md](api/attachment.md)): each object has attachments of its own, with a title, type and size, and a photo per object.
     - **An attachment is always named with its object:** `get`, `download`, `set` and `delete` take `TYPE REF ID`, like `list` and `add`.
     - **`add … [--title T] [--photo]`:** the title defaults to the file name.
-    - **`photo TYPE REF ID|none`** sets or clears an object's photo, which must be one of its own image attachments.
+    - **`photo TYPE REF ID|none`** sets or clears an object's photo, which must be one of its own image attachments. The photo is named after its object: "Item photo set.", and "item photo" in lists.
     - **`delete TYPE REF ID`** marks it deleted; **`restore TYPE REF ID`** brings it back, as an ordinary attachment. `get` says when one is deleted.
     - **`download`** names the file as the server does: the title, with an extension for the type if it lacks one (`internal/mediatype`).
     - **No edit form, and no `add --edit`:** the title is all there is to change, with `set --title`.

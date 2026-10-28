@@ -212,7 +212,9 @@ func printMissing(w io.Writer, indent string, missing []ref) {
 	fmt.Fprintf(w, "%sMissing required: %s\n", indent, strings.Join(names, ", "))
 }
 
-func printAttachments(w io.Writer, indent string, list []attachment, photo *attachment) {
+// printAttachments lists an object's attachments; photoName ("item photo",
+// …) marks its photo.
+func printAttachments(w io.Writer, indent string, list []attachment, photo *attachment, photoName string) {
 	if len(list) == 0 {
 		return
 	}
@@ -221,7 +223,7 @@ func printAttachments(w io.Writer, indent string, list []attachment, photo *atta
 	for _, a := range list {
 		note := ""
 		if photo != nil && photo.ID == a.ID {
-			note = "photo"
+			note = photoName
 		}
 		t.row(indent+"  "+a.ID, a.Title, a.Type, formatSize(a.Size), note)
 	}
