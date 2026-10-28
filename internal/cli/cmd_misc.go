@@ -18,27 +18,17 @@ import (
 
 func attachmentGroup() group {
 	printAttachment := printAttachmentJSON
-	attachmentID := func(args []string) (string, error) {
-		if err := wantArgs(args, 1, 1); err != nil {
-			return "", err
-		}
-		if !isUUID(args[0]) {
-			return "", usagef("attachments are named by id; 'wtf attachment list TYPE REF' shows them")
-		}
-		return strings.ToLower(args[0]), nil
-	}
+	targetParams := []param{arg("Type", targetTypes), arg("Object", completeTargetOf(0))}
+	withID := append(append([]param{}, targetParams...), arg("Attachment id", nil))
 	return group{
 		name:    "attachment",
 		summary: "Files attached to items, stock, locations and classes",
 		commands: []command{
-			editCommand("attachment", arg("Attachment id", nil), func(e *env, s string) (string, error) {
-				return attachmentID([]string{s})
-			}, (*env).editAttachment),
 			{
 				name:    "list",
 				args:    "<item|stock|location|class> <ref>",
 				summary: "List an object's attachments (for an item also its stock rows').",
-				params:  []param{arg("Type", targetTypes), arg("Object", completeTargetOf(0))},
+				params:  targetParams,
 				setup: simple(func(e *env, args []string) error {
 					if err := wantArgs(args, 2, 2); err != nil {
 						return err
@@ -80,19 +70,13 @@ func attachmentGroup() group {
 			},
 			{
 				name:    "add",
-				args:    "<item|stock|location|class> <ref> <file> [--title T] [--photo] [--edit]",
+				args:    "<item|stock|location|class> <ref> <file> [--title T] [--photo]",
 				summary: "Attach a file; its title is the file name unless --title gives one.",
-				params:  []param{arg("Type", targetTypes), arg("Object", completeTargetOf(0)), fileArg("File")},
+				params:  append(append([]param{}, targetParams...), fileArg("File")),
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
 					title := fs.String("title", "", "title (default: the file name)")
 					photo := fs.Bool("photo", false, "make it the object's photo (images only)")
-					editAfter := fs.Bool("edit", false, "open the new attachment in the edit form")
 					return func(e *env, args []string) error {
-						if *editAfter {
-							if err := e.needTerminal("--edit"); err != nil {
-								return err
-							}
-						}
 						if err := wantArgs(args, 3, 3); err != nil {
 							return err
 						}
@@ -108,24 +92,21 @@ func attachmentGroup() group {
 						if err != nil {
 							return err
 						}
-						if *editAfter {
-							return e.editCreated(data, (*env).editAttachment)
-						}
 						return e.emit(data, func() error { return printAttachment(e, data) })
 					}
 				},
 			},
 			{
 				name:    "get",
-				args:    "<attachment-id>",
+				args:    "<item|stock|location|class> <ref> <attachment-id>",
 				summary: "Show an attachment's details.",
-				params:  []param{arg("Attachment id", nil)},
+				params:  withID,
 				setup: simple(func(e *env, args []string) error {
-					id, err := attachmentID(args)
+					path, err := e.attachmentPath(args)
 					if err != nil {
 						return err
 					}
-					data, err := e.api.Get(e.ctx, "/attachments/"+id, nil)
+					data, err := e.api.Get(e.ctx, path, nil)
 					if err != nil {
 						return err
 					}
@@ -134,31 +115,31 @@ func attachmentGroup() group {
 			},
 			{
 				name:    "download",
-				args:    "<attachment-id> [-o FILE|-] [--force]",
+				args:    "<item|stock|location|class> <ref> <attachment-id> [-o FILE|-] [--force]",
 				summary: "Save an attachment's content, by default named after its title in the current directory.",
-				params:  []param{arg("Attachment id", nil)},
+				params:  withID,
 				flags:   map[string]param{"o": fileArg("Output file")},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
 					out := fs.String("o", "", "output file, or - for stdout")
 					force := fs.Bool("force", false, "overwrite an existing file")
 					return func(e *env, args []string) error {
-						id, err := attachmentID(args)
+						path, err := e.attachmentPath(args)
 						if err != nil {
 							return err
 						}
 						if *out == "-" {
-							_, err := e.api.Download(e.ctx, "/attachments/"+id+"/content", e.stdout)
+							_, err := e.api.Download(e.ctx, path+"/content", e.stdout)
 							return err
 						}
 						name := *out
 						if name == "" {
 							var a attachment
-							if err := e.get("/attachments/"+id, nil, &a); err != nil {
+							if err := e.get(path, nil, &a); err != nil {
 								return err
 							}
 							name = filepath.Base(mediatype.DownloadName(a.Title, a.Type))
 							if name == "." || name == string(filepath.Separator) || name == "" {
-								name = id
+								name = a.ID
 							}
 						}
 						flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
@@ -172,7 +153,7 @@ func attachmentGroup() group {
 						if err != nil {
 							return err
 						}
-						_, err = e.api.Download(e.ctx, "/attachments/"+id+"/content", f)
+						_, err = e.api.Download(e.ctx, path+"/content", f)
 						if cerr := f.Close(); err == nil {
 							err = cerr
 						}
@@ -189,21 +170,21 @@ func attachmentGroup() group {
 			},
 			{
 				name:    "set",
-				args:    "<attachment-id> --title T",
+				args:    "<item|stock|location|class> <ref> <attachment-id> --title T",
 				summary: "Change an attachment's title.",
-				params:  []param{arg("Attachment id", nil)},
+				params:  withID,
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
 					var title optString
 					fs.Var(&title, "title", "new title")
 					return func(e *env, args []string) error {
-						id, err := attachmentID(args)
+						path, err := e.attachmentPath(args)
 						if err != nil {
 							return err
 						}
 						if !title.set {
 							return usagef("nothing to change")
 						}
-						data, err := e.do(http.MethodPatch, "/attachments/"+id, object{"title": title.value})
+						data, err := e.do(http.MethodPatch, path, object{"title": title.value})
 						if err != nil {
 							return err
 						}
@@ -215,7 +196,7 @@ func attachmentGroup() group {
 				name:    "photo",
 				args:    "<item|stock|location|class> <ref> <attachment-id|none>",
 				summary: "Make one of an object's image attachments its photo, or none.",
-				params:  []param{arg("Type", targetTypes), arg("Object", completeTargetOf(0)), arg("Attachment id", nil)},
+				params:  withID,
 				setup: simple(func(e *env, args []string) error {
 					if err := wantArgs(args, 3, 3); err != nil {
 						return err
@@ -226,9 +207,10 @@ func attachmentGroup() group {
 					}
 					var photo any
 					if !isNone(args[2]) {
-						if photo, err = attachmentID(args[2:]); err != nil {
-							return err
+						if !isUUID(args[2]) {
+							return usagef("attachments are named by id; 'wtf attachment list TYPE REF' shows them")
 						}
+						photo = strings.ToLower(args[2])
 					}
 					if _, err := e.do(http.MethodPatch, path, object{"photo": photo}); err != nil {
 						return err
@@ -244,52 +226,42 @@ func attachmentGroup() group {
 				}),
 			},
 			{
-				name:    "remove",
-				args:    "<item|stock|location|class> <ref> <attachment-id>",
-				summary: "Remove an attachment from an object; on nothing else, it is deleted for good.",
-				params:  []param{arg("Type", targetTypes), arg("Object", completeTargetOf(0)), arg("Attachment id", nil)},
-				setup: simple(func(e *env, args []string) error {
-					if err := wantArgs(args, 3, 3); err != nil {
-						return err
-					}
-					path, err := e.targetPath(args[0], args[1])
-					if err != nil {
-						return err
-					}
-					id, err := attachmentID(args[2:])
-					if err != nil {
-						return err
-					}
-					if _, err := e.do(http.MethodDelete, path+"/attachments/"+id, nil); err != nil {
-						return err
-					}
-					if !e.json {
-						fmt.Fprintf(e.stdout, "Removed attachment %s.\n", id)
-					}
-					return nil
-				}),
-			},
-			{
 				name:    "delete",
-				args:    "<attachment-id>",
-				summary: "Delete an attachment for good, from every object it is on (it can't be restored).",
-				params:  []param{arg("Attachment id", nil)},
+				args:    "<item|stock|location|class> <ref> <attachment-id>",
+				summary: "Delete an attachment, for good (it can't be restored).",
+				params:  withID,
 				setup: simple(func(e *env, args []string) error {
-					id, err := attachmentID(args)
+					path, err := e.attachmentPath(args)
 					if err != nil {
 						return err
 					}
-					if _, err := e.do(http.MethodDelete, "/attachments/"+id, nil); err != nil {
+					if _, err := e.do(http.MethodDelete, path, nil); err != nil {
 						return err
 					}
 					if !e.json {
-						fmt.Fprintf(e.stdout, "Deleted attachment %s.\n", id)
+						fmt.Fprintf(e.stdout, "Deleted attachment %s.\n", args[2])
 					}
 					return nil
 				}),
 			},
 		},
 	}
+}
+
+// attachmentPath is the path of an attachment named by TYPE REF ID:
+// /items/{id}/attachments/{attachment}, and so on.
+func (e *env) attachmentPath(args []string) (string, error) {
+	if err := wantArgs(args, 3, 3); err != nil {
+		return "", err
+	}
+	if !isUUID(args[2]) {
+		return "", usagef("attachments are named by id; 'wtf attachment list TYPE REF' shows them")
+	}
+	path, err := e.targetPath(args[0], args[1])
+	if err != nil {
+		return "", err
+	}
+	return path + "/attachments/" + strings.ToLower(args[2]), nil
 }
 
 func codeCommand() command {
@@ -849,6 +821,7 @@ func printAttachmentJSON(e *env, data json.RawMessage) error {
 	fields(e.stdout,
 		"Title", a.Title,
 		"Type", a.Type,
+		"Size", formatSize(a.Size),
 		"SHA-256", a.Hash,
 		"Id", a.ID)
 	return nil

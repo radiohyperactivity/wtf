@@ -25,11 +25,12 @@ const (
 	multipartOverhead = 1 << 20
 )
 
-// upload attaches a multipart/form-data upload to an object of targetType.
+// upload attaches a multipart/form-data upload to an object of kind, whose
+// routes are under /kindPath.
 // Parts: "file" (required; its Content-Type is kept, and its file name is
 // the title unless a "title" part gives one) and "photo" (true/false: make
 // it the object's photo).
-func (s *server) upload(targetType string) handlerFunc {
+func (s *server) upload(kind, kindPath string) handlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		target := r.PathValue("id")
 		if !uuidPattern.MatchString(target) {
@@ -138,10 +139,11 @@ func (s *server) upload(targetType string) handlerFunc {
 			}
 			placed = true
 			sql, values := callSQL("attachment_create", []arg{
-				{name: "p_target_type", typ: "text", value: targetType},
-				{name: "p_target", typ: "uuid", value: target},
+				{name: "p_kind", typ: "text", value: kind},
+				{name: "p_owner", typ: "uuid", value: target},
 				{name: "p_hash", typ: "text", value: staged.Hash},
 				{name: "p_type", typ: "text", value: contentType},
+				{name: "p_size", typ: "bigint", value: staged.Size},
 				{name: "p_title", typ: "text", value: title},
 				{name: "p_photo", typ: "boolean", value: photo},
 			})
@@ -157,7 +159,7 @@ func (s *server) upload(targetType string) handlerFunc {
 		if err := json.Unmarshal([]byte(result), &created); err != nil {
 			return err
 		}
-		w.Header().Set("Location", apiPrefix+"/attachments/"+created.ID)
+		w.Header().Set("Location", apiPrefix+"/"+kindPath+"/"+target+"/attachments/"+created.ID)
 		writeJSON(w, http.StatusCreated, []byte(result))
 		return nil
 	}
@@ -179,8 +181,14 @@ func readField(part io.Reader) (string, error) {
 // mediatype.DownloadName). Only content types that can't run scripts in a browser are
 // shown inline; everything else is a download. The content of an attachment
 // never changes, so it can be cached for good.
-func (s *server) download(w http.ResponseWriter, r *http.Request) error {
-	args, err := collect(r, []param{path("p_id", "id")})
+func (s *server) download(kind string) handlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) error {
+		return s.sendAttachment(w, r, kind)
+	}
+}
+
+func (s *server) sendAttachment(w http.ResponseWriter, r *http.Request, kind string) error {
+	args, err := collect(r, []param{constant("p_kind", "text", kind), path("p_owner", "id"), path("p_id", "attachment")})
 	if err != nil {
 		return err
 	}
@@ -199,7 +207,7 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) error {
 
 	f, err := s.files.OpenFile(a.Hash)
 	if errors.Is(err, fs.ErrNotExist) {
-		s.log.Error("attachment file missing", "attachment", r.PathValue("id"), "sha256", a.Hash)
+		s.log.Error("attachment file missing", "attachment", r.PathValue("attachment"), "sha256", a.Hash)
 		return &problem{
 			Type:   "/problems/internal",
 			Title:  "Attachment file missing",

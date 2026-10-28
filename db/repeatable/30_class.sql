@@ -41,7 +41,7 @@ BEGIN
     END IF;
     RETURN util.class_json(p_id) || jsonb_build_object(
         'attributes',  util.class_attributes_json(p_id),
-        'photo',       util.attachment_json((SELECT photo FROM class WHERE id = p_id)),
+        'photo',       util.attachment_json('class', (SELECT photo FROM class WHERE id = p_id)),
         'attachments', util.attachments_json(NULL, NULL, NULL, p_id)
     );
 END;

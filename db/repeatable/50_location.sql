@@ -39,7 +39,7 @@ BEGIN
         PERFORM util.raise_not_found('location', p_id);
     END IF;
     RETURN util.location_json(p_id) || jsonb_build_object(
-        'photo',       util.attachment_json((SELECT photo FROM location WHERE id = p_id)),
+        'photo',       util.attachment_json('location', (SELECT photo FROM location WHERE id = p_id)),
         'attachments', util.attachments_json(NULL, NULL, p_id, NULL));
 END;
 $$;
@@ -436,8 +436,8 @@ $$;
 -- attachments, the moved amount is added to that row (a whole row is then
 -- marked deleted, merged_into that row). Otherwise a whole row simply changes
 -- location, and a partial amount is split off into a new row at the
--- destination, with a copy of the per-unit values; the new row shares the
--- attachments and the photo.
+-- destination, with copies of the per-unit values, the attachments and the
+-- photo.
 -- Returns the stock row at the destination.
 CREATE FUNCTION stock_move(p_id uuid, p_location uuid, p_quantity numeric DEFAULT NULL)
 RETURNS jsonb
@@ -450,6 +450,8 @@ DECLARE
     v_whole      boolean;
     v_candidates uuid[];
     v_target     uuid;
+    v_attachment stock_attachment;
+    v_copy       uuid;
 BEGIN
     PERFORM util.require('data', 'write');
     SELECT * INTO v_stock FROM stock WHERE id = p_id FOR UPDATE;
@@ -525,12 +527,16 @@ BEGIN
     FROM stock_value
     WHERE stock = p_id;
 
-    -- The new row shares the attachments, and the photo.
-    INSERT INTO stock_attachment (stock, attachment)
-    SELECT v_target, attachment
-    FROM stock_attachment
-    WHERE stock = p_id;
-    UPDATE stock SET photo = (SELECT photo FROM stock WHERE id = p_id) WHERE id = v_target;
+    -- The new row gets copies of the attachments (the same files on disk),
+    -- and the copy of the photo as its photo.
+    FOR v_attachment IN SELECT * FROM stock_attachment WHERE stock = p_id ORDER BY id LOOP
+        INSERT INTO stock_attachment (stock, type, hash, size, title)
+        VALUES (v_target, v_attachment.type, v_attachment.hash, v_attachment.size, v_attachment.title)
+        RETURNING id INTO v_copy;
+        IF v_attachment.id = v_stock.photo THEN
+            UPDATE stock SET photo = v_copy WHERE id = v_target;
+        END IF;
+    END LOOP;
 
     RETURN util.stock_detail_json(v_target);
 END;

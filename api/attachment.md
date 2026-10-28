@@ -1,27 +1,28 @@
 # Attachments
 
-The SQL is in [`db/repeatable/80_attachment.sql`](../db/repeatable/80_attachment.sql), and the tables are in [`db/migrations/0004_attachments.sql`](../db/migrations/0004_attachments.sql). The file handling is in [`internal/files`](../internal/files/), and the upload and download handlers are in [`internal/serve/attachments.go`](../internal/serve/attachments.go).
+The SQL is in [`db/repeatable/80_attachment.sql`](../db/repeatable/80_attachment.sql), and the tables are in [`db/migrations/0005_attachments.sql`](../db/migrations/0005_attachments.sql). The file handling is in [`internal/files`](../internal/files/), and the upload and download handlers are in [`internal/serve/attachments.go`](../internal/serve/attachments.go).
 
 Files (photos, datasheets, manuals, receipts, …) can be attached to items, stock rows, locations and classes. Any file type is accepted.
 
 ## The model
 
-- **An attachment** is a row in `attachment`: `id`, `hash` (the hex SHA-256 of the content), `type` (the MIME type) and `title`. The title is given at upload, and defaults to the uploaded file's name.
-- **Links:** an attachment is linked to the objects it belongs to through four mapping tables, `item_attachment`, `stock_attachment`, `location_attachment` and `class_attachment`. Each has the pair (object, attachment) as its primary key. An upload links its attachment to one object. Splitting a stock row links the new row to the same attachments, so it shares them.
-- **A photo:** items, stock rows, locations and classes each have a `photo` column, naming one of their own attachments. It must be an image (`image/*`) and linked to that object (a trigger checks both). Removing that link clears the photo.
-- **Content on disk:** the contents live in `wtfd`'s files directory (`--files-directory`), named by their hash: `<directory>/ab/abcdef…`. A stored file never changes. The same content is stored once on disk, however many attachments have it; the hash isn't unique among attachments.
-- **No deleting by marking.** Attachments are removed, not marked deleted. An attachment is deleted as soon as nothing links to it any more (a trigger), and can't be restored; history still records it. Its file goes at the next `wtfd gc`, once no attachment has its hash (see [WTFD.md](../WTFD.md)).
-- **Deleted objects keep their attachments,** linked and frozen, and get them back when restored. Purging the object removes its links, and with them the attachments that were only on it.
+- **Each kind of object has attachments of its own,** in `item_attachment`, `stock_attachment`, `location_attachment` and `class_attachment`. A row is one attachment: `id`, its object (`item`, `stock`, `location` or `class`), `type` (the MIME type), `hash` (the hex SHA-256 of the content), `size` (in bytes) and `title`. The title is given at upload, and defaults to the uploaded file's name. Nothing is shared between objects.
+- **An attachment is only reached through its object:** `/items/{id}/attachments/{attachment}`, and so on. The same id under another object is not found.
+- **A photo:** items, stock rows, locations and classes each have a `photo` column, naming one of their own attachments (a foreign key on the object and the attachment) that must be an image (`image/*`, a trigger). Deleting that attachment clears the photo.
+- **Content on disk:** the contents live in `wtfd`'s files directory (`--files-directory`), named by their hash: `<directory>/ab/abcdef…`. A stored file never changes. The same content is stored once on disk, however many attachments have it, on whatever objects.
+- **Deleting** an attachment removes its row, for good; history still records it. Its file goes at the next `wtfd gc`, once no attachment of any kind has its hash (see [WTFD.md](../WTFD.md)).
+- **Deleted objects keep their attachments,** frozen: they can be read, but not added, changed or deleted, until the object is restored. Purging the object removes them.
 
 ## Functions
 
-- **`attachment_lock(p_hash)`** and **`attachment_create(p_target_type, p_target, p_hash, p_type, p_title, p_photo)`** are used by the upload handler, in one transaction: lock the hash, put the file in place, record the attachment and its link. `wtfd gc` takes the same lock before removing a file, so a running upload never loses its file. With `p_photo`, the attachment becomes the object's photo.
-- **`attachment_get(p_id)`** returns `{id, title, type, hash}`.
-- **`attachment_patch(p_id, p_patch)`** changes the `title`.
-- **`attachment_unlink(p_target_type, p_target, p_attachment)`** removes an attachment from one object. If that was the last link, the attachment is deleted.
-- **`attachment_delete(p_id)`** deletes an attachment for good, from every object it is on.
+Every function takes the kind of object (`p_kind`: `item`, `stock`, `location` or `class`) and the object's id.
+
+- **`attachment_lock(p_hash)`** and **`attachment_create(p_kind, p_owner, p_hash, p_type, p_size, p_title, p_photo)`** are used by the upload handler, in one transaction: lock the hash, put the file in place, record the attachment. `wtfd gc` takes the same lock before removing a file, so a running upload never loses its file. With `p_photo`, the attachment becomes the object's photo.
+- **`attachment_get(p_kind, p_owner, p_id)`** returns `{id, title, type, size, hash}`.
+- **`attachment_patch(p_kind, p_owner, p_id, p_patch)`** changes the `title`.
+- **`attachment_delete(p_kind, p_owner, p_id)`** deletes it.
 - **The photo** is set with the object's own patch: `{"photo": "<attachment id>"}`, or `null` for none (`item_patch`, `stock_patch`, `location_patch`, `class_patch`).
-- **Privileges:** attachments of classes belong to the model (model write to change them); all others belong to the data (data write). Reading needs model or data read. An attachment on a deleted object can't be changed or removed (55000, 409).
+- **Privileges:** attachments of classes belong to the model (model read or data read to read them, model write to change them); all others belong to the data (data read, data write). An attachment of a deleted object can't be added, changed or deleted (55000, 409).
 
 ## Where attachments appear
 
@@ -32,19 +33,20 @@ Files (photos, datasheets, manuals, receipts, …) can be attached to items, sto
 
 ## Stock rows
 
-When `stock_move` splits a row, the new row is linked to the same attachments and gets the same photo. A row with attachments is never merged into another row, because its attachments would be lost.
+When `stock_move` splits a row, the new row gets copies of the attachments: new rows with new ids, the same files on disk. The copy of the photo becomes its photo. A row with attachments is never merged into another row, because its attachments would be lost.
 
 ## Uploading and downloading
 
-- **Upload:** `POST /items/{id}/attachments` (also `/stock/…`, `/locations/…`, `/classes/…`), with a `multipart/form-data` body:
+The routes are under the object: `/items/{id}`, `/stock/{id}`, `/locations/{id}` or `/classes/{id}`.
+
+- **Upload:** `POST …/attachments`, with a `multipart/form-data` body:
   - a `file` part (required): its `Content-Type` is kept, and the type is detected when it's missing or `application/octet-stream`;
   - an optional `title` part (default: the file's name);
   - an optional `photo` part (`true`/`false`): make it the object's photo. A file that isn't an image is then refused (422), and nothing is attached.
 
-  The size limit is `--max-attachment-size` (100 MiB by default).
-- **Remove from an object:** `DELETE /items/{id}/attachments/{attachment}` (also `/stock/…`, `/locations/…`, `/classes/…`).
-- **Delete everywhere:** `DELETE /attachments/{id}`.
-- **Download:** `GET /attachments/{id}/content`.
+  The size limit is `--max-attachment-size` (100 MiB by default). `Location` points at the new attachment.
+- **Read, rename, delete:** `GET`, `PATCH` (`{title}`) and `DELETE` on `…/attachments/{attachment}`.
+- **Download:** `GET …/attachments/{attachment}/content`.
   - **Name:** the title, plus an extension for the type when the title doesn't already end in one that fits. "Datasheet" as `application/pdf` downloads as `Datasheet.pdf`; "manual.pdf" stays as it is.
   - **Inline or not:** images (except SVG), PDF and plain text are sent `inline`; everything else as a download (`Content-Disposition: attachment`). Downloads also carry `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox`, so an uploaded HTML file can't run as a page on the API's hostname.
   - **Caching:** the `ETag` is the content hash, the content never changes, and `Range` requests work.

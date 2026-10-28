@@ -2,8 +2,6 @@ package integration
 
 import (
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -91,16 +89,6 @@ func TestCLIEdit(t *testing.T) {
 	out, _ = c.interact([]string{"\r", clear + "write\r", "\r", "\r", "\r", "\r"}, false, "account", "edit", "editor@test.local")
 	contains(t, out, "data read_write, model none")
 	c.ok("account", "delete", "editor@test.local")
-
-	// Attachment form.
-	file := filepath.Join(t.TempDir(), "note.txt")
-	if err := os.WriteFile(file, []byte("hello"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var att struct{ ID string }
-	c.json(&att, "attachment", "add", "item", "M3x10", file)
-	out, _ = c.interact([]string{clear + "Read me\r"}, false, "attachment", "edit", att.ID)
-	contains(t, out, "Title:", "Read me", "text/plain")
 
 	// --edit on add opens the form for the new object.
 	out, _ = c.interact([]string{"\r", "\r", clear + "yes\r"}, false, "location", "add", "Cellar", "--edit")

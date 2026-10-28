@@ -77,10 +77,6 @@ BEGIN
         OR (h.table_name = 'stock_value' AND h.data ->> 'stock' IN %2$s)
         OR (h.table_name = 'item_attachment'  AND h.data ->> 'item'  = %1$s)
         OR (h.table_name = 'stock_attachment' AND h.data ->> 'stock' IN %2$s)
-        OR (h.table_name = 'attachment' AND h.data ->> 'id' IN (
-                SELECT m.data ->> 'attachment' FROM history m
-                WHERE (m.table_name = 'item_attachment'  AND m.data ->> 'item'  = %1$s)
-                   OR (m.table_name = 'stock_attachment' AND m.data ->> 'stock' IN %2$s)))
     $q$, v_id, v_stock), p_limit, p_offset);
 END;
 $$;
@@ -97,9 +93,6 @@ BEGIN
            (h.table_name = 'stock'       AND h.data ->> 'id'    = %1$s)
         OR (h.table_name = 'stock_value' AND h.data ->> 'stock' = %1$s)
         OR (h.table_name = 'stock_attachment' AND h.data ->> 'stock' = %1$s)
-        OR (h.table_name = 'attachment' AND h.data ->> 'id' IN (
-                SELECT m.data ->> 'attachment' FROM history m
-                WHERE m.table_name = 'stock_attachment' AND m.data ->> 'stock' = %1$s))
     $q$, quote_literal(p_id)), p_limit, p_offset);
 END;
 $$;
@@ -120,9 +113,6 @@ BEGIN
         OR (h.table_name = 'stock'      AND (h.data ->> 'location' = %1$s
                                              OR h.changes -> 'location' ->> 'old' = %1$s))
         OR (h.table_name = 'location_attachment' AND h.data ->> 'location' = %1$s)
-        OR (h.table_name = 'attachment' AND h.data ->> 'id' IN (
-                SELECT m.data ->> 'attachment' FROM history m
-                WHERE m.table_name = 'location_attachment' AND m.data ->> 'location' = %1$s))
         OR (h.table_name = 'location'   AND (h.data ->> 'parent' = %1$s
                                              OR h.changes -> 'parent' ->> 'old' = %1$s)
                                         AND (h.operation <> 'update' OR h.changes ?| ARRAY['parent', 'deleted']))
@@ -144,9 +134,6 @@ BEGIN
            (h.table_name = 'class'           AND h.data ->> 'id'    = %1$s)
         OR (h.table_name = 'class_attribute' AND h.data ->> 'class' = %1$s)
         OR (h.table_name = 'class_attachment' AND h.data ->> 'class' = %1$s)
-        OR (h.table_name = 'attachment' AND h.data ->> 'id' IN (
-                SELECT m.data ->> 'attachment' FROM history m
-                WHERE m.table_name = 'class_attachment' AND m.data ->> 'class' = %1$s))
         OR (h.table_name = 'class'           AND (h.data ->> 'parent' = %1$s
                                                   OR h.changes -> 'parent' ->> 'old' = %1$s)
                                              AND (h.operation <> 'update' OR h.changes ?| ARRAY['parent', 'deleted']))

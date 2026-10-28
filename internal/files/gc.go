@@ -10,6 +10,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// hashUsed tells whether any attachment has the file with hash $1.
+const hashUsed = `SELECT EXISTS (SELECT 1 FROM item_attachment WHERE hash = $1)
+	OR EXISTS (SELECT 1 FROM stock_attachment WHERE hash = $1)
+	OR EXISTS (SELECT 1 FROM location_attachment WHERE hash = $1)
+	OR EXISTS (SELECT 1 FROM class_attachment WHERE hash = $1)`
+
 // GCOptions configures GC.
 type GCOptions struct {
 	ConnConfig *pgx.ConnConfig // connection as the schema owner (DBA role)
@@ -28,7 +34,7 @@ type GCResult struct {
 // GC removes files that no attachment references:
 //
 //   - files on disk whose hash no attachment has: their attachments were
-//     removed from everything, or an upload's database insert failed;
+//     deleted, or an upload's database insert failed;
 //   - abandoned uploads in the tmp directory.
 //
 // Files younger than MinAge are left alone, so uploads in progress are safe.
@@ -72,7 +78,7 @@ func GC(ctx context.Context, o GCOptions) (GCResult, error) {
 		}
 		var referenced bool
 		if err := conn.QueryRow(ctx,
-			"SELECT EXISTS (SELECT 1 FROM attachment WHERE hash = $1)", hash).Scan(&referenced); err != nil {
+			hashUsed, hash).Scan(&referenced); err != nil {
 			return err
 		}
 		if !referenced {
@@ -125,7 +131,7 @@ func removeUnreferenced(ctx context.Context, conn *pgx.Conn, store *Store, hash 
 		}
 		var referenced bool
 		if err := tx.QueryRow(ctx,
-			"SELECT EXISTS (SELECT 1 FROM attachment WHERE hash = $1)", hash).Scan(&referenced); err != nil {
+			hashUsed, hash).Scan(&referenced); err != nil {
 			return err
 		}
 		if referenced {

@@ -2,7 +2,7 @@
 
 The `deleted` columns are in [`db/migrations/0001_schema.sql`](../db/migrations/0001_schema.sql). The functions are in the repeatable scripts of each kind, with the shared helpers in [`10_util.sql`](../db/repeatable/10_util.sql).
 
-Deleting an item, stock row, location, class, attribute, option or attachment doesn't remove its row; it sets `deleted`. Accounts work the same way (see [account.md](account.md)). A deleted object can still be fetched, scanned and restored. Only an operator's purge removes it for good.
+Deleting an item, stock row, location, class, attribute or option doesn't remove its row; it sets `deleted`. Accounts work the same way (see [account.md](account.md)). A deleted object can still be fetched, scanned and restored. Only an operator's purge removes it for good.
 
 ## What is marked, and what is removed
 
@@ -10,11 +10,11 @@ Deleting an item, stock row, location, class, attribute, option or attachment do
 |-------|-----------|-----|
 | `item`, `stock`, `location`, `class`, `attribute`, `attribute_option` | **marked deleted** | They have an identity: a label code, a name in a tree, a photo. They can be scanned, linked to and restored. |
 | `account` | marked deleted | See [account.md](account.md). |
-| `value`, `stock_value`, `class_attribute` | **removed** | They belong to their owner. Clearing a value or unassigning an attribute is a change to the owner, recorded in history. When the owner is marked deleted, they stay as they are, so a restore brings them back. The options of a deleted attribute and the attachment links of a deleted object stay in the same way. |
+| `value`, `stock_value`, `class_attribute` | **removed** | They belong to their owner. Clearing a value or unassigning an attribute is a change to the owner, recorded in history. When the owner is marked deleted, they stay as they are, so a restore brings them back. The options of a deleted attribute and the attachments of a deleted object stay in the same way. |
 | `quantity`, `unit_family`, `unit` | not deletable | Seeded system data. |
 | `session` | removed | Not inventory data. |
 | `history` | only purged by age | See [history.md](history.md). |
-| `attachment`, `item_attachment`, … | **removed** | Removing an attachment from an object removes the link; an attachment left on nothing is deleted at once, and can't be restored. Purging an object removes its links. See [attachment.md](attachment.md). |
+| `item_attachment`, `stock_attachment`, `location_attachment`, `class_attachment` | **removed** | Deleting an attachment removes it for good; history still records it. Purging an object removes its attachments. See [attachment.md](attachment.md). |
 | files on disk | removed by `wtfd gc` once no attachment has their hash | |
 
 `deleted` is a flag, not a date: when and by whom is in history, and a date column would store it twice. History records a delete as an update with `changes: {"deleted": {"old": false, "new": true}}`, and everything one call deleted shares its `transaction`.
@@ -42,7 +42,6 @@ A row that isn't deleted is **live**. Every rule of [SCHEMA.md](../SCHEMA.md) ap
 | `class_delete_tree` | the class, every live class below it, and with `force` their live items and those items' live stock rows | without `force`: there are live items |
 | `attribute_delete` | the attribute | live values, defaults or assignments to live classes use it |
 | `attribute_option_delete` | the option | live values or defaults use it |
-| `attachment_delete` | the attachment | — |
 
 Below a deleted node every row is marked explicitly, so a query only ever checks one row's flag. The previews (`…/deletion`) count live rows only.
 
@@ -51,9 +50,9 @@ Below a deleted node every row is marked explicitly, so a query only ever checks
 ## Reading
 
 - **Lists, search, trees, stock totals, `missing` and previews** leave deleted rows out.
-- **Fetching one** (`item_get`, `stock_get`, `location_get`, `class_get`, `attribute_get`, `attribute_option_get`, `attachment_get`, `code_resolve`) still returns it, with `deleted: true`. Stock rows also have `merged_into` (`{id, code}` or null). Every object's JSON carries `deleted`.
+- **Fetching one** (`item_get`, `stock_get`, `location_get`, `class_get`, `attribute_get`, `attribute_option_get`, `code_resolve`) still returns it, with `deleted: true`. Stock rows also have `merged_into` (`{id, code}` or null). Every object's JSON carries `deleted`.
 - **A deleted item lists the stock rows deleted together with it,** which restoring it brings back. A live item lists its live rows.
-- **Attachment content** of a deleted attachment, or of a deleted object, is still served.
+- **Attachments of a deleted object** can still be read and downloaded.
 
 ## Restoring
 
@@ -82,7 +81,7 @@ A stock row can only be restored at a live location, a location or class only un
 - **`with_parents: true`** also restores the deleted location, parent or class, and the deleted ones above it. Only that chain comes back, not what else was deleted with them.
 - **Somewhere else:** `location` for a stock row, `parent` for a location or class (null: at the top), `class` for an item, naming a live place. Everything below a restored location or class comes back under it.
 
-An option of a deleted attribute, an attachment of a deleted object and a stock row of a deleted item have no other place: their restore is refused, naming what to restore first. Restoring the item also restores the stock rows deleted with it.
+An option of a deleted attribute and a stock row of a deleted item have no other place: their restore is refused, naming what to restore first. Restoring the item also restores the stock rows deleted with it.
 
 ## Purging
 

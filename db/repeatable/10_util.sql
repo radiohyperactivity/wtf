@@ -1063,7 +1063,7 @@ BEGIN
         SELECT util.stock_json(s.id) || jsonb_build_object(
             'values',      util.values_json(i.class, true, s.id),
             'missing',     util.attribute_refs_json(ARRAY(SELECT stock_missing_attributes(s.id))),
-            'photo',       util.attachment_json(s.photo),
+            'photo',       util.attachment_json('stock', s.photo),
             'attachments', util.attachments_json(NULL, s.id, NULL, NULL)
         )
         FROM stock s
@@ -1106,7 +1106,7 @@ BEGIN
                             'display',  util.display_json(s.quantity, i.unit, i.unit_lock),
                             'values',      util.values_json(i.class, true, s.id),
                             'missing',     util.attribute_refs_json(ARRAY(SELECT stock_missing_attributes(s.id))),
-                            'photo',       util.attachment_json(s.photo),
+                            'photo',       util.attachment_json('stock', s.photo),
                             'attachments', util.attachments_json(NULL, s.id, NULL, NULL)
                         )
                         ORDER BY lower(l.name), s.id
@@ -1366,20 +1366,22 @@ $$;
 -- Attachments
 -- ---------------------------------------------------------------------------
 
--- {id, title, type, hash}. The content is at /attachments/{id}/content.
-CREATE FUNCTION util.attachment_json(p_attachment uuid) RETURNS jsonb
+-- An attachment of an object of p_kind ('item', 'stock', 'location',
+-- 'class'): {id, title, type, size, hash}, or SQL NULL. Its content is at
+-- /<kind's path>/{object}/attachments/{id}/content.
+CREATE FUNCTION util.attachment_json(p_kind text, p_id uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    v_result jsonb;
 BEGIN
-    RETURN (
-        SELECT jsonb_build_object(
-            'id',    a.id,
-            'title', a.title,
-            'type',  a.type,
-            'hash',  a.hash
-        )
-        FROM attachment a
-        WHERE a.id = p_attachment
-    );
+    IF p_id IS NULL THEN
+        RETURN NULL;
+    END IF;
+    EXECUTE format(
+        'SELECT jsonb_build_object(''id'', id, ''title'', title, ''type'', type, ''size'', size, ''hash'', hash) '
+        'FROM %I WHERE id = $1', p_kind || '_attachment')
+        INTO v_result USING p_id;
+    RETURN v_result;
 END;
 $$;
 
@@ -1389,27 +1391,20 @@ CREATE FUNCTION util.attachments_json(p_item uuid, p_stock uuid, p_location uuid
 RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 DECLARE
-    v_photo uuid := COALESCE(
-        (SELECT photo FROM item WHERE id = p_item),
-        (SELECT photo FROM stock WHERE id = p_stock),
-        (SELECT photo FROM location WHERE id = p_location),
-        (SELECT photo FROM class WHERE id = p_class));
+    v_kind   text := CASE WHEN p_item IS NOT NULL THEN 'item'
+                          WHEN p_stock IS NOT NULL THEN 'stock'
+                          WHEN p_location IS NOT NULL THEN 'location'
+                          ELSE 'class' END;
+    v_owner  uuid := COALESCE(p_item, p_stock, p_location, p_class);
+    v_result jsonb;
 BEGIN
-    RETURN (
-        SELECT COALESCE(
-            jsonb_agg(util.attachment_json(a.id)
-                      ORDER BY a.id IS DISTINCT FROM v_photo, lower(a.title), a.id),
-            '[]'::jsonb
-        )
-        FROM attachment a
-        WHERE a.id IN (SELECT attachment FROM item_attachment WHERE item = p_item
-                       UNION ALL
-                       SELECT attachment FROM stock_attachment WHERE stock = p_stock
-                       UNION ALL
-                       SELECT attachment FROM location_attachment WHERE location = p_location
-                       UNION ALL
-                       SELECT attachment FROM class_attachment WHERE class = p_class)
-    );
+    EXECUTE format(
+        'SELECT COALESCE(jsonb_agg(util.attachment_json(%1$L, a.id) '
+        '                ORDER BY a.id IS DISTINCT FROM o.photo, lower(a.title), a.id), ''[]''::jsonb) '
+        'FROM %2$I a JOIN %1$I o ON o.id = a.%1$I WHERE a.%1$I = $1',
+        v_kind, v_kind || '_attachment')
+        INTO v_result USING v_owner;
+    RETURN v_result;
 END;
 $$;
 
@@ -1417,27 +1412,13 @@ $$;
 CREATE FUNCTION util.item_photo_json(p_item uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
-    RETURN util.attachment_json((SELECT photo FROM item WHERE id = p_item));
+    RETURN util.attachment_json('item', (SELECT photo FROM item WHERE id = p_item));
 END;
 $$;
 
--- Whether attachment p_attachment is linked to an object of p_kind ('item',
--- 'stock', 'location', 'class').
-CREATE FUNCTION util.attachment_linked(p_attachment uuid, p_kind text) RETURNS boolean
-LANGUAGE plpgsql STABLE AS $$
-BEGIN
-    RETURN CASE p_kind
-        WHEN 'item'     THEN EXISTS (SELECT 1 FROM item_attachment     WHERE attachment = p_attachment)
-        WHEN 'stock'    THEN EXISTS (SELECT 1 FROM stock_attachment    WHERE attachment = p_attachment)
-        WHEN 'location' THEN EXISTS (SELECT 1 FROM location_attachment WHERE attachment = p_attachment)
-        WHEN 'class'    THEN EXISTS (SELECT 1 FROM class_attachment    WHERE attachment = p_attachment)
-    END;
-END;
-$$;
-
--- Sets the photo of an object of p_kind from a patch's "photo" key: an
--- attachment id of the object's own, or null for none. The table's trigger
--- checks that it is an image and one of the object's attachments.
+-- Sets the photo of an object of p_kind from a patch's "photo" key: the id
+-- of one of its own attachments, or null for none. The photo's foreign key
+-- and the table's trigger check that it is its own, and an image.
 CREATE FUNCTION util.set_photo(p_kind text, p_id uuid, p_patch jsonb) RETURNS void
 LANGUAGE plpgsql AS $$
 BEGIN

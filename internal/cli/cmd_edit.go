@@ -726,26 +726,6 @@ func (e *env) editAccount(id string) error {
 	return e.showAfterEdit("/accounts/"+id, func(e *env, d json.RawMessage) error { return printAccountJSON(e, d) })
 }
 
-func (e *env) editAttachment(id string) error {
-	var a attachment
-	if err := e.get("/attachments/"+id, nil, &a); err != nil {
-		return err
-	}
-	e.editTitle("attachment " + a.Title)
-	p := newPlan("/attachments/" + id)
-	v, err := e.requiredField("Title", a.Title, nil)
-	if err != nil {
-		return err
-	}
-	if v != a.Title {
-		p.patch["title"] = v
-	}
-	if err := e.apply(p); err != nil {
-		return err
-	}
-	return e.showAfterEdit("/attachments/"+id, func(e *env, d json.RawMessage) error { return printAttachmentJSON(e, d) })
-}
-
 // editCreated opens the object an add command just created in its form.
 func (e *env) editCreated(data json.RawMessage, edit func(*env, string) error) error {
 	var created struct {

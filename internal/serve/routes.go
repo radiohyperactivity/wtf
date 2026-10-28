@@ -25,7 +25,7 @@ type handlerFunc func(w http.ResponseWriter, r *http.Request) error
 func (s *server) routes() []route {
 	id := path("p_id", "id")
 	limit, offset := query("p_limit", "limit", "integer"), query("p_offset", "offset", "integer")
-	return []route{
+	routes := []route{
 		{"GET /health", s.health},
 		{"GET /openapi.yaml", s.openAPI},
 
@@ -143,19 +143,6 @@ func (s *server) routes() []route {
 		{"DELETE /stock/{id}/values/{attribute}", s.update("stock_value_delete",
 			path("p_stock", "id"), path("p_attribute", "attribute"))},
 
-		{"GET /attachments/{id}", s.read("attachment_get", id)},
-		{"PATCH /attachments/{id}", s.update("attachment_patch", id, patch("p_patch"))},
-		{"DELETE /attachments/{id}", s.remove("attachment_delete", id)},
-		{"DELETE /items/{id}/attachments/{attachment}", s.remove("attachment_unlink",
-			constant("p_target_type", "text", "item"), path("p_target", "id"), path("p_attachment", "attachment"))},
-		{"DELETE /stock/{id}/attachments/{attachment}", s.remove("attachment_unlink",
-			constant("p_target_type", "text", "stock"), path("p_target", "id"), path("p_attachment", "attachment"))},
-		{"DELETE /locations/{id}/attachments/{attachment}", s.remove("attachment_unlink",
-			constant("p_target_type", "text", "location"), path("p_target", "id"), path("p_attachment", "attachment"))},
-		{"DELETE /classes/{id}/attachments/{attachment}", s.remove("attachment_unlink",
-			constant("p_target_type", "text", "class"), path("p_target", "id"), path("p_attachment", "attachment"))},
-		{"GET /attachments/{id}/content", s.download},
-
 		{"POST /login", s.login},
 		{"POST /logout", s.logout},
 		{"GET /me", s.read("me")},
@@ -188,16 +175,38 @@ func (s *server) routes() []route {
 
 		{"GET /codes/{code}", s.read("code_resolve", pathText("p_code", "code"))},
 	}
+	// Attachments, only ever reached through their object.
+	for _, k := range attachmentKinds {
+		kind := constant("p_kind", "text", k.kind)
+		owner, attachment := path("p_owner", "id"), path("p_id", "attachment")
+		base := "/" + k.path + "/{id}/attachments/{attachment}"
+		routes = append(routes,
+			route{"GET " + base, s.read("attachment_get", kind, owner, attachment)},
+			route{"PATCH " + base, s.update("attachment_patch", kind, owner, attachment, patch("p_patch"))},
+			route{"DELETE " + base, s.remove("attachment_delete", kind, owner, attachment)},
+			route{"GET " + base + "/content", s.download(k.kind)},
+		)
+	}
+	return routes
+}
+
+// attachmentKinds are the kinds of object that have attachments, with the
+// path of their routes.
+var attachmentKinds = []struct{ kind, path string }{
+	{"item", "items"},
+	{"stock", "stock"},
+	{"location", "locations"},
+	{"class", "classes"},
 }
 
 // uploadRoutes are the routes that take a file upload. Their body limit is
 // the attachment size instead of the JSON body size.
 func (s *server) uploadRoutes() []route {
 	return []route{
-		{"POST /items/{id}/attachments", s.upload("item")},
-		{"POST /stock/{id}/attachments", s.upload("stock")},
-		{"POST /locations/{id}/attachments", s.upload("location")},
-		{"POST /classes/{id}/attachments", s.upload("class")},
+		{"POST /items/{id}/attachments", s.upload("item", "items")},
+		{"POST /stock/{id}/attachments", s.upload("stock", "stock")},
+		{"POST /locations/{id}/attachments", s.upload("location", "locations")},
+		{"POST /classes/{id}/attachments", s.upload("class", "classes")},
 	}
 }
 

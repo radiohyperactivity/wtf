@@ -141,10 +141,10 @@ attribute  { id, name, datatype, unit: unit | null, unit_lock, deleted }
            attribute_get adds  options: [ { id, name } ]  for choice attributes
 option     { id, attribute, name, deleted }
 class      { id, name, parent, container, path: [ { id, name } ], deleted }
-           class_get adds  attributes: [ { attribute, defined_on_class, inherited, default, default_display: display | null, per_unit, required } ], attachments: [ attachment ]
+           class_get adds  attributes: [ { attribute, defined_on_class, inherited, default, default_display: display | null, per_unit, required } ], photo: attachment | null, attachments: [ attachment ]
 location   { id, code, name, parent, container, path: [ { id, name } ], deleted }
-           location_get adds  attachments: [ attachment ]
-attachment { id, title, type, hash }   (type: MIME type; hash: hex SHA-256)
+           location_get adds  photo: attachment | null, attachments: [ attachment ]
+attachment { id, title, type, size, hash }   (type: MIME type; size: bytes; hash: hex SHA-256)
 item       (list)  { id, code, name, class: <class id>, unit: unit | null, unit_lock, deleted,
                      stock: { total, display: display | null, uncounted }, incomplete }
            (get)   { id, code, name, deleted, class: class, unit: unit | null, unit_lock,
@@ -217,10 +217,9 @@ Suggested REST routes are only there to show intent. The REST design comes later
 | `stock_value_set(p_stock, p_attribute, p_value)` | stock | `PUT /stock/{id}/values/{attribute}` |
 | `stock_value_delete(p_stock, p_attribute)` | stock | `DELETE /stock/{id}/values/{attribute}` |
 | `attachment_lock(p_hash)`, `attachment_create(…)` | attachment | `POST /items\|stock\|locations\|classes/{id}/attachments` (multipart, via wtfd) |
-| `attachment_get(p_id)` | attachment | `GET /attachments/{id}` (content: `GET /attachments/{id}/content`, via wtfd) |
-| `attachment_patch(p_id, p_patch)` | attachment | `PATCH /attachments/{id}` |
-| `attachment_delete(p_id)` | void | `DELETE /attachments/{id}` |
-| `attachment_unlink(p_target_type, p_target, p_attachment)` | void | `DELETE /items\|stock\|locations\|classes/{id}/attachments/{attachment}` |
+| `attachment_get(p_kind, p_owner, p_id)` | attachment | `GET /items\|stock\|locations\|classes/{id}/attachments/{attachment}` (content: `…/content`, via wtfd) |
+| `attachment_patch(p_kind, p_owner, p_id, p_patch)` | attachment | `PATCH …/attachments/{attachment}` |
+| `attachment_delete(p_kind, p_owner, p_id)` | void | `DELETE …/attachments/{attachment}` |
 | `login(p_email, p_password)` | `{ok, token, account}` or `{ok: false, reason}` | `POST /api/v1/login` (the token becomes the session cookie) |
 | `session_use(p_token)` | void | – (called by wtfd before every function) |
 | `logout()` | void | `POST /logout` |

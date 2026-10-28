@@ -790,13 +790,49 @@ paths:
   /items/{id}/attachments/{attachment}:
     parameters:
       - { $ref: "#/components/parameters/Id" }
-      - { name: attachment, in: path, required: true, schema: { $ref: "#/components/schemas/Uuid" } }
-    delete:
-      summary: Remove an attachment from an item
-      description: If it was the photo, there is no photo any more. An attachment left on nothing is deleted for good.
-      operationId: itemAttachmentRemove
+      - { $ref: "#/components/parameters/AttachmentId" }
+    get:
+      summary: An attachment of an item
+      operationId: itemAttachmentGet
       responses:
-        "204": { description: Removed. }
+        "200": { $ref: "#/components/responses/Attachment" }
+        default: { $ref: "#/components/responses/Problem" }
+    patch:
+      summary: Change the title of an attachment of an item
+      operationId: itemAttachmentPatch
+      requestBody: { $ref: "#/components/requestBodies/AttachmentPatch" }
+      responses:
+        "200": { $ref: "#/components/responses/Attachment" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: Delete an attachment of an item, for good
+      description: If it was the photo, there is no photo any more. The file goes at the next "wtfd gc" once no attachment has its hash.
+      operationId: itemAttachmentDelete
+      responses:
+        "204": { description: Deleted. }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /items/{id}/attachments/{attachment}/content:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+      - { $ref: "#/components/parameters/AttachmentId" }
+    get:
+      summary: The content of an attachment of an item
+      description: |
+        Images (except SVG), PDF and plain text are sent inline, everything
+        else as a download, named after the title with an extension for the
+        type. The ETag is the SHA-256 of the content, which never changes;
+        Range requests are supported.
+      operationId: itemAttachmentContent
+      responses:
+        "200":
+          description: The file.
+          headers:
+            ETag: { schema: { type: string } }
+            Content-Disposition: { schema: { type: string } }
+          content:
+            "*/*": {}
+        "304": { description: Not modified. }
         default: { $ref: "#/components/responses/Problem" }
 
   /items/{id}/attachments:
@@ -812,13 +848,49 @@ paths:
   /stock/{id}/attachments/{attachment}:
     parameters:
       - { $ref: "#/components/parameters/Id" }
-      - { name: attachment, in: path, required: true, schema: { $ref: "#/components/schemas/Uuid" } }
-    delete:
-      summary: Remove an attachment from a stock row
-      description: If it was the photo, there is no photo any more. An attachment left on nothing is deleted for good.
-      operationId: stockAttachmentRemove
+      - { $ref: "#/components/parameters/AttachmentId" }
+    get:
+      summary: An attachment of a stock row
+      operationId: stockAttachmentGet
       responses:
-        "204": { description: Removed. }
+        "200": { $ref: "#/components/responses/Attachment" }
+        default: { $ref: "#/components/responses/Problem" }
+    patch:
+      summary: Change the title of an attachment of a stock row
+      operationId: stockAttachmentPatch
+      requestBody: { $ref: "#/components/requestBodies/AttachmentPatch" }
+      responses:
+        "200": { $ref: "#/components/responses/Attachment" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: Delete an attachment of a stock row, for good
+      description: If it was the photo, there is no photo any more. The file goes at the next "wtfd gc" once no attachment has its hash.
+      operationId: stockAttachmentDelete
+      responses:
+        "204": { description: Deleted. }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /stock/{id}/attachments/{attachment}/content:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+      - { $ref: "#/components/parameters/AttachmentId" }
+    get:
+      summary: The content of an attachment of a stock row
+      description: |
+        Images (except SVG), PDF and plain text are sent inline, everything
+        else as a download, named after the title with an extension for the
+        type. The ETag is the SHA-256 of the content, which never changes;
+        Range requests are supported.
+      operationId: stockAttachmentContent
+      responses:
+        "200":
+          description: The file.
+          headers:
+            ETag: { schema: { type: string } }
+            Content-Disposition: { schema: { type: string } }
+          content:
+            "*/*": {}
+        "304": { description: Not modified. }
         default: { $ref: "#/components/responses/Problem" }
 
   /stock/{id}/attachments:
@@ -834,13 +906,49 @@ paths:
   /locations/{id}/attachments/{attachment}:
     parameters:
       - { $ref: "#/components/parameters/Id" }
-      - { name: attachment, in: path, required: true, schema: { $ref: "#/components/schemas/Uuid" } }
-    delete:
-      summary: Remove an attachment from a location
-      description: If it was the photo, there is no photo any more. An attachment left on nothing is deleted for good.
-      operationId: locationAttachmentRemove
+      - { $ref: "#/components/parameters/AttachmentId" }
+    get:
+      summary: An attachment of a location
+      operationId: locationAttachmentGet
       responses:
-        "204": { description: Removed. }
+        "200": { $ref: "#/components/responses/Attachment" }
+        default: { $ref: "#/components/responses/Problem" }
+    patch:
+      summary: Change the title of an attachment of a location
+      operationId: locationAttachmentPatch
+      requestBody: { $ref: "#/components/requestBodies/AttachmentPatch" }
+      responses:
+        "200": { $ref: "#/components/responses/Attachment" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: Delete an attachment of a location, for good
+      description: If it was the photo, there is no photo any more. The file goes at the next "wtfd gc" once no attachment has its hash.
+      operationId: locationAttachmentDelete
+      responses:
+        "204": { description: Deleted. }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /locations/{id}/attachments/{attachment}/content:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+      - { $ref: "#/components/parameters/AttachmentId" }
+    get:
+      summary: The content of an attachment of a location
+      description: |
+        Images (except SVG), PDF and plain text are sent inline, everything
+        else as a download, named after the title with an extension for the
+        type. The ETag is the SHA-256 of the content, which never changes;
+        Range requests are supported.
+      operationId: locationAttachmentContent
+      responses:
+        "200":
+          description: The file.
+          headers:
+            ETag: { schema: { type: string } }
+            Content-Disposition: { schema: { type: string } }
+          content:
+            "*/*": {}
+        "304": { description: Not modified. }
         default: { $ref: "#/components/responses/Problem" }
 
   /locations/{id}/attachments:
@@ -856,13 +964,49 @@ paths:
   /classes/{id}/attachments/{attachment}:
     parameters:
       - { $ref: "#/components/parameters/Id" }
-      - { name: attachment, in: path, required: true, schema: { $ref: "#/components/schemas/Uuid" } }
-    delete:
-      summary: Remove an attachment from a class
-      description: If it was the photo, there is no photo any more. An attachment left on nothing is deleted for good.
-      operationId: classAttachmentRemove
+      - { $ref: "#/components/parameters/AttachmentId" }
+    get:
+      summary: An attachment of a class
+      operationId: classAttachmentGet
       responses:
-        "204": { description: Removed. }
+        "200": { $ref: "#/components/responses/Attachment" }
+        default: { $ref: "#/components/responses/Problem" }
+    patch:
+      summary: Change the title of an attachment of a class
+      operationId: classAttachmentPatch
+      requestBody: { $ref: "#/components/requestBodies/AttachmentPatch" }
+      responses:
+        "200": { $ref: "#/components/responses/Attachment" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: Delete an attachment of a class, for good
+      description: If it was the photo, there is no photo any more. The file goes at the next "wtfd gc" once no attachment has its hash.
+      operationId: classAttachmentDelete
+      responses:
+        "204": { description: Deleted. }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /classes/{id}/attachments/{attachment}/content:
+    parameters:
+      - { $ref: "#/components/parameters/Id" }
+      - { $ref: "#/components/parameters/AttachmentId" }
+    get:
+      summary: The content of an attachment of a class
+      description: |
+        Images (except SVG), PDF and plain text are sent inline, everything
+        else as a download, named after the title with an extension for the
+        type. The ETag is the SHA-256 of the content, which never changes;
+        Range requests are supported.
+      operationId: classAttachmentContent
+      responses:
+        "200":
+          description: The file.
+          headers:
+            ETag: { schema: { type: string } }
+            Content-Disposition: { schema: { type: string } }
+          content:
+            "*/*": {}
+        "304": { description: Not modified. }
         default: { $ref: "#/components/responses/Problem" }
 
   /classes/{id}/attachments:
@@ -873,58 +1017,6 @@ paths:
       requestBody: { $ref: "#/components/requestBodies/Upload" }
       responses:
         "201": { $ref: "#/components/responses/AttachmentCreated" }
-        default: { $ref: "#/components/responses/Problem" }
-
-  /attachments/{id}:
-    parameters: [{ $ref: "#/components/parameters/Id" }]
-    get:
-      summary: An attachment's metadata
-      operationId: attachmentGet
-      responses:
-        "200": { $ref: "#/components/responses/Attachment" }
-        default: { $ref: "#/components/responses/Problem" }
-    patch:
-      summary: Change an attachment's title
-      operationId: attachmentPatch
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                title: { type: string }
-      responses:
-        "200": { $ref: "#/components/responses/Attachment" }
-        default: { $ref: "#/components/responses/Problem" }
-    delete:
-      summary: Delete an attachment for good, from every object it is on
-      description: Not while one of them is deleted. The file goes at the next "wtfd gc" when no attachment has its hash.
-      operationId: attachmentDelete
-      responses:
-        "204": { description: Deleted. }
-        default: { $ref: "#/components/responses/Problem" }
-
-  /attachments/{id}/content:
-    parameters: [{ $ref: "#/components/parameters/Id" }]
-    get:
-      summary: An attachment's content
-      description: |
-        Images (except SVG), PDF and plain text are sent inline, everything
-        else as a download, named after the title with an extension for the
-        type. The ETag is the SHA-256 of the content, which never changes;
-        Range requests are supported.
-      operationId: attachmentContent
-      responses:
-        "200":
-          description: The file.
-          headers:
-            ETag: { schema: { type: string } }
-            Content-Disposition: { schema: { type: string } }
-          content:
-            "*/*": {}
-        "304": { description: Not modified. }
         default: { $ref: "#/components/responses/Problem" }
 
   /login:
@@ -1344,6 +1436,11 @@ components:
       in: path
       required: true
       schema: { $ref: "#/components/schemas/Uuid" }
+    AttachmentId:
+      name: attachment
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/Uuid" }
     IntId:
       name: id
       in: path
@@ -1394,6 +1491,15 @@ components:
                 description: The file; its Content-Type is kept (and detected when missing or application/octet-stream).
               title: { type: string, description: "Default: the file's name." }
               photo: { type: boolean, description: "Make it the object's photo (images only)." }
+    AttachmentPatch:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            properties:
+              title: { type: string }
     TreeNodeCreate:
       required: true
       content:
@@ -1464,7 +1570,7 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Attachment" }
     AttachmentCreated:
-      description: Created. `Location` points at /attachments/{id}.
+      description: Created. `Location` points at the attachment, under its object.
       headers:
         Location: { schema: { type: string } }
       content:
@@ -1717,6 +1823,7 @@ components:
         id: { $ref: "#/components/schemas/Uuid" }
         title: { type: string }
         type: { type: string, description: MIME type. }
+        size: { type: integer, description: In bytes. }
         hash: { type: string, description: Hex SHA-256 of the content. }
 
     Attachments:

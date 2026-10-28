@@ -367,11 +367,10 @@ With `--web-root DIR`, `wtfd` serves the web app (a Flutter web build) outside `
 | `POST /stock/{id}/move` | `stock_move` | `{location, quantity?}` |
 | `GET /codes/{code}` | `code_resolve` | – (code: Crockford Base32; case and hyphens ignored) |
 | `POST /items/{id}/attachments` (also `/stock/…`, `/locations/…`, `/classes/…`) | `attachment_lock`, `attachment_create` | multipart: `file`, `title?`, `photo?` |
-| `DELETE /items/{id}/attachments/{attachment}` (also `/stock/…`, `/locations/…`, `/classes/…`) | `attachment_unlink` | |
-| `GET /attachments/{id}` | `attachment_get` | |
-| `PATCH /attachments/{id}` | `attachment_patch` | patch object |
-| `DELETE /attachments/{id}` | `attachment_delete` | |
-| `GET /attachments/{id}/content` | `attachment_get` + files directory | `If-None-Match`, `Range` |
+| `GET /items/{id}/attachments/{attachment}` (also `/stock/…`, `/locations/…`, `/classes/…`) | `attachment_get` | |
+| `PATCH …/attachments/{attachment}` | `attachment_patch` | `{title}` |
+| `DELETE …/attachments/{attachment}` | `attachment_delete` | |
+| `GET …/attachments/{attachment}/content` | `attachment_get` + files directory | `If-None-Match`, `Range` |
 | `POST /login` | `login` | `{email, password}`; no session needed; sets the session cookie |
 | `POST /logout` | `logout` | |
 | `GET /me` | `me` | |
@@ -432,7 +431,7 @@ It removes what was deleted longer ago than `--older-than` (days or a Go duratio
 
 ## The `gc` action
 
-`wtfd gc` removes attachment files that nothing references any more. A deleted attachment still references its file; once it is purged (`wtfd deleted purge`), the file is unreferenced. An upload whose database insert failed leaves a file nothing knows about.
+`wtfd gc` removes attachment files that nothing references any more: their attachments were deleted, or their objects purged (`wtfd deleted purge`). An upload whose database insert failed leaves a file nothing knows about.
 
 ```sh
 wtfd gc --files-directory /var/lib/wtf/files --dry-run   # report only
@@ -441,7 +440,7 @@ wtfd gc --files-directory /var/lib/wtf/files
 
 It connects as the DBA role and removes two kinds of file:
 
-- files on disk whose hash no attachment has: their attachments were removed from everything, or an upload's database insert failed;
+- files on disk whose hash no attachment (of any kind of object) has: their attachments were deleted, or an upload's database insert failed;
 - abandoned uploads in the `tmp` directory.
 
 Files younger than `--min-age` (env `WTFD_GC_MIN_AGE`, default `1h`) are never removed, so uploads in progress are safe. Each removal takes the file's advisory lock, the same one an upload holds while it puts the file in place and records it, and re-checks that nothing references the file. `--dry-run` reports what would be removed, and `--verbose` logs every removed file. Run it from cron or a systemd timer, e.g. nightly.

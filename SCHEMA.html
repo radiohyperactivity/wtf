@@ -76,7 +76,7 @@ code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-siz
 <h1>WtF Schema</h1>
 <p>Entity-relationship diagram in crow's foot notation. Source: SCHEMA.md.</p>
 <div class="diagram">
-<svg viewBox="0 0 2290 1720" role="img" aria-label="Entity-relationship diagram of the WtF database schema">
+<svg viewBox="0 0 2290 2110" role="img" aria-label="Entity-relationship diagram of the WtF database schema">
 <defs>
   <!-- Drawn for a line arriving from the left at a box edge at x=0. -->
   <marker id="one" markerUnits="userSpaceOnUse" markerWidth="30" markerHeight="30" refX="0" refY="0" orient="auto-start-reverse" viewBox="-24 -12 30 24" overflow="visible">
@@ -129,22 +129,14 @@ code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-siz
 <path class="rel" d="M1330,300 H1350 V929 H410" marker-start="url(#one)" marker-end="url(#zero-many)"/>
 <path class="halo" d="M1330,600 H1370 V1061 H410"/>
 <path class="rel" d="M1330,600 H1370 V1061 H410" marker-start="url(#zero-one)" marker-end="url(#zero-many)"/>
-<path class="halo" d="M1000,1247 H935 V1379 H870"/>
-<path class="rel" d="M1000,1247 H935 V1379 H870" marker-start="url(#one)" marker-end="url(#zero-many)"/>
-<path class="halo" d="M1000,1247 H935 V1489 H870"/>
-<path class="rel" d="M1000,1247 H935 V1489 H870" marker-start="url(#one)" marker-end="url(#zero-many)"/>
-<path class="halo" d="M1000,1247 H935 V1599 H870"/>
-<path class="rel" d="M1000,1247 H935 V1599 H870" marker-start="url(#one)" marker-end="url(#zero-many)"/>
-<path class="halo" d="M1000,1247 H935 V1269 H870"/>
-<path class="rel" d="M1000,1247 H935 V1269 H870" marker-start="url(#one)" marker-end="url(#zero-many)"/>
-<path class="halo" d="M80,440 H55 V1357 H540"/>
-<path class="rel" d="M80,440 H55 V1357 H540" marker-start="url(#one)" marker-end="url(#zero-many)"/>
-<path class="halo" d="M80,760 H35 V1467 H540"/>
-<path class="rel" d="M80,760 H35 V1467 H540" marker-start="url(#one)" marker-end="url(#zero-many)"/>
+<path class="halo" d="M80,440 H55 V1469 H540"/>
+<path class="rel" d="M80,440 H55 V1469 H540" marker-start="url(#one)" marker-end="url(#zero-many)"/>
+<path class="halo" d="M80,760 H35 V1669 H540"/>
+<path class="rel" d="M80,760 H35 V1669 H540" marker-start="url(#one)" marker-end="url(#zero-many)"/>
 <path class="halo" d="M705,794 V1200"/>
 <path class="rel" d="M705,794 V1200" marker-start="url(#one)" marker-end="url(#zero-many)"/>
-<path class="halo" d="M80,160 H20 V1577 H540"/>
-<path class="rel" d="M80,160 H20 V1577 H540" marker-start="url(#one)" marker-end="url(#zero-many)"/>
+<path class="halo" d="M80,160 H20 V1869 H540"/>
+<path class="rel" d="M80,160 H20 V1869 H540" marker-start="url(#one)" marker-end="url(#zero-many)"/>
 <path class="halo" d="M2085,926 V1000"/>
 <path class="rel" d="M2085,926 V1000" marker-start="url(#one)" marker-end="url(#zero-many)"/>
 <path class="halo" d="M1625,750 V860"/>
@@ -312,68 +304,92 @@ code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-siz
 <text class="keys" x="398" y="1065" text-anchor="end">FK</text>
 </g>
 <g class="table">
-<rect class="box" x="1000" y="1200" width="330" height="132" rx="8"/>
-<path class="head" d="M1000,1208 a8,8 0 0 1 8,-8 h314 a8,8 0 0 1 8,8 v20 h-330 z"/>
-<text class="title" x="1012" y="1219">attachment</text>
-<text class="col pk" x="1012" y="1251">id</text>
-<text class="type" x="1135" y="1251">uuid</text>
-<text class="keys" x="1318" y="1251" text-anchor="end">PK</text>
-<rect class="stripe" x="1001" y="1258" width="328" height="22"/>
-<text class="col" x="1012" y="1273">hash</text>
-<text class="type" x="1135" y="1273">text</text>
-<text class="col" x="1012" y="1295">type</text>
-<text class="type" x="1135" y="1295">text</text>
-<rect class="stripe" x="1001" y="1302" width="328" height="22"/>
-<text class="col" x="1012" y="1317">title</text>
-<text class="type" x="1135" y="1317">text</text>
-</g>
-<g class="table">
-<rect class="box" x="540" y="1200" width="330" height="88" rx="8"/>
+<rect class="box" x="540" y="1200" width="330" height="176" rx="8"/>
 <path class="head" d="M540,1208 a8,8 0 0 1 8,-8 h314 a8,8 0 0 1 8,8 v20 h-330 z"/>
 <text class="title" x="552" y="1219">location_attachment</text>
-<text class="col pk" x="552" y="1251">location</text>
+<text class="col pk" x="552" y="1251">id</text>
 <text class="type" x="675" y="1251">uuid</text>
-<text class="keys" x="858" y="1251" text-anchor="end">PK FK</text>
+<text class="keys" x="858" y="1251" text-anchor="end">PK</text>
 <rect class="stripe" x="541" y="1258" width="328" height="22"/>
-<text class="col pk" x="552" y="1273">attachment</text>
+<text class="col" x="552" y="1273">location</text>
 <text class="type" x="675" y="1273">uuid</text>
-<text class="keys" x="858" y="1273" text-anchor="end">PK FK</text>
+<text class="keys" x="858" y="1273" text-anchor="end">FK</text>
+<text class="col" x="552" y="1295">type</text>
+<text class="type" x="675" y="1295">text</text>
+<rect class="stripe" x="541" y="1302" width="328" height="22"/>
+<text class="col" x="552" y="1317">hash</text>
+<text class="type" x="675" y="1317">text</text>
+<text class="col" x="552" y="1339">size</text>
+<text class="type" x="675" y="1339">bigint</text>
+<rect class="stripe" x="541" y="1346" width="328" height="22"/>
+<text class="col" x="552" y="1361">title</text>
+<text class="type" x="675" y="1361">text</text>
 </g>
 <g class="table">
-<rect class="box" x="540" y="1310" width="330" height="88" rx="8"/>
-<path class="head" d="M540,1318 a8,8 0 0 1 8,-8 h314 a8,8 0 0 1 8,8 v20 h-330 z"/>
-<text class="title" x="552" y="1329">item_attachment</text>
-<text class="col pk" x="552" y="1361">item</text>
-<text class="type" x="675" y="1361">uuid</text>
-<text class="keys" x="858" y="1361" text-anchor="end">PK FK</text>
-<rect class="stripe" x="541" y="1368" width="328" height="22"/>
-<text class="col pk" x="552" y="1383">attachment</text>
-<text class="type" x="675" y="1383">uuid</text>
-<text class="keys" x="858" y="1383" text-anchor="end">PK FK</text>
+<rect class="box" x="540" y="1400" width="330" height="176" rx="8"/>
+<path class="head" d="M540,1408 a8,8 0 0 1 8,-8 h314 a8,8 0 0 1 8,8 v20 h-330 z"/>
+<text class="title" x="552" y="1419">item_attachment</text>
+<text class="col pk" x="552" y="1451">id</text>
+<text class="type" x="675" y="1451">uuid</text>
+<text class="keys" x="858" y="1451" text-anchor="end">PK</text>
+<rect class="stripe" x="541" y="1458" width="328" height="22"/>
+<text class="col" x="552" y="1473">item</text>
+<text class="type" x="675" y="1473">uuid</text>
+<text class="keys" x="858" y="1473" text-anchor="end">FK</text>
+<text class="col" x="552" y="1495">type</text>
+<text class="type" x="675" y="1495">text</text>
+<rect class="stripe" x="541" y="1502" width="328" height="22"/>
+<text class="col" x="552" y="1517">hash</text>
+<text class="type" x="675" y="1517">text</text>
+<text class="col" x="552" y="1539">size</text>
+<text class="type" x="675" y="1539">bigint</text>
+<rect class="stripe" x="541" y="1546" width="328" height="22"/>
+<text class="col" x="552" y="1561">title</text>
+<text class="type" x="675" y="1561">text</text>
 </g>
 <g class="table">
-<rect class="box" x="540" y="1420" width="330" height="88" rx="8"/>
-<path class="head" d="M540,1428 a8,8 0 0 1 8,-8 h314 a8,8 0 0 1 8,8 v20 h-330 z"/>
-<text class="title" x="552" y="1439">stock_attachment</text>
-<text class="col pk" x="552" y="1471">stock</text>
-<text class="type" x="675" y="1471">uuid</text>
-<text class="keys" x="858" y="1471" text-anchor="end">PK FK</text>
-<rect class="stripe" x="541" y="1478" width="328" height="22"/>
-<text class="col pk" x="552" y="1493">attachment</text>
-<text class="type" x="675" y="1493">uuid</text>
-<text class="keys" x="858" y="1493" text-anchor="end">PK FK</text>
+<rect class="box" x="540" y="1600" width="330" height="176" rx="8"/>
+<path class="head" d="M540,1608 a8,8 0 0 1 8,-8 h314 a8,8 0 0 1 8,8 v20 h-330 z"/>
+<text class="title" x="552" y="1619">stock_attachment</text>
+<text class="col pk" x="552" y="1651">id</text>
+<text class="type" x="675" y="1651">uuid</text>
+<text class="keys" x="858" y="1651" text-anchor="end">PK</text>
+<rect class="stripe" x="541" y="1658" width="328" height="22"/>
+<text class="col" x="552" y="1673">stock</text>
+<text class="type" x="675" y="1673">uuid</text>
+<text class="keys" x="858" y="1673" text-anchor="end">FK</text>
+<text class="col" x="552" y="1695">type</text>
+<text class="type" x="675" y="1695">text</text>
+<rect class="stripe" x="541" y="1702" width="328" height="22"/>
+<text class="col" x="552" y="1717">hash</text>
+<text class="type" x="675" y="1717">text</text>
+<text class="col" x="552" y="1739">size</text>
+<text class="type" x="675" y="1739">bigint</text>
+<rect class="stripe" x="541" y="1746" width="328" height="22"/>
+<text class="col" x="552" y="1761">title</text>
+<text class="type" x="675" y="1761">text</text>
 </g>
 <g class="table">
-<rect class="box" x="540" y="1530" width="330" height="88" rx="8"/>
-<path class="head" d="M540,1538 a8,8 0 0 1 8,-8 h314 a8,8 0 0 1 8,8 v20 h-330 z"/>
-<text class="title" x="552" y="1549">class_attachment</text>
-<text class="col pk" x="552" y="1581">class</text>
-<text class="type" x="675" y="1581">uuid</text>
-<text class="keys" x="858" y="1581" text-anchor="end">PK FK</text>
-<rect class="stripe" x="541" y="1588" width="328" height="22"/>
-<text class="col pk" x="552" y="1603">attachment</text>
-<text class="type" x="675" y="1603">uuid</text>
-<text class="keys" x="858" y="1603" text-anchor="end">PK FK</text>
+<rect class="box" x="540" y="1800" width="330" height="176" rx="8"/>
+<path class="head" d="M540,1808 a8,8 0 0 1 8,-8 h314 a8,8 0 0 1 8,8 v20 h-330 z"/>
+<text class="title" x="552" y="1819">class_attachment</text>
+<text class="col pk" x="552" y="1851">id</text>
+<text class="type" x="675" y="1851">uuid</text>
+<text class="keys" x="858" y="1851" text-anchor="end">PK</text>
+<rect class="stripe" x="541" y="1858" width="328" height="22"/>
+<text class="col" x="552" y="1873">class</text>
+<text class="type" x="675" y="1873">uuid</text>
+<text class="keys" x="858" y="1873" text-anchor="end">FK</text>
+<text class="col" x="552" y="1895">type</text>
+<text class="type" x="675" y="1895">text</text>
+<rect class="stripe" x="541" y="1902" width="328" height="22"/>
+<text class="col" x="552" y="1917">hash</text>
+<text class="type" x="675" y="1917">text</text>
+<text class="col" x="552" y="1939">size</text>
+<text class="type" x="675" y="1939">bigint</text>
+<rect class="stripe" x="541" y="1946" width="328" height="22"/>
+<text class="col" x="552" y="1961">title</text>
+<text class="type" x="675" y="1961">text</text>
 </g>
 <g class="table">
 <rect class="box" x="540" y="640" width="330" height="154" rx="8"/>
@@ -561,13 +577,13 @@ code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-siz
 <text class="type" x="1135" y="615">text</text>
 </g>
 <g class="legend">
-  <path class="rel" d="M80,1660 H130" marker-end="url(#one)"/>
-  <text x="142" y="1664">exactly one</text>
-  <path class="rel" d="M300,1660 H350" marker-end="url(#zero-one)"/>
-  <text x="362" y="1664">zero or one</text>
-  <path class="rel" d="M520,1660 H570" marker-end="url(#zero-many)"/>
-  <text x="582" y="1664">zero or many</text>
-  <text x="80" y="1698" class="type">PK primary key · FK foreign key · NULL nullable column</text>
+  <path class="rel" d="M80,2040 H130" marker-end="url(#one)"/>
+  <text x="142" y="2044">exactly one</text>
+  <path class="rel" d="M300,2040 H350" marker-end="url(#zero-one)"/>
+  <text x="362" y="2044">zero or one</text>
+  <path class="rel" d="M520,2040 H570" marker-end="url(#zero-many)"/>
+  <text x="582" y="2044">zero or many</text>
+  <text x="80" y="2078" class="type">PK primary key · FK foreign key · NULL nullable column</text>
 </g>
 </svg>
 </div>
@@ -578,8 +594,8 @@ code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-siz
   <li>Each unit belongs to one <code>unit_family</code> of a quantity, and converts to the quantity's base unit as <code>value × base_factor + base_offset</code>. Quantities, families and units have integer ids.</li>
   <li><code>item.code</code>, <code>location.code</code> and <code>stock.code</code> are label codes from one shared sequence (<code>code_sequence</code>), so they are unique across all three tables; the API shows them in Crockford Base32.</li>
   <li><code>class_attribute.per_unit</code> puts an attribute's values on stock rows (<code>stock_value</code>) instead of on the item (<code>value</code>); <code>required</code> makes new items or stock rows need a value unless there is a default.</li>
-  <li>An <code>attachment</code> is a file: the SHA-256 <code>hash</code> of its content (the bytes live in <code>wtfd</code>'s files directory, named by it), its MIME <code>type</code> and a <code>title</code>. The mapping tables link it to items, stock rows, locations and classes; one that nothing links to any more is deleted.</li>
-  <li><code>photo</code> on <code>item</code>, <code>stock</code>, <code>location</code> and <code>class</code> refers to <code>attachment</code> (not drawn): one of the object's own attachments, and an image.</li>
+  <li><code>item_attachment</code>, <code>stock_attachment</code>, <code>location_attachment</code> and <code>class_attachment</code> are the files attached to each kind of object: MIME <code>type</code>, SHA-256 <code>hash</code> (the bytes live in <code>wtfd</code>'s files directory, named by it, once however often they are attached), <code>size</code> and <code>title</code>.</li>
+  <li><code>photo</code> on <code>item</code>, <code>stock</code>, <code>location</code> and <code>class</code> is one of the object's own attachments (foreign key <code>(id, photo)</code> to its attachment table, not drawn), and an image.</li>
   <li><code>history</code> is written by a trigger on every data table and on <code>account</code>; accounts are never deleted, only marked <code>deleted</code>, so history can always refer to them.</li>
   <li><code>data_version</code> holds a change counter for the <code>class</code> and <code>location</code> tables (one row each), maintained by statement-level triggers. It has no foreign keys.</li>
   <li><code>attribute.unit</code> and <code>item.unit</code> are the unit numbers are entered in; on output they are scaled within its family, or shown in the unit itself with <code>unit_lock</code>. The numbers themselves (values, defaults, stock quantities) are stored in the base unit. An item without a unit counts pieces.</li>

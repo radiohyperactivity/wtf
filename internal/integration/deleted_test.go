@@ -320,7 +320,7 @@ func TestDeletedRules(t *testing.T) {
 	}
 	e.expect(t, 204, "DELETE", "/items/"+item, nil)
 	purgeDeleted(t, e)
-	e.expect(t, 404, "GET", "/attachments/"+photo, nil)
+	e.expect(t, 404, "GET", "/items/"+item+"/attachments/"+photo, nil)
 }
 
 // The top level of the trees and the list of attributes have a history of
