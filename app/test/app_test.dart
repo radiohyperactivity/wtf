@@ -246,7 +246,7 @@ void main() {
 
     await tester.tap(find.byTooltip('Attachment'));
     await tester.pumpAndSettle();
-    expect(find.text('Make it the photo'), findsNothing); // not an image
+    expect(find.text('Make it the item photo'), findsNothing); // not an image
     await tester.tap(find.text('Title…'));
     await tester.pumpAndSettle();
     await tester.enterText(
@@ -293,7 +293,7 @@ void main() {
       find.widgetWithText(TextField, 'front.png'),
       'Front',
     );
-    await tester.tap(find.text('Make it the photo'));
+    await tester.tap(find.text('Make it the item photo'));
     await tester.tap(find.widgetWithText(FilledButton, 'Attach'));
     await tester.pumpAndSettle();
     final upload = fake.changes.last;
@@ -329,6 +329,30 @@ void main() {
     );
     expect(find.textContaining('This attachment is deleted'), findsNothing);
     expect(find.text('3 B'), findsOneWidget);
+
+    // Download, named as the server names it.
+    final saved = <(String, List<int>)>[];
+    saveDownloadedFile = (name, bytes) async => saved.add((name, bytes));
+    addTearDown(() => saveDownloadedFile = (name, bytes) async {});
+    // The message about the upload is gone by now.
+    tester
+        .state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger))
+        .clearSnackBars();
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FloatingActionButton, 'Download'));
+    await tester.pumpAndSettle();
+    expect(saved, hasLength(1));
+    expect(saved.single.$1, 'Manual.pdf');
+    expect(saved.single.$2, [1, 2, 3]);
+
+    // The menu of a file offers it too.
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Attachment'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Download…'));
+    await tester.pumpAndSettle();
+    expect(saved, hasLength(2));
   });
 
   testWidgets('the appearance is kept on the device', (tester) async {

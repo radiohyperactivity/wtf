@@ -10,15 +10,15 @@ It was planned to cover what you do every day. While building it, it grew to cov
 
 | In the first version | Later |
 |----------------------|-------|
-| Log in and out, change your password | Opening or downloading attachments that aren't images |
+| Log in and out, change your password | |
 | Search, and browse the location and class trees | Label scanning |
 | Look at an item: values, stock and where it is, photos | |
 | Add items (with their values), stock and locations (also with a compartment grid) | |
 | Move stock, and edit and delete items and stock rows | |
 | Manage classes (with their attributes), locations, attributes and their options, and accounts | |
 | History, and the units | |
-| Titles of attachments, the photo of an object, removing attachments | |
-| Uploading files, taking photos (phones), restoring attachments | |
+| Titles of attachments, the item photo (class photo, …), removing attachments | |
+| Uploading and downloading files, taking photos (phones), restoring attachments | |
 
 **Platforms, in this order:**
 1. **Web and Windows:** on your PC, where everything is installed.
@@ -145,7 +145,7 @@ These are decisions I made without you, recorded for review. You asked me to cop
 ### What it covers
 
 5. **Almost all of the CLI.** Everything except:
-   - **What needs new packages:** opening or downloading attachments that aren't images, which needs `url_launcher` or similar. (Uploading came later, with `file_picker` and `image_picker`: decision 35.)
+   - **What needs new packages:** uploading and downloading attachments. (Both came later, with `file_picker` and `image_picker`: decisions 35 and 38.)
    - **What only makes sense in a terminal:** `--json`, the pager, shell completion, profiles. The native apps remember one server, and the web app uses its own.
    - **Creating by path** (`class add MCU/AVR/Old`, with missing parents): the app has a parent picker instead, and names can't contain `/` anyway.
    - **Moving a stock row to another item** (`stock set --item`): rare, and easy to get wrong with a tap.
@@ -282,18 +282,19 @@ Built for API revision 5, with unit files ([seed/units-format.md](seed/units-for
 Built for API revision 7, with the new attachment model ([api/attachment.md](api/attachment.md)).
 34. **Titles and photos.** An attachment shows its title, and files their type and size. Each attachment's menu has:
     - **Title…** to rename it;
-    - **Make it the photo** or **No longer the photo** for images, which sets the object's photo (a star marks it);
+    - **Make it the item photo** or **No longer the item photo** for images (class photo, location photo, stock row photo for the others), which sets the object's photo (a star marks it);
     - **Delete…**, which asks first and warns that it can't be restored.
-    - **History** names attachments by their latest title: "Added photo Front", "Renamed attachment …", "Photo: Front view", "Deleted photo …".
+    - **History** names attachments by their latest title: "Added image Front", "Renamed attachment …", "Item photo: Front view", "Deleted image …". "Photo" only ever means an object's photo; an image file is an "image".
 
 ### Uploading, photos and deleted attachments
 
 Built for API revision 8: attachments are marked deleted again, and restored ([api/attachment.md](api/attachment.md)).
 
 35. **Add files** on every item, stock row, location and class that the account may change, next to Attachments. It chooses one or more files (`file_picker`).
-    - **One file:** a dialog asks for the title (the file name by default) and, for an image, offers "Make it the photo".
+    - **One file:** a dialog asks for the title (the file name by default) and, for an image, offers "Make it the item photo" (or class photo, …).
     - **Several:** each is attached under its file name. If one fails, the message says which were attached already.
     - **The type** is sent from the file name's extension when it is a common one (images, PDF, text, Office, CAD); otherwise the server detects it.
 36. **Take a photo,** with a new dependency, `image_picker`, which uses the camera. The app has no Android or iOS projects yet, so for now it shows on the web on phone-sized screens, where the browser opens the camera. It will work in the Android and iOS apps once those are added (iOS then needs a camera usage description). Desktops don't show it.
 37. **Deleted attachments are found through history,** as you chose: the lines about an attachment ("Added …", "Deleted …", "Restored …", "Renamed …") lead to an attachment screen. It shows the title, type and size, and an image itself. A deleted one has a banner with **Restore**, which brings it back as an ordinary attachment. A file in an object's list opens the same screen.
+38. **Downloading** an attachment: **Download…** in its menu, and a **Download** button on the attachment screen (a floating button, like Add stock). The app fetches the file with the session and saves it: the browser downloads it on the web, and the native apps ask where to save it (`file_picker`). The file name is the one the server gives, as in the CLI: the title, with an extension for the type when it lacks one. The native apps can't hand the browser a link, because the browser doesn't have their session.
 

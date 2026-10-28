@@ -290,6 +290,16 @@ void main() {
 
   // The client's paths must exist in the API description, like the server's
   // route test.
+  test('download file names, as wtfd writes them', () {
+    expect(downloadName('attachment; filename=manual.pdf'), 'manual.pdf');
+    expect(downloadName('inline; filename="Front view.png"'), 'Front view.png');
+    expect(
+      downloadName("attachment; filename*=utf-8''R%C3%B8d%20bok.pdf"),
+      'Rød bok.pdf',
+    );
+    expect(downloadName(null), isNull);
+  });
+
   test('the calls are in openapi.yaml', () {
     // The spec's paths and their methods, with parameters as {}.
     final spec = <String, Set<String>>{};

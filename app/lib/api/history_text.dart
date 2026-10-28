@@ -588,7 +588,7 @@ class _Describer {
         'unit' =>
           'Unit: ${n.unitName(c?.old, 'pieces')} → ${n.unitName(c?.now, 'pieces')}',
         'unit_lock' => 'Unit lock ${c?.now == true ? 'on' : 'off'}',
-        'photo' => _photo(c?.now),
+        'photo' => _photo('Item photo', c?.now),
         _ => null,
       };
       if (line != null) out.add(HistoryLine(line, link));
@@ -596,9 +596,11 @@ class _Describer {
     return out;
   }
 
-  /// A change of photo: none, or one of the object's attachments.
-  String _photo(Object? now) =>
-      now == null ? 'Removed the photo' : 'Photo: ${n.attachmentTitle(now)}';
+  /// A change of an object's photo ([name]: "Item photo", …): none, or one
+  /// of its attachments.
+  String _photo(String name, Object? now) => now == null
+      ? 'Removed the ${name.toLowerCase()}'
+      : '$name: ${n.attachmentTitle(now)}';
 
   List<HistoryLine> _value(HistoryEntry e) {
     final attribute = e.data['attribute'];
@@ -676,7 +678,9 @@ class _Describer {
       out.add(HistoryLine('Now a row of ${n.itemName(it.now)}', link));
     }
     if (e.changes.containsKey('photo')) {
-      out.add(HistoryLine(_photo(e.change('photo')?.now), link));
+      out.add(
+        HistoryLine(_photo('Stock row photo', e.change('photo')?.now), link),
+      );
     }
     final del = e.change('deleted');
     if (del != null) {
@@ -736,7 +740,10 @@ class _Describer {
               : 'Moved from ${place(c?.old)} to ${place(c?.now)}',
         'container' =>
           c?.now == true ? 'Now a container' : 'No longer a container',
-        'photo' => _photo(c?.now),
+        'photo' => _photo(
+          noun == 'location' ? 'Location photo' : 'Class photo',
+          c?.now,
+        ),
         _ => null,
       };
       if (line != null) out.add(HistoryLine(line, link));
@@ -837,8 +844,9 @@ class _Describer {
   /// deleted one can be restored from there.
   List<HistoryLine> _attachment(HistoryEntry e) {
     final title = '${e.data['title']}';
+    // An image file; "photo" is only ever the object's photo.
     final what = '${e.data['type']}'.startsWith('image/')
-        ? 'photo $title'
+        ? 'image $title'
         : 'file $title';
     final kind = e.table.replaceFirst('_attachment', '');
     final path = switch (kind) {

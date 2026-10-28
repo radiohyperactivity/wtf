@@ -450,12 +450,12 @@ void main() {
       ]);
       final texts = lines.map((e) => e.lines.map((l) => l.text).join(' / '));
       expect(texts, [
-        'Purged photo Front view',
-        'Restored photo Front view',
-        'Deleted photo Front view',
-        'Photo: Front view',
+        'Purged image Front view',
+        'Restored image Front view',
+        'Deleted image Front view',
+        'Item photo: Front view',
         'Renamed attachment “Front” to “Front view”',
-        'Added photo Front',
+        'Added image Front',
       ]);
     },
   );

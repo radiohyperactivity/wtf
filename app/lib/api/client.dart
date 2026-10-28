@@ -2,6 +2,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
@@ -133,6 +134,19 @@ String? mediaTypeOf(String name) {
     'step': 'model/step',
     'stp': 'model/step',
   }[name.substring(dot + 1).toLowerCase()];
+}
+
+/// The file name in a Content-Disposition header: filename*=utf-8''… (as
+/// Go writes non-ASCII names) or filename="…"; null when there is none.
+String? downloadName(String? disposition) {
+  if (disposition == null) return null;
+  final extended = RegExp(
+    r"filename\*=utf-8''([^;]+)",
+    caseSensitive: false,
+  ).firstMatch(disposition);
+  if (extended != null) return Uri.decodeComponent(extended[1]!);
+  final plain = RegExp(r'filename="?([^";]+)"?').firstMatch(disposition);
+  return plain?[1];
 }
 
 /// A request body that is JSON text already, sent as it is.
@@ -868,6 +882,18 @@ class ApiClient {
     );
     final resp = await _send(req);
     return Attachment.fromJson(decodeBody(resp.body) as Json, ownerPath);
+  }
+
+  /// An attachment's content, with the file name the server gives it (its
+  /// title, with an extension for its type).
+  Future<(String, Uint8List)> downloadAttachment(Attachment a) async {
+    final req = http.Request('GET', server.resolve('$apiPath${a.path}/content'))
+      ..headers['Accept'] = '*/*';
+    final resp = await _send(req);
+    return (
+      downloadName(resp.headers['content-disposition']) ?? a.title,
+      resp.bodyBytes,
+    );
   }
 
   /// Restores a deleted attachment, as an ordinary one.

@@ -578,6 +578,16 @@ class FakeServer {
         final item = items.firstWhere((i) => i['id'] == id);
         if (part('photo') == 'true') item['photo'] = a['id'];
         return _json(a, 201);
+      case ('GET', ['items', _, 'attachments', _, 'content']):
+        return http.Response.bytes(
+          [1, 2, 3],
+          200,
+          headers: {
+            ..._headers,
+            'content-type': 'application/pdf',
+            'content-disposition': 'attachment; filename=Manual.pdf',
+          },
+        );
       case ('GET', ['items', final id, 'attachments', final attachment]):
         return _json(
           itemAttachments[id]!.firstWhere((a) => a['id'] == attachment),

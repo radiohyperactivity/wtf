@@ -65,8 +65,9 @@ void showPhoto(BuildContext context, Attachment attachment) {
 /// The attachments of the object at [ownerPath] (/items/{id}, …): images as
 /// thumbnails, other files by title, [photo] marked. With [onChanged] (when
 /// the account may change the object), files can be added (and photos taken,
-/// where there is a camera), and each has a menu to change its title, make it
-/// the photo (images) or delete it.
+/// where there is a camera). Each has a menu to download it and, with
+/// [onChanged], to change its title, make it the object's photo ("Item
+/// photo", … for images) or delete it.
 class AttachmentList extends StatelessWidget {
   const AttachmentList(
     this.attachments, {
@@ -138,11 +139,11 @@ class AttachmentList extends StatelessWidget {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           if (_isPhoto(a))
-                            const Tooltip(
-                              message: 'The photo',
-                              child: Icon(Icons.star, size: 16),
+                            Tooltip(
+                              message: photoName(ownerPath),
+                              child: const Icon(Icons.star, size: 16),
                             ),
-                          if (onChanged != null) _menu(context, a),
+                          _menu(context, a),
                         ],
                       ),
                     ],
@@ -157,7 +158,7 @@ class AttachmentList extends StatelessWidget {
             title: Text(a.title),
             subtitle: Text('${a.type} · ${a.sizeText}'),
             onTap: () => context.push(attachmentRoute(a)),
-            trailing: onChanged == null ? null : _menu(context, a),
+            trailing: _menu(context, a),
           ),
       ],
     );
@@ -184,6 +185,8 @@ class AttachmentList extends StatelessWidget {
             if (title != null && title != a.title) {
               run(() => client.patchAttachment(a, title));
             }
+          case 'download':
+            download(context, a);
           case 'photo':
             run(() => client.setPhoto(ownerPath, _isPhoto(a) ? null : a.id));
           case 'delete':
@@ -197,15 +200,20 @@ class AttachmentList extends StatelessWidget {
         }
       },
       itemBuilder: (context) => [
-        const PopupMenuItem(value: 'title', child: Text('Title…')),
-        if (a.isImage)
-          PopupMenuItem(
-            value: 'photo',
-            child: Text(
-              _isPhoto(a) ? 'No longer the photo' : 'Make it the photo',
+        const PopupMenuItem(value: 'download', child: Text('Download…')),
+        if (onChanged != null) ...[
+          const PopupMenuItem(value: 'title', child: Text('Title…')),
+          if (a.isImage)
+            PopupMenuItem(
+              value: 'photo',
+              child: Text(
+                _isPhoto(a)
+                    ? 'No longer the ${photoName(ownerPath).toLowerCase()}'
+                    : 'Make it the ${photoName(ownerPath).toLowerCase()}',
+              ),
             ),
-          ),
-        const PopupMenuItem(value: 'delete', child: Text('Delete…')),
+          const PopupMenuItem(value: 'delete', child: Text('Delete…')),
+        ],
       ],
     );
   }
@@ -249,6 +257,41 @@ Future<String?> _titleDialog(BuildContext context, Attachment a) {
   );
 }
 
+/// The name of an object's photo, by the path of its object: "Item photo",
+/// "Stock row photo", "Location photo" or "Class photo".
+String photoName(String ownerPath) => switch (ownerPath.split('/')[1]) {
+  'items' => 'Item photo',
+  'stock' => 'Stock row photo',
+  'locations' => 'Location photo',
+  _ => 'Class photo',
+};
+
+/// Saves a downloaded file: a save dialog in the native apps, a download in
+/// the browser. Tests replace it.
+Future<void> Function(String name, Uint8List bytes) saveDownloadedFile =
+    (name, bytes) async {
+      await FilePicker.saveFile(
+        dialogTitle: 'Save $name',
+        fileName: name,
+        bytes: bytes,
+      );
+    };
+
+/// Downloads an attachment and saves it, named after its title.
+Future<void> download(BuildContext context, Attachment a) async {
+  final client = context.read<Session>().client;
+  final messenger = ScaffoldMessenger.of(context);
+  showMessage(context, 'Downloading ${a.title}…');
+  try {
+    final (name, bytes) = await client.downloadAttachment(a);
+    messenger.hideCurrentSnackBar();
+    await saveDownloadedFile(name, bytes);
+  } catch (e) {
+    messenger.hideCurrentSnackBar();
+    if (context.mounted) showError(context, e);
+  }
+}
+
 /// The app's route of an attachment: /attachment/items/{owner id}/{id}, …
 String attachmentRoute(Attachment a) =>
     '/attachment${a.path.replaceFirst('/attachments/', '/')}';
@@ -275,7 +318,8 @@ Future<List<PickedFile>> Function() pickAttachmentFiles = () async {
 };
 
 /// Lets the user choose files and attaches them to the object at
-/// [ownerPath]: one file with a title and, for an image, "make it the photo";
+/// [ownerPath]: one file with a title and, for an image, "make it the item
+/// photo" (or class photo, …);
 /// several with their file names as titles.
 Future<void> addFiles(
   BuildContext context,
@@ -321,7 +365,7 @@ Future<void> _upload(
   String? title;
   var photo = false;
   if (files.length == 1) {
-    final options = await _uploadDialog(context, files.single.$1);
+    final options = await _uploadDialog(context, files.single.$1, ownerPath);
     if (options == null || !context.mounted) return;
     (title, photo) = options;
   }
@@ -367,9 +411,13 @@ Future<void> _upload(
   }
 }
 
-/// The title of one file to upload, and whether to make it the photo; null
-/// when cancelled.
-Future<(String, bool)?> _uploadDialog(BuildContext context, String name) {
+/// The title of one file to upload, and whether to make it the object's
+/// photo; null when cancelled.
+Future<(String, bool)?> _uploadDialog(
+  BuildContext context,
+  String name,
+  String ownerPath,
+) {
   final title = TextEditingController(text: name);
   final isImage =
       (mediaTypeOf(name) ?? '').startsWith('image/') &&
@@ -395,7 +443,9 @@ Future<(String, bool)?> _uploadDialog(BuildContext context, String name) {
                 if (isImage)
                   CheckboxListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('Make it the photo'),
+                    title: Text(
+                      'Make it the ${photoName(ownerPath).toLowerCase()}',
+                    ),
                     value: photo,
                     onChanged: (v) => setState(() => photo = v ?? false),
                   ),
@@ -449,15 +499,21 @@ class _AttachmentScreenState extends State<AttachmentScreen> {
       load: () => client.attachment(widget.ownerPath, widget.id),
       builder: (context, a, reload) => Scaffold(
         appBar: AppBar(title: Text(a.title)),
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: () => download(context, a),
+          icon: const Icon(Icons.download),
+          label: const Text('Download'),
+        ),
         body: Readable(
           child: ListView(
             padding: const EdgeInsets.only(bottom: 16),
             children: [
               if (a.deleted)
                 MaterialBanner(
-                  content: const Text(
+                  content: Text(
                     'This attachment is deleted. Restoring it brings it back '
-                    'as an ordinary attachment, not as a photo.',
+                    'as an ordinary attachment, not as the '
+                    '${photoName(widget.ownerPath).toLowerCase()} it may have been.',
                   ),
                   leading: const Icon(Icons.delete_outline),
                   actions: [
