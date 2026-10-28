@@ -244,6 +244,14 @@ void main() {
       },
     ];
     fake.items.first['photo'] = 'att-1';
+    final place = fake.stock.firstWhere((s) => s['item'] == 'i-drill');
+    fake.locations.firstWhere((l) => l['id'] == place['location'])['photo'] = {
+      'id': 'att-place',
+      'title': 'Shelf',
+      'type': 'image/png',
+      'size': 3,
+      'hash': 'ef',
+    };
 
     // Wide: small photos in the results table, the photo right of the
     // details, which include the values without a header of their own.
@@ -274,6 +282,14 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Item photo · image/png · 3 B'), findsOneWidget);
+
+    // A stock row is shown as its place, with the location's photo.
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is Thumbnail && w.attachment.id == 'att-place',
+      ),
+      findsOneWidget,
+    );
 
     // Narrow: the photo as wide as the screen, under the values and above
     // the stock.

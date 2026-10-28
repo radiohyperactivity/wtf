@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../api/client.dart';
 import '../api/models.dart';
 import '../api/units.dart';
 import '../session.dart';
@@ -27,7 +28,7 @@ class ItemScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final session = context.watch<Session>();
     final client = session.client;
-    return Loader<(ItemDetail, Map<String, String>)>(
+    return Loader<(ItemDetail, Map<String, String>, Tree)>(
       key: ValueKey(code),
       title: 'Item $code',
       refreshOn: client.treeChanges,
@@ -41,10 +42,12 @@ class ItemScreen extends StatelessWidget {
         return (
           item,
           await client.locationPaths(item.stock.map((s) => s.location)),
+          // Cached already, for the paths.
+          await client.tree(TreeKind.locations),
         );
       },
       builder: (context, data, reload) {
-        final (item, paths) = data;
+        final (item, paths, locations) = data;
         Future<void> open(String path) async {
           await context.push(path);
           reload();
@@ -160,7 +163,11 @@ class ItemScreen extends StatelessWidget {
                   if (item.stock.isEmpty) const EmptyNote('No stock.'),
                   for (final s in item.stock) ...[
                     ListTile(
-                      leading: PhotoOrIcon(s.photo, icon: Icons.place_outlined),
+                      // Each row is shown as its place: the location photo.
+                      leading: PhotoOrIcon(
+                        locations[s.location]?.photo,
+                        icon: Icons.place_outlined,
+                      ),
                       title: Text(paths[s.location] ?? s.location),
                       subtitle: Text(s.code),
                       trailing: Text(
