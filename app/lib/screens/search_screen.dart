@@ -690,6 +690,18 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
         ],
       ),
     );
+    // At most three lines, so one long value doesn't make its row tall;
+    // the whole of a longer one in a tooltip.
+    Widget short(String text, {TextStyle? style}) => Tooltip(
+      message: text.length > 40 ? text : '',
+      child: Text(
+        text,
+        style: style,
+        maxLines: 3,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+
     Widget row(ItemListed item) {
       final d = _loaded[item.id];
       String where = '';
@@ -760,13 +772,13 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
                   ],
                 ),
               ),
-              cell(fixed[1].$2, Text(_classes!.pathOf(item.classId))),
-              cell(fixed[2].$2, Text(item.stockText)),
-              cell(fixed[3].$2, Text(where, style: muted)),
+              cell(fixed[1].$2, short(_classes!.pathOf(item.classId))),
+              cell(fixed[2].$2, short(item.stockText)),
+              cell(fixed[3].$2, short(where, style: muted)),
               for (final (id, _) in columns)
                 cell(
                   attributeWidth,
-                  Text(
+                  short(
                     values[id]?.$1 ?? '',
                     style: values[id]?.$2 == true
                         ? muted.copyWith(fontStyle: FontStyle.italic)

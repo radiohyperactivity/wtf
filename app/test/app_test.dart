@@ -683,6 +683,9 @@ void main() {
     expect(find.text('Cordless drill'), findsOneWidget);
     expect(find.text('18 V'), findsOneWidget);
     expect(find.text('Garage/Shelf 1'), findsOneWidget);
+    // A long value can't make its row tall: cells end after three lines.
+    expect(tester.widget<Text>(find.text('18 V')).maxLines, 3);
+    expect(tester.widget<Text>(find.text('Garage/Shelf 1')).maxLines, 3);
 
     // Back to the form, as it was filled in.
     await tester.pageBack();
