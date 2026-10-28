@@ -294,7 +294,7 @@ Built for API revision 8: attachments are marked deleted again, and restored ([a
     - **One file:** a dialog asks for the title (the file name by default) and, for an image, offers "Make it the item photo" (or class photo, …).
     - **Several:** each is attached under its file name. If one fails, the message says which were attached already.
     - **The type** is sent from the file name's extension when it is a common one (images, PDF, text, Office, CAD); otherwise the server detects it.
-36. **Take a photo,** with a new dependency, `image_picker`, which uses the camera. The app has no Android or iOS projects yet, so for now it shows on the web on phone-sized screens, where the browser opens the camera. It will work in the Android and iOS apps once those are added (iOS then needs a camera usage description). Desktops don't show it.
+36. **Take a photo,** with a new dependency, `image_picker`, which uses the camera. It shows in the Android app (decision 50) and on the web on phone-sized screens, where the browser opens the camera. It will work in the iOS app once that is added (iOS then needs a camera usage description). Desktops don't show it.
 37. **Deleted attachments are found through history,** as you chose: the lines about an attachment ("Added …", "Deleted …", "Restored …", "Renamed …") lead to an attachment screen. It shows the title, type and size, and an image itself. A deleted one has a banner with **Restore**, which brings it back as an ordinary attachment. A file in an object's list opens the same screen.
 38. **Downloading** an attachment: **Download…** in its menu, and a **Download** button on the attachment screen (a floating button, like Add stock). The app fetches the file with the session and saves it: the browser downloads it on the web, and the native apps ask where to save it (`file_picker`). The file name is the one the server gives, as in the CLI: the title, with an extension for the type when it lacks one. The native apps can't hand the browser a link, because the browser doesn't have their session.
 
@@ -330,3 +330,12 @@ Built for API revision 9: the class and location tree nodes include their `photo
 49. **Teal or the logo's orange,** chosen on the Me screen next to Light and Dark, and kept on the device like them. Teal stays the default. Both are Material colour schemes built from one colour, light and dark (`lib/theme.dart`).
     - **Orange** uses Material's "fidelity" scheme, which keeps the logo's `#ff7828` itself as the container colour (floating buttons, selected items). The usual scheme would turn it brownish. Text and outlines get darker orange in light mode (`#a04100`) and lighter in dark mode (`#ffb692`), so they stay readable.
     - The web app's browser colour (decision 47) stays orange whichever is chosen: it is fixed in the page, before the app has started.
+
+### Android
+
+50. **The Android project** (`app/android/`), made with `flutter create`. Building it waits for Android Studio, which brings the SDK and a Java JDK.
+    - **Package name `io.bbj.wtf`,** as you chose. It can't change once the app is installed or published.
+    - **The app is called WtF.** It may use the internet. **Plain HTTP is allowed,** because `wtfd` leaves HTTPS to an optional proxy, so a phone can reach a server on the home network without one. The session token then travels unencrypted, as it does to the Windows app.
+    - **The launcher icon** comes from the logo. Older Androids get `icon.svg`, rendered at the five densities. Android 8 and later get an adaptive icon: the stack (`logo/icon-android-foreground.svg`, scaled into the safe zone) on the logo's orange, which every launcher shape shows whole. The same layer is the monochrome icon for Android 13's themed icons.
+    - **No camera permission** is needed: `image_picker` hands the photo to the phone's camera app. Choosing and saving files go through Android's own file dialogs (`file_picker`), so no storage permission is needed either.
+    - **Release builds are signed with the debug key** for now (Flutter's default), which is enough for installing on your own phones. A store release needs a key of its own, kept out of git (`key.properties` and keystores are ignored).

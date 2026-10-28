@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The logo's orange. -->
+    <color name="ic_launcher_background">#FF7828</color>
+</resources>
