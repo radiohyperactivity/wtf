@@ -30,6 +30,7 @@ Every function takes the kind of object (`p_kind`: `item`, `stock`, `location` o
 - **`item_get`:** the item's `photo` and attachments, and those of each of its stock rows.
 - **`stock_get`, `location_get`, `class_get`:** the object's `photo` and attachments.
 - **`item_list`:** each item's `photo`.
+- **Stock rows and item summaries** everywhere (`stock_list`, the `item` inside a stock row, `code_resolve`, …): the stock row's `photo`, and the item's `photo` in its summary.
 - **`class_list`, `location_list`:** each tree node's `photo`. Any change to a class's or location's attachments gives its tree a new version, so a cached tree never shows an old title.
 - Attachments are listed with the photo first, then by title; deleted ones aren't listed.
 

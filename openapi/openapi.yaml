@@ -1998,6 +1998,9 @@ components:
           oneOf: [{ $ref: "#/components/schemas/Unit" }, { type: "null" }]
         unit_lock: { type: boolean }
         deleted: { $ref: "#/components/schemas/Deleted" }
+        photo:
+          description: The item photo, or null.
+          oneOf: [{ $ref: "#/components/schemas/Attachment" }, { type: "null" }]
 
     ItemListed:
       allOf:
@@ -2011,7 +2014,6 @@ components:
                 display: { $ref: "#/components/schemas/Display" }
                 uncounted: { type: boolean }
             incomplete: { type: boolean, description: The item or one of its stock rows lacks a required value. }
-            photo: { oneOf: [{ $ref: "#/components/schemas/Attachment" }, { type: "null" }] }
 
     ItemDetail:
       type: object
@@ -2068,8 +2070,8 @@ components:
           $ref: "#/components/schemas/Missing"
           description: Not in GET /stock list rows.
         photo:
-          { oneOf: [{ $ref: "#/components/schemas/Attachment" }, { type: "null" }] }
-          description: Not in GET /stock list rows.
+          description: The stock row photo, or null.
+          oneOf: [{ $ref: "#/components/schemas/Attachment" }, { type: "null" }]
         attachments:
           $ref: "#/components/schemas/Attachments"
           description: Not in GET /stock list rows.

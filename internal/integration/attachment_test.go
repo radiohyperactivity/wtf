@@ -196,6 +196,13 @@ func TestAttachments(t *testing.T) {
 	// attachments isn't merged away.
 	receipt := e.upload(t, 201, "/stock/"+stockID+"/attachments", "receipt.png", "image/png",
 		append([]byte(nil), append(pngBytes, 'r')...), "photo", "true").body
+	// The stock list has each row's photo and its item's.
+	e.expect(t, 200, "PATCH", "/items/"+itemID, obj("photo", photoID))
+	rows := e.expect(t, 200, "GET", "/stock?item="+itemID, nil).body
+	if str(t, rows, "rows", 0, "photo", "id") != str(t, receipt, "id") ||
+		str(t, rows, "rows", 0, "item", "photo", "id") != photoID {
+		t.Errorf("stock_list photos: %v", get(t, rows, "rows", 0))
+	}
 	split := e.expect(t, 200, "POST", "/stock/"+stockID+"/move", obj("location", van, "quantity", 1)).body
 	copied := str(t, split, "attachments", 0, "id")
 	if copied == str(t, receipt, "id") || str(t, split, "attachments", 0, "hash") != str(t, receipt, "hash") ||

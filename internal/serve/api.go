@@ -15,7 +15,7 @@ import (
 const (
 	apiPrefix   = "/api/v1"
 	apiVersion  = 1
-	apiRevision = 9 // increase with every addition to /api/v1
+	apiRevision = 10 // increase with every addition to /api/v1
 	healthPath  = "/api/health"
 )
 

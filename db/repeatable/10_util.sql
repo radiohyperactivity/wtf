@@ -924,7 +924,8 @@ END;
 $$;
 
 -- Short form used in lists and inside other objects. class is just the id:
--- the client resolves it from its cached class tree.
+-- the client resolves it from its cached class tree. photo is the item
+-- photo (util.attachment_json) or null.
 CREATE FUNCTION util.item_summary_json(p_item uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
@@ -936,7 +937,8 @@ BEGIN
             'class',      i.class,
             'unit',       util.unit_json(i.unit),
             'unit_lock',  i.unit_lock,
-            'deleted',    i.deleted
+            'deleted',    i.deleted,
+            'photo',      util.attachment_json('item', i.photo)
         )
         FROM item i
         WHERE i.id = p_item
@@ -947,7 +949,7 @@ $$;
 -- quantity is in the base unit of the item's unit (pieces if none); display
 -- is the same quantity as it is shown (see util.display_json).
 -- location is just the id: the client resolves it from its cached location
--- tree.
+-- tree. photo is the stock row photo, item.photo the item photo.
 CREATE FUNCTION util.stock_json(p_stock uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
@@ -960,6 +962,7 @@ BEGIN
             'quantity', s.quantity,
             'display',  util.display_json(s.quantity, i.unit, i.unit_lock),
             'deleted',  s.deleted,
+            'photo',    util.attachment_json('stock', s.photo),
             -- A row merged into another by a move: the row it went into.
             'merged_into', (SELECT jsonb_build_object('id', m.id, 'code', util.code_text(m.code))
                             FROM stock m WHERE m.id = s.merged_into)
@@ -1067,7 +1070,6 @@ BEGIN
         SELECT util.stock_json(s.id) || jsonb_build_object(
             'values',      util.values_json(i.class, true, s.id),
             'missing',     util.attribute_refs_json(ARRAY(SELECT stock_missing_attributes(s.id))),
-            'photo',       util.attachment_json('stock', s.photo),
             'attachments', util.attachments_json(NULL, s.id, NULL, NULL)
         )
         FROM stock s
