@@ -247,7 +247,11 @@ class _StockRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListTile(
       dense: true,
-      leading: PhotoOrIcon(stock.photo, icon: Icons.layers_outlined),
+      // The row's own photo, else its item's.
+      leading: PhotoOrIcon(
+        stock.photo ?? stock.item.photo,
+        icon: Icons.inventory_2_outlined,
+      ),
       title: Text(stock.item.name),
       subtitle: Text([stock.code, ?place].join('  ·  ')),
       trailing: Text(stock.quantityText),

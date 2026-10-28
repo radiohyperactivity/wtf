@@ -309,7 +309,7 @@ Built for API revision 8: attachments are marked deleted again, and restored ([a
 
 ### Photos in the trees, and framed icons
 
-Built for API revision 9: the class and location tree nodes include their `photo` ([api/attachment.md](api/attachment.md)).
+Built for API revision 9: the class and location tree nodes include their `photo` ([api/attachment.md](api/attachment.md)). Revision 10 adds the stock row's `photo` to stock lists and the item's `photo` to item summaries, such as the item of a stock row.
 
-45. **A photo or a framed icon** at the start of every list entry for an object: the object's small photo, or, when it has none, its icon in a frame the same size. That covers attachments (the paperclip), items (narrow list, wide table, a class's items), an item's stock rows (shown as their place, so with the location's photo; a stock row's own photo is on its screen), a location's stock (each row's own photo), what's inside a location, the classes below a class, and both trees. The frame is the same thin border as the photos', so entries with and without a photo look alike and their names line up.
+45. **A photo or a framed icon** at the start of every list entry for an object: the object's small photo, or, when it has none, its icon in a frame the same size. That covers attachments (the paperclip), items (narrow list, wide table, a class's items), an item's stock rows (the row's own photo, else its location's), a location's stock (the row's own photo, else its item's), what's inside a location, the classes below a class, and both trees. The frame is the same thin border as the photos', so entries with and without a photo look alike and their names line up.
 46. **The trees use a smaller size,** 36 pixels instead of 48, so they stay compact. Their rows are 48 pixels high instead of 44.

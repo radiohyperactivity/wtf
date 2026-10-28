@@ -13,7 +13,7 @@ import 'units.dart';
 /// The API version and revision this app was built for.
 const apiPath = '/api/v1';
 const apiVersion = 1;
-const apiRevision = 9;
+const apiRevision = 10;
 
 const sessionCookie = 'wtf_session';
 

@@ -163,9 +163,9 @@ class ItemScreen extends StatelessWidget {
                   if (item.stock.isEmpty) const EmptyNote('No stock.'),
                   for (final s in item.stock) ...[
                     ListTile(
-                      // Each row is shown as its place: the location photo.
+                      // The row's own photo, else its location's.
                       leading: PhotoOrIcon(
-                        locations[s.location]?.photo,
+                        s.photo ?? locations[s.location]?.photo,
                         icon: Icons.place_outlined,
                       ),
                       title: Text(paths[s.location] ?? s.location),

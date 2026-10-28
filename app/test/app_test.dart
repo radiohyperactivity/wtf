@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:wtf/app.dart';
 import 'package:wtf/screens/attribute_screens.dart';
 import 'package:wtf/screens/search_screen.dart';
@@ -302,6 +303,41 @@ void main() {
     );
     expect(narrow.bottom, lessThan(tester.getRect(find.text('Stock')).top));
     expect(narrow.width, 400 - 32);
+
+    // On the location, the stock row has its item's photo; a row's own
+    // photo comes first, there and on the item.
+    Thumbnail? thumbnail(String id) => tester
+        .widgetList<Thumbnail>(find.byType(Thumbnail))
+        .where((t) => t.attachment.id == id)
+        .firstOrNull;
+    final location = fake.locations.firstWhere(
+      (l) => l['id'] == place['location'],
+    );
+    final router = GoRouter.of(tester.element(find.byType(ObjectPhoto)));
+    router.push('/locations/${location['code']}');
+    await tester.pumpAndSettle();
+    expect(thumbnail('att-1'), isNotNull);
+    expect(thumbnail('att-1')!.attachment.owner, '/items/i-drill');
+
+    place['photo'] = {
+      'id': 'att-row',
+      'title': 'Label',
+      'type': 'image/png',
+      'size': 3,
+      'hash': '12',
+    };
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    router.push('/locations/${location['code']}');
+    await tester.pumpAndSettle();
+    expect(thumbnail('att-row'), isNotNull);
+    expect(thumbnail('att-1'), isNull);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, 400));
+    await tester.pumpAndSettle(); // pull to refresh the item
+    expect(thumbnail('att-row'), isNotNull);
+    expect(thumbnail('att-place'), isNull);
   });
 
   testWidgets('an attachment: change its title, then delete it', (

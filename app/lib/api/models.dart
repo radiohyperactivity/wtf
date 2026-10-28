@@ -633,6 +633,7 @@ class ItemSummary {
     this.unit,
     this.unitLock = false,
     this.deleted = false,
+    this.photo,
   });
 
   factory ItemSummary.fromJson(Json json) => ItemSummary(
@@ -645,12 +646,16 @@ class ItemSummary {
     unit: json['unit'] == null ? null : Unit.fromJson(json['unit'] as Json),
     unitLock: json['unit_lock'] as bool? ?? false,
     deleted: json['deleted'] as bool? ?? false,
+    photo: Attachment.maybe(json['photo'], '/items/${json['id']}'),
   );
 
   final String id;
   final String code;
   final String name;
   final String classId;
+
+  /// The item photo.
+  final Attachment? photo;
 
   /// The unit stock is measured in; null means pieces.
   final Unit? unit;
@@ -670,7 +675,7 @@ class ItemListed extends ItemSummary {
     super.deleted,
     required this.stockText,
     this.incomplete = false,
-    this.photo,
+    super.photo,
   });
 
   factory ItemListed.fromJson(Json json) {
@@ -685,7 +690,7 @@ class ItemListed extends ItemSummary {
       deleted: s.deleted,
       stockText: _formatTotal(_obj(json['stock'])),
       incomplete: json['incomplete'] as bool? ?? false,
-      photo: Attachment.maybe(json['photo'], '/items/${s.id}'),
+      photo: s.photo,
     );
   }
 
@@ -694,7 +699,6 @@ class ItemListed extends ItemSummary {
 
   /// The item or one of its stock rows lacks a required value.
   final bool incomplete;
-  final Attachment? photo;
 }
 
 String _formatTotal(Json? t) {
@@ -799,6 +803,7 @@ class ItemDetail {
     unit: unit,
     unitLock: unitLock,
     deleted: deleted,
+    photo: photo,
   );
 }
 

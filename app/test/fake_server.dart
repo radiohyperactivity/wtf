@@ -178,6 +178,9 @@ class FakeServer {
     'class': i['class'],
     'unit': null,
     'unit_lock': false,
+    'photo': (itemAttachments[i['id']] ?? [])
+        .where((a) => a['id'] == i['photo'])
+        .firstOrNull,
   };
 
   List<Map<String, dynamic>> _values(Map<String, dynamic> i) => [
@@ -201,9 +204,6 @@ class FakeServer {
       'class': classJson(i['class'] as String)..remove('attributes'),
       'values': _values(i),
       'missing': [],
-      'photo': (itemAttachments[id] ?? [])
-          .where((a) => a['id'] == i['photo'])
-          .firstOrNull,
       'attachments': itemAttachments[id] ?? [],
       'stock': [
         for (final s in stock.where((s) => s['item'] == id))
@@ -241,9 +241,6 @@ class FakeServer {
         'uncounted': rows.any((s) => s['quantity'] == null),
       },
       'incomplete': false,
-      'photo': (itemAttachments[i['id']] ?? [])
-          .where((a) => a['id'] == i['photo'])
-          .firstOrNull,
     };
   }
 
