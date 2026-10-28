@@ -42,7 +42,7 @@ Decisions marked *(yours)* were made by you; the rest are mine, made while you w
 15. **Keys are UUIDs** *(yours)*, for quantities, families and units alike, as for everything else. Unit files refer to units by name and symbol, so their format doesn't change. The API's ids become strings (a new API revision).
 16. **Turning units on and off, per quantity and per family** *(yours)*:
     - **Global quantities and families have `standard`** *(yours; first named `default_available`)*: whether a tenant has them without having chosen. A new global quantity or family shows up in every tenant, or not, according to this flag, with nothing else to set.
-    - **A tenant stores only its choices**, in `tenant_quantity` and `tenant_unit_family`: (tenant, quantity or family, `available`).
+    - **A tenant stores only its choices**, in `tenant_quantity` and `tenant_unit_family`: (tenant, quantity or family, `available`). A choice that is the default anyway isn't kept, so a choice always differs from the default, and the app offers a way back to the default only then.
     - **A quantity is available** by the tenant's choice, otherwise by its `standard`. A tenant's own quantities are available unless it turns them off.
     - **A family is available** when its quantity is, and then by the tenant's choice, otherwise by its `standard`.
     - **A new tenant needs no unit rows:** the defaults are its starting point.

@@ -184,7 +184,9 @@ $$;
 
 -- Sets the tenant's choice of whether a quantity or a unit family is
 -- available, from p_patch's "available": true, false, or null to follow the
--- default again. Something in use can't be turned off (23001, 409).
+-- default again. A choice that is the default anyway isn't kept, so a
+-- tenant has a choice only where it differs from the default. Something in
+-- use can't be turned off (23001, 409).
 CREATE FUNCTION util.set_availability(p_kind text, p_id uuid, p_patch jsonb) RETURNS void
 LANGUAGE plpgsql AS $$
 DECLARE
@@ -201,6 +203,16 @@ BEGIN
         PERFORM util.raise_invalid('available must be true, false or null');
     END IF;
     v_choice := (p_patch ->> 'available')::boolean;
+
+    -- The standard of a global one; a tenant's own are available by default.
+    IF v_choice IS NOT DISTINCT FROM (
+        CASE p_kind
+            WHEN 'quantity' THEN (SELECT CASE WHEN tenant IS NULL THEN standard ELSE true END FROM quantity WHERE id = p_id)
+            ELSE (SELECT CASE WHEN tenant IS NULL THEN standard ELSE true END FROM unit_family WHERE id = p_id)
+        END)
+    THEN
+        v_choice := NULL;
+    END IF;
 
     IF p_kind = 'quantity' THEN
         SELECT name INTO v_name FROM quantity WHERE id = p_id;

@@ -528,7 +528,9 @@ class _UnitsScreenState extends State<UnitsScreen> {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (a.choice != null && a.global)
+        // Only where the choice differs from the default (the server keeps
+        // no choice that is the default anyway).
+        if (a.choice != null && a.choice != a.standard && a.global)
           IconButton(
             icon: const Icon(Icons.undo),
             tooltip:

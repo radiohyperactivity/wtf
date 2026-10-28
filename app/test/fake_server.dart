@@ -549,7 +549,9 @@ class FakeServer {
         );
       case ('PATCH', ['quantities' || 'unit-families', final id]):
         final available = body!['available'] as bool?;
-        choice[id] = available;
+        // Everything here is on as standard; a choice that is the standard
+        // isn't kept, as on the server.
+        choice[id] = available == true ? null : available;
         if (available == false) {
           off.add(id);
         } else {

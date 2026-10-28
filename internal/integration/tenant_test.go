@@ -182,7 +182,10 @@ func TestTenants(t *testing.T) {
 	if get(t, e.expect(t, 200, "GET", "/unit-families/"+imperial, nil).body, "available") != true {
 		t.Error("the test tenant's Imperial length was turned off too")
 	}
-	e.expect(t, 200, "PATCH", "/unit-families/"+imperial, obj("available", nil), b...)
+	// Turned on again, it follows the standard: no choice is kept.
+	if f := e.expect(t, 200, "PATCH", "/unit-families/"+imperial, obj("available", true), b...).body; get(t, f, "choice") != nil {
+		t.Errorf("a choice that is the standard is kept: %v", f)
+	}
 	// A quantity turned off turns its families off.
 	e.expect(t, 200, "PATCH", "/quantities/"+length, obj("available", false), b...)
 	for _, f := range e.expect(t, 200, "GET", "/unit-families?quantity="+length, nil, b...).body.([]any) {

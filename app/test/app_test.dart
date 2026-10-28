@@ -217,6 +217,14 @@ void main() {
     );
     expect(tester.widget<Switch>(switchOf('Imperial length')).value, isTrue);
 
+    // Switched back on, it is the default again: no way back is offered.
+    await tester.tap(switchOf('Imperial length'));
+    await tester.pumpAndSettle();
+    await tester.tap(switchOf('Imperial length'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<Switch>(switchOf('Imperial length')).value, isTrue);
+    expect(find.byTooltip('Back to the default (on)'), findsNothing);
+
     // A unit of a family that is off can't be chosen.
     await tester.tap(switchOf('Imperial length'));
     await tester.pumpAndSettle();
