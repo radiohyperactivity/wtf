@@ -396,16 +396,44 @@ An `openapi.yaml` (OpenAPI 3.1) describes every route, body and response shape. 
 - **HTTP server timeouts:** 10 s to read the request header, 30 s to read the whole request, 60 s to write the response, and 120 s for idle keep-alive connections.
 - **Database:** each call is limited by the role's `statement_timeout` (30 s in the README).
 
-## The `account` action
+## Tenants
 
-The operator creates the first account, and recovers a lost password, as the DBA role:
+One installation holds many inventories, called tenants ([TENANTS.md](TENANTS.md)). The first label of a request's hostname picks one: `wtfd` lower-cases the `Host` header, drops the port, and looks up the label before the first dot (`bob` for `Bob.wtf.example:8443`). A hostname that picks no tenant gets 404, for the API and the web app alike, except `GET /api/health`, which answers on any hostname. A session belongs to its tenant: its cookie at another tenant's hostname gets 401.
+
+## The `tenant` action
+
+The operator creates, lists and renames tenants as the DBA role:
 
 ```sh
-wtfd account create --email anna@example.com
-wtfd account password --email anna@example.com
+wtfd tenant create --host bob --email anna@example.com
+wtfd tenant list
+wtfd tenant rename --host bob --new-host robert --files-directory /var/lib/wtf/files
+```
+
+`create` makes the tenant and its first account, with every privilege, and prints the account's generated password once. `host` is a DNS label that starts with a letter: `a`–`z`, `0`–`9` and `-`, at most 63 characters. `rename` changes the host and moves the tenant's directory in the files directory along with it. Deleting a tenant isn't built yet.
+
+## The `account` action
+
+The operator creates an account with every privilege in a tenant, and recovers a lost password, as the DBA role:
+
+```sh
+wtfd account create --host bob --email anna@example.com
+wtfd account password --host bob --email anna@example.com
 ```
 
 `create` makes an account with every privilege. `password` gives an existing account a new password, lifts a lockout and ends its sessions. Both print the generated password once; the account should change it after logging in (`PUT /me/password`). Further accounts are made through the API (`POST /accounts`). See [ACCOUNTS.md](ACCOUNTS.md).
+
+## The `unit` action
+
+Global units, which every tenant sees, are the operator's (TENANTS.md, decisions 14–17). Tenants import their own through the API.
+
+```sh
+wtfd unit import --global more-units.json [--dry-run]
+wtfd unit default --family "Imperial length" --available false
+wtfd unit default --quantity Temperature --available true
+```
+
+`import` adds what isn't there yet, as `POST /units/import` does, and prints the same report; a name some tenant already has for its own is a conflict. `default` sets whether a global quantity or family is available to tenants that haven't chosen themselves.
 
 ## The `history` action
 
@@ -413,10 +441,10 @@ History is kept until the operator deletes old entries (see [api/history.md](api
 
 ```sh
 wtfd history purge --older-than 730d
-wtfd history purge --older-than 365d --dry-run
+wtfd history purge --older-than 365d --host bob --dry-run
 ```
 
-`--older-than` takes days (`730d`) or a Go duration (`36h`). `--dry-run` only counts the entries. It connects as the DBA role.
+`--older-than` takes days (`730d`) or a Go duration (`36h`). Every tenant's history, or with `--host` one tenant's. `--dry-run` only counts the entries. It connects as the DBA role.
 
 ## The `deleted` action
 
@@ -424,10 +452,10 @@ Deleted objects stay in the database until the operator purges them (see [api/de
 
 ```sh
 wtfd deleted purge --older-than 730d
-wtfd deleted purge --older-than 365d --dry-run
+wtfd deleted purge --older-than 365d --host bob --dry-run
 ```
 
-It removes what was deleted longer ago than `--older-than` (days or a Go duration), with what belongs to it, and reports how many of each kind. An object something else still refers to stays until that is purged too. `--dry-run` runs the purge in a transaction and rolls it back. It connects as the DBA role. Run `wtfd gc` afterwards to remove the files of purged attachments.
+It removes what was deleted longer ago than `--older-than` (days or a Go duration), with what belongs to it, in every tenant or with `--host` in one, and reports how many of each kind. An object something else still refers to stays until that is purged too. `--dry-run` runs the purge in a transaction and rolls it back. It connects as the DBA role. Run `wtfd gc` afterwards to remove the files of purged attachments.
 
 ## The `gc` action
 
@@ -438,10 +466,12 @@ wtfd gc --files-directory /var/lib/wtf/files --dry-run   # report only
 wtfd gc --files-directory /var/lib/wtf/files
 ```
 
-It connects as the DBA role and removes two kinds of file:
+It connects as the DBA role and goes through every tenant's directory (`<files directory>/<host>/`), removing two kinds of file:
 
-- files on disk whose hash no attachment (of any kind of object) has: their attachments were deleted, or an upload's database insert failed;
-- abandoned uploads in the `tmp` directory.
+- files whose hash no attachment of that tenant (of any kind of object) has: their attachments were deleted, or an upload's database insert failed;
+- abandoned uploads in the tenant's `tmp` directory.
+
+A directory that belongs to no tenant is reported and left alone.
 
 Files younger than `--min-age` (env `WTFD_GC_MIN_AGE`, default `1h`) are never removed, so uploads in progress are safe. Each removal takes the file's advisory lock, the same one an upload holds while it puts the file in place and records it, and re-checks that nothing references the file. `--dry-run` reports what would be removed, and `--verbose` logs every removed file. Run it from cron or a systemd timer, e.g. nightly.
 

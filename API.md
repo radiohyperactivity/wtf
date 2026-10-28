@@ -7,7 +7,8 @@ All access to the data goes through the PL/pgSQL functions described here. They 
 | Documentation                            | SQL                                                        | Contents |
 |------------------------------------------|------------------------------------------------------------|----------|
 | [SCHEMA.md](SCHEMA.md)                   | [db/migrations/0001_schema.sql](db/migrations/0001_schema.sql) | Types, tables, views, integrity triggers |
-| [seed/units.md](seed/units.md)           | [db/migrations/0002_units.sql](db/migrations/0002_units.sql)   | System data: quantities, unit families and units |
+| [seed/units.md](seed/units.md)           | [db/migrations/0002_units.sql](db/migrations/0002_units.sql)   | The global units: quantities, unit families and units |
+| [TENANTS.md](TENANTS.md)                 | [db/migrations/0001_schema.sql](db/migrations/0001_schema.sql) | Tenants: many inventories, picked by hostname |
 | [api/helpers.md](api/helpers.md)         | [db/repeatable/10_util.sql](db/repeatable/10_util.sql)         | Schema `util`: internal helpers for errors, paging, paths, typed values, JSON builders |
 | [api/attribute.md](api/attribute.md)     | [db/repeatable/20_attribute.sql](db/repeatable/20_attribute.sql) | `quantity_*`, `unit_family_*`, `unit_*`, `attribute_*`, `attribute_option_*` |
 | [api/class.md](api/class.md)             | [db/repeatable/30_class.sql](db/repeatable/30_class.sql)       | `class_*`, `class_attribute_*` |
@@ -28,7 +29,7 @@ The files are applied by `wtfd schema` (see [WTFD.md](WTFD.md)). Migrations run 
 - **History.** Every change to the data is logged by a trigger: who, when, what changed. It can be read per object with the history privilege; see [api/history.md](api/history.md).
 - **Deleting marks objects** instead of removing them; see [api/deleting.md](api/deleting.md). Lists and trees leave deleted objects out; `_get` and `code_resolve` still return them, with `deleted: true`. A deleted object can't be changed, only restored (`<entity>_restore(p_id, p_options)`) or purged by the operator.
 - **Logins.** Every API function works on behalf of a logged-in account (see [ACCOUNTS.md](ACCOUNTS.md) and [api/account.md](api/account.md)).
-  - `wtfd` calls `session_use(token)` first in each transaction.
+  - `wtfd` calls `session_use(token, host)` first in each transaction; every function then works in the session's tenant only (TENANTS.md).
   - The function checks the account's privilege (`data`, `model`, `account` or `history`; read or write).
 - **Access.**
   - API functions are `SECURITY DEFINER`: they run with the privileges of their owner, `wtf_dba`, not those of the caller.
@@ -90,7 +91,7 @@ The files are applied by `wtfd schema` (see [WTFD.md](WTFD.md)). Migrations run 
   | `choice`  | option id or option name (case-insensitive)  | `{"id": …, "name": …}`   |
 
 - **Units.**
-  - **System data:** quantities, unit families and units are seeded (see [seed/units.md](seed/units.md)), and more can be imported from unit files ([seed/units-format.md](seed/units-format.md)); nothing else changes them. They have integer ids; everything else has UUIDs.
+  - **Units:** quantities, unit families and units are global (seeded, see [seed/units.md](seed/units.md), and imported by the operator) or a tenant's own (imported from unit files, [seed/units-format.md](seed/units-format.md)). A tenant turns quantities and families on and off. Everything has UUIDs as ids.
   - **Units:** an attribute (for values and defaults) or an item (for stock quantities) may have a unit. That makes its numbers measurements of the unit's quantity. Each unit belongs to one family, such as Metric length.
   - **Unit lock:** with `unit_lock`, numbers are always shown in the unit itself. Without it (the default), they are scaled within the unit's family.
   - **Storage and input:** such numbers are stored, and must be given, in the base unit of the quantity (metres, kilograms, ohms, kelvin, …). Counts use the integer datatype; every other quantity uses float.
@@ -220,8 +221,9 @@ Suggested REST routes are only there to show intent. The REST design comes later
 | `attachment_get(p_kind, p_owner, p_id)` | attachment | `GET /items\|stock\|locations\|classes/{id}/attachments/{attachment}` (content: `…/content`, via wtfd) |
 | `attachment_patch(p_kind, p_owner, p_id, p_patch)` | attachment | `PATCH …/attachments/{attachment}` |
 | `attachment_delete(p_kind, p_owner, p_id)` | void | `DELETE …/attachments/{attachment}` |
-| `login(p_email, p_password)` | `{ok, token, account}` or `{ok: false, reason}` | `POST /api/v1/login` (the token becomes the session cookie) |
-| `session_use(p_token)` | void | – (called by wtfd before every function) |
+| `tenant_known(p_host)` | boolean | – (wtfd answers 404 for a hostname that picks no tenant) |
+| `login(p_host, p_email, p_password)` | `{ok, token, account}` or `{ok: false, reason}` | `POST /api/v1/login` (the token becomes the session cookie) |
+| `session_use(p_token, p_host)` | void | – (called by wtfd before every function) |
 | `logout()` | void | `POST /logout` |
 | `me()` | account | `GET /me` |
 | `password_change(p_current, p_new)` | void | `PUT /me/password` |

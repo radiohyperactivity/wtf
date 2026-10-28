@@ -1,6 +1,6 @@
 # Tenants – design
 
-Status: **being built** (agreed 2026-10-28). One installation holds many independent inventories, called **tenants**. Setting one up is adding a few rows to the database, with no new DNS entries, databases, processes or directories to create by hand.
+Status: **built** (agreed and built 2026-10-28; migrations `0001`–`0002`, API revision 11). One installation holds many independent inventories, called **tenants**. Setting one up is adding a few rows to the database, with no new DNS entries, databases, processes or directories to create by hand.
 
 Decisions marked *(yours)* were made by you; the rest are mine, made while you were away, and are open to change.
 
@@ -71,7 +71,7 @@ Run as the DBA role, like the other `wtfd` actions:
 |---|---|
 | `wtfd tenant create --host bob --email anna@example.com` | Creates the tenant and its first account, with every privilege, and prints a generated password once. |
 | `wtfd tenant list` | Lists the tenants: host, accounts, items, files. |
-| `wtfd tenant rename --host bob --new-host robert` | Changes the host, and moves the files directory with it. |
+| `wtfd tenant rename --host bob --new-host robert --files-directory DIR` | Changes the host, and moves its directory in the files directory with it. |
 | `wtfd account create --host bob --email …` | Another account with every privilege (as today, now in a tenant). |
 | `wtfd account password --host bob --email …` | A new password for a lost one (as today, now in a tenant). |
 | `wtfd unit import --global FILE [--dry-run]` | Adds global units from a unit file. |
@@ -92,3 +92,15 @@ Run as the DBA role, like the other `wtfd` actions:
 - **Unit ids are strings** (UUIDs), and unit lists say what is global and what is available. Pickers offer only available units.
 - **Manage → Units** in the app, and `wtf quantity` / `wtf unit-family` in the CLI, can turn quantities and families on and off.
 - **The API revision** goes to 11.
+
+## Decided while building
+
+26. **A missing reference in a request's body is 422, a missing object in the path 404,** as before tenants. Another tenant's things count as missing either way. The explicit checks raise `foreign_key_violation` (`util.raise_bad_reference`) for body references, so `POST /items` with another tenant's class is 422, while `GET /items/{another tenant's item}` is 404.
+27. **"Still in use" is 409 for every method,** not only DELETE: turning off a family that attributes use is `PATCH`. A `restrict_violation` always means in use; a foreign key error outside DELETE stays 422.
+28. **Tree versions** start at 1 for a tenant that has no row in `data_version` yet; its row appears with the first change. The triggers are per row now (a statement can't tell which tenants it touched), which only means more increments.
+29. **The advisory lock of a file** is keyed by its hash alone, shared by all tenants: at worst two uploads of the same content in different tenants wait for each other.
+30. **Importing units** is one function, `util.unit_import(tenant, file, dry_run)`, for the API (the session's tenant) and for `wtfd unit import --global` (no tenant).
+31. **Lists of units are ordered by name** (quantities, then families, then units by size). The old integer ids happened to keep the seed's order; UUIDs don't, so "Imperial length" now comes before "Metric length".
+32. **Units of a family that is off** still show and convert where they are used. The app's number fields accept units typed from available families and from the unit's own family; the CLI completes only available units; the server refuses the rest.
+33. **The tests** run one tenant, `test` (`test.wtf.example`), and the isolation test adds a second for each run. The CLI tests reach the server through a test server at an IP address, which picks no tenant, so it sets the hostname on each request.
+34. **Your dev database** was recreated with one tenant, host `bbj`, and your account `bbj@bbj.io`. The old files are in `_before-tenants` in the files directory.

@@ -4,12 +4,13 @@ The SQL is in [`db/repeatable/90_account.sql`](../db/repeatable/90_account.sql),
 
 ## Sessions
 
-- **`login(p_email, p_password)`** logs in.
+- **`login(p_host, p_email, p_password)`** logs in to the tenant whose host is `p_host`, the first label of the request's hostname (TENANTS.md).
   - **On success** it returns `{ok: true, token, account}`.
   - **On failure** it returns `{ok: false, reason}`, where `reason` is `invalid` (unknown email or wrong password) or `locked`. It returns these rather than raising an error, so the count of failed logins is committed.
   - **Lockout:** after 5 failed logins, only one attempt per minute is accepted until a login succeeds.
   - `wtfd` answers 200, 401 or 429 (with `Retry-After`).
-- **`session_use(p_token)`** starts using a session for the current transaction. It checks the token, renews the session at most once a minute, and remembers the token until the end of the transaction. `wtfd` calls it before every API function except `login`.
+- **`session_use(p_token, p_host)`** starts using a session for the current transaction. It checks the token, and that the session is of the tenant of `p_host`, renews the session at most once a minute, and remembers the token until the end of the transaction. `wtfd` calls it before every API function except `login`.
+- **`tenant_known(p_host)`** tells whether a tenant has that host; `wtfd` answers 404 to a hostname that picks none.
 - **`logout()`** ends the current session.
 - **`me()`** returns the logged-in account.
 - **`password_change(p_current, p_new)`** changes the own password, and ends the account's other sessions.
@@ -27,7 +28,7 @@ Every API function checks the logged-in account's privileges. Each privilege is 
 | `account` | the accounts |
 | `history` | reading history ([api/history.md](history.md)); `read_write` counts as `read_only` |
 
-- **System data** (quantities, unit families, units) and the account's own information (`me`, `password_change`, `logout`) need only a login.
+- **Units** (reading quantities, unit families and units) and the account's own information (`me`, `password_change`, `logout`) need only a login. Turning quantities and families on and off, and importing units, need model write.
 - **Missing privilege:** the function raises 42501, which `wtfd` turns into a 403.
 
 ## Accounts
@@ -50,4 +51,4 @@ The account privilege is needed: `read` to list and get, `write` for everything 
   - You can't delete your own account (422).
 - **`account_history(p_id, …)`** shows the changes to an account (history privilege).
 
-The first account is created with `wtfd account create`, which can also set a lost password (see [WTFD.md](../WTFD.md)).
+The first account of a tenant is created with `wtfd tenant create`; `wtfd account create` adds another, and `wtfd account password` sets a lost password (see [WTFD.md](../WTFD.md)).

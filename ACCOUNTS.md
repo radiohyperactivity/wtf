@@ -4,8 +4,8 @@ Status: **implemented** (migration `0001_schema.sql`, [api/account.md](api/accou
 
 ## Concepts
 
-- One installation holds one inventory: classes, attributes, items, locations, stock and attachments, plus the system data (quantities, unit families and units).
-- An **account** is a user. The email address is the user name, unique case-insensitively among accounts that aren't deleted.
+- One installation holds many inventories, called **tenants** ([TENANTS.md](TENANTS.md)), each with its classes, attributes, items, locations, stock, attachments and accounts. Global units are shared; each tenant can import its own.
+- An **account** is a user of one tenant. The email address is the user name, unique case-insensitively among the tenant's accounts that aren't deleted. The same email in two tenants means two unrelated accounts.
 - Accounts have four **privileges**, each `none`, `read_only` or `read_write`:
 
   | Privilege | Covers |
@@ -15,33 +15,33 @@ Status: **implemented** (migration `0001_schema.sql`, [api/account.md](api/accou
   | `account` | the accounts (users) |
   | `history` | reading history (see [history](api/history.md); `read_write` counts as `read_only`) |
 
-  Reading the model also works with the `data` read privilege, since entering data needs to see it. Quantities, unit families and units are readable by every logged-in account.
+  Reading the model also works with the `data` read privilege, since entering data needs to see it. Quantities, unit families and units are readable by every logged-in account; turning them on and off for the tenant, and importing its own, needs model write.
 
 ## Schema
 
 - **`account`** (`user` is a reserved word in SQL):
-  - `id`;
-  - `email`, unique case-insensitively among live accounts;
+  - `id` and `tenant`;
+  - `email`, unique case-insensitively among the tenant's live accounts;
   - `password_hash` (`NULL` = can't log in, e.g. until a future reset link is used);
   - `data_privilege`, `model_privilege`, `account_privilege` and `history_privilege`, of the enum `privilege`;
   - `failed_logins` and `last_failed_login`, for the lockout;
   - `deleted`: a deleted account keeps its row, so history can still say who did what.
-- **`session`:** `token_hash` (SHA-256 of the token; the token itself is never stored), `account` and `last_used`.
+- **`session`:** `token_hash` (SHA-256 of the token; the token itself is never stored), `tenant`, `account` and `last_used`.
 - **`pgcrypto`** is installed in its own schema, `extensions`, which `wtf_api` can't use. Passwords are hashed with bcrypt (`crypt` + `gen_salt('bf')`).
 
 ## Enforcement in the database
 
-1. **Per request,** `wtfd` runs one transaction: `session_use(p_token)`, then the API function.
-   - `session_use` hashes the token and finds the session. It checks that the session hasn't been unused for 30 days, and sets `last_used` (at most once a minute, to avoid a write on every request).
+1. **Per request,** `wtfd` runs one transaction: `session_use(p_token, p_host)`, then the API function.
+   - `session_use` hashes the token and finds the session. It checks that the session is of the tenant of the request's host and hasn't been unused for 30 days, and sets `last_used` (at most once a minute, to avoid a write on every request).
    - It then stores the token for the transaction: `set_config('wtf.token', …, true)`.
-2. **Every API function** starts with `util.require('data' | 'model' | 'account' | 'history', 'read' | 'write')`, or `util.require_login()` for system data. That looks the token up again (by hash), finds the account, and checks the privilege.
+2. **Every API function** starts with `util.require('data' | 'model' | 'account' | 'history', 'read' | 'write')`, or `util.require_login()` for system data. That looks the token up again (by hash), finds the account and its tenant, and checks the privilege. Every function then filters by that tenant (TENANTS.md, "Isolation").
 3. **Defence in depth:** someone with the `wtf_api` password but no valid token can't act as any user. Without a session, the API functions refuse to work.
 
 ## API
 
 | Method & path | Function | Who |
 |---------------|----------|-----|
-| `POST /api/v1/login` `{email, password}` | `login(p_email, p_password)` → `{token, account}`; `wtfd` sends the token as the session cookie | anonymous |
+| `POST /api/v1/login` `{email, password}` | `login(p_host, p_email, p_password)` → `{token, account}`, in the tenant of the request's host; `wtfd` sends the token as the session cookie | anonymous |
 | `POST /logout` | `logout()` (revokes the current token) | logged in |
 | `GET /me` | `me()` → the account with its privileges | logged in |
 | `PUT /me/password` `{current, new}` | `password_change(…)`: revokes all other sessions of the user | logged in |
@@ -68,7 +68,7 @@ Status: **implemented** (migration `0001_schema.sql`, [api/account.md](api/accou
 
 Run by the operator as the DBA role:
 
-- **`wtfd account create --email anna@example.com`** creates an account with every privilege `read_write`, such as the first one. It prints a generated password once.
+- **`wtfd tenant create --host smith --email anna@example.com`** creates a tenant and its first account, and **`wtfd account create --host smith --email …`** another account in it, with every privilege `read_write`. Both print a generated password once.
 - **`wtfd account password --email anna@example.com`** gives an account a new generated password, when it is lost. It also lifts a lockout and ends the account's sessions.
 
 ## TLS
@@ -79,4 +79,4 @@ Passwords travel from the client to `wtfd`, and from `wtfd` to PostgreSQL, becau
 
 - **Naming:** the table is `account` (`user` is a reserved word in SQL), and the privilege area for managing accounts is `account`. The term "member" is not used.
 - **"Log out everywhere":** left out. Changing your own password already revokes all other sessions.
-- **No tenants:** an earlier design kept several independent inventories in one database, each reached through its own hostname. It was dropped: one installation is one inventory.
+- **Tenants:** dropped once, and brought back, with accounts per tenant, in [TENANTS.md](TENANTS.md).

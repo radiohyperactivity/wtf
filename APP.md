@@ -355,3 +355,12 @@ Built for API revision 9: the class and location tree nodes include their `photo
     - **Android and iOS** go through `open_filex` (a new dependency), which shares the file through the system. Its storage and media permissions are removed from the manifest: the app only opens its own copies. **Windows, macOS and Linux** open a `file:` address with `url_launcher`. `open_filex` would run `cmd /c start` on Windows, where a title with `&` in it would act as a command. `path_provider` (also new, from the Flutter team) finds the temporary files.
     - When no app on the device takes the type, a message says so and suggests Download.
 55. **Icons by file type** (your idea), from Material's own icons, so nothing is added to the app. They show in the attachment list and, large, on a file's attachment screen. Common sub-types have their own: PDF; word processing (Word, OpenDocument, RTF); spreadsheets (Excel, OpenDocument, CSV); presentations; archives (ZIP, gzip, tar, 7z, RAR); data (JSON, XML, YAML); HTML; code; Markdown; calendars; contacts; e-books; SVG; and programs (Windows, Android). Each major type has a default: image, audio, video, text, font and model (STL, STEP). Anything else gets a plain file. The icons take the theme's colour, like the other icons in the app (`typeIcon` in `lib/widgets/attachments.dart`).
+
+### Tenants
+
+Built with the server's tenants ([TENANTS.md](TENANTS.md)), API revision 11.
+
+56. **One server address per inventory, as before.** The hostname in it picks the tenant, so the login screen, Me and everything else stay as they are; nothing tells users that there are other tenants (your decision). An IP address alone picks no tenant: on a home network, use a name such as `http://bbj.192.168.1.10.nip.io:8080`.
+57. **Unit ids are strings** (UUIDs), and quantities and families say whether they are available, the default, and the inventory's own choice.
+58. **Manage → Units has a switch for each quantity and family** (model write privilege). A quantity that is off keeps its families' switches off. Once a global one is switched, an undo button returns it to the default, with the default in its tooltip. Turning off what attributes or items use is refused, and the message names them. Others see "Off" where something is off.
+59. **Choosing units:** the unit picker offers only units of available families. A number field takes units of available families, and of its own unit's family even when that is off, since its values are already shown in it.

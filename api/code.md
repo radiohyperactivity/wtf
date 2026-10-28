@@ -4,8 +4,8 @@ The SQL is in [`db/repeatable/70_code.sql`](../db/repeatable/70_code.sql), with 
 
 Every location, item and stock row has a short code for labels (QR codes, barcodes or printed text), e.g. `1A7K`. Codes are:
 
-- **Generated:** each new location, item or stock row gets the next number from one shared sequence. Codes are never chosen or changed by users.
-- **Globally unique:** a code identifies exactly one object of any of the three types.
+- **Generated:** each new location, item or stock row gets the next number of its tenant (`tenant.next_code`), one counter for all three types. Codes are never chosen or changed by users.
+- **Unique within the tenant:** a code identifies exactly one object of any of the three types. Every tenant's codes start at `1000`, so two tenants have the same codes for different things; looking a code up searches only your own tenant ([TENANTS.md](../TENANTS.md)).
 - **Crockford Base32:** the digits `0-9` and the letters `A-Z` without `I`, `L`, `O` and `U`. The first code is `1000` (32768). Codes have four characters until `ZZZZ`, about a million codes later, and five after that.
 
 In the database a code is stored as the number (`code bigint`). Every location, item and stock object in the API carries it as text in `code`, and so does every node of the location tree.

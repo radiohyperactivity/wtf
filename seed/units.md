@@ -1,6 +1,6 @@
 # Seed data: quantities, unit families and units
 
-System data loaded after [SCHEMA.md](../SCHEMA.md). This is a bootstrap set, so it only covers what most inventories need. More quantities, families and units are imported from unit files ([units-format.md](units-format.md)); the bootstrap set itself is one too: [units.json](units.json). Nothing else changes them through the API.
+The global units, loaded after [SCHEMA.md](../SCHEMA.md): every tenant sees them, and has them available unless it turns them off ([TENANTS.md](../TENANTS.md)). This is a bootstrap set, so it only covers what most inventories need. More quantities, families and units are imported from unit files ([units-format.md](units-format.md)): global ones by the operator (`wtfd unit import --global`), a tenant's own through the API. The bootstrap set itself is one too: [units.json](units.json).
 
 - A **quantity** is what is measured: Length, Weight, Voltage, …
 - A **unit family** is a set of units of one quantity that are used together, and that a number is scaled between on output: Metric length is nm … km, Imperial length is mil … mi. A quantity can have several families.
@@ -14,7 +14,7 @@ base = value × base_factor + base_offset
 
 The base unit of each quantity has factor 1 and offset 0. Factors are exact where the unit is defined exactly (inch = 0.0254 m, pound = 0.45359237 kg, calorie = 4.184 J). Otherwise they are given to 20 significant digits (°F).
 
-Quantities, families and units have integer ids, given in order from 1000. Every installation has the same ids for the same units, and imported ones continue from the highest id.
+Quantities, families and units have UUIDs, which differ between installations; unit files name them instead. Everything here is available by default (`default_available`); the operator can change that with `wtfd unit default`.
 
 The SQL is in [`db/migrations/0002_units.sql`](../db/migrations/0002_units.sql).
 

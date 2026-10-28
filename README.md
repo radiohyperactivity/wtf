@@ -6,7 +6,7 @@ Keeping your shit organised: a database of the things you own (from tiny electro
 |------------------------------|--------------------------------------------------------------|
 | [SCHEMA.md](SCHEMA.md)       | Tables, types, integrity rules and triggers                   |
 | [SCHEMA.html](SCHEMA.html)   | Entity-relationship diagram                                   |
-| [seed/units.md](seed/units.md) | System data: quantities, unit families and units            |
+| [seed/units.md](seed/units.md) | The global units: quantities, unit families and units       |
 | [API.md](API.md)             | The PL/pgSQL functions all data access goes through           |
 | [CLI.md](CLI.md)             | `wtf`, the command-line client                                |
 | [TODO.md](TODO.md)           | Things to come back to later                                  |
@@ -180,22 +180,24 @@ By default it listens on `127.0.0.1:8080`, for a reverse proxy on the same machi
 
 **TLS is recommended but not required:** passwords travel to `wtfd` and on to PostgreSQL, which hashes them. Whether to use HTTPS at the proxy and `hostssl` / `--database-sslmode require` for the database connection is the administrator's decision.
 
-### 8. Create the first account
+### 8. Create the first tenant
+
+One installation holds many inventories, called tenants ([TENANTS.md](TENANTS.md)). The first label of the hostname a request comes to picks the tenant: `smith` for `smith.wtf.example`. Point a wildcard DNS name (`*.wtf.example`) at the server, and use a wildcard certificate at the proxy, and a new tenant needs nothing but this:
 
 ```sh
 export WTFD_DBA_DATABASE_PASSWORD='…'
-./wtfd account create --email anna@example.com
+./wtfd tenant create --host smith --email anna@example.com
 ```
 
-This prints the first account's password once. Log in and change it, with `wtf login` and `wtf password` (see [CLI.md](CLI.md)), or by hand. The session comes back as the cookie `wtf_session`, which curl keeps in a file:
+This creates the tenant and its first account, and prints the account's password once. On a home network without DNS names, [nip.io](https://nip.io) names reach the server by its address with the tenant in front: `http://smith.192.168.1.10.nip.io:8080`. An IP address alone picks no tenant, and gets 404. Log in and change it, with `wtf login` and `wtf password` (see [CLI.md](CLI.md)), or by hand. The session comes back as the cookie `wtf_session`, which curl keeps in a file:
 
 ```sh
-curl -s -c cookies -H 'Content-Type: application/json' \
+curl -s -c cookies -H 'Host: smith.wtf.example' -H 'Content-Type: application/json' \
      -d '{"email": "anna@example.com", "password": "…"}' http://127.0.0.1:8080/api/v1/login
-curl -s -b cookies http://127.0.0.1:8080/api/v1/me
+curl -s -b cookies -H 'Host: smith.wtf.example' http://127.0.0.1:8080/api/v1/me
 ```
 
-The first account has every privilege and can create more accounts (`POST /accounts`). A lost password is replaced with `./wtfd account password --email …`. See [ACCOUNTS.md](ACCOUNTS.md).
+The first account has every privilege and can create more accounts (`POST /accounts`). A lost password is replaced with `./wtfd account password --host smith --email …`. See [ACCOUNTS.md](ACCOUNTS.md).
 
 ### 9. Check
 

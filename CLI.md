@@ -72,7 +72,7 @@ wtf item add            # asks for everything, with Tab completion
 | `wtf attribute list` / `get` / `add <name> [--type T] [--unit U [--unit-lock]] [--edit]` (with a unit, the type follows from it) / `set` / `edit` / `delete` / `restore` / `history [attribute]` | `/attributes` |
 | `wtf option list <attribute>` / `get` / `add <attribute> <name>…` / `set --name N` / `delete` / `restore` | `/attributes/{id}/options`, `/options/{id}` |
 | `wtf attachment list <type> <ref>` / `add <type> <ref> <file> [--title T] [--photo]` / `get <type> <ref> <id>` / `download <type> <ref> <id> [-o FILE\|-]` / `set <type> <ref> <id> --title T` / `photo <type> <ref> <id\|none>` / `delete <type> <ref> <id>` / `restore <type> <ref> <id>` | attachments |
-| `wtf quantity list` / `get`, `wtf unit-family list [--quantity Q]` / `get`, `wtf unit list [--quantity Q] [--family F]` / `get` / `import <file> [--dry-run]` | system data |
+| `wtf quantity list` / `get` / `available <q> on\|off\|default`, `wtf unit-family list [--quantity Q]` / `get` / `available <f> on\|off\|default`, `wtf unit list [--quantity Q] [--family F]` / `get` / `import <file> [--dry-run]` | units: global and the tenant's own, and which are available |
 | `wtf account list` / `get` / `add <email> [--password] [--data P] [--model P] [--account P] [--history P] [--edit]` / `set` / `edit` / `delete` / `history` | `/accounts` |
 
 ## Interactive use
@@ -335,3 +335,11 @@ These follow your answers: all attributes offered, a picker on Tab Tab, bash, zs
     - **`delete TYPE REF ID`** marks it deleted; **`restore TYPE REF ID`** brings it back, as an ordinary attachment. `get` says when one is deleted.
     - **`download`** names the file as the server does: the title, with an extension for the type if it lacks one (`internal/mediatype`).
     - **No edit form, and no `add --edit`:** the title is all there is to change, with `set --title`.
+
+### Tenants
+
+Built with the server's tenants ([TENANTS.md](TENANTS.md)), API revision 11.
+
+52. **A profile is still one server address,** and the hostname in it picks the tenant: `wtf login https://smith.wtf.example`. Nothing else changes for logging in.
+53. **Unit ids are strings** (UUIDs). `--unit` still takes a symbol, a name, `"B (Binary bytes)"`, or an id.
+54. **`wtf quantity available <quantity> on|off|default`** and **`wtf unit-family available <family> on|off|default`** turn units on and off for the tenant (model write privilege); `default` follows the global default again. `list` and `get` have an AVAILABLE column: yes or no, with "(chosen)" when it is the tenant's own choice rather than the default. Completion offers only available units; the server refuses the others, and refuses to turn off what attributes or items use, naming them.

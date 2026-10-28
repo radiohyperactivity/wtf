@@ -11,7 +11,7 @@ Deleting an item, stock row, location, class, attribute, option or attachment do
 | `item`, `stock`, `location`, `class`, `attribute`, `attribute_option` | **marked deleted** | They have an identity: a label code, a name in a tree, a photo. They can be scanned, linked to and restored. |
 | `account` | marked deleted | See [account.md](account.md). |
 | `value`, `stock_value`, `class_attribute` | **removed** | They belong to their owner. Clearing a value or unassigning an attribute is a change to the owner, recorded in history. When the owner is marked deleted, they stay as they are, so a restore brings them back. The options of a deleted attribute and the attachments of a deleted object stay in the same way. |
-| `quantity`, `unit_family`, `unit` | not deletable | Seeded system data. |
+| `quantity`, `unit_family`, `unit` | not deletable | Global or the tenant's own; a tenant turns them off instead. |
 | `session` | removed | Not inventory data. |
 | `history` | only purged by age | See [history.md](history.md). |
 | `item_attachment`, `stock_attachment`, `location_attachment`, `class_attachment` | **marked deleted** | Found again through history, and restored as an ordinary attachment: a deleted photo isn't the photo again. Purging an object removes its attachments. See [attachment.md](attachment.md). |
@@ -23,7 +23,7 @@ Deleting an item, stock row, location, class, attribute, option or attachment do
 
 A row that isn't deleted is **live**. Every rule of [SCHEMA.md](../SCHEMA.md) applies between live rows only:
 
-- **Names** are unique among live siblings only (classes, locations), as are attribute names and option names within an attribute. A deleted object's name is free again. **Label codes** stay unique across all rows and are never reused, so an old label always finds its object.
+- **Names** are unique among live siblings only (classes, locations), as are attribute names and option names within an attribute. A deleted object's name is free again. **Label codes** stay unique across all of a tenant's rows and are never reused, so an old label always finds its object.
 - **Live rows only refer to live rows** (triggers, which lock the referenced row `FOR SHARE`): a stock row's item and location, an item's class, a location's or class's parent, an option's attribute. A value, default or assignment needs a live owner, a live attribute and, for a choice, a live option; an attachment needs a live owner.
 - **Something can only be deleted while nothing live depends on it** (triggers, 23001 as before): an item without live stock, a location or class with nothing live in it, an attribute or option that no live value, default or assignment uses.
 - **The existing checks count live rows only:** containers, required attributes, values matching their attribute's scope, an attribute's datatype change. So values of deleted items never block a change to the model.
