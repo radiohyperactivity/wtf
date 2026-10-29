@@ -8,7 +8,6 @@ import '../session.dart';
 import '../widgets/attachments.dart';
 import '../widgets/common.dart';
 import '../widgets/pickers.dart';
-import 'model_import.dart';
 
 /// Where a tree node's screen is: locations by label code, classes by id.
 String nodePath(TreeKind kind, TreeNode n) =>
@@ -97,15 +96,6 @@ class _TreeScreenState extends State<TreeScreen> {
                 tooltip: 'Collapse all',
                 onPressed: () => setState(_open.clear),
               ),
-              // A model file's units, attributes and classes (seed/model-format.md).
-              if (!_locations && session.canWriteModel)
-                IconButton(
-                  icon: const Icon(Icons.upload_file),
-                  tooltip: 'Import a model',
-                  onPressed: () async {
-                    if (await importModelFile(context)) reload();
-                  },
-                ),
               IconButton(
                 icon: const Icon(Icons.refresh),
                 tooltip: 'Reload',

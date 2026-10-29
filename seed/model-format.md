@@ -2,7 +2,7 @@
 
 A model file describes part of an inventory's model in JSON: quantities and units, attributes, and a tree of classes that use them, set up for one use. An "MCU" model, say, has clock, RAM, flash, GPIO pins and timers. Importing one sets up that part of the model in one go. Exporting a class writes one, with everything below the class and everything it needs, so that another inventory can import it.
 
-- **Import:** Classes → Import, a class's menu → Import a model here, or Manage → Units → Import in the app; `wtf model import FILE` in the CLI; `POST /api/v1/model/import`.
+- **Import:** Manage → Import in the app; `wtf model import FILE` in the CLI; `POST /api/v1/model/import`.
 - **Export:** a class's menu → Export as a model file in the app; `wtf model export CLASS` in the CLI; `GET /api/v1/classes/{id}/model`.
 - **Examples:** [models/mcu.json](models/mcu.json), a model of microcontrollers; [units.json](units.json), the units every WtF starts with.
 
@@ -243,7 +243,7 @@ These were made for unit files, which are now the `quantities` of a model file.
 16. **An assignment on a class whose parent assigns the same attribute** is allowed: it overrides the inherited one, as in the example (AVR's own Clock).
 17. **Nothing that exists changes,** apart from added options and added assignments. Names keep their case as they are; a class isn't moved; nothing is deleted.
 18. **Conflicts are found by trying,** in a subtransaction that is rolled back when there are any (or for a dry run). The database's own rules then decide, exactly as for the API, and nothing is kept. To you this is the same as checking first: nothing starts unless everything fits.
-19. **Where to import:** at the top of the class tree, or below a class (`parent`): the class's menu has "Import a model here" in the app, and the CLI has `--parent CLASS`.
+19. **Where to import:** at the top of the class tree, or below a class (`parent`): the app's preview has Change… for it (APP.md decision 67), and the CLI has `--parent CLASS`.
 20. **Everything is in history,** as if it had been made by hand by the account that imported the file.
 
 ### Units in model files, and exporting (2026-10-29)

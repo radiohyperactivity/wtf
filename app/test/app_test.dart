@@ -344,11 +344,15 @@ void main() {
     pickModelFile = () async => (name: 'mcu.json', text: file);
     addTearDown(() => pickModelFile = () async => null);
     await startApp(tester, fake);
+    // Importing is under Manage, and nowhere else.
     await tester.tap(find.text('Classes'));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.upload_file), findsNothing);
+    await tester.tap(find.text('Manage'));
     await tester.pumpAndSettle();
 
     // A dry run first: what it adds, and where.
-    await tester.tap(find.byTooltip('Import a model'));
+    await tester.tap(find.widgetWithText(ListTile, 'Import'));
     await tester.pumpAndSettle();
     expect(fake.changes.last, 'POST /api/v1/model/import?dry_run=true $file');
     expect(find.text('Import Microcontrollers (mcu.json)'), findsOneWidget);
@@ -366,21 +370,26 @@ void main() {
     expect(fake.changes.last, 'POST /api/v1/model/import $file');
     expect(find.text('Imported 1 class and 1 attribute.'), findsOneWidget);
 
-    // Below a class, from its menu.
-    GoRouter.of(tester.element(find.byType(Scaffold).first))
-        .push('/classes/c-drills');
+    // Below a class: Change… chooses it, and the dry run is done again.
+    await tester.tap(find.widgetWithText(ListTile, 'Import'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(PopupMenuButton<String>).last);
+    await tester.tap(find.text('Change…'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Import a model here…'));
+    expect(find.text('Import the classes below'), findsOneWidget);
+    expect(find.text('(top level)'), findsOneWidget);
+    await tester.tap(find.text('Tools/Drills'));
     await tester.pumpAndSettle();
     expect(
       fake.changes.last,
       'POST /api/v1/model/import?parent=c-drills&dry_run=true $file',
     );
     expect(find.text('Its classes go below Tools/Drills.'), findsOneWidget);
-    await tester.tap(find.text('Cancel'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Import'));
     await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      'POST /api/v1/model/import?parent=c-drills $file',
+    );
   });
 
   testWidgets('export a class as a model file, also with read privilege', (
@@ -398,7 +407,7 @@ void main() {
     await tester.tap(find.byType(PopupMenuButton<String>).last);
     await tester.pumpAndSettle();
     // Only exporting: the rest changes the class.
-    expect(find.text('Import a model here…'), findsNothing);
+    expect(find.text('Edit'), findsNothing);
     expect(find.text('Delete…'), findsNothing);
     await tester.tap(find.text('Export as a model file…'));
     await tester.pumpAndSettle();
@@ -422,8 +431,7 @@ void main() {
     await startApp(tester, fake);
     await tester.tap(find.text('Manage'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Units'));
-    await tester.pumpAndSettle();
+    final import = find.widgetWithText(ListTile, 'Import');
 
     // Conflicts: shown, and nothing to press but Close.
     file = jsonEncode({
@@ -436,7 +444,7 @@ void main() {
         },
       ],
     });
-    await tester.tap(find.text('Import'));
+    await tester.tap(import);
     await tester.pumpAndSettle();
     expect(find.text('Import pressure.json'), findsOneWidget);
     expect(find.textContaining('Nothing can be imported'), findsOneWidget);
@@ -455,10 +463,11 @@ void main() {
         '"name": "Voltage", "base_unit": {"symbol": "V", "name": "volt"}, '
         '"families": [{"name": "Voltage", "units": ['
         '{"symbol": "V", "name": "volt", "factor": "1"}]}]}]}';
-    await tester.tap(find.text('Import'));
+    await tester.tap(import);
     await tester.pumpAndSettle();
     expect(find.text('Import Pressure (pressure.json)'), findsOneWidget);
     expect(find.textContaining('Its classes go'), findsNothing); // it has none
+    expect(find.text('Change…'), findsNothing);
     expect(find.textContaining('Pressure › Pascals'), findsWidgets);
     expect(
       find.textContaining('Pressure › Pascals › Pa, Pressure › Pascals › kPa'),
@@ -470,8 +479,11 @@ void main() {
     // The file goes as it was chosen, factors as written.
     expect(fake.unitImports.last, (file, false));
     expect(find.text('Imported 2 units.'), findsOneWidget);
-    // The screen shows the new quantity at once.
+    // The Units screen shows the new quantity, and has no Import of its own.
+    await tester.tap(find.text('Units'));
+    await tester.pumpAndSettle();
     expect(find.text('Pressure'), findsOneWidget);
+    expect(find.text('Import'), findsNothing);
   });
 
   testWidgets('an item without a photo shows its class\'s, or a parent\'s', (

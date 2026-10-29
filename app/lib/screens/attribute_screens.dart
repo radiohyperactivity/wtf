@@ -10,7 +10,6 @@ import '../widgets/pickers.dart';
 import '../widgets/restore.dart';
 import '../widgets/select_keys.dart';
 import '../widgets/value_fields.dart';
-import 'model_import.dart';
 
 String _describe(Attribute a) => [
   a.datatype,
@@ -579,19 +578,7 @@ class _UnitsScreenState extends State<UnitsScreen> {
         // While filtering, everything that matches is shown open.
         final filtering = _filter.text.trim().isNotEmpty;
         return Scaffold(
-          appBar: AppBar(
-            title: const Text('Units'),
-            actions: [
-              if (context.watch<Session>().canWriteModel)
-                TextButton.icon(
-                  onPressed: () async {
-                    if (await importModelFile(context)) await reload();
-                  },
-                  icon: const Icon(Icons.upload_file),
-                  label: const Text('Import'),
-                ),
-            ],
-          ),
+          appBar: AppBar(title: const Text('Units')),
           body: Readable(
             child: Column(
               children: [

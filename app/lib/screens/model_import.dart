@@ -1,6 +1,6 @@
 // Model files (seed/model-format.md): units, attributes and classes set up
-// for one use. Importing one from the class tree, below a class or on the
-// Units screen; exporting a class with everything below it.
+// for one use. Importing one, from Manage; exporting a class with
+// everything below it, from its menu.
 
 import 'dart:convert';
 
@@ -8,11 +8,13 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../api/client.dart';
 import '../api/models.dart';
 import '../api/units.dart';
 import '../session.dart';
 import '../widgets/attachments.dart' show saveDownloadedFile;
 import '../widgets/common.dart';
+import '../widgets/pickers.dart';
 
 /// A model file chosen to import: its file name and its text.
 typedef ModelFile = ({String name, String text});
@@ -32,16 +34,18 @@ Future<ModelFile?> Function() pickModelFile = () async {
   );
 };
 
-/// Imports a model file, like `wtf model import`: a dry run first, which
-/// shows what would be added, how much is there already and any conflicts;
-/// then, when asked, the import. Its classes go below the class [parentId]
-/// (whose path is [parentPath]), or at the top. True when something was
-/// imported.
-Future<bool> importModelFile(
-  BuildContext context, {
-  String? parentId,
-  String? parentPath,
-}) async {
+/// The class a file's classes go below: its id and path; id null for the
+/// top of the class tree.
+typedef ImportBelow = ({String? id, String path});
+
+const ImportBelow _top = (id: null, path: '');
+
+/// Imports a model file, like `wtf model import`, from Manage → Import: a
+/// dry run first, which shows what would be added, how much is there
+/// already and any conflicts; then, when asked, the import. A file with
+/// classes puts them at the top of the class tree, or below a class chosen
+/// in the preview. True when something was imported.
+Future<bool> importModelFile(BuildContext context) async {
   final client = context.read<Session>().client;
   final ModelFile? file;
   try {
@@ -51,10 +55,11 @@ Future<bool> importModelFile(
     return false;
   }
   if (file == null || !context.mounted) return false;
+  final text = file.text;
   String title = file.name;
   final bool hasClasses;
   try {
-    final json = jsonDecode(file.text) as Map;
+    final json = jsonDecode(text) as Map;
     final meta = json['meta'];
     if (meta is Map &&
         meta['name'] is String &&
@@ -69,32 +74,36 @@ Future<bool> importModelFile(
   }
   final ModelImport preview;
   try {
-    preview = await client.importModel(
-      file.text,
-      parent: parentId,
-      dryRun: true,
-    );
+    preview = await client.importModel(text, dryRun: true);
   } catch (e) {
     if (context.mounted) showError(context, e);
     return false;
   }
   if (!context.mounted) return false;
-  final below = hasClasses ? (parentPath ?? '') : null;
-  final go = await showDialog<bool>(
+  final below = await showDialog<ImportBelow>(
     context: context,
-    builder: (context) =>
-        ModelImportDialog(title: title, below: below, report: preview),
+    builder: (context) => ModelImportDialog(
+      title: title,
+      file: text,
+      hasClasses: hasClasses,
+      report: preview,
+    ),
   );
-  if (go != true || !context.mounted) return false;
+  if (below == null || !context.mounted) return false;
   try {
-    final done = await client.importModel(file.text, parent: parentId);
+    final done = await client.importModel(text, parent: below.id);
     if (!context.mounted) return done.applied;
     if (!done.applied) {
       // Something changed since the dry run.
       await showDialog<void>(
         context: context,
-        builder: (context) =>
-            ModelImportDialog(title: title, below: below, report: done),
+        builder: (context) => ModelImportDialog(
+          title: title,
+          file: text,
+          hasClasses: hasClasses,
+          report: done,
+          below: below,
+        ),
       );
       return false;
     }
@@ -141,26 +150,76 @@ Future<void> exportModelFile(
 }
 
 /// What a model import would add (or the conflicts that stop it), with
-/// Import when there is something to import and nothing in the way.
-class ModelImportDialog extends StatelessWidget {
+/// Import when there is something to import and nothing in the way. For a
+/// file with classes it says where they go, and Change… chooses another
+/// class: the dry run is then done again, since what is there already
+/// depends on it. Pops with where the classes go when Import is pressed.
+class ModelImportDialog extends StatefulWidget {
   const ModelImportDialog({
     super.key,
     required this.title,
+    required this.file,
+    required this.hasClasses,
     required this.report,
-    this.below,
+    this.below = _top,
   });
 
   final String title;
-  final ModelImport report;
 
-  /// The path of the class the classes go below; '' at the top, and null
-  /// for a file without classes.
-  final String? below;
+  /// The file's text, for the dry runs.
+  final String file;
+  final bool hasClasses;
+
+  /// The dry run (or the import) for [below].
+  final ModelImport report;
+  final ImportBelow below;
+
+  @override
+  State<ModelImportDialog> createState() => _ModelImportDialogState();
+}
+
+class _ModelImportDialogState extends State<ModelImportDialog> {
+  late ModelImport _report = widget.report;
+  late ImportBelow _below = widget.below;
+  bool _busy = false;
+
+  Future<void> _change() async {
+    final client = context.read<Session>().client;
+    final id = await pickNode(
+      context,
+      TreeKind.classes,
+      title: 'Import the classes below',
+      allowTopLevel: true,
+    );
+    if (id == null || !mounted) return;
+    final ImportBelow below = id == topLevel
+        ? _top
+        : (id: id, path: (await client.tree(TreeKind.classes)).pathOf(id));
+    if (below.id == _below.id || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      final report = await client.importModel(
+        widget.file,
+        parent: below.id,
+        dryRun: true,
+      );
+      if (mounted) {
+        setState(() {
+          _report = report;
+          _below = below;
+        });
+      }
+    } catch (e) {
+      if (mounted) showError(context, e);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final r = report;
+    final r = _report;
     Widget line(String label, String text) => Padding(
       padding: const EdgeInsets.only(top: 8),
       child: Text.rich(
@@ -176,8 +235,9 @@ class ModelImportDialog extends StatelessWidget {
       ),
     );
     final blocked = r.conflicts.isNotEmpty;
+    final offered = !blocked && !r.nothingNew && !r.applied;
     return AlertDialog(
-      title: Text('Import $title'),
+      title: Text('Import ${widget.title}'),
       content: SizedBox(
         width: 560,
         child: SingleChildScrollView(
@@ -185,15 +245,26 @@ class ModelImportDialog extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (below case final below?) ...[
-                Text(
-                  below.isEmpty
-                      ? 'Its classes go at the top of the class tree.'
-                      : 'Its classes go below $below.',
-                  style: theme.textTheme.bodySmall,
+              if (widget.hasClasses) ...[
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _below.id == null
+                            ? 'Its classes go at the top of the class tree.'
+                            : 'Its classes go below ${_below.path}.',
+                      ),
+                    ),
+                    if (!r.applied)
+                      TextButton(
+                        onPressed: _busy ? null : _change,
+                        child: const Text('Change…'),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 8),
               ],
+              if (_busy) const LinearProgressIndicator(),
               if (blocked) ...[
                 Text(
                   'Nothing can be imported until these are fixed in the file:',
@@ -236,14 +307,12 @@ class ModelImportDialog extends StatelessWidget {
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context, false),
-          child: Text(
-            blocked || r.nothingNew || r.applied ? 'Close' : 'Cancel',
-          ),
+          onPressed: () => Navigator.pop(context),
+          child: Text(offered ? 'Cancel' : 'Close'),
         ),
-        if (!blocked && !r.nothingNew && !r.applied)
+        if (offered)
           FilledButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: _busy ? null : () => Navigator.pop(context, _below),
             child: const Text('Import'),
           ),
       ],

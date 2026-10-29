@@ -168,14 +168,6 @@ class ClassScreen extends StatelessWidget {
                         open('/classes/new?parent=${c.id}');
                       case 'assign':
                         assign();
-                      case 'import':
-                        if (await importModelFile(
-                          context,
-                          parentId: c.id,
-                          parentPath: c.pathText,
-                        )) {
-                          reload();
-                        }
                       case 'export':
                         await exportModelFile(context, c.id, c.name);
                       case 'delete':
@@ -200,10 +192,6 @@ class ClassScreen extends StatelessWidget {
                       PopupMenuItem(
                         value: 'assign',
                         child: Text('Assign an attribute'),
-                      ),
-                      PopupMenuItem(
-                        value: 'import',
-                        child: Text('Import a model here…'),
                       ),
                     ],
                     const PopupMenuItem(

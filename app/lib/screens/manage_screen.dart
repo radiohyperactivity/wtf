@@ -4,9 +4,10 @@ import 'package:provider/provider.dart';
 
 import '../session.dart';
 import '../widgets/common.dart';
+import 'model_import.dart';
 
 /// What the inventory is set up with, rather than what it keeps: attributes
-/// (with their options), units and accounts.
+/// (with their options), units and accounts; and importing model files.
 class ManageScreen extends StatelessWidget {
   const ManageScreen({super.key});
 
@@ -37,6 +38,16 @@ class ManageScreen extends StatelessWidget {
               ),
               onTap: () => context.push('/units'),
             ),
+            // A model file holds units, attributes and classes, any of them.
+            if (session.canWriteModel)
+              ListTile(
+                leading: const Icon(Icons.upload_file),
+                title: const Text('Import'),
+                subtitle: const Text(
+                  'Units, attributes and classes from a model file',
+                ),
+                onTap: () => importModelFile(context),
+              ),
             if (session.canReadAccounts)
               ListTile(
                 leading: const Icon(Icons.group_outlined),
