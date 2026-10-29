@@ -115,8 +115,8 @@ const unitUsage = `Usage:
   wtfd unit import --global FILE [--dry-run] [database flags]
   wtfd unit standard (--quantity NAME | --family NAME) --available true|false [database flags]
 
-import adds the units of a unit file (seed/units-format.md) as global
-units, which every tenant sees. standard sets whether a global quantity or
+import adds the units of a model file of only quantities
+(seed/model-format.md) as global units, which every tenant sees. standard sets whether a global quantity or
 unit family is available to tenants that haven't chosen themselves.
 `
 
@@ -142,7 +142,7 @@ func runUnit(args []string, stdout, stderr io.Writer) int {
 	var file, quantity, family, available *string
 	var dryRun *bool
 	if command == "import" {
-		file = fs.String("global", "", "the unit file to import as global units (required)")
+		file = fs.String("global", "", "the model file (of only quantities) to import as global units (required)")
 		dryRun = fs.Bool("dry-run", false, "report what would be added, add nothing")
 	} else {
 		quantity = fs.String("quantity", "", "a global quantity, by name")

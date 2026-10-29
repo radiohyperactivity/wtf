@@ -1,25 +1,30 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	iofs "io/fs"
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 )
 
-// modelGroup imports model files: attributes and a tree of classes set up
-// for one use (seed/model-format.md).
+// modelGroup imports and exports model files: quantities and units,
+// attributes and a tree of classes set up for one use
+// (seed/model-format.md).
 func modelGroup() group {
 	return group{
 		name:    "model",
-		summary: "Model files: attributes and classes for one use, such as microcontrollers",
+		summary: "Model files: units, attributes and classes for one use, such as microcontrollers",
 		commands: []command{
 			{
 				name:    "import",
 				args:    "<file> [--parent CLASS] [--dry-run]",
-				summary: "Import attributes and classes from a model file (seed/model-format.md); what is there and the same is used as it is.",
+				summary: "Import units, attributes and classes from a model file (seed/model-format.md); what is there and the same is used as it is.",
 				params:  []param{fileArg("File")},
 				flags:   map[string]param{"parent": arg("Class", completeClasses)},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
@@ -51,7 +56,8 @@ func modelGroup() group {
 						if err != nil {
 							return err
 						}
-						// New classes and attributes: the cached tree and list go.
+						// New units, classes and attributes: the cached ones go.
+						e.wrote("/quantities")
 						e.wrote("/classes")
 						e.wrote("/attributes")
 						var report modelReport
@@ -71,6 +77,61 @@ func modelGroup() group {
 					}
 				},
 			},
+			{
+				name:    "export",
+				args:    "<class> [-o FILE] [--force]",
+				summary: "Export a class and everything below it as a model file, with the attributes and units of your own it needs.",
+				params:  []param{arg("Class", completeClasses)},
+				flags:   map[string]param{"o": fileArg("Output file")},
+				setup: func(fs *flag.FlagSet) func(*env, []string) error {
+					out := fs.String("o", "", "output file; without it, the file goes to stdout")
+					force := fs.Bool("force", false, "overwrite an existing file")
+					return func(e *env, args []string) error {
+						if err := wantArgs(args, 1, 1); err != nil {
+							return err
+						}
+						id, err := e.resolveClass(args[0])
+						if err != nil {
+							return err
+						}
+						data, err := e.api.Get(e.ctx, "/classes/"+id+"/model", nil)
+						if err != nil {
+							return err
+						}
+						var file bytes.Buffer
+						if err := json.Indent(&file, data, "", "  "); err != nil {
+							return err
+						}
+						file.WriteByte('\n')
+						if *out == "" || *out == "-" {
+							_, err := file.WriteTo(e.stdout)
+							return err
+						}
+						flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
+						if *force {
+							flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+						}
+						f, err := os.OpenFile(*out, flags, 0o644)
+						if errors.Is(err, iofs.ErrExist) {
+							return fmt.Errorf("%s exists; use --force to overwrite it", *out)
+						}
+						if err != nil {
+							return err
+						}
+						_, err = file.WriteTo(f)
+						if cerr := f.Close(); err == nil {
+							err = cerr
+						}
+						if err != nil {
+							return err
+						}
+						if !e.json {
+							fmt.Fprintf(e.stdout, "Saved %s.\n", *out)
+						}
+						return nil
+					}
+				},
+			},
 		},
 	}
 }
@@ -79,6 +140,9 @@ func modelGroup() group {
 type modelReport struct {
 	Applied     bool `json:"applied"`
 	DryRun      bool `json:"dry_run"`
+	Quantities  struct{ Added, Existing []string }
+	Families    struct{ Added, Existing []string }
+	Units       struct{ Added, Existing []string }
 	Attributes  struct{ Added, Existing []string }
 	Options     struct{ Added []string }
 	Classes     struct{ Added, Existing []string }
@@ -94,18 +158,18 @@ func printModelImport(e *env, r modelReport) {
 		verb = "Would add"
 	}
 	var lines []string
-	for _, a := range r.Attributes.Added {
-		lines = append(lines, "  attribute "+a)
+	add := func(what string, names []string) {
+		for _, n := range names {
+			lines = append(lines, "  "+what+" "+n)
+		}
 	}
-	for _, o := range r.Options.Added {
-		lines = append(lines, "  option "+o)
-	}
-	for _, c := range r.Classes.Added {
-		lines = append(lines, "  class "+c)
-	}
-	for _, a := range r.Assignments.Added {
-		lines = append(lines, "  assignment "+a)
-	}
+	add("quantity", r.Quantities.Added)
+	add("unit family", r.Families.Added)
+	add("unit", r.Units.Added)
+	add("attribute", r.Attributes.Added)
+	add("option", r.Options.Added)
+	add("class", r.Classes.Added)
+	add("assignment", r.Assignments.Added)
 	if len(lines) == 0 {
 		fmt.Fprintln(e.stdout, "Nothing new.")
 	} else {
@@ -114,9 +178,26 @@ func printModelImport(e *env, r modelReport) {
 			fmt.Fprintln(e.stdout, l)
 		}
 	}
-	if n := len(r.Attributes.Existing) + len(r.Classes.Existing) + len(r.Assignments.Existing); n > 0 {
-		fmt.Fprintf(e.stdout, "Already there: %d attributes, %d classes, %d assignments.\n",
-			len(r.Attributes.Existing), len(r.Classes.Existing), len(r.Assignments.Existing))
+	var there []string
+	for _, c := range []struct {
+		n         int
+		one, many string
+	}{
+		{len(r.Quantities.Existing), "quantity", "quantities"},
+		{len(r.Families.Existing), "unit family", "unit families"},
+		{len(r.Units.Existing), "unit", "units"},
+		{len(r.Attributes.Existing), "attribute", "attributes"},
+		{len(r.Classes.Existing), "class", "classes"},
+		{len(r.Assignments.Existing), "assignment", "assignments"},
+	} {
+		if c.n == 1 {
+			there = append(there, "1 "+c.one)
+		} else if c.n > 1 {
+			there = append(there, fmt.Sprintf("%d %s", c.n, c.many))
+		}
+	}
+	if len(there) > 0 {
+		fmt.Fprintf(e.stdout, "Already there: %s.\n", strings.Join(there, ", "))
 	}
 	if len(r.Conflicts) > 0 {
 		fmt.Fprintln(e.stdout, "Conflicts, so nothing was imported:")

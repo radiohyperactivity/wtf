@@ -129,12 +129,13 @@ func RenameTenant(ctx context.Context, conn *pgx.Conn, store *files.Store, host,
 	return nil
 }
 
-// ImportGlobalUnits imports a unit file as global units, which every tenant
-// sees (util.unit_import with no tenant). It returns the import's report
-// (JSON), as POST /units/import does.
+// ImportGlobalUnits imports the units of a model file (one of only
+// quantities) as global units, which every tenant sees (util.model_import
+// with no tenant). It returns the import's report (JSON), as POST
+// /model/import does.
 func ImportGlobalUnits(ctx context.Context, conn *pgx.Conn, data []byte, dryRun bool) ([]byte, error) {
 	var report string
-	err := conn.QueryRow(ctx, "SELECT util.unit_import(NULL, $1::jsonb, $2)::text", string(data), dryRun).Scan(&report)
+	err := conn.QueryRow(ctx, "SELECT util.model_import(NULL, $1::jsonb, NULL, NULL, $2)::text", string(data), dryRun).Scan(&report)
 	return []byte(report), err
 }
 

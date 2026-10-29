@@ -394,6 +394,8 @@ func (e *environment) dropTenantUnits(t *testing.T) {
 	t.Helper()
 	for _, sql := range []string{
 		"DELETE FROM value v USING attribute a, unit u WHERE v.attribute = a.id AND a.unit = u.id AND u.tenant IS NOT NULL",
+		"DELETE FROM stock_value v USING attribute a, unit u WHERE v.attribute = a.id AND a.unit = u.id AND u.tenant IS NOT NULL",
+		"DELETE FROM class_attribute ca USING attribute a, unit u WHERE ca.attribute = a.id AND a.unit = u.id AND u.tenant IS NOT NULL",
 		"DELETE FROM attribute a USING unit u WHERE a.unit = u.id AND u.tenant IS NOT NULL",
 		"DELETE FROM item i USING unit u WHERE i.unit = u.id AND u.tenant IS NOT NULL",
 		"DELETE FROM unit WHERE tenant IS NOT NULL",

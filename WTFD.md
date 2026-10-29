@@ -319,7 +319,7 @@ With `--web-root DIR`, `wtfd` serves the web app (a Flutter web build) outside `
 | `GET /unit-families/{id}` | `unit_family_get` | |
 | `GET /units` | `unit_list` | `?quantity=&family=` |
 | `GET /units/{id}` | `unit_get` | |
-| `POST /units/import` | `unit_import` | a unit file ([seed/units-format.md](seed/units-format.md)); `?dry_run=true` |
+| `POST /model/import` | `model_import` | a model file of units, attributes and classes ([seed/model-format.md](seed/model-format.md)); `?parent=&dry_run=true` |
 | `GET /attributes` | `attribute_list()` | |
 | `POST /attributes` | `attribute_create` | `{name, datatype, unit?, unit_lock?}` |
 | `GET /attributes/{id}` | `attribute_get` | |
@@ -337,6 +337,7 @@ With `--web-root DIR`, `wtfd` serves the web app (a Flutter web build) outside `
 | `GET /classes/{id}` | `class_get` | |
 | `PATCH /classes/{id}` | `class_patch` | patch object |
 | `DELETE /classes/{id}` | `class_delete`, or with `?recursive=true` `class_delete_tree` | `force`; recursive answers 200 with what was deleted |
+| `GET /classes/{id}/model` | `model_export` | the class with everything below it, as a model file |
 | `GET /classes/{id}/deletion` | `class_delete_tree` with `p_dry_run` | `force`; what a recursive delete would delete |
 | `POST /classes/{id}/restore` | `class_restore` | `{name?, parent?, with_parents?}` |
 | `PUT /classes/{id}/attributes/{attribute}` | `class_attribute_set` | `{default?, per_unit?, required?}` |
@@ -433,7 +434,7 @@ wtfd unit standard --family "Imperial length" --available false
 wtfd unit standard --quantity Temperature --available true
 ```
 
-`import` adds what isn't there yet, as `POST /units/import` does, and prints the same report; a name some tenant already has for its own is a conflict. `standard` sets whether a global quantity or family is available to tenants that haven't chosen themselves.
+`import` adds the units of a model file of only quantities ([seed/model-format.md](seed/model-format.md)) that aren't there yet, as `POST /model/import` does, and prints the same report; a name some tenant already has for its own is a conflict. `standard` sets whether a global quantity or family is available to tenants that haven't chosen themselves.
 
 ## The `history` action
 

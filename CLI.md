@@ -325,7 +325,7 @@ These follow your answers: all attributes offered, a picker on Tab Tab, bash, zs
 
 ### Importing units
 
-50. **`wtf unit import FILE [--dry-run]`** sends a unit file ([seed/units-format.md](seed/units-format.md)) and tells what was added (or would be, with `--dry-run`), how much was there already, and every conflict. With conflicts nothing is imported, and the exit code is 1. `--json` prints the server's report. The CLI's cached units are dropped at once, so the new units can be used straight away.
+50. **`wtf unit import FILE [--dry-run]`** sent a unit file and told what was added (or would be), how much was there already, and every conflict. It is gone: `wtf model import` imports units now (decision 56).
 
 ### Attachments, redone
 51. **Attachments follow the new model** ([api/attachment.md](api/attachment.md)): each object has attachments of its own, with a title, type and size, and a photo per object.
@@ -346,4 +346,6 @@ Built with the server's tenants ([TENANTS.md](TENANTS.md)), API revision 11.
 
 ### Model files
 
-55. **`wtf model import FILE [--parent CLASS] [--dry-run]`** imports a model file ([seed/model-format.md](seed/model-format.md)): attributes and a tree of classes. It tells what was added (or would be), how much was there already, and every conflict, as `wtf unit import` does; with conflicts nothing is imported, and the exit code is 1. `--parent` puts the file's classes below a class instead of at the top. The cached class tree and attributes are dropped at once.
+55. **`wtf model import FILE [--parent CLASS] [--dry-run]`** imports a model file ([seed/model-format.md](seed/model-format.md)): attributes and a tree of classes. It tells what was added (or would be), how much was there already, and every conflict, as `wtf unit import` did; with conflicts nothing is imported, and the exit code is 1. `--parent` puts the file's classes below a class instead of at the top. The cached class tree and attributes are dropped at once.
+56. **Units come in model files** (API revision 12, [seed/model-format.md](seed/model-format.md), decisions 21–35), so `wtf unit import` is gone and `wtf model import` imports them: a file of only quantities is what a unit file was. The report lists added quantities, families and units too, and the cached units are dropped as well, so the new units can be used straight away.
+57. **`wtf model export CLASS [-o FILE] [--force]`** writes the class with everything below it as a model file, indented, with its keys in the format's order: to stdout, or to FILE, which it won't overwrite without `--force`. It needs only read access.

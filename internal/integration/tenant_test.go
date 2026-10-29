@@ -141,7 +141,7 @@ func TestTenants(t *testing.T) {
 	e.expect(t, 404, "GET", "/items/"+str(t, bItem, "id")+"/attachments/"+str(t, att, "id"), nil)
 
 	// Units: a tenant's own are its own.
-	r := e.expect(t, 200, "POST", "/units/import", obj("format", "wtf-units", "version", 1, "quantities", []any{
+	r := e.expect(t, 200, "POST", "/model/import", obj("format", "wtf-model", "version", 1, "quantities", []any{
 		obj("name", "Length", "base_unit", obj("symbol", "m", "name", "metre"), "families", []any{
 			obj("name", "Imperial length", "units", []any{obj("symbol", "hh", "name", "hand", "factor", "0.1016")}),
 		}),
@@ -203,7 +203,7 @@ func TestTenants(t *testing.T) {
 	}
 	defer conn.Close(context.Background())
 	file := func(family string) []byte {
-		return must(json.Marshal(obj("format", "wtf-units", "version", 1, "quantities", []any{
+		return must(json.Marshal(obj("format", "wtf-model", "version", 1, "quantities", []any{
 			obj("name", "Length", "base_unit", obj("symbol", "m", "name", "metre"), "families", []any{
 				obj("name", family, "units", []any{obj("symbol", "ftm", "name", "fathom", "factor", "1.8288")}),
 			}),
@@ -221,7 +221,7 @@ func TestTenants(t *testing.T) {
 			t.Errorf("Nautical length: %v", f)
 		}
 	}
-	e.expect(t, 200, "POST", "/units/import", obj("format", "wtf-units", "version", 1, "quantities", []any{
+	e.expect(t, 200, "POST", "/model/import", obj("format", "wtf-model", "version", 1, "quantities", []any{
 		obj("name", "Length", "base_unit", obj("symbol", "m", "name", "metre"), "families", []any{obj("name", "Rope length")}),
 	}), b...)
 	report, err = admin.ImportGlobalUnits(context.Background(), conn, file("Rope length"), false)

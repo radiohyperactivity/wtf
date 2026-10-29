@@ -37,9 +37,9 @@ Decisions marked *(yours)* were made by you; the rest are mine, made while you w
 
 14. **Global units, and each tenant's own** *(yours)*. Quantities, unit families and units have `tenant uuid NULL`, where NULL means global. A tenant sees the global ones and its own.
     - **Global units** are installed with the schema (the bootstrap set) and imported by the operator: `wtfd unit import --global FILE`. They are only ever added to: changing a global unit's factor would change every tenant's numbers.
-    - **A tenant's own** come from importing a unit file through the API, as today (model write privilege). Their families can belong to a global quantity, and their units to a global family: a tenant can add "hand" to Imperial length.
+    - **A tenant's own** come from importing a model file through the API (model write privilege; since 2026-10-29 model files hold units, [seed/model-format.md](seed/model-format.md)). Their families can belong to a global quantity, and their units to a global family: a tenant can add "hand" to Imperial length.
     - **Names and symbols** must be unique among what a tenant sees. A tenant can't import a family named like a global one, and the operator can't add a global one named like some tenant's (the import says which tenants are in the way).
-15. **Keys are UUIDs** *(yours)*, for quantities, families and units alike, as for everything else. Unit files refer to units by name and symbol, so their format doesn't change. The API's ids become strings (a new API revision).
+15. **Keys are UUIDs** *(yours)*, for quantities, families and units alike, as for everything else. Unit files (now model files) refer to units by name and symbol, so their format doesn't change. The API's ids become strings (a new API revision).
 16. **Turning units on and off, per quantity and per family** *(yours)*:
     - **Global quantities and families have `standard`** *(yours; first named `default_available`)*: whether a tenant has them without having chosen. A new global quantity or family shows up in every tenant, or not, according to this flag, with nothing else to set.
     - **A tenant stores only its choices**, in `tenant_quantity` and `tenant_unit_family`: (tenant, quantity or family, `available`). A choice that is the default anyway isn't kept, so a choice always differs from the default, and the app offers a way back to the default only then.
@@ -74,7 +74,7 @@ Run as the DBA role, like the other `wtfd` actions:
 | `wtfd tenant rename --host bob --new-host robert --files-directory DIR` | Changes the host, and moves its directory in the files directory with it. |
 | `wtfd account create --host bob --email …` | Another account with every privilege (as today, now in a tenant). |
 | `wtfd account password --host bob --email …` | A new password for a lost one (as today, now in a tenant). |
-| `wtfd unit import --global FILE [--dry-run]` | Adds global units from a unit file. |
+| `wtfd unit import --global FILE [--dry-run]` | Adds global units from a model file of only quantities. |
 | `wtfd unit standard --quantity NAME | --family NAME --available true|false` | Changes whether a global quantity or family is available as standard. |\| --family NAME --available true\|false` | Changes whether a global quantity or family is available by default. |
 
 `wtfd tenant create` is the convenient way; three `INSERT`s (tenant, account, with a bcrypt password) do the same.
@@ -99,7 +99,7 @@ Run as the DBA role, like the other `wtfd` actions:
 27. **"Still in use" is 409 for every method,** not only DELETE: turning off a family that attributes use is `PATCH`. A `restrict_violation` always means in use; a foreign key error outside DELETE stays 422.
 28. **Tree versions** start at 1 for a tenant that has no row in `data_version` yet; its row appears with the first change. The triggers are per row now (a statement can't tell which tenants it touched), which only means more increments.
 29. **The advisory lock of a file** is keyed by its hash alone, shared by all tenants: at worst two uploads of the same content in different tenants wait for each other.
-30. **Importing units** is one function, `util.unit_import(tenant, file, dry_run)`, for the API (the session's tenant) and for `wtfd unit import --global` (no tenant).
+30. **Importing units** is one function, for the API (the session's tenant) and for `wtfd unit import --global` (no tenant). Since 2026-10-29 that is `util.model_import`, which imports model files; a global import takes only quantities.
 31. **Lists of units are ordered by name** (quantities, then families, then units by size). The old integer ids happened to keep the seed's order; UUIDs don't, so "Imperial length" now comes before "Metric length".
 32. **Units of a family that is off** still show and convert where they are used. The app's number fields accept units typed from available families and from the unit's own family; the CLI completes only available units; the server refuses the rest.
 33. **The tests** run one tenant, `test` (`test.wtf.example`), and the isolation test adds a second for each run. The CLI tests reach the server through a test server at an IP address, which picks no tenant, so it sets the hostname on each request.

@@ -1,8 +1,10 @@
 {
-  "format": "wtf-units",
+  "format": "wtf-model",
   "version": 1,
-  "name": "WtF bootstrap set",
-  "description": "The quantities, unit families and units every WtF installation starts with (db/migrations/0002_units.sql). Importing it changes nothing.",
+  "meta": {
+    "name": "WtF bootstrap set",
+    "description": "The quantities, unit families and units every WtF installation starts with (db/migrations/0002_units.sql). Importing it changes nothing."
+  },
   "quantities": [
     {
       "name": "Length",

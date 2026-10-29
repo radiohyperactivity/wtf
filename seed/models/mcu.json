@@ -1,8 +1,10 @@
 {
   "format": "wtf-model",
   "version": 1,
-  "name": "Microcontrollers",
-  "description": "MCUs by family, with what tells them apart: clock, memory, pins, timers and package.",
+  "meta": {
+    "name": "Microcontrollers",
+    "description": "MCUs by family, with what tells them apart: clock, memory, pins, timers and package."
+  },
   "attributes": [
     { "name": "Clock", "unit": "MHz" },
     { "name": "Flash", "unit": "KiB" },

@@ -139,56 +139,20 @@ paths:
               schema: { $ref: "#/components/schemas/Unit" }
         default: { $ref: "#/components/responses/Problem" }
 
-  /units/import:
-    post:
-      summary: Import quantities, unit families and units from a unit file, as the tenant's own (model write privilege)
-      operationId: unitImport
-      description: |
-        The body is a unit file (seed/units-format.md). What the tenant doesn't
-        see yet is added, as its own; what it sees (global or its own) must
-        be the same, or it is a conflict. Nothing
-        that exists is changed or removed. All or nothing: with a conflict, or
-        with dry_run, nothing is kept. A body that isn't a valid unit file is
-        refused with 400.
-      parameters:
-        - { name: dry_run, in: query, schema: { type: boolean }, description: Only tell what would happen. }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { type: object, description: A unit file, see seed/units-format.md. }
-      responses:
-        "200":
-          description: What was (or would be) added, what was there already, and the conflicts.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  applied: { type: boolean, description: Whether the import was kept. }
-                  dry_run: { type: boolean }
-                  quantities: { $ref: "#/components/schemas/ImportSection" }
-                  families: { $ref: "#/components/schemas/ImportSection" }
-                  units: { $ref: "#/components/schemas/ImportSection" }
-                  conflicts:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        where: { type: string, description: 'e.g. "Length › Imperial length › in"' }
-                        message: { type: string }
-        default: { $ref: "#/components/responses/Problem" }
-
   /model/import:
     post:
-      summary: Import attributes and classes from a model file (model write privilege)
+      summary: Import units, attributes and classes from a model file (model write privilege)
       operationId: modelImport
       description: |
-        The body is a model file (seed/model-format.md): attributes, and a tree
-        of classes with their attribute assignments. What is there and the
-        same is used as it is; what isn't is added; what differs is a
-        conflict. All or nothing: with a conflict, or with dry_run, nothing is
-        kept. A body that isn't a valid model file is refused with 400.
+        The body is a model file (seed/model-format.md): quantities with their
+        unit families and units, attributes, and a tree of classes with their
+        attribute assignments. What the tenant has (or sees, for units) and
+        is the same is used as it is; what isn't there is added, as the
+        tenant's own; what differs is a conflict. An assignment that is the
+        same as one the class inherits is there already. All or nothing: with
+        a conflict, or with dry_run, nothing is kept. A body that isn't a
+        valid model file is refused with 400. A file of only quantities is
+        how units are imported.
       parameters:
         - { name: parent, in: query, schema: { $ref: "#/components/schemas/Uuid" }, description: The class to import below; the top of the class tree without it. }
         - { name: dry_run, in: query, schema: { type: boolean }, description: Only tell what would happen. }
@@ -207,6 +171,9 @@ paths:
                 properties:
                   applied: { type: boolean, description: Whether the import was kept. }
                   dry_run: { type: boolean }
+                  quantities: { $ref: "#/components/schemas/ModelImportSection" }
+                  families: { $ref: "#/components/schemas/ModelImportSection" }
+                  units: { $ref: "#/components/schemas/ModelImportSection" }
                   attributes: { $ref: "#/components/schemas/ModelImportSection" }
                   options:
                     type: object
@@ -218,7 +185,7 @@ paths:
                     items:
                       type: object
                       properties:
-                        where: { type: string, description: 'e.g. "Class MCU/AVR: Clock"' }
+                        where: { type: string, description: 'e.g. "Class MCU/AVR: Clock", "Length › Imperial length › in"' }
                         message: { type: string }
         default: { $ref: "#/components/responses/Problem" }
 
@@ -455,6 +422,26 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ClassDeletion" }
         "204": { description: Deleted (without recursive). }
+        default: { $ref: "#/components/responses/Problem" }
+
+  /classes/{id}/model:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      summary: The class with everything below it, as a model file (model or data read privilege)
+      operationId: modelExport
+      description: |
+        A model file (seed/model-format.md) of the class and the live classes
+        below it, with the class's inherited assignments as its own, every
+        attribute they use, and the units of the tenant's own those attributes
+        need, with their families. Units every WtF has are left out. "meta"
+        names the class, the tenant and when. Importing the file where the
+        class is changes nothing; importing it elsewhere sets up the same.
+      responses:
+        "200":
+          description: A model file.
+          content:
+            application/json:
+              schema: { type: object, description: A model file, see seed/model-format.md. }
         default: { $ref: "#/components/responses/Problem" }
 
   /classes/{id}/deletion:
@@ -1885,14 +1872,8 @@ components:
     ModelImportSection:
       type: object
       properties:
-        added: { type: array, items: { type: string }, description: 'Names; classes as paths ("MCU/AVR"); assignments as "path: attribute".' }
+        added: { type: array, items: { type: string }, description: 'Names; families as "Quantity › Family", units as "Quantity › Family › symbol"; classes as paths ("MCU/AVR"); assignments as "path: attribute".' }
         existing: { type: array, items: { type: string } }
-
-    ImportSection:
-      type: object
-      properties:
-        added: { type: array, items: { type: object }, description: "{name}; families {quantity, name}; units {quantity, family, symbol, name}" }
-        existing: { type: array, items: { type: object } }
 
     Unit:
       type: object

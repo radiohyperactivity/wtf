@@ -92,7 +92,7 @@ The files are applied by `wtfd schema` (see [WTFD.md](WTFD.md)). Migrations run 
   | `choice`  | option id or option name (case-insensitive)  | `{"id": …, "name": …}`   |
 
 - **Units.**
-  - **Units:** quantities, unit families and units are global (seeded, see [seed/units.md](seed/units.md), and imported by the operator) or a tenant's own (imported from unit files, [seed/units-format.md](seed/units-format.md)). A tenant turns quantities and families on and off. Everything has UUIDs as ids.
+  - **Units:** quantities, unit families and units are global (seeded, see [seed/units.md](seed/units.md), and imported by the operator) or a tenant's own (imported from model files, [seed/model-format.md](seed/model-format.md)). A tenant turns quantities and families on and off. Everything has UUIDs as ids.
   - **Units:** an attribute (for values and defaults) or an item (for stock quantities) may have a unit. That makes its numbers measurements of the unit's quantity. Each unit belongs to one family, such as Metric length.
   - **Unit lock:** with `unit_lock`, numbers are always shown in the unit itself. Without it (the default), they are scaled within the unit's family.
   - **Storage and input:** such numbers are stored, and must be given, in the base unit of the quantity (metres, kilograms, ohms, kelvin, …). Counts use the integer datatype; every other quantity uses float.
@@ -172,8 +172,8 @@ Suggested REST routes are only there to show intent. The REST design comes later
 | `unit_family_get(p_id)` | unit family (+ units) | `GET /unit-families/{id}` |
 | `unit_list(p_quantity, p_family)` | [unit] | `GET /units?quantity=&family=` |
 | `unit_get(p_id)` | unit | `GET /units/{id}` |
-| `unit_import(p_data, p_dry_run)` | what was added, what was there, conflicts | `POST /units/import?dry_run=` (body: a unit file, [seed/units-format.md](seed/units-format.md)) |
-| `model_import(p_data, p_parent, p_dry_run)` | what was added, what was there, conflicts | `POST /model/import?parent=&dry_run=` (body: a model file, [seed/model-format.md](seed/model-format.md)) |
+| `model_import(p_data, p_parent, p_dry_run)` | what was added, what was there, conflicts | `POST /model/import?parent=&dry_run=` (body: a model file of units, attributes and classes, [seed/model-format.md](seed/model-format.md)) |
+| `model_export(p_class)` | a model file of the class with everything below it | `GET /classes/{id}/model` |
 | `attribute_list()` | [attribute] | `GET /attributes` |
 | `attribute_get(p_id)` | attribute (+ options) | `GET /attributes/{id}` |
 | `attribute_create(p_name, p_datatype, p_unit, p_unit_lock)` | attribute | `POST /attributes` |

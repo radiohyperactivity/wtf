@@ -38,8 +38,6 @@ func (s *server) routes() []route {
 		{"GET /units", s.read("unit_list",
 			query("p_quantity", "quantity", "uuid"), query("p_family", "family", "uuid"))},
 		{"GET /units/{id}", s.read("unit_get", id)},
-		{"POST /units/import", s.update("unit_import", patch("p_data"),
-			query("p_dry_run", "dry_run", "boolean"))},
 		{"POST /model/import", s.update("model_import", patch("p_data"),
 			query("p_parent", "parent", "uuid"), query("p_dry_run", "dry_run", "boolean"))},
 
@@ -72,6 +70,7 @@ func (s *server) routes() []route {
 		{"PATCH /classes/{id}", s.update("class_patch", id, patch("p_patch"))},
 		{"DELETE /classes/{id}", s.removeTree("class_delete", "class_delete_tree", id)},
 		{"POST /classes/{id}/restore", s.update("class_restore", id, patch("p_options"))},
+		{"GET /classes/{id}/model", s.read("model_export", path("p_class", "id"))},
 		{"GET /classes/{id}/deletion", s.read("class_delete_tree", id,
 			query("p_force", "force", "boolean"), constant("p_dry_run", "boolean", true))},
 		{"PUT /classes/{id}/attributes/{attribute}", s.update("class_attribute_set",
