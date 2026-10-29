@@ -379,3 +379,7 @@ Built with the server's tenants ([TENANTS.md](TENANTS.md)), API revision 11.
 ### Photos
 
 65. **An item without a photo of its own shows its class's** (your choice), or the nearest parent class's that has one, wherever items show a photo: the item screen, search results, a class's items, and a location's stock (after the row's own photo and the item's), as stock rows show their location's. The item's attachments still list only its own, and only its own can be made its photo. The app takes the class photos from the class tree it keeps anyway.
+
+### Desktop
+
+66. **The window opens where it was,** at the same size, maximized if it was (Windows, macOS and Linux; `lib/window_place.dart`, with the `window_manager` and `screen_retriever` packages). Where it is goes into the app's settings (shared_preferences) half a second after it moves or changes size, and when it closes, since Windows only reports moves and resizes made with the mouse. A maximized window keeps the size it had before, for when it is restored. A place no longer on any screen (an unplugged monitor) is centred on the main screen, and a size larger than that becomes the default 1280×720. The Windows runner no longer shows the window by itself (`windows/runner/flutter_window.cpp`): the app shows it once it is in place, so it doesn't appear at the default place first. There are no macOS and Linux projects yet; made with `flutter create --platforms=macos,linux .`, they need the same change to their runner to avoid that jump, and the rest works as it is.

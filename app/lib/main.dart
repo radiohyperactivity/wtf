@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import 'app.dart';
 import 'session.dart';
+import 'window_place.dart';
 
 Future<void> main() async {
   // URLs like /items/1B2C instead of /#/items/1B2C (wtfd answers them with
@@ -20,4 +21,6 @@ Future<void> main() async {
   );
   await session.restore();
   runApp(WtfApp(session: session));
+  // On the desktop: where the window was last time.
+  await placeWindow();
 }

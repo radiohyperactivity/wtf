@@ -27,9 +27,9 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
-  flutter_controller_->engine()->SetNextFrameCallback([&]() {
-    this->Show();
-  });
+  // The window is shown by the app (lib/window_place.dart) once it is where
+  // it was last time, so it doesn't appear at the default place first.
+  flutter_controller_->engine()->SetNextFrameCallback([&]() {});
 
   // Flutter can complete the first frame before the "show window" callback is
   // registered. The following call ensures a frame is pending to ensure the
