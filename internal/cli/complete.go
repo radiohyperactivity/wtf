@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/radiohyperactivity/wtf/internal/prompt"
@@ -83,7 +82,7 @@ func treeCandidates(ix *treeIndex, cur string, full, noContainers bool) []string
 				out = append(out, ix.pathString(id))
 			}
 		}
-		sort.Strings(out)
+		sortNatural(out)
 		return out
 	}
 	nodes := ix.roots

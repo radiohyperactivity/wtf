@@ -82,11 +82,11 @@ BEGIN
                            || jsonb_build_object('stock',      util.item_stock_total_json(m.id),
                                                  'incomplete', util.item_incomplete(m.id),
                                                  'photo',      util.item_photo_json(m.id))
-                           ORDER BY lower(m.name), m.id)
+                           ORDER BY util.natural_key(m.name), m.id)
                 FROM (
                     SELECT id, name
                     FROM matching
-                    ORDER BY lower(name), id
+                    ORDER BY util.natural_key(name), id
                     LIMIT p_limit OFFSET p_offset
                 ) m
             )

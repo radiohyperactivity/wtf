@@ -414,3 +414,11 @@ func TestGrid(t *testing.T) {
 		}
 	}
 }
+
+func TestNaturalOrder(t *testing.T) {
+	names := []string{"SOIC", "DIP10", "dip8", "DIP4", "A/B2", "A/B10"}
+	sortNatural(names)
+	if got := strings.Join(names, " "); got != "A/B2 A/B10 DIP4 dip8 DIP10 SOIC" {
+		t.Errorf("natural order: %s", got)
+	}
+}

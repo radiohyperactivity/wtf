@@ -170,7 +170,7 @@ BEGIN
         'items', (
             SELECT COALESCE(jsonb_agg(jsonb_build_object('id', i.id, 'code', util.code_text(i.code),
                                                          'name', i.name, 'class', i.class)
-                                      ORDER BY lower(i.name), i.id), '[]'::jsonb)
+                                      ORDER BY util.natural_key(i.name), i.id), '[]'::jsonb)
             FROM item i WHERE i.id = ANY (v_items)
         ),
         'stock', (SELECT count(*) FROM stock s WHERE s.item = ANY (v_items) AND NOT s.deleted)
@@ -182,7 +182,7 @@ BEGIN
                 RETURN v_result;
             END IF;
             SELECT string_agg(format('%s (%s %s)', t.path, t.n, CASE WHEN t.n = 1 THEN 'item' ELSE 'items' END),
-                              ', ' ORDER BY t.path)
+                              ', ' ORDER BY util.natural_key(t.path))
             INTO v_in_use
             FROM (
                 SELECT util.path_text(util.class_path(i.class)) AS path, count(*) AS n

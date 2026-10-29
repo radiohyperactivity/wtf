@@ -113,7 +113,7 @@ BEGIN
     PERFORM util.require_login();
     v_tenant := util.tenant();
     RETURN (
-        SELECT COALESCE(jsonb_agg(util.quantity_entry_json(v_tenant, q.id) ORDER BY lower(q.name), q.id), '[]'::jsonb)
+        SELECT COALESCE(jsonb_agg(util.quantity_entry_json(v_tenant, q.id) ORDER BY util.natural_key(q.name), q.id), '[]'::jsonb)
         FROM quantity q
         WHERE q.tenant IS NULL OR q.tenant = v_tenant
     );
@@ -137,7 +137,7 @@ BEGIN
     RETURN util.quantity_entry_json(v_tenant, p_id) || jsonb_build_object(
         'families', (
             SELECT COALESCE(
-                jsonb_agg(util.family_entry_json(v_tenant, f.id) - 'quantity' ORDER BY lower(f.name), f.id),
+                jsonb_agg(util.family_entry_json(v_tenant, f.id) - 'quantity' ORDER BY util.natural_key(f.name), f.id),
                 '[]'::jsonb
             )
             FROM unit_family f
@@ -172,9 +172,9 @@ BEGIN
         )
         -- At most five, and how many more.
         SELECT CASE WHEN count(*) = 0 THEN NULL
-                    WHEN count(*) <= 5 THEN string_agg(what, ', ' ORDER BY what)
-                    ELSE (SELECT string_agg(f.what, ', ' ORDER BY f.what)
-                          FROM (SELECT what FROM used ORDER BY what LIMIT 5) f)
+                    WHEN count(*) <= 5 THEN string_agg(what, ', ' ORDER BY util.natural_key(what))
+                    ELSE (SELECT string_agg(f.what, ', ' ORDER BY util.natural_key(f.what))
+                          FROM (SELECT what FROM used ORDER BY util.natural_key(what) LIMIT 5) f)
                          || format(' and %s more', count(*) - 5)
                END
         FROM used
@@ -289,7 +289,7 @@ BEGIN
 
     RETURN (
         SELECT COALESCE(
-            jsonb_agg(util.family_entry_json(v_tenant, f.id) ORDER BY lower(q.name), lower(f.name), f.id),
+            jsonb_agg(util.family_entry_json(v_tenant, f.id) ORDER BY util.natural_key(q.name), util.natural_key(f.name), f.id),
             '[]'::jsonb
         )
         FROM unit_family f
@@ -362,7 +362,7 @@ BEGIN
     END IF;
 
     RETURN (
-        SELECT COALESCE(jsonb_agg(util.unit_json(u.id) ORDER BY lower(f.name), f.id, u.base_factor, u.id), '[]'::jsonb)
+        SELECT COALESCE(jsonb_agg(util.unit_json(u.id) ORDER BY util.natural_key(f.name), f.id, u.base_factor, u.id), '[]'::jsonb)
         FROM unit u
         JOIN unit_family f ON f.id = u.family
         WHERE (u.tenant IS NULL OR u.tenant = v_tenant)
@@ -397,7 +397,7 @@ AS $$
 BEGIN
     PERFORM util.require_model_read();
     RETURN (
-        SELECT COALESCE(jsonb_agg(util.attribute_json(a.id) ORDER BY lower(a.name), a.id), '[]'::jsonb)
+        SELECT COALESCE(jsonb_agg(util.attribute_json(a.id) ORDER BY util.natural_key(a.name), a.id), '[]'::jsonb)
         FROM attribute a
         WHERE a.tenant = util.tenant()
           AND NOT a.deleted
@@ -426,7 +426,7 @@ BEGIN
             (
                 SELECT COALESCE(
                     jsonb_agg(jsonb_build_object('id', o.id, 'name', o.name)
-                              ORDER BY lower(o.name), o.id),
+                              ORDER BY util.natural_key(o.name), o.id),
                     '[]'::jsonb
                 )
                 FROM attribute_option o
@@ -567,7 +567,7 @@ BEGIN
     END IF;
 
     RETURN (
-        SELECT COALESCE(jsonb_agg(util.option_json(o.id) ORDER BY lower(o.name), o.id), '[]'::jsonb)
+        SELECT COALESCE(jsonb_agg(util.option_json(o.id) ORDER BY util.natural_key(o.name), o.id), '[]'::jsonb)
         FROM attribute_option o
         WHERE o.attribute = p_attribute
           AND NOT o.deleted

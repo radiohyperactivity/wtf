@@ -49,7 +49,7 @@ The files are applied by `wtfd schema` (see [WTFD.md](WTFD.md)). Migrations run 
 - **No `/` in class and location names.** The `create` and `patch` functions reject them with 22023 (400), because `/` separates the names in a path.
 - **Lists.**
   - The class and location trees sort numbers inside names by their value (`A2` before `A10`, `Shelf 2` before `Shelf 10`), ignoring case (`util.natural_key`).
-  - Lists are sorted alphabetically by name, case-insensitively, with `id` as a tie-breaker.
+  - Lists are sorted by name in natural order (`util.natural_key`): numbers inside names by their value, the rest ignoring case, so "DIP4" comes before "dip8" and "DIP10"; `id` breaks ties. The trees order siblings the same way. Numbers are compared as digits, not as what they mean: "4k7" comes before "100R".
   - Lists of system data and of things defined once (quantities, unit families, units, attributes, options) are small, and return a plain JSON array of everything.
   - Only the lists that grow with the inventory, `item_list` and `stock_list`, are paged, with `p_limit` (1–1000, default 100) and `p_offset` (default 0). They return this envelope:
 
@@ -68,7 +68,7 @@ The files are applied by `wtfd schema` (see [WTFD.md](WTFD.md)). Migrations run 
   - a text or URL value;
   - the name of a choice value.
 
-  Values include class defaults the item shows. Different words may match in different places, so "resistor 0805" finds 0805 resistors. Results stay alphabetical, and the search combines with the `p_class` filter.
+  Values include class defaults the item shows. Different words may match in different places, so "resistor 0805" finds 0805 resistors. Results stay in natural order, and the search combines with the `p_class` filter.
 - **Attribute filters.** `item_list`'s `p_where` (`GET /items?where=`, JSON) is a list of conditions on attribute values, all of which must match; see [api/item.md](api/item.md). For example `[{"attribute": "<Resistance>", "op": ">=", "value": 32000}]`. They combine with `p_search` and `p_class`.
 - **Per-unit attributes.** A class assignment with `per_unit` puts the attribute's values on stock rows (`stock_value_set`, or `values` in `stock_create`) instead of on the item, e.g. a serial number or purchase date. Defaults work the same way for both scopes.
   - **Splitting** a row with `stock_move` copies its per-unit values.

@@ -551,12 +551,12 @@ func TestSearch(t *testing.T) {
 		{"search=0805", []string{"10k"}},                    // class default
 		{"search=0603", []string{"4k7"}},                    // own value overrides the default
 		{"search=resistor+0805", []string{"10k"}},           // words match in different places
-		{"search=smd", []string{"10k", "4k7"}},              // class name
-		{"search=resistor", []string{"100R", "10k", "4k7"}}, // ancestor class
+		{"search=smd", []string{"4k7", "10k"}},              // class name
+		{"search=resistor", []string{"4k7", "10k", "100R"}}, // ancestor class
 		{"search=pn-12", []string{"100R"}},                  // text value, substring
 		{"search=++DRILL++", []string{"Drill"}},             // case and extra spaces
 		{"search=drill+0805", nil},                          // all words must match
-		{"search=resistor&class=" + smd, []string{"10k", "4k7"}},
+		{"search=resistor&class=" + smd, []string{"4k7", "10k"}},
 		{"class=" + tools, []string{"Drill"}},
 	}
 	for _, tt := range tests {
@@ -626,17 +626,17 @@ func TestSearchWhere(t *testing.T) {
 		{"greater or equal", where(f(ohms, ">=", 32000)), []string{"47k"}},
 		{"less than", where(f(ohms, "<", 4700)), []string{"100R"}},
 		{"exact number", where(f(ohms, "=", 4700)), []string{"4k7"}},
-		{"range, inclusive", where(f(ohms, "between", []any{1000, 10000})), []string{"10k", "4k7"}},
-		{"choice by name, defaults included", where(f(pkg, "=", "0805")), []string{"100R", "10k", "47k"}},
-		{"any of several options", where(f(pkg, "in", []any{"0603", "0805"})), []string{"100R", "10k", "47k", "4k7"}},
+		{"range, inclusive", where(f(ohms, "between", []any{1000, 10000})), []string{"4k7", "10k"}},
+		{"choice by name, defaults included", where(f(pkg, "=", "0805")), []string{"10k", "47k", "100R"}},
+		{"any of several options", where(f(pkg, "in", []any{"0603", "0805"})), []string{"4k7", "10k", "47k", "100R"}},
 		{"text contains, ignoring case", where(f(notes, "contains", "METAL")), []string{"47k"}},
 		{"text exactly", where(f(notes, "=", "metal film")), []string{"47k"}},
 		{"yes", where(f(leadFree, "=", true)), []string{"100R"}},
 		{"per unit: any stock row", where(f(bought, ">=", "2026-01-01")), []string{"10k"}},
 		{"per unit: no rows match", where(f(bought, "<", "2025-01-01")), nil},
 		{"all filters must match", where(f(ohms, ">", 1000), f(pkg, "=", "0805")), []string{"10k", "47k"}},
-		{"with search words", "search=4&" + where(f(ohms, ">", 1000)), []string{"47k", "4k7"}},
-		{"no filters", where(), []string{"100R", "10k", "47k", "4k7"}},
+		{"with search words", "search=4&" + where(f(ohms, ">", 1000)), []string{"4k7", "47k"}},
+		{"no filters", where(), []string{"4k7", "10k", "47k", "100R"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

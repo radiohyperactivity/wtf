@@ -257,7 +257,7 @@ These were made for unit files, which are now the `quantities` of a model file.
 27. **All of the tenant's units in a needed family go in,** not just the used one, because together they decide how values are scaled when shown.
 28. **Every attribute has its `datatype` in an export,** also with a unit, where an import lets it be left out: explicit is easier to read.
 29. **A unit is named by symbol,** with its family in brackets only where the symbol alone could mean another unit in the exporting inventory ("B (Binary bytes)").
-30. **Options are exported in alphabetical order,** as the app lists them; options have no order of their own.
+30. **Options are exported in natural order** (DIP4 before DIP10), as the API lists them; options have no order of their own.
 31. **The keys come in the order of this document,** by building the export as `json`, not `jsonb` (which sorts keys by length). `wtf model export` indents it.
 32. **Defaults are rounded to 15 significant digits** when converted to the attribute's unit, so that 16 MHz comes out as 16 and not 15.999999999999998.
 33. **The app saves an export as "CLASS.json"**, through the same save dialog (or browser download) as attachments. Anyone who sees the class can export it, so the class's menu is there for read-only accounts too, with only Export in it.

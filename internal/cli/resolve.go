@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -183,7 +183,7 @@ func (e *env) classTree() (*treeIndex, error) {
 
 // ambiguous is the error for a name with several matches.
 func ambiguous(kind, ref string, candidates []string) error {
-	sort.Strings(candidates)
+	sortNatural(candidates)
 	return fmt.Errorf("%s %q is ambiguous; it could be:\n  %s", kind, ref, strings.Join(candidates, "\n  "))
 }
 
@@ -208,7 +208,7 @@ func resolveTreeNode(ix *treeIndex, kind, ref string) (string, error) {
 // ambiguity is the error for a path that matches several nodes. It lists
 // each with a way to name it uniquely.
 func (ix *treeIndex) ambiguity(kind, ref string, matches []*node) error {
-	sort.Slice(matches, func(i, j int) bool { return ix.pathString(matches[i].ID) < ix.pathString(matches[j].ID) })
+	slices.SortFunc(matches, func(a, b *node) int { return naturalCompare(ix.pathString(a.ID), ix.pathString(b.ID)) })
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s %q is ambiguous. Name one of them like this:\n", kind, ref)
 	tw := tabwriter.NewWriter(&b, 0, 0, 3, ' ', 0)
@@ -256,7 +256,7 @@ func (e *env) resolveClass(ref string) (string, error) {
 // matches is meant instead of failing.
 func (e *env) resolveNode(ix *treeIndex, kind, ref string) (string, error) {
 	if matches := ix.find(ref); len(matches) > 1 && !isUUID(ref) {
-		sort.Slice(matches, func(i, j int) bool { return ix.pathString(matches[i].ID) < ix.pathString(matches[j].ID) })
+		slices.SortFunc(matches, func(a, b *node) int { return naturalCompare(ix.pathString(a.ID), ix.pathString(b.ID)) })
 		var labels []string
 		for _, n := range matches {
 			label := ix.pathString(n.ID)

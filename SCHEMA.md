@@ -15,7 +15,7 @@ All data access goes through the functions described in [API.md](API.md). The ER
 | `unit_family`     | A set of related units of one quantity that a number is scaled between on output ("Metric length": nm … km). A quantity can have several. |
 | `unit`            | A unit of measure in one family ("millimetre" / "mm"), with its conversion to the quantity's base unit. |
 | `attribute`       | A global, reusable property definition ("Weight", "Voltage") with a fixed datatype, an optional unit and Unit lock. |
-| `attribute_option`| An allowed option for a `choice` attribute ("0805", "0603", "THT"). Listed alphabetically by the API. |
+| `attribute_option`| An allowed option for a `choice` attribute ("0805", "0603", "THT"). Listed in natural order by the API (DIP4 before DIP10). |
 | `class_attribute` | Assigns an attribute to a class (and thereby to all its descendants): with an optional default, as per kind or per unit, and optionally required. |
 | `item`            | A *kind* of thing ("M3x10 hex screw", "Makita DHP482 drill"). Belongs to exactly one class, and optionally has the unit its stock is measured in (none = pieces), with Unit lock. |
 | `value`           | The value of one per-kind attribute for one item. Numbers with a unit are in the base unit. |

@@ -217,7 +217,7 @@ BEGIN
                        'id', s.id, 'code', util.code_text(s.code),
                        'item', jsonb_build_object('id', i.id, 'code', util.code_text(i.code), 'name', i.name),
                        'location', s.location, 'quantity', s.quantity)
-                   ORDER BY lower(i.name), s.id), '[]'::jsonb)
+                   ORDER BY util.natural_key(i.name), s.id), '[]'::jsonb)
             FROM stock s JOIN item i ON i.id = s.item
             WHERE s.id = ANY (v_stock)
         )
@@ -228,7 +228,7 @@ BEGIN
             RETURN v_result;
         END IF;
         SELECT string_agg(format('%s (%s %s)', t.path, t.n, CASE WHEN t.n = 1 THEN 'stock row' ELSE 'stock rows' END),
-                          ', ' ORDER BY t.path)
+                          ', ' ORDER BY util.natural_key(t.path))
         INTO v_in_use
         FROM (
             SELECT util.path_text(util.location_path(s.location)) AS path, count(*) AS n
@@ -369,11 +369,11 @@ BEGIN
             (SELECT count(*) FROM matching),
             p_limit, p_offset,
             (
-                SELECT jsonb_agg(util.stock_json(m.id) ORDER BY lower(m.item_name), m.id)
+                SELECT jsonb_agg(util.stock_json(m.id) ORDER BY util.natural_key(m.item_name), m.id)
                 FROM (
                     SELECT id, item_name
                     FROM matching
-                    ORDER BY lower(item_name), id
+                    ORDER BY util.natural_key(item_name), id
                     LIMIT p_limit OFFSET p_offset
                 ) m
             )

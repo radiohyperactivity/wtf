@@ -167,7 +167,7 @@ AS $$
 BEGIN
     PERFORM util.require('account', 'read');
     RETURN (
-        SELECT COALESCE(jsonb_agg(util.account_json(a.id) ORDER BY lower(a.email), a.id), '[]'::jsonb)
+        SELECT COALESCE(jsonb_agg(util.account_json(a.id) ORDER BY util.natural_key(a.email), a.id), '[]'::jsonb)
         FROM account a
         WHERE a.tenant = util.tenant()
           AND NOT a.deleted

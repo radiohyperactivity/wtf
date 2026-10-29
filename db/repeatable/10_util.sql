@@ -150,16 +150,15 @@ END;
 $$;
 
 -- A sort key that orders numbers inside names by their value, ignoring case:
--- "A2" before "A10", "Shelf 2" before "Shelf 10".
+-- "A2" before "A10", "DIP4" before "dip8" before "DIP10". Every list of
+-- names, paths or emails is in this order (the trees, attributes, options,
+-- items, units' families, accounts…). SQL rather than PL/pgSQL, as it runs
+-- for every row of an item search.
 CREATE FUNCTION util.natural_key(p_name text) RETURNS text
-LANGUAGE plpgsql IMMUTABLE AS $$
-BEGIN
-    RETURN (
-        SELECT string_agg(CASE WHEN m.part[1] ~ '^[0-9]' THEN lpad(m.part[1], 20, '0') ELSE lower(m.part[1]) END,
-                          '' ORDER BY m.ord)
-        FROM regexp_matches(p_name, '([0-9]+|[^0-9]+)', 'g') WITH ORDINALITY AS m(part, ord)
-    );
-END;
+LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+    SELECT string_agg(CASE WHEN m.part[1] ~ '^[0-9]' THEN lpad(m.part[1], 20, '0') ELSE lower(m.part[1]) END,
+                      '' ORDER BY m.ord)
+    FROM regexp_matches(p_name, '([0-9]+|[^0-9]+)', 'g') WITH ORDINALITY AS m(part, ord);
 $$;
 
 -- A path from util.class_path or util.location_path as text: "MCU/AVR/Old".
@@ -909,7 +908,7 @@ BEGIN
                     'per_unit',         e.per_unit,
                     'required',         e.required
                 )
-                ORDER BY lower(a.name), a.id
+                ORDER BY util.natural_key(a.name), a.id
             ),
             '[]'::jsonb
         )
@@ -1036,7 +1035,7 @@ BEGIN
                                       a.unit, a.unit_lock),
                     'is_default', x.is_default
                 )
-                ORDER BY lower(a.name), a.id
+                ORDER BY util.natural_key(a.name), a.id
             ),
             '[]'::jsonb
         )
@@ -1052,7 +1051,7 @@ LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (
         SELECT COALESCE(
-            jsonb_agg(jsonb_build_object('id', a.id, 'name', a.name) ORDER BY lower(a.name), a.id),
+            jsonb_agg(jsonb_build_object('id', a.id, 'name', a.name) ORDER BY util.natural_key(a.name), a.id),
             '[]'::jsonb
         )
         FROM attribute a
@@ -1131,7 +1130,7 @@ BEGIN
                             'photo',       util.attachment_json('stock', s.photo),
                             'attachments', util.attachments_json(NULL, s.id, NULL, NULL)
                         )
-                        ORDER BY lower(l.name), s.id
+                        ORDER BY util.natural_key(l.name), s.id
                     ),
                     '[]'::jsonb
                 )

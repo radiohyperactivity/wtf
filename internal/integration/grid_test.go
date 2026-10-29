@@ -79,3 +79,41 @@ func TestGrid(t *testing.T) {
 	// Classes have no grids.
 	e.expect(t, 400, "POST", "/classes", obj("name", "Gridded", "grid", obj("columns", 2, "rows", 2)))
 }
+
+// TestNaturalOrder checks that lists other than the trees are in natural
+// order too: numbers by their value, the rest ignoring case.
+func TestNaturalOrder(t *testing.T) {
+	e := setup(t)
+	e.reset(t)
+	want := []string{"DIP4", "dip8", "DIP10", "SOIC"}
+	names := func(list any, key string) []string {
+		var out []string
+		for _, x := range list.([]any) {
+			out = append(out, str(t, x, key))
+		}
+		return out
+	}
+	check := func(what string, got []string) {
+		t.Helper()
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("%s: %v, want %v", what, got, want)
+		}
+	}
+
+	pkg := str(t, e.expect(t, 201, "POST", "/attributes", obj("name", "Package", "datatype", "choice")).body, "id")
+	class := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "ICs")).body, "id")
+	for _, n := range []string{"SOIC", "DIP10", "dip8", "DIP4"} {
+		e.expect(t, 201, "POST", "/attributes/"+pkg+"/options", obj("name", n))
+		e.expect(t, 201, "POST", "/attributes", obj("name", n, "datatype", "text"))
+		e.expect(t, 201, "POST", "/items", obj("class", class, "name", n))
+	}
+	check("options", names(e.expect(t, 200, "GET", "/attributes/"+pkg+"/options", nil).body, "name"))
+	var attributes []string
+	for _, n := range names(e.expect(t, 200, "GET", "/attributes", nil).body, "name") {
+		if n != "Package" {
+			attributes = append(attributes, n)
+		}
+	}
+	check("attributes", attributes)
+	check("items", names(get(t, e.expect(t, 200, "GET", "/items?class="+class, nil).body, "rows"), "name"))
+}

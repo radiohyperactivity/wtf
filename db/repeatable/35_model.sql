@@ -809,13 +809,13 @@ LANGUAGE sql STABLE AS $$
                        'default', util.model_export_default(a.id,
                                       e.text_default, e.integer_default, e.float_default,
                                       e.date_default, e.boolean_default, e.option_default)))
-                   ORDER BY lower(a.name), a.id)
+                   ORDER BY util.natural_key(a.name), a.id)
             FROM class_effective_attribute e
             JOIN attribute a ON a.id = e.attribute
             WHERE e.class = c.id AND NOT a.deleted
               AND (p_root OR e.inherited_depth = 0)),
         'classes', (
-            SELECT json_agg(util.model_export_class(k.id, false) ORDER BY lower(k.name), k.id)
+            SELECT json_agg(util.model_export_class(k.id, false) ORDER BY util.natural_key(k.name), k.id)
             FROM class k
             WHERE k.parent = c.id AND NOT k.deleted)
     ))
@@ -896,10 +896,10 @@ BEGIN
                                                  ORDER BY u.base_factor, u.symbol), '[]'::json)
                                           FROM unit u
                                           WHERE u.family = f.id AND u.tenant = v_tenant))
-                                  ORDER BY lower(f.name))
+                                  ORDER BY util.natural_key(f.name))
                            FROM unit_family f
                            WHERE f.quantity = q.id AND f.id = ANY (v_families)))
-                   ORDER BY lower(q.name))
+                   ORDER BY util.natural_key(q.name))
             FROM quantity q
             WHERE q.id IN (SELECT f.quantity FROM unit_family f WHERE f.id = ANY (v_families))),
         'attributes', (
@@ -908,10 +908,10 @@ BEGIN
                        'datatype', a.datatype,
                        'unit', util.model_unit_ref(v_tenant, a.unit),
                        'unit_lock', CASE WHEN a.unit_lock THEN true END,
-                       'options', (SELECT json_agg(o.name ORDER BY lower(o.name))
+                       'options', (SELECT json_agg(o.name ORDER BY util.natural_key(o.name))
                                    FROM attribute_option o
                                    WHERE o.attribute = a.id AND NOT o.deleted))
-                   ORDER BY lower(a.name), a.id)
+                   ORDER BY util.natural_key(a.name), a.id)
             FROM attribute a
             WHERE a.id = ANY (v_attributes)),
         'classes', json_build_array(util.model_export_class(p_class, true))
