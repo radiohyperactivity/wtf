@@ -131,6 +131,55 @@ void main() {
     );
   });
 
+  testWidgets('a dropdown takes letters and arrows, as a select box', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    await startApp(tester, FakeServer());
+    await tester.tap(find.text('Manage'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Attributes'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New attribute'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'Clock');
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pumpAndSettle();
+    String type() => tester
+        .widget<DropdownButtonFormField<String>>(
+          find.byType(DropdownButtonFormField<String>),
+        )
+        .initialValue!;
+
+    Future<void> press(List<LogicalKeyboardKey> keys) async {
+      for (final k in keys) {
+        await tester.sendKeyEvent(k);
+      }
+      await tester.pumpAndSettle();
+    }
+
+    await press([LogicalKeyboardKey.keyF]);
+    expect(type(), 'float');
+    // The arrows pick the next and previous type, and stay in the field.
+    await press([LogicalKeyboardKey.arrowDown]);
+    expect(type(), 'date');
+    await press([LogicalKeyboardKey.arrowUp, LogicalKeyboardKey.arrowUp]);
+    expect(type(), 'integer');
+    expect(find.text('Clock'), findsOneWidget); // no menu, still the dialog
+    // Letters typed together find more than their first.
+    await press([LogicalKeyboardKey.arrowUp]);
+    expect(type(), 'text');
+    await press([LogicalKeyboardKey.keyU, LogicalKeyboardKey.keyR]);
+    expect(type(), 'url');
+    // The same letter again goes on to the next type with it.
+    await press([LogicalKeyboardKey.arrowUp]);
+    await press([LogicalKeyboardKey.keyT, LogicalKeyboardKey.keyT]);
+    expect(type(), 'text'); // only one starts with t
+    await press([LogicalKeyboardKey.arrowDown]);
+    await press([LogicalKeyboardKey.keyC]);
+    expect(type(), 'choice');
+  });
+
   testWidgets('units by quantity, then by family', (tester) async {
     setSize(tester, 400, 800);
     final fake = FakeServer();

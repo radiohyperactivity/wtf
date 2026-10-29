@@ -8,6 +8,7 @@ import '../session.dart';
 import '../widgets/common.dart';
 import '../widgets/pickers.dart';
 import '../widgets/restore.dart';
+import '../widgets/select_keys.dart';
 import '../widgets/value_fields.dart';
 import 'model_import.dart';
 
@@ -382,14 +383,20 @@ Future<Attribute?> showAttributeDialog(
                     decoration: const InputDecoration(labelText: 'Name'),
                   ),
                   const SizedBox(height: 16),
-                  DropdownButtonFormField<String>(
-                    initialValue: datatype,
-                    decoration: const InputDecoration(labelText: 'Type'),
-                    items: [
-                      for (final d in datatypes)
-                        DropdownMenuItem(value: d, child: Text(d)),
-                    ],
-                    onChanged: (v) => setState(() => datatype = v ?? datatype),
+                  SelectKeys<String>(
+                    options: [for (final d in datatypes) (d, d)],
+                    value: datatype,
+                    onChanged: (v) => setState(() => datatype = v),
+                    child: DropdownButtonFormField<String>(
+                      initialValue: datatype,
+                      decoration: const InputDecoration(labelText: 'Type'),
+                      items: [
+                        for (final d in datatypes)
+                          DropdownMenuItem(value: d, child: Text(d)),
+                      ],
+                      onChanged: (v) =>
+                          setState(() => datatype = v ?? datatype),
+                    ),
                   ),
                   // A unit can be changed (to another of its quantity), but
                   // not added or removed, as in the CLI.

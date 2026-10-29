@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../api/client.dart';
 import '../api/models.dart';
 import '../api/units.dart';
+import 'select_keys.dart';
 
 /// One attribute in a form, with what checking its input needs.
 class ValueInput {
@@ -155,26 +156,32 @@ class _ValueFieldState extends State<ValueField> {
                 .where((o) => o.toLowerCase() == input.text.toLowerCase())
                 .firstOrNull ??
             '';
-        return DropdownButtonFormField<String>(
-          initialValue: current,
-          decoration: decoration.copyWith(
-            hintText: null,
-            helperText: switch ([?_hint, ?widget.helper]) {
-              [] => null,
-              final parts => parts.join('. '),
-            },
-          ),
-          items: [
-            DropdownMenuItem(
-              value: '',
-              child: Text(
-                input.defaultText.isEmpty ? '—' : '— (${input.defaultText})',
-              ),
+        return SelectKeys<String>(
+          options: [('', ''), for (final o in options) (o, o)],
+          value: current,
+          onChanged: (v) => setState(() => input.controller.text = v),
+          child: DropdownButtonFormField<String>(
+            initialValue: current,
+            decoration: decoration.copyWith(
+              hintText: null,
+              helperText: switch ([?_hint, ?widget.helper]) {
+                [] => null,
+                final parts => parts.join('. '),
+              },
             ),
-            for (final o in options) DropdownMenuItem(value: o, child: Text(o)),
-          ],
-          onChanged: (v) => input.controller.text = v ?? '',
-          validator: (_) => input.validate(),
+            items: [
+              DropdownMenuItem(
+                value: '',
+                child: Text(
+                  input.defaultText.isEmpty ? '—' : '— (${input.defaultText})',
+                ),
+              ),
+              for (final o in options)
+                DropdownMenuItem(value: o, child: Text(o)),
+            ],
+            onChanged: (v) => input.controller.text = v ?? '',
+            validator: (_) => input.validate(),
+          ),
         );
       case 'date':
         return TextFormField(
@@ -287,19 +294,29 @@ class UnitMenu extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
+        child: SelectKeys<String>(
+          options: [for (final u in family) (u.id, u.symbol)],
           value: picked.id,
-          isDense: true,
-          items: [
-            for (final u in family)
-              DropdownMenuItem(value: u.id, child: Text(u.symbol)),
-          ],
           onChanged: family.length < 2
               ? null
               : (id) {
                   controller.plainIn = family.firstWhere((u) => u.id == id);
                   onChanged?.call();
                 },
+          child: DropdownButton<String>(
+            value: picked.id,
+            isDense: true,
+            items: [
+              for (final u in family)
+                DropdownMenuItem(value: u.id, child: Text(u.symbol)),
+            ],
+            onChanged: family.length < 2
+                ? null
+                : (id) {
+                    controller.plainIn = family.firstWhere((u) => u.id == id);
+                    onChanged?.call();
+                  },
+          ),
         ),
       ),
     );

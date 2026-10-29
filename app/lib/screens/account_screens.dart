@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../api/models.dart';
 import '../session.dart';
 import '../widgets/common.dart';
+import '../widgets/select_keys.dart';
 
 String _privilegeSummary(Account a) => privilegeKeys.entries
     .where((e) => a.privileges[e.key]!.canRead)
@@ -227,17 +228,30 @@ Future<Account?> showAccountDialog(BuildContext context, {Account? current}) {
                     ),
                     const SizedBox(height: 8),
                     for (final MapEntry(:key, :value) in privilegeKeys.entries)
-                      DropdownButtonFormField<Privilege>(
-                        initialValue: privileges[key],
-                        decoration: InputDecoration(labelText: value),
-                        items: [
+                      SelectKeys<Privilege>(
+                        options: [
                           for (final p in Privilege.values)
                             if (p != Privilege.readWrite ||
                                 !readOnlyPrivileges.contains(key))
-                              DropdownMenuItem(value: p, child: Text(p.label)),
+                              (p, p.label),
                         ],
-                        onChanged: (p) => setState(
-                          () => privileges[key] = p ?? Privilege.none,
+                        value: privileges[key],
+                        onChanged: (p) => setState(() => privileges[key] = p),
+                        child: DropdownButtonFormField<Privilege>(
+                          initialValue: privileges[key],
+                          decoration: InputDecoration(labelText: value),
+                          items: [
+                            for (final p in Privilege.values)
+                              if (p != Privilege.readWrite ||
+                                  !readOnlyPrivileges.contains(key))
+                                DropdownMenuItem(
+                                  value: p,
+                                  child: Text(p.label),
+                                ),
+                          ],
+                          onChanged: (p) => setState(
+                            () => privileges[key] = p ?? Privilege.none,
+                          ),
                         ),
                       ),
                     const SizedBox(height: 8),
