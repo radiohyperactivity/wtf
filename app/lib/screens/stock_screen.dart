@@ -10,6 +10,7 @@ import '../widgets/attachments.dart';
 import '../widgets/common.dart';
 import '../widgets/pickers.dart';
 import '../widgets/restore.dart';
+import '../widgets/select_keys.dart';
 import '../widgets/value_fields.dart';
 import 'item_screen.dart';
 
@@ -207,89 +208,98 @@ Future<Stock?> showMoveDialog(
     builder: (context) => DisposeWith(
       onDispose: quantity.dispose,
       child: StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: Text('Move ${stock.item.name}'),
-          content: SizedBox(
-            width: 420,
-            child: Form(
-              key: form,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    'Now at ${locations.pathOf(stock.location)}: ${stock.quantityText}.',
-                  ),
-                  const SizedBox(height: 16),
-                  FormField<String>(
-                    validator: (_) => target == null ? 'Choose where to' : null,
-                    builder: (field) => InputDecorator(
-                      decoration: InputDecoration(
-                        labelText: 'To',
-                        border: const OutlineInputBorder(),
-                        errorText: field.errorText,
-                      ),
-                      child: InkWell(
-                        onTap: () async {
-                          final id = await pickNode(
-                            context,
-                            TreeKind.locations,
-                            title: 'Move to',
-                            forUse: true,
-                            exclude: {stock.location},
-                          );
-                          if (id != null) setState(() => target = id);
-                        },
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                target == null
-                                    ? 'Choose a location'
-                                    : locations.pathOf(target),
-                              ),
+        builder: (context, setState) {
+          Future<void> chooseTarget([String query = '']) async {
+            final id = await pickNode(
+              context,
+              TreeKind.locations,
+              title: 'Move to',
+              forUse: true,
+              exclude: {stock.location},
+              query: query,
+            );
+            if (id != null) setState(() => target = id);
+          }
+
+          return AlertDialog(
+            title: Text('Move ${stock.item.name}'),
+            content: SizedBox(
+              width: 420,
+              child: Form(
+                key: form,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      'Now at ${locations.pathOf(stock.location)}: ${stock.quantityText}.',
+                    ),
+                    const SizedBox(height: 16),
+                    FormField<String>(
+                      validator: (_) =>
+                          target == null ? 'Choose where to' : null,
+                      builder: (field) => InputDecorator(
+                        decoration: InputDecoration(
+                          labelText: 'To',
+                          border: const OutlineInputBorder(),
+                          errorText: field.errorText,
+                        ),
+                        child: PickerKeys(
+                          open: chooseTarget,
+                          child: InkWell(
+                            onTap: chooseTarget,
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    target == null
+                                        ? 'Choose a location'
+                                        : locations.pathOf(target),
+                                  ),
+                                ),
+                                const Icon(Icons.arrow_drop_down),
+                              ],
                             ),
-                            const Icon(Icons.arrow_drop_down),
-                          ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  if (stock.quantity != null) ...[
-                    const SizedBox(height: 16),
-                    QuantityField(
-                      controller: quantity,
-                      units: units,
-                      emptyMeans: 'all of it',
-                    ),
+                    if (stock.quantity != null) ...[
+                      const SizedBox(height: 16),
+                      QuantityField(
+                        controller: quantity,
+                        units: units,
+                        emptyMeans: 'all of it',
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () async {
-                if (!form.currentState!.validate()) return;
-                try {
-                  final moved = await client.moveStock(
-                    stock.id,
-                    target!,
-                    quantity: QuantityField.parse(quantity, units),
-                  );
-                  if (context.mounted) Navigator.pop(context, moved);
-                } catch (e) {
-                  if (context.mounted) showError(context, e);
-                }
-              },
-              child: const Text('Move'),
-            ),
-          ],
-        ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () async {
+                  if (!form.currentState!.validate()) return;
+                  try {
+                    final moved = await client.moveStock(
+                      stock.id,
+                      target!,
+                      quantity: QuantityField.parse(quantity, units),
+                    );
+                    if (context.mounted) Navigator.pop(context, moved);
+                  } catch (e) {
+                    if (context.mounted) showError(context, e);
+                  }
+                },
+                child: const Text('Move'),
+              ),
+            ],
+          );
+        },
       ),
     ),
   );

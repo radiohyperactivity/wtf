@@ -367,6 +367,20 @@ Future<Attribute?> showAttributeDialog(
             }
           }
 
+          Future<void> chooseUnit([String query = '']) async {
+            final picked = await pickUnit(
+              context,
+              noneLabel: current == null ? 'None: plain numbers' : null,
+              quantityId: current?.unit?.quantity.id,
+              query: query,
+            );
+            if (picked == null) return;
+            setState(() {
+              unit = picked.unit;
+              if (unit != null) datatype = unit!.quantity.datatype;
+            });
+          }
+
           return AlertDialog(
             title: Text(
               current == null ? 'New attribute' : 'Edit ${current.name}',
@@ -404,34 +418,22 @@ Future<Attribute?> showAttributeDialog(
                     const SizedBox(height: 16),
                     InputDecorator(
                       decoration: const InputDecoration(labelText: 'Unit'),
-                      child: InkWell(
-                        onTap: () async {
-                          final picked = await pickUnit(
-                            context,
-                            noneLabel: current == null
-                                ? 'None: plain numbers'
-                                : null,
-                            quantityId: current?.unit?.quantity.id,
-                          );
-                          if (picked == null) return;
-                          setState(() {
-                            unit = picked.unit;
-                            if (unit != null) {
-                              datatype = unit!.quantity.datatype;
-                            }
-                          });
-                        },
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                unit == null
-                                    ? 'None: plain numbers'
-                                    : unitLabel(unit!),
+                      child: PickerKeys(
+                        open: chooseUnit,
+                        child: InkWell(
+                          onTap: chooseUnit,
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  unit == null
+                                      ? 'None: plain numbers'
+                                      : unitLabel(unit!),
+                                ),
                               ),
-                            ),
-                            const Icon(Icons.arrow_drop_down),
-                          ],
+                              const Icon(Icons.arrow_drop_down),
+                            ],
+                          ),
                         ),
                       ),
                     ),

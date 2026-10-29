@@ -180,6 +180,40 @@ void main() {
     expect(type(), 'choice');
   });
 
+  testWidgets('a picker field opens on a letter, searching for it', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    await startApp(tester, FakeServer());
+    // From the search field to Class, then a letter.
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyD);
+    await tester.pumpAndSettle();
+    expect(find.text('Only items of this class'), findsOneWidget);
+    final search = tester.widget<TextField>(
+      find.descendant(
+        of: find.byType(Dialog),
+        matching: find.byType(TextField),
+      ),
+    );
+    expect(search.controller!.text, 'd');
+    expect(
+      search.controller!.selection,
+      const TextSelection.collapsed(offset: 1),
+    );
+    expect(find.text('Tools/Drills'), findsOneWidget);
+    // Enter takes the first match.
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(find.text('Only items of this class'), findsNothing);
+    expect(find.text('Tools/Drills'), findsOneWidget); // in the class field
+    // The down arrow opens it too, with nothing typed.
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pumpAndSettle();
+    expect(find.text('Only items of this class'), findsOneWidget);
+  });
+
   testWidgets('units by quantity, then by family', (tester) async {
     setSize(tester, 400, 800);
     final fake = FakeServer();

@@ -109,3 +109,44 @@ class _SelectKeysState<T> extends State<SelectKeys<T>> {
     child: widget.child,
   );
 }
+
+/// Keys for a field that opens a picker (a class, a location, a unit…):
+/// typing opens it with what was typed in its search, and the down arrow
+/// opens it, as a select box opens its list. Enter and space open it
+/// already, as for any button.
+class PickerKeys extends StatelessWidget {
+  const PickerKeys({super.key, required this.open, required this.child});
+
+  /// Opens the picker, searching for the text given; null when the field
+  /// can't be changed.
+  final void Function(String query)? open;
+  final Widget child;
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    final open = this.open;
+    if (open == null || event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      open('');
+      return KeyEventResult.handled;
+    }
+    final keys = HardwareKeyboard.instance;
+    final char = event.character;
+    if (char == null ||
+        char.trim().isEmpty ||
+        keys.isControlPressed ||
+        keys.isAltPressed ||
+        keys.isMetaPressed) {
+      return KeyEventResult.ignored;
+    }
+    open(char);
+    return KeyEventResult.handled;
+  }
+
+  @override
+  Widget build(BuildContext context) => Focus(
+    canRequestFocus: false,
+    skipTraversal: true,
+    onKeyEvent: _onKey,
+    child: child,
+  );
+}

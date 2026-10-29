@@ -13,6 +13,7 @@ import '../widgets/attachments.dart';
 import '../widgets/common.dart';
 import '../widgets/link.dart';
 import '../widgets/pickers.dart';
+import '../widgets/select_keys.dart';
 import '../widgets/value_fields.dart';
 
 /// The start screen, like `wtf find`: search words, a class, and with a
@@ -58,11 +59,12 @@ class _ItemSearchScreenState extends State<ItemSearchScreen> {
     super.dispose();
   }
 
-  Future<void> _chooseClass() async {
+  Future<void> _chooseClass([String query = '']) async {
     final id = await pickNode(
       context,
       TreeKind.classes,
       title: 'Only items of this class',
+      query: query,
     );
     if (id == null || id == _classId) return;
     _classes = await _client.tree(TreeKind.classes);
@@ -171,24 +173,29 @@ class _ItemSearchScreenState extends State<ItemSearchScreen> {
       onChanged: (_) => setState(() {}),
       onSubmitted: (_) => _search(),
     );
-    final classField = InkWell(
-      onTap: _chooseClass,
-      child: InputDecorator(
-        decoration: InputDecoration(
-          labelText: 'Class',
-          border: const OutlineInputBorder(),
-          prefixIcon: const Icon(Icons.category_outlined),
-          suffixIcon: _classId == null
-              ? const Icon(Icons.arrow_drop_down)
-              : IconButton(
-                  icon: const Icon(Icons.clear),
-                  tooltip: 'Any class',
-                  onPressed: _clearClass,
-                ),
-        ),
-        child: Text(
-          _classId == null ? 'Any class' : (_classes?.pathOf(_classId) ?? '…'),
-          overflow: TextOverflow.ellipsis,
+    final classField = PickerKeys(
+      open: _chooseClass,
+      child: InkWell(
+        onTap: _chooseClass,
+        child: InputDecorator(
+          decoration: InputDecoration(
+            labelText: 'Class',
+            border: const OutlineInputBorder(),
+            prefixIcon: const Icon(Icons.category_outlined),
+            suffixIcon: _classId == null
+                ? const Icon(Icons.arrow_drop_down)
+                : IconButton(
+                    icon: const Icon(Icons.clear),
+                    tooltip: 'Any class',
+                    onPressed: _clearClass,
+                  ),
+          ),
+          child: Text(
+            _classId == null
+                ? 'Any class'
+                : (_classes?.pathOf(_classId) ?? '…'),
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
       ),
     );

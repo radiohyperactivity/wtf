@@ -40,16 +40,18 @@ class Choice<T> {
 }
 
 /// Shows a list to choose from; [search] gives the candidates for what has
-/// been typed. Returns the chosen value, or null when cancelled.
+/// been typed, starting with [query] (typed into the field that opened it,
+/// see PickerKeys). Returns the chosen value, or null when cancelled.
 Future<T?> pick<T>(
   BuildContext context, {
   required String title,
   required Future<List<Choice<T>>> Function(String query) search,
   String hint = 'Search',
+  String query = '',
 }) => showDialog<T>(
   context: context,
   builder: (context) =>
-      _PickerDialog<T>(title: title, search: search, hint: hint),
+      _PickerDialog<T>(title: title, search: search, hint: hint, query: query),
 );
 
 /// [pick] from a list that is loaded once and filtered here.
@@ -57,11 +59,13 @@ Future<T?> pickFromList<T>(
   BuildContext context, {
   required String title,
   required Future<List<Choice<T>>> Function() load,
+  String query = '',
 }) {
   Future<List<Choice<T>>>? all;
   return pick<T>(
     context,
     title: title,
+    query: query,
     search: (q) async => (await (all ??= load()))
         .where((c) => matchesWords('${c.title} ${c.subtitle ?? ''}', q))
         .toList(),
@@ -74,11 +78,13 @@ class _PickerDialog<T> extends StatefulWidget {
     required this.title,
     required this.search,
     required this.hint,
+    required this.query,
   });
 
   final String title;
   final Future<List<Choice<T>>> Function(String query) search;
   final String hint;
+  final String query;
 
   @override
   State<_PickerDialog<T>> createState() => _PickerDialogState<T>();
@@ -89,16 +95,24 @@ class _PickerDialogState<T> extends State<_PickerDialog<T>> {
   Object? _error;
   Timer? _debounce;
   int _generation = 0;
+  // Typing goes on after what was typed into the field that opened it.
+  late final _query = TextEditingController.fromValue(
+    TextEditingValue(
+      text: widget.query,
+      selection: TextSelection.collapsed(offset: widget.query.length),
+    ),
+  );
 
   @override
   void initState() {
     super.initState();
-    _run('');
+    _run(widget.query);
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
+    _query.dispose();
     super.dispose();
   }
 
@@ -143,6 +157,7 @@ class _PickerDialogState<T> extends State<_PickerDialog<T>> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: TextField(
+                controller: _query,
                 autofocus: true,
                 decoration: InputDecoration(
                   prefixIcon: const Icon(Icons.search),
@@ -215,12 +230,14 @@ Future<String?> pickNode(
   bool forUse = false,
   Set<String> exclude = const {},
   bool allowTopLevel = false,
+  String query = '',
 }) {
   final client = context.read<Session>().client;
   final noun = kind == TreeKind.classes ? 'class' : 'location';
   return pickFromList<String>(
     context,
     title: title ?? 'Choose a $noun',
+    query: query,
     load: () async {
       final tree = await client.tree(kind);
       return [
@@ -248,11 +265,13 @@ Future<String?> pickNode(
 Future<ItemListed?> pickItem(
   BuildContext context, {
   String title = 'Choose an item',
+  String query = '',
 }) {
   final client = context.read<Session>().client;
   return pick<ItemListed>(
     context,
     title: title,
+    query: query,
     search: (q) async {
       final classes = await client.tree(TreeKind.classes);
       final page = await client.items(search: q, limit: 30);
@@ -282,11 +301,13 @@ Future<PickedUnit?> pickUnit(
   BuildContext context, {
   String? noneLabel,
   String? quantityId,
+  String query = '',
 }) {
   final client = context.read<Session>().client;
   return pickFromList<PickedUnit>(
     context,
     title: 'Choose a unit',
+    query: query,
     load: () async => [
       if (noneLabel != null) Choice(const PickedUnit(null), noneLabel),
       for (final f in await client.unitFamilies())

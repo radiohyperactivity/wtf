@@ -8,6 +8,7 @@ import '../api/units.dart';
 import '../session.dart';
 import '../widgets/common.dart';
 import '../widgets/pickers.dart';
+import '../widgets/select_keys.dart';
 import '../widgets/value_fields.dart';
 
 /// Adds an item (in [classId], if given), or edits the item with [code].
@@ -127,22 +128,24 @@ class _ItemFormState extends State<_ItemForm> {
     }
   }
 
-  Future<void> _chooseClass() async {
+  Future<void> _chooseClass([String query = '']) async {
     final id = await pickNode(
       context,
       TreeKind.classes,
       title: 'Class',
       forUse: true,
+      query: query,
     );
     if (id == null || id == _classId) return;
     setState(() => _classId = id);
     _loadValues();
   }
 
-  Future<void> _chooseUnit() async {
+  Future<void> _chooseUnit([String query = '']) async {
     final current = widget.item?.unit;
     final picked = await pickUnit(
       context,
+      query: query,
       // A new item may be counted in pieces; an existing one can only change
       // to another unit of the same quantity, as in the CLI.
       noneLabel: _editing ? null : 'None: counted in pieces',
@@ -259,19 +262,22 @@ class _ItemFormState extends State<_ItemForm> {
                   labelText: 'Class',
                   border: OutlineInputBorder(),
                 ),
-                child: InkWell(
-                  onTap: _chooseClass,
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          _classId == null
-                              ? 'Choose a class'
-                              : widget.classes.pathOf(_classId),
+                child: PickerKeys(
+                  open: _chooseClass,
+                  child: InkWell(
+                    onTap: _chooseClass,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _classId == null
+                                ? 'Choose a class'
+                                : widget.classes.pathOf(_classId),
+                          ),
                         ),
-                      ),
-                      const Icon(Icons.arrow_drop_down),
-                    ],
+                        const Icon(Icons.arrow_drop_down),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -293,17 +299,20 @@ class _ItemFormState extends State<_ItemForm> {
                     labelText: 'Stock is measured in',
                     border: OutlineInputBorder(),
                   ),
-                  child: InkWell(
-                    onTap: _chooseUnit,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            _unit == null ? 'pieces' : unitLabel(_unit!),
+                  child: PickerKeys(
+                    open: _chooseUnit,
+                    child: InkWell(
+                      onTap: _chooseUnit,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _unit == null ? 'pieces' : unitLabel(_unit!),
+                            ),
                           ),
-                        ),
-                        const Icon(Icons.arrow_drop_down),
-                      ],
+                          const Icon(Icons.arrow_drop_down),
+                        ],
+                      ),
                     ),
                   ),
                 ),

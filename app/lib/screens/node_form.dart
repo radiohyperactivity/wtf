@@ -9,6 +9,7 @@ import '../api/units.dart';
 import '../session.dart';
 import '../widgets/common.dart';
 import '../widgets/pickers.dart';
+import '../widgets/select_keys.dart';
 
 /// What the form starts from: a new node (under [parentId]) or an existing
 /// one, by label code (locations) or id (classes).
@@ -137,11 +138,12 @@ class _NodeFormState extends State<_NodeForm> {
     return (c, r);
   }
 
-  Future<void> _chooseParent() async {
+  Future<void> _chooseParent([String query = '']) async {
     final node = widget.node;
     final id = await pickNode(
       context,
       widget.args.kind,
+      query: query,
       title: 'Choose the parent',
       allowTopLevel: true,
       // A node can't move into itself or below itself.
@@ -266,19 +268,22 @@ class _NodeFormState extends State<_NodeForm> {
                   labelText: 'Parent',
                   border: OutlineInputBorder(),
                 ),
-                child: InkWell(
-                  onTap: _chooseParent,
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          _parent == null
-                              ? '(top level)'
-                              : widget.tree.pathOf(_parent),
+                child: PickerKeys(
+                  open: _chooseParent,
+                  child: InkWell(
+                    onTap: _chooseParent,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _parent == null
+                                ? '(top level)'
+                                : widget.tree.pathOf(_parent),
+                          ),
                         ),
-                      ),
-                      const Icon(Icons.arrow_drop_down),
-                    ],
+                        const Icon(Icons.arrow_drop_down),
+                      ],
+                    ),
                   ),
                 ),
               ),

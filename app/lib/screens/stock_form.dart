@@ -8,6 +8,7 @@ import '../api/units.dart';
 import '../session.dart';
 import '../widgets/common.dart';
 import '../widgets/pickers.dart';
+import '../widgets/select_keys.dart';
 import '../widgets/value_fields.dart';
 
 /// Adds a stock row (of [itemId] and at [locationId], when given), or edits
@@ -166,8 +167,8 @@ class _StockFormState extends State<_StockForm> {
     }
   }
 
-  Future<void> _chooseItem() async {
-    final found = await pickItem(context);
+  Future<void> _chooseItem([String query = '']) async {
+    final found = await pickItem(context, query: query);
     if (found == null) return;
     try {
       final item = await _client.item(found.id);
@@ -178,10 +179,11 @@ class _StockFormState extends State<_StockForm> {
     }
   }
 
-  Future<void> _chooseLocation() async {
+  Future<void> _chooseLocation([String query = '']) async {
     final id = await pickNode(
       context,
       TreeKind.locations,
+      query: query,
       title: 'Location',
       forUse: true,
     );
@@ -296,20 +298,23 @@ class _StockFormState extends State<_StockForm> {
                   labelText: 'Item',
                   border: OutlineInputBorder(),
                 ),
-                child: InkWell(
-                  onTap: _editing || widget.item != null ? null : _chooseItem,
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          item == null
-                              ? 'Choose an item'
-                              : '${item.name}  (${item.code})',
+                child: PickerKeys(
+                  open: _editing || widget.item != null ? null : _chooseItem,
+                  child: InkWell(
+                    onTap: _editing || widget.item != null ? null : _chooseItem,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            item == null
+                                ? 'Choose an item'
+                                : '${item.name}  (${item.code})',
+                          ),
                         ),
-                      ),
-                      if (!_editing && widget.item == null)
-                        const Icon(Icons.arrow_drop_down),
-                    ],
+                        if (!_editing && widget.item == null)
+                          const Icon(Icons.arrow_drop_down),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -319,19 +324,22 @@ class _StockFormState extends State<_StockForm> {
                   labelText: 'Location',
                   border: OutlineInputBorder(),
                 ),
-                child: InkWell(
-                  onTap: _chooseLocation,
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          _locationId == null
-                              ? 'Choose a location'
-                              : widget.locations.pathOf(_locationId),
+                child: PickerKeys(
+                  open: _chooseLocation,
+                  child: InkWell(
+                    onTap: _chooseLocation,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _locationId == null
+                                ? 'Choose a location'
+                                : widget.locations.pathOf(_locationId),
+                          ),
                         ),
-                      ),
-                      const Icon(Icons.arrow_drop_down),
-                    ],
+                        const Icon(Icons.arrow_drop_down),
+                      ],
+                    ),
                   ),
                 ),
               ),
