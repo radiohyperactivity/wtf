@@ -271,7 +271,7 @@ Decimal parseMeasure(
 /// Converts typed text to the JSON value the API expects for an attribute:
 /// numbers in the base unit ([units] must be given for attributes with a
 /// unit, [plainIn] is the unit picked for a plain number), yes/no, dates;
-/// text, url and choices (by name) as they are.
+/// choices by their option's name, ignoring case; text and url as they are.
 Object parseValue(
   Attribute a,
   String input, [
@@ -293,6 +293,13 @@ Object parseValue(
             (throw InputError('"$input" is not yes or no'));
       case 'date':
         return parseDate(input);
+      // An option, ignoring case, as the server takes it; by its own name.
+      case 'choice' when a.options.isNotEmpty:
+        return a.options
+                .map((o) => o.name)
+                .where((o) => o.toLowerCase() == input.toLowerCase())
+                .firstOrNull ??
+            (throw InputError('"$input" is not one of the options'));
     }
   } on InputError catch (e) {
     throw InputError('${a.name}: ${e.message}');

@@ -156,32 +156,34 @@ class _ValueFieldState extends State<ValueField> {
                 .where((o) => o.toLowerCase() == input.text.toLowerCase())
                 .firstOrNull ??
             '';
-        return SelectKeys<String>(
-          options: [('', ''), for (final o in options) (o, o)],
-          value: current,
-          onChanged: (v) => setState(() => input.controller.text = v),
-          child: DropdownButtonFormField<String>(
-            initialValue: current,
-            decoration: decoration.copyWith(
-              hintText: null,
-              helperText: switch ([?_hint, ?widget.helper]) {
-                [] => null,
-                final parts => parts.join('. '),
-              },
-            ),
-            items: [
-              DropdownMenuItem(
-                value: '',
-                child: Text(
-                  input.defaultText.isEmpty ? '—' : '— (${input.defaultText})',
-                ),
-              ),
-              for (final o in options)
-                DropdownMenuItem(value: o, child: Text(o)),
-            ],
-            onChanged: (v) => input.controller.text = v ?? '',
-            validator: (_) => input.validate(),
+        // Typed into, it narrows the list to the options with what was
+        // typed, open or not; the arrows and Enter choose. The text is the
+        // value: what isn't an option is refused when saving.
+        return DropdownMenuFormField<String>(
+          controller: input.controller,
+          initialSelection: current,
+          enableFilter: true,
+          // Typing everywhere, also on phones, where it is off by default.
+          requestFocusOnTap: true,
+          expandedInsets: EdgeInsets.zero,
+          label: Text(_label),
+          hintText: _hint,
+          helperText: widget.helper,
+          inputDecorationTheme: const InputDecorationTheme(
+            border: OutlineInputBorder(),
           ),
+          dropdownMenuEntries: [
+            // No value: the default, if any, applies.
+            DropdownMenuEntry(
+              value: '',
+              label: '',
+              labelWidget: Text(
+                input.defaultText.isEmpty ? '—' : '— (${input.defaultText})',
+              ),
+            ),
+            for (final o in options) DropdownMenuEntry(value: o, label: o),
+          ],
+          validator: (_) => input.validate(),
         );
       case 'date':
         return TextFormField(
