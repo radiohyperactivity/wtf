@@ -93,7 +93,7 @@ Every screen has a URL. In the web app it shows in the address bar, and it works
 | `/manage` | Links to attributes, units and accounts. |
 | `/attributes`, `/attributes/<id>` | The attributes; one attribute with its options (add, rename, delete). |
 | `/accounts`, `/accounts/<id>` | The accounts: email, privileges, password (keep, set or remove). |
-| `/units` | The units by quantity and family, for reference; Import adds more from a unit file. |
+| `/units` | The units by quantity and family, for reference; Import adds more from a model file. |
 
 **Choosing things:** wherever a location or class must be chosen, a picker with search and the tree replaces the CLI's typing with Tab. Units work as in the CLI: you can type `12mm` or `2.5 m` into a number field, and the app converts and checks it as you type, with the same rules as the CLI (decision 1).
 
@@ -268,7 +268,7 @@ Built for API revision 4, with `where` on `GET /items` and `--where` in the CLI 
 
 ### Importing units
 
-Built for API revision 5, with unit files ([seed/units-format.md](seed/units-format.md)) and `POST /units/import`. Made while you were away; see the decisions to discuss there.
+Built for API revision 5, with unit files and `POST /units/import`. Unit files are part of model files now, and the Units screen imports those (decision 61).
 
 33. **Import on the Units screen,** for accounts with the model write privilege, like `wtf unit import`.
     - **Choosing the file** uses the `file_picker` package, a new dependency. It works on the web, Windows, Android and iOS, and the Windows and web builds succeed with it. If you'd rather not depend on it, pasting the JSON into a text box would do instead.
@@ -367,4 +367,6 @@ Built with the server's tenants ([TENANTS.md](TENANTS.md)), API revision 11.
 
 ### Model files
 
-60. **Import a model** ([seed/model-format.md](seed/model-format.md)): an Import button on the class tree (model write privilege) puts a model file's classes at the top, and "Import a model here…" in a class's menu puts them below that class. As for unit files, a dry run comes first: the dialog says where the classes go, what would be added (attributes, options, classes, assignments), how much is there already, and every conflict. Import is offered only when there is something to add and nothing in the way.
+60. **Import a model** ([seed/model-format.md](seed/model-format.md)): an Import button on the class tree (model write privilege) puts a model file's classes at the top, and "Import a model here…" in a class's menu puts them below that class. A dry run comes first: the dialog says where the classes go, what would be added (units, attributes, options, classes, assignments), how much is there already, and every conflict. Import is offered only when there is something to add and nothing in the way.
+61. **Units come in model files** (API revision 12, [seed/model-format.md](seed/model-format.md), decisions 21–35). Manage → Units → Import imports a model file, with the same dialog as the class tree's Import; for a file without classes it doesn't say where classes go. The dialog takes the file's name from its `meta`.
+62. **Export as a model file…** in a class's menu saves the class with everything below it as "CLASS.json": a save dialog in the native apps, a download in the browser, as for attachments. Anyone who sees the class can export it, so read-only accounts get the menu too, with only Export in it. The file is indented, with its keys in the order the server wrote them.

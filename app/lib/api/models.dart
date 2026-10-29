@@ -127,66 +127,14 @@ class Quantity with Availability {
   final bool? choice;
 }
 
-/// The answer of POST /units/import: what was (or would be) added, how much
-/// was there already, and the conflicts.
-class UnitImport {
-  const UnitImport({
-    required this.applied,
-    required this.quantities,
-    required this.families,
-    required this.units,
-    required this.existing,
-    required this.conflicts,
-  });
-
-  factory UnitImport.fromJson(Json json) {
-    List<Json> added(String kind) =>
-        _list((json[kind] as Json)['added']).toList();
-    int existing(String kind) =>
-        (((json[kind] as Json)['existing'] as List?) ?? const []).length;
-    return UnitImport(
-      applied: json['applied'] as bool,
-      quantities: [for (final q in added('quantities')) '${q['name']}'],
-      families: [
-        for (final f in added('families')) '${f['quantity']} › ${f['name']}',
-      ],
-      units: [
-        for (final u in added('units'))
-          ('${u['quantity']} › ${u['family']}', '${u['symbol']}'),
-      ],
-      existing:
-          existing('quantities') + existing('families') + existing('units'),
-      conflicts: [
-        for (final c in _list(json['conflicts']))
-          ('${c['where']}', '${c['message']}'),
-      ],
-    );
-  }
-
-  final bool applied;
-
-  /// Names of quantities added; families as "Quantity › Family".
-  final List<String> quantities;
-  final List<String> families;
-
-  /// (Quantity › Family, symbol) of each unit added.
-  final List<(String, String)> units;
-
-  /// How many quantities, families and units were there already.
-  final int existing;
-
-  /// (where, message) of each conflict.
-  final List<(String, String)> conflicts;
-
-  bool get nothingNew =>
-      quantities.isEmpty && families.isEmpty && units.isEmpty;
-}
-
 /// The answer of POST /model/import (seed/model-format.md): what was (or
 /// would be) added, how much was there already, and the conflicts.
 class ModelImport {
   const ModelImport({
     required this.applied,
+    this.quantities = const [],
+    this.families = const [],
+    this.units = const [],
     required this.attributes,
     required this.options,
     required this.classes,
@@ -197,18 +145,24 @@ class ModelImport {
 
   factory ModelImport.fromJson(Json json) {
     List<String> added(String kind) => [
-      for (final x in ((json[kind] as Json)['added'] as List?) ?? const [])
+      for (final x in ((json[kind] as Json?)?['added'] as List?) ?? const [])
         '$x',
     ];
     int existing(String kind) =>
-        (((json[kind] as Json)['existing'] as List?) ?? const []).length;
+        (((json[kind] as Json?)?['existing'] as List?) ?? const []).length;
     return ModelImport(
       applied: json['applied'] as bool,
+      quantities: added('quantities'),
+      families: added('families'),
+      units: added('units'),
       attributes: added('attributes'),
       options: added('options'),
       classes: added('classes'),
       assignments: added('assignments'),
       existing:
+          existing('quantities') +
+          existing('families') +
+          existing('units') +
           existing('attributes') +
           existing('classes') +
           existing('assignments'),
@@ -221,6 +175,12 @@ class ModelImport {
 
   final bool applied;
 
+  /// Quantity names; families as "Quantity › Family"; units as
+  /// "Quantity › Family › symbol".
+  final List<String> quantities;
+  final List<String> families;
+  final List<String> units;
+
   /// Attribute names; options as "Attribute: option"; classes as paths
   /// ("MCU/AVR"); assignments as "path: attribute".
   final List<String> attributes;
@@ -228,13 +188,16 @@ class ModelImport {
   final List<String> classes;
   final List<String> assignments;
 
-  /// How many attributes, classes and assignments were there already.
+  /// How many things in the file were there already.
   final int existing;
 
   /// (where, message) of each conflict.
   final List<(String, String)> conflicts;
 
   bool get nothingNew =>
+      quantities.isEmpty &&
+      families.isEmpty &&
+      units.isEmpty &&
       attributes.isEmpty &&
       options.isEmpty &&
       classes.isEmpty &&

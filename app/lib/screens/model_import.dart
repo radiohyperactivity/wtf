@@ -1,5 +1,6 @@
-// Importing model files: attributes and classes set up for one use
-// (seed/model-format.md), from the class tree or below a class.
+// Model files (seed/model-format.md): units, attributes and classes set up
+// for one use. Importing one from the class tree, below a class or on the
+// Units screen; exporting a class with everything below it.
 
 import 'dart:convert';
 
@@ -10,11 +11,14 @@ import 'package:provider/provider.dart';
 import '../api/models.dart';
 import '../api/units.dart';
 import '../session.dart';
+import '../widgets/attachments.dart' show saveDownloadedFile;
 import '../widgets/common.dart';
-import 'attribute_screens.dart' show UnitFile;
+
+/// A model file chosen to import: its file name and its text.
+typedef ModelFile = ({String name, String text});
 
 /// Lets the user choose a model file; null when cancelled. Tests replace it.
-Future<UnitFile?> Function() pickModelFile = () async {
+Future<ModelFile?> Function() pickModelFile = () async {
   final files = await FilePicker.pickFiles(
     dialogTitle: 'Choose a model file',
     type: FileType.custom,
@@ -31,30 +35,37 @@ Future<UnitFile?> Function() pickModelFile = () async {
 /// Imports a model file, like `wtf model import`: a dry run first, which
 /// shows what would be added, how much is there already and any conflicts;
 /// then, when asked, the import. Its classes go below the class [parentId]
-/// (whose path is [parentPath]), or at the top.
-Future<void> importModelFile(
+/// (whose path is [parentPath]), or at the top. True when something was
+/// imported.
+Future<bool> importModelFile(
   BuildContext context, {
   String? parentId,
   String? parentPath,
 }) async {
   final client = context.read<Session>().client;
-  final UnitFile? file;
+  final ModelFile? file;
   try {
     file = await pickModelFile();
   } catch (e) {
     if (context.mounted) showError(context, e);
-    return;
+    return false;
   }
-  if (file == null || !context.mounted) return;
+  if (file == null || !context.mounted) return false;
   String title = file.name;
+  final bool hasClasses;
   try {
-    final named = (jsonDecode(file.text) as Map)['name'];
-    if (named is String && named.trim().isNotEmpty) {
-      title = '${named.trim()} (${file.name})';
+    final json = jsonDecode(file.text) as Map;
+    final meta = json['meta'];
+    if (meta is Map &&
+        meta['name'] is String &&
+        (meta['name'] as String).trim().isNotEmpty) {
+      title = '${(meta['name'] as String).trim()} (${file.name})';
     }
+    hasClasses =
+        json['classes'] is List && (json['classes'] as List).isNotEmpty;
   } on Object {
     showError(context, InputError('${file.name} is not JSON.'));
-    return;
+    return false;
   }
   final ModelImport preview;
   try {
@@ -65,39 +76,69 @@ Future<void> importModelFile(
     );
   } catch (e) {
     if (context.mounted) showError(context, e);
-    return;
+    return false;
   }
-  if (!context.mounted) return;
+  if (!context.mounted) return false;
+  final below = hasClasses ? (parentPath ?? '') : null;
   final go = await showDialog<bool>(
     context: context,
     builder: (context) =>
-        ModelImportDialog(title: title, below: parentPath, report: preview),
+        ModelImportDialog(title: title, below: below, report: preview),
   );
-  if (go != true || !context.mounted) return;
+  if (go != true || !context.mounted) return false;
   try {
     final done = await client.importModel(file.text, parent: parentId);
-    if (!context.mounted) return;
+    if (!context.mounted) return done.applied;
     if (!done.applied) {
       // Something changed since the dry run.
       await showDialog<void>(
         context: context,
         builder: (context) =>
-            ModelImportDialog(title: title, below: parentPath, report: done),
+            ModelImportDialog(title: title, below: below, report: done),
       );
-      return;
+      return false;
     }
-    showMessage(
-      context,
-      'Imported ${_count(done.classes.length, 'class', 'classes')} and '
-      '${_count(done.attributes.length, 'attribute')}.',
-    );
+    showMessage(context, 'Imported ${_imported(done)}.');
+    return true;
   } catch (e) {
     if (context.mounted) showError(context, e);
+    return false;
   }
+}
+
+/// What an import added, briefly: "2 classes and 3 attributes".
+String _imported(ModelImport r) {
+  final parts = [
+    if (r.classes.isNotEmpty) _count(r.classes.length, 'class', 'classes'),
+    if (r.attributes.isNotEmpty) _count(r.attributes.length, 'attribute'),
+    if (r.units.isNotEmpty) _count(r.units.length, 'unit'),
+    if (r.classes.isEmpty && r.attributes.isEmpty && r.units.isEmpty)
+      'what was new',
+  ];
+  return parts.length == 1
+      ? parts.single
+      : '${parts.sublist(0, parts.length - 1).join(', ')} and ${parts.last}';
 }
 
 String _count(int n, String one, [String? many]) =>
     '$n ${n == 1 ? one : (many ?? '${one}s')}';
+
+/// Exports the class [classId], named [name], with everything below it as a
+/// model file, like `wtf model export`, and saves it as "[name].json".
+Future<void> exportModelFile(
+  BuildContext context,
+  String classId,
+  String name,
+) async {
+  final client = context.read<Session>().client;
+  try {
+    final file = await client.exportModel(classId);
+    final fileName = '${name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')}.json';
+    await saveDownloadedFile(fileName, utf8.encode(file));
+  } catch (e) {
+    if (context.mounted) showError(context, e);
+  }
+}
 
 /// What a model import would add (or the conflicts that stop it), with
 /// Import when there is something to import and nothing in the way.
@@ -112,7 +153,8 @@ class ModelImportDialog extends StatelessWidget {
   final String title;
   final ModelImport report;
 
-  /// The path of the class the classes go below; null: at the top.
+  /// The path of the class the classes go below; '' at the top, and null
+  /// for a file without classes.
   final String? below;
 
   @override
@@ -143,13 +185,15 @@ class ModelImportDialog extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                below == null
-                    ? 'Its classes go at the top of the class tree.'
-                    : 'Its classes go below $below.',
-                style: theme.textTheme.bodySmall,
-              ),
-              const SizedBox(height: 8),
+              if (below case final below?) ...[
+                Text(
+                  below.isEmpty
+                      ? 'Its classes go at the top of the class tree.'
+                      : 'Its classes go below $below.',
+                  style: theme.textTheme.bodySmall,
+                ),
+                const SizedBox(height: 8),
+              ],
               if (blocked) ...[
                 Text(
                   'Nothing can be imported until these are fixed in the file:',
@@ -163,6 +207,11 @@ class ModelImportDialog extends StatelessWidget {
                 const Text('Everything in this file is there already.')
               else ...[
                 Text(blocked ? 'It would add:' : 'This adds:'),
+                if (r.quantities.isNotEmpty)
+                  line('Quantities', r.quantities.join(', ')),
+                if (r.families.isNotEmpty)
+                  line('Unit families', r.families.join(', ')),
+                if (r.units.isNotEmpty) line('Units', r.units.join(', ')),
                 if (r.attributes.isNotEmpty)
                   line('Attributes', r.attributes.join(', ')),
                 if (r.options.isNotEmpty) line('Options', r.options.join(', ')),

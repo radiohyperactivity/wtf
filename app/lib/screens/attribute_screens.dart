@@ -1,6 +1,3 @@
-import 'dart:convert';
-
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -12,6 +9,7 @@ import '../widgets/common.dart';
 import '../widgets/pickers.dart';
 import '../widgets/restore.dart';
 import '../widgets/value_fields.dart';
+import 'model_import.dart';
 
 String _describe(Attribute a) => [
   a.datatype,
@@ -577,7 +575,9 @@ class _UnitsScreenState extends State<UnitsScreen> {
             actions: [
               if (context.watch<Session>().canWriteModel)
                 TextButton.icon(
-                  onPressed: () => importUnitFile(context, reload),
+                  onPressed: () async {
+                    if (await importModelFile(context)) await reload();
+                  },
                   icon: const Icon(Icons.upload_file),
                   label: const Text('Import'),
                 ),
@@ -661,182 +661,6 @@ class _UnitsScreenState extends State<UnitsScreen> {
           ),
         );
       },
-    );
-  }
-}
-
-/// A unit file chosen to import: its file name and its text.
-typedef UnitFile = ({String name, String text});
-
-/// Lets the user choose a unit file; null when cancelled. Tests replace it.
-Future<UnitFile?> Function() pickUnitFile = () async {
-  final files = await FilePicker.pickFiles(
-    dialogTitle: 'Choose a unit file',
-    type: FileType.custom,
-    allowedExtensions: ['json'],
-  );
-  if (files.isEmpty) return null;
-  final bytes = await files.first.readAsBytes();
-  return (
-    name: files.first.name,
-    text: utf8.decode(bytes, allowMalformed: true),
-  );
-};
-
-/// Imports a unit file (seed/units-format.md), like `wtf unit import`: a
-/// dry run first, which shows what would be added, what is there already
-/// and any conflicts; then, when asked, the import. [reload] shows the new
-/// units.
-Future<void> importUnitFile(
-  BuildContext context,
-  Future<void> Function() reload,
-) async {
-  final client = context.read<Session>().client;
-  final UnitFile? file;
-  try {
-    file = await pickUnitFile();
-  } catch (e) {
-    if (context.mounted) showError(context, e);
-    return;
-  }
-  if (file == null || !context.mounted) return;
-  String title = file.name;
-  try {
-    final named = (jsonDecode(file.text) as Map)['name'];
-    if (named is String && named.trim().isNotEmpty) {
-      title = '${named.trim()} (${file.name})';
-    }
-  } on Object {
-    showError(context, InputError('${file.name} is not JSON.'));
-    return;
-  }
-  final UnitImport preview;
-  try {
-    preview = await client.importUnits(file.text, dryRun: true);
-  } catch (e) {
-    if (context.mounted) showError(context, e);
-    return;
-  }
-  if (!context.mounted) return;
-  final go = await showDialog<bool>(
-    context: context,
-    builder: (context) => _UnitImportDialog(title: title, report: preview),
-  );
-  if (go != true || !context.mounted) return;
-  try {
-    final done = await client.importUnits(file.text);
-    if (!context.mounted) return;
-    if (!done.applied) {
-      // Something changed since the dry run.
-      await showDialog<void>(
-        context: context,
-        builder: (context) => _UnitImportDialog(title: title, report: done),
-      );
-      return;
-    }
-    showMessage(
-      context,
-      'Imported ${_count(done.units.length, 'unit')}, '
-      '${_count(done.families.length, 'unit family', 'unit families')} and '
-      '${_count(done.quantities.length, 'quantity', 'quantities')}.',
-    );
-    await reload();
-  } catch (e) {
-    if (context.mounted) showError(context, e);
-  }
-}
-
-String _count(int n, String one, [String? many]) =>
-    '$n ${n == 1 ? one : (many ?? '${one}s')}';
-
-/// What an import would add (or the conflicts that stop it), with Import
-/// when there is something to import and nothing in the way.
-class _UnitImportDialog extends StatelessWidget {
-  const _UnitImportDialog({required this.title, required this.report});
-
-  final String title;
-  final UnitImport report;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final r = report;
-    final byFamily = <String, List<String>>{};
-    for (final (family, symbol) in r.units) {
-      byFamily.putIfAbsent(family, () => []).add(symbol);
-    }
-    Widget line(String label, String text) => Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Text.rich(
-        TextSpan(
-          children: [
-            TextSpan(
-              text: '$label: ',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            TextSpan(text: text),
-          ],
-        ),
-      ),
-    );
-    final blocked = r.conflicts.isNotEmpty;
-    return AlertDialog(
-      title: Text('Import $title'),
-      content: SizedBox(
-        width: 520,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (blocked) ...[
-                Text(
-                  'Nothing can be imported until these are fixed in the file:',
-                  style: TextStyle(color: theme.colorScheme.error),
-                ),
-                for (final (where, message) in r.conflicts)
-                  line(where, message),
-                const SizedBox(height: 16),
-              ],
-              if (r.nothingNew)
-                const Text('Everything in this file is there already.')
-              else ...[
-                Text(blocked ? 'It would add:' : 'This adds:'),
-                if (r.quantities.isNotEmpty)
-                  line('Quantities', r.quantities.join(', ')),
-                if (r.families.isNotEmpty)
-                  line('Unit families', r.families.join(', ')),
-                for (final MapEntry(:key, :value) in byFamily.entries)
-                  line('Units in $key', value.join(', ')),
-              ],
-              if (r.existing > 0 && !r.nothingNew)
-                Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: Text(
-                    '${_count(r.existing, 'thing')} in the file '
-                    '${r.existing == 1 ? 'is' : 'are'} there already, and '
-                    '${r.existing == 1 ? 'stays' : 'stay'} as '
-                    '${r.existing == 1 ? 'it is' : 'they are'}.',
-                    style: theme.textTheme.bodySmall,
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context, false),
-          child: Text(
-            blocked || r.nothingNew || r.applied ? 'Close' : 'Cancel',
-          ),
-        ),
-        if (!blocked && !r.nothingNew && !r.applied)
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Import'),
-          ),
-      ],
     );
   }
 }

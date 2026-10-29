@@ -97,14 +97,13 @@ class _TreeScreenState extends State<TreeScreen> {
                 tooltip: 'Collapse all',
                 onPressed: () => setState(_open.clear),
               ),
-              // A model file's attributes and classes (seed/model-format.md).
+              // A model file's units, attributes and classes (seed/model-format.md).
               if (!_locations && session.canWriteModel)
                 IconButton(
                   icon: const Icon(Icons.upload_file),
                   tooltip: 'Import a model',
                   onPressed: () async {
-                    await importModelFile(context);
-                    reload();
+                    if (await importModelFile(context)) reload();
                   },
                 ),
               IconButton(

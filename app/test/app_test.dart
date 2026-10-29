@@ -256,7 +256,8 @@ void main() {
     setSize(tester, 1000);
     final fake = FakeServer();
     const file =
-        '{"format": "wtf-model", "version": 1, "name": "Microcontrollers"}';
+        '{"format": "wtf-model", "version": 1, '
+        '"meta": {"name": "Microcontrollers"}, "classes": [{"name": "MCU"}]}';
     pickModelFile = () async => (name: 'mcu.json', text: file);
     addTearDown(() => pickModelFile = () async => null);
     await startApp(tester, fake);
@@ -299,14 +300,42 @@ void main() {
     await tester.pumpAndSettle();
   });
 
-  testWidgets('import a unit file: a preview first, then the units', (
+  testWidgets('export a class as a model file, also with read privilege', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    final saved = <(String, String)>[];
+    saveDownloadedFile = (name, bytes) async =>
+        saved.add((name, utf8.decode(bytes)));
+    addTearDown(() => saveDownloadedFile = (name, bytes) async {});
+    await startApp(tester, FakeServer(privilege: 'read_only'));
+    GoRouter.of(tester.element(find.byType(Scaffold).first))
+        .push('/classes/c-drills');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(PopupMenuButton<String>).last);
+    await tester.pumpAndSettle();
+    // Only exporting: the rest changes the class.
+    expect(find.text('Import a model here…'), findsNothing);
+    expect(find.text('Delete…'), findsNothing);
+    await tester.tap(find.text('Export as a model file…'));
+    await tester.pumpAndSettle();
+    // Named after the class, indented, its keys in the format's order.
+    expect(saved.single.$1, 'Drills.json');
+    expect(
+      saved.single.$2,
+      startsWith('{\n  "format": "wtf-model",\n  "version": 1,\n  "meta": {'),
+    );
+    expect(saved.single.$2, endsWith('}\n'));
+  });
+
+  testWidgets('import units from a model file: a preview, then the units', (
     tester,
   ) async {
     setSize(tester, 400, 800);
     final fake = FakeServer();
     String file = '';
-    pickUnitFile = () async => (name: 'pressure.json', text: file);
-    addTearDown(() => pickUnitFile = () async => null);
+    pickModelFile = () async => (name: 'pressure.json', text: file);
+    addTearDown(() => pickModelFile = () async => null);
     await startApp(tester, fake);
     await tester.tap(find.text('Manage'));
     await tester.pumpAndSettle();
@@ -315,7 +344,7 @@ void main() {
 
     // Conflicts: shown, and nothing to press but Close.
     file = jsonEncode({
-      'format': 'wtf-units',
+      'format': 'wtf-model',
       'version': 1,
       'quantities': [
         {
@@ -335,7 +364,7 @@ void main() {
 
     // A file that adds: the preview names it all, and Import imports it.
     file =
-        '{"format": "wtf-units", "version": 1, "name": "Pressure", "quantities": [{'
+        '{"format": "wtf-model", "version": 1, "meta": {"name": "Pressure"}, "quantities": [{'
         '"name": "Pressure", "base_unit": {"symbol": "Pa", "name": "pascal"}, '
         '"families": [{"name": "Pascals", "units": ['
         '{"symbol": "Pa", "name": "pascal", "factor": "1"}, '
@@ -346,17 +375,18 @@ void main() {
     await tester.tap(find.text('Import'));
     await tester.pumpAndSettle();
     expect(find.text('Import Pressure (pressure.json)'), findsOneWidget);
+    expect(find.textContaining('Its classes go'), findsNothing); // it has none
     expect(find.textContaining('Pressure › Pascals'), findsWidgets);
-    expect(find.textContaining('Pa, kPa'), findsOneWidget);
+    expect(
+      find.textContaining('Pressure › Pascals › Pa, Pressure › Pascals › kPa'),
+      findsOneWidget,
+    );
     expect(find.textContaining('there already'), findsOneWidget);
     await tester.tap(find.widgetWithText(FilledButton, 'Import'));
     await tester.pumpAndSettle();
     // The file goes as it was chosen, factors as written.
     expect(fake.unitImports.last, (file, false));
-    expect(
-      find.text('Imported 2 units, 1 unit family and 1 quantity.'),
-      findsOneWidget,
-    );
+    expect(find.text('Imported 2 units.'), findsOneWidget);
     // The screen shows the new quantity at once.
     expect(find.text('Pressure'), findsOneWidget);
   });

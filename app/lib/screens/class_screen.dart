@@ -154,7 +154,8 @@ class ClassScreen extends StatelessWidget {
                     '/history/classes/${c.id}?title=${Uri.encodeComponent(c.pathText)}',
                   ),
                 ),
-              if (write)
+              // Anyone who sees the class can export it; the rest changes it.
+              if (!c.deleted)
                 PopupMenuButton<String>(
                   onSelected: (action) async {
                     switch (action) {
@@ -168,12 +169,15 @@ class ClassScreen extends StatelessWidget {
                       case 'assign':
                         assign();
                       case 'import':
-                        await importModelFile(
+                        if (await importModelFile(
                           context,
                           parentId: c.id,
                           parentPath: c.pathText,
-                        );
-                        reload();
+                        )) {
+                          reload();
+                        }
+                      case 'export':
+                        await exportModelFile(context, c.id, c.name);
                       case 'delete':
                         if (await deleteNode(
                               context,
@@ -186,21 +190,31 @@ class ClassScreen extends StatelessWidget {
                         }
                     }
                   },
-                  itemBuilder: (context) => const [
-                    PopupMenuItem(value: 'edit', child: Text('Edit')),
-                    PopupMenuItem(
-                      value: 'add',
-                      child: Text('Add a class below'),
+                  itemBuilder: (context) => [
+                    if (write) ...const [
+                      PopupMenuItem(value: 'edit', child: Text('Edit')),
+                      PopupMenuItem(
+                        value: 'add',
+                        child: Text('Add a class below'),
+                      ),
+                      PopupMenuItem(
+                        value: 'assign',
+                        child: Text('Assign an attribute'),
+                      ),
+                      PopupMenuItem(
+                        value: 'import',
+                        child: Text('Import a model here…'),
+                      ),
+                    ],
+                    const PopupMenuItem(
+                      value: 'export',
+                      child: Text('Export as a model file…'),
                     ),
-                    PopupMenuItem(
-                      value: 'assign',
-                      child: Text('Assign an attribute'),
-                    ),
-                    PopupMenuItem(
-                      value: 'import',
-                      child: Text('Import a model here…'),
-                    ),
-                    PopupMenuItem(value: 'delete', child: Text('Delete…')),
+                    if (write)
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Text('Delete…'),
+                      ),
                   ],
                 ),
             ],

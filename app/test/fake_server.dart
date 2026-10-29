@@ -271,12 +271,13 @@ class FakeServer {
     'history_privilege': 'read_only',
   };
 
-  /// The bodies of POST /units/import, as sent, with dry_run.
+  /// The bodies of POST /model/import with quantities, as sent, with
+  /// dry_run.
   final List<(String, bool)> unitImports = [];
 
-  /// POST /units/import, as the server does it for files that only add
-  /// quantities, or add to Voltage: conflicts when a quantity named Voltage
-  /// has another base unit.
+  /// POST /model/import of a file of quantities, as the server does it for
+  /// files that only add quantities, or add to Voltage: conflicts when a
+  /// quantity named Voltage has another base unit.
   Map<String, dynamic> _importUnits(
     Map<String, dynamic> file,
     String text, {
@@ -296,9 +297,9 @@ class FakeServer {
           });
           continue;
         }
-        existing['quantities']!.add({'name': name});
+        existing['quantities']!.add(name);
       } else {
-        added['quantities']!.add({'name': name});
+        added['quantities']!.add(name);
       }
       final quantity = {
         'id': 'f-new${newFamilies.length}',
@@ -314,12 +315,9 @@ class FakeServer {
           final known =
               family == 'Voltage' &&
               (u['symbol'] == 'V' || u['symbol'] == 'mV');
-          (known ? existing : added)['units']!.add({
-            'quantity': name,
-            'family': family,
-            'symbol': u['symbol'],
-            'name': u['name'],
-          });
+          (known ? existing : added)['units']!.add(
+            '$name › $family › ${u['symbol']}',
+          );
           units.add({
             'id': 'u-new${units.length}',
             'name': u['name'],
@@ -331,9 +329,9 @@ class FakeServer {
           });
         }
         if (family == 'Voltage') {
-          existing['families']!.add({'quantity': name, 'name': family});
+          existing['families']!.add('$name › $family');
         } else {
-          added['families']!.add({'quantity': name, 'name': family});
+          added['families']!.add('$name › $family');
           newFamilies.add({
             'id': 'f-new${newFamilies.length}',
             'name': family,
@@ -351,6 +349,9 @@ class FakeServer {
       'dry_run': dryRun,
       for (final k in added.keys)
         k: {'added': added[k], 'existing': existing[k]},
+      for (final k in ['attributes', 'classes', 'assignments'])
+        k: {'added': [], 'existing': []},
+      'options': {'added': []},
       'conflicts': conflicts,
     };
   }
@@ -521,6 +522,10 @@ class FakeServer {
           }
         }
         return _problem(404, 'Not found');
+      case ('POST', ['model', 'import']) when body!.containsKey('quantities'):
+        return _json(
+          _importUnits(body, req.body, dryRun: q['dry_run'] == 'true'),
+        );
       case ('POST', ['model', 'import']):
         // As the server reports a new MCU model; a dry run keeps nothing.
         final dryRun = q['dry_run'] == 'true';
@@ -542,9 +547,15 @@ class FakeServer {
           },
           'conflicts': <Object>[],
         });
-      case ('POST', ['units', 'import']):
-        return _json(
-          _importUnits(body!, req.body, dryRun: q['dry_run'] == 'true'),
+      case ('GET', ['classes', _, 'model']):
+        // The keys in the format's order, as the server writes them.
+        return http.Response(
+          '{"format": "wtf-model", "version": 1, '
+          '"meta": {"name": "Drills", "class": "Tools/Drills"}, '
+          '"attributes": [{"name": "Voltage", "datatype": "float", "unit": "V"}], '
+          '"classes": [{"name": "Drills", "attributes": [{"attribute": "Voltage"}]}]}',
+          200,
+          headers: _headers,
         );
       case ('GET', ['unit-families']):
         return _json([

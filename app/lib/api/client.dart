@@ -13,7 +13,7 @@ import 'units.dart';
 /// The API version and revision this app was built for.
 const apiPath = '/api/v1';
 const apiVersion = 1;
-const apiRevision = 11;
+const apiRevision = 12;
 
 const sessionCookie = 'wtf_session';
 
@@ -219,7 +219,7 @@ class ApiClient {
   // Data that rarely changes, kept for the session: the trees (revalidated
   // with their ETag on every use), and the unit families with their units.
   // A tree this client changes is fetched again at once (see _wrote); units
-  // only change by an import (see importUnits).
+  // only change by an import (see importModel).
   final Map<TreeKind, Tree> _trees = {};
   Future<List<UnitFamily>>? _families;
   final _treeChanges = StreamController<TreeKind>.broadcast();
@@ -660,23 +660,9 @@ class ApiClient {
     for (final f in await unitFamilies()) ...f.units,
   ];
 
-  /// POST /units/import: imports a unit file (seed/units-format.md), sent as
-  /// it is, so no factor loses digits. With [dryRun], only tells.
-  Future<UnitImport> importUnits(String file, {bool dryRun = false}) async {
-    final json = await _call(
-      'POST',
-      '/units/import',
-      query: {if (dryRun) 'dry_run': 'true'},
-      body: RawJson(file),
-    ) as Json;
-    final report = UnitImport.fromJson(json);
-    if (report.applied) _families = null; // fetched again with the new units
-    return report;
-  }
-
   /// POST /model/import: imports a model file (seed/model-format.md), sent
-  /// as it is, below class [parent] or at the top. With [dryRun], only
-  /// tells.
+  /// as it is so that no factor loses digits; its classes go below class
+  /// [parent] or at the top. With [dryRun], only tells.
   Future<ModelImport> importModel(
     String file, {
     String? parent,
@@ -689,8 +675,19 @@ class ApiClient {
       body: RawJson(file),
     ) as Json;
     final report = ModelImport.fromJson(json);
-    if (report.applied) await _wrote('/classes'); // the new classes
+    if (report.applied) {
+      _families = null; // fetched again with the new units
+      await _wrote('/classes'); // the new classes
+    }
     return report;
+  }
+
+  /// GET /classes/{id}/model: the class with everything below it as a model
+  /// file, indented, with its keys in the order the server wrote them.
+  Future<String> exportModel(String classId) async {
+    final resp = await _request('GET', '/classes/$classId/model');
+    final file = jsonDecode(utf8.decode(resp.bodyBytes));
+    return '${const JsonEncoder.withIndent('  ').convert(file)}\n';
   }
 
   /// Turns a quantity on or off for choosing units (null: back to its
