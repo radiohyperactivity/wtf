@@ -560,6 +560,15 @@ class Tree {
   /// The path of a node, or its id when the tree doesn't know it.
   String pathOf(String? id) => this[id]?.path ?? id ?? '';
 
+  /// The photo of [id], else of the nearest node above it that has one:
+  /// what an item without a photo of its own shows, from its class.
+  Attachment? photoOf(String? id) {
+    for (var n = this[id]; n != null; n = this[n.parent]) {
+      if (n.photo case final photo?) return photo;
+    }
+    return null;
+  }
+
   /// The nodes from the root down to [id].
   List<TreeNode> ancestry(String id) {
     final out = <TreeNode>[];

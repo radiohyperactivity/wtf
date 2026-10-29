@@ -474,6 +474,35 @@ void main() {
     expect(find.text('Pressure'), findsOneWidget);
   });
 
+  testWidgets('an item without a photo shows its class\'s, or a parent\'s', (
+    tester,
+  ) async {
+    final fake = FakeServer();
+    // Drills has none, its parent Tools has one; the items have none.
+    fake.classes.firstWhere((c) => c['id'] == 'c-tools')['photo'] = {
+      'id': 'att-tools',
+      'title': 'Tools',
+      'type': 'image/png',
+      'size': 3,
+      'hash': 'ab',
+    };
+    setSize(tester, 1200);
+    await startApp(tester, fake);
+    await search(tester, 'drill');
+    expect(find.byType(Thumbnail), findsOneWidget); // in the results table
+    await tester.tap(find.text('Cordless drill'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ObjectPhoto), findsOneWidget);
+    // It is the class's: the item's own attachments don't list it.
+    expect(
+      find.descendant(
+        of: find.byType(AttachmentList),
+        matching: find.byType(Thumbnail),
+      ),
+      findsNothing,
+    );
+  });
+
   testWidgets('the item photo: beside the details, or above the stock', (
     tester,
   ) async {

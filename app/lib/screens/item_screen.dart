@@ -33,7 +33,7 @@ class ItemScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final session = context.watch<Session>();
     final client = session.client;
-    return Loader<(ItemDetail, Map<String, String>, Tree)>(
+    return Loader<(ItemDetail, Map<String, String>, Tree, Tree)>(
       key: ValueKey(code),
       title: 'Item $code',
       refreshOn: client.treeChanges,
@@ -49,10 +49,12 @@ class ItemScreen extends StatelessWidget {
           await client.locationPaths(item.stock.map((s) => s.location)),
           // Cached already, for the paths.
           await client.tree(TreeKind.locations),
+          // For the class's photo, when the item has none of its own.
+          await client.tree(TreeKind.classes),
         );
       },
       builder: (context, data, reload) {
-        final (item, paths, locations) = data;
+        final (item, paths, locations, classes) = data;
         Future<void> open(String path) async {
           await context.push(path);
           reload();
@@ -136,7 +138,8 @@ class ItemScreen extends StatelessWidget {
                     ),
                   // The class's values are details like the code and class.
                   WithPhoto(
-                    photo: item.photo,
+                    // Its own, else its class's (or a parent class's).
+                    photo: item.photo ?? classes.photoOf(item.cls.id),
                     children: [
                       const SizedBox(height: 8),
                       Field('Code', item.code),

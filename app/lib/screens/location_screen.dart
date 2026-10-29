@@ -15,10 +15,19 @@ import 'node_delete.dart';
 const _stockShown = 1000;
 
 class _LocationData {
-  const _LocationData(this.location, this.tree, this.stock, this.stockTotal);
+  const _LocationData(
+    this.location,
+    this.tree,
+    this.classes,
+    this.stock,
+    this.stockTotal,
+  );
 
   final Location location;
   final Tree tree;
+
+  /// For the photos of items without one of their own.
+  final Tree classes;
   final List<Stock> stock;
   final int stockTotal;
 }
@@ -45,11 +54,12 @@ class LocationScreen extends StatelessWidget {
         }
         final l = await client.location(target.location.id);
         final tree = await client.tree(TreeKind.locations);
+        final classes = await client.tree(TreeKind.classes);
         final page = await client.stockList(
           locationId: l.id,
           limit: _stockShown,
         );
-        return _LocationData(l, tree, page.rows, page.total);
+        return _LocationData(l, tree, classes, page.rows, page.total);
       },
       builder: (context, data, reload) {
         final l = data.location;
@@ -199,6 +209,7 @@ class LocationScreen extends StatelessWidget {
                     for (final s in here)
                       _StockRow(
                         stock: s,
+                        classes: data.classes,
                         place: null,
                         onTap: () => open('/stock/${s.code}'),
                       ),
@@ -208,6 +219,7 @@ class LocationScreen extends StatelessWidget {
                     for (final s in below)
                       _StockRow(
                         stock: s,
+                        classes: data.classes,
                         place: relative(s.location),
                         onTap: () => open('/stock/${s.code}'),
                       ),
@@ -235,11 +247,13 @@ class LocationScreen extends StatelessWidget {
 class _StockRow extends StatelessWidget {
   const _StockRow({
     required this.stock,
+    required this.classes,
     required this.place,
     required this.onTap,
   });
 
   final Stock stock;
+  final Tree classes;
   final String? place;
   final VoidCallback onTap;
 
@@ -247,9 +261,9 @@ class _StockRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListTile(
       dense: true,
-      // The row's own photo, else its item's.
+      // The row's own photo, else its item's, else its class's.
       leading: PhotoOrIcon(
-        stock.photo ?? stock.item.photo,
+        stock.photo ?? stock.item.photo ?? classes.photoOf(stock.item.classId),
         icon: Icons.inventory_2_outlined,
       ),
       title: Text(stock.item.name),

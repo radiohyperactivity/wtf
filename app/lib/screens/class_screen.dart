@@ -300,7 +300,7 @@ class ClassScreen extends StatelessWidget {
                     ListTile(
                       dense: true,
                       leading: PhotoOrIcon(
-                        i.photo,
+                        i.photo ?? data.tree.photoOf(i.classId),
                         icon: Icons.inventory_2_outlined,
                       ),
                       title: Text(i.name),

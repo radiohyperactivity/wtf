@@ -747,7 +747,10 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    PhotoOrIcon(item.photo, icon: Icons.inventory_2_outlined),
+                    PhotoOrIcon(
+                      item.photo ?? _classes!.photoOf(item.classId),
+                      icon: Icons.inventory_2_outlined,
+                    ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Column(
@@ -969,7 +972,10 @@ class _FoundItem extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.only(right: 12),
-              child: PhotoOrIcon(item.photo, icon: Icons.inventory_2_outlined),
+              child: PhotoOrIcon(
+                item.photo ?? classes.photoOf(item.classId),
+                icon: Icons.inventory_2_outlined,
+              ),
             ),
             Expanded(
               child: Column(
