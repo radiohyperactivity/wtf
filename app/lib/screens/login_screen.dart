@@ -81,7 +81,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       textAlign: TextAlign.center,
                     ),
                     Text(
-                      'Where the Fxxx',
+                      'Where to Find',
                       style: theme.textTheme.titleMedium,
                       textAlign: TextAlign.center,
                     ),

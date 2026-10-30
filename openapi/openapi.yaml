@@ -10,7 +10,7 @@ info:
     version the server doesn't serve gets an `unsupported-api-version`
     problem that lists the versions it does serve (`supported`).
 
-    Where the Fuck: a register of the things you own and where they are.
+    Where to Find: a register of the things you own and where they are.
     Every endpoint calls one database function; see API.md for the semantics
     and WTFD.md for the HTTP conventions.
 

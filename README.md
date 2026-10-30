@@ -1,4 +1,4 @@
-# WtF – Where the Fuck
+# WtF – Where to Find
 
 Keeping your shit organised: a database of the things you own (from tiny electronic components to tools, cars and boats) and where they are.
 
