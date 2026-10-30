@@ -1,3 +1,6 @@
 /dist/
 /local/
 /.vscode/
+
+# Claude Code's personal settings
+.claude/settings.local.json

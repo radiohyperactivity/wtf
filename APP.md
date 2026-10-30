@@ -45,7 +45,7 @@ app/
 ```
 
 - **App ID:** `io.bbj.wtf` on every platform; it can't change after the first store release.
-- **Names:** "Where the Fxxx" in the stores. Under the icon on a home screen, the shorter "WtF" fits better.
+- **Names:** "Where to Find" in the stores. Under the icon on a home screen, the shorter "WtF" fits better.
 
 ## Talking to the API
 
@@ -136,7 +136,7 @@ Testing uses `flutter_test`, which is built into Flutter.
 1. **Numbers with units are converted by each client, for now.** The API keeps taking numbers in the base unit of the quantity, as before. Each client turns `12mm` into `0.012` itself and checks it while you type, so mistakes are caught at once. The CLI does this today (`internal/cli/units.go`), and the apps get the same rules in Dart. Doing it on the server was tried, and set aside because prompts and forms could then only report mistakes when saving.
 2. **No `--dev-origin` for now.** Development uses the Windows app, which needs nothing on the server, and the web app is tested through `--web-root`. The switch can come later if web development without hot reload becomes a nuisance.
 3. **The start screen is search.**
-4. **The name under the icon is "WtF".** If the stores object to "Where the Fxxx", WtF can also stand for "Where to Find".
+4. **The name under the icon is "WtF",** and in full "Where to Find". It was "Where the Fxxx" until it was renamed before the first App Store review, so the stores have nothing to object to.
 
 ## Decisions made while building
 
@@ -319,6 +319,7 @@ Built for API revision 9: the class and location tree nodes include their `photo
     - **Web:** `favicon.ico` (16, 32 and 48), with `favicon.svg` for browsers that take SVG; `icon-192.png` and `icon-512.png` in the manifest; `apple-touch-icon.png` for iOS home screens. The manifest's and the page's theme colour is the logo's orange, `#ff7828`.
     - **Maskable icons** (Android crops them to its own shape) come from `logo/icon-maskable.svg`: the same stack, smaller, on a full orange square, so nothing is cut off.
     - **Windows:** `app_icon.ico` holds the favicon PNGs at 16, 32 and 48 pixels, and `icon.svg` rendered at 64, 128 and 256 (with headless Chrome).
+    - **iOS:** `icon.svg` without its rounded corners, a full orange square, since iOS rounds icons itself; without an alpha channel, which the App Store refuses. **macOS:** `icon.svg` as it is, 824 of 1024 pixels with a transparent margin, the size of the Mac's other app icons. Both rendered with headless Chrome (decision 70).
 
 ### Image memory
 
@@ -400,3 +401,12 @@ Built with the server's tenants ([TENANTS.md](TENANTS.md)), API revision 11.
     - **Users** add, change, delete and restore items and stock rows, with their values and attachments, and put stock in any location; **viewers** get none of those buttons. Everyone sees the history of items and stock rows.
     - **Accounts** have one Role field; a new account is a viewer unless another role is chosen. Your own role can't be changed (the server refuses it), so the field is greyed out for you. Me shows your role.
     - **Old history:** account entries from before roles still read, as "Data privilege: read only → read and write".
+
+### iOS, macOS and Linux
+
+70. **The three projects** (`app/ios/`, `app/macos/`, `app/linux/`), made with `flutter create`, app ID `io.bbj.wtf` and the name "WtF", as on the other platforms. They're built on your own machines over SSH rather than on GitHub: iOS and macOS on the Mac Mini (mercury), Linux on venus.
+    - **The window waits for the app** on macOS and Linux too (decision 66): the runners leave it hidden until `lib/window_place.dart` has put it where it was.
+    - **macOS** apps run in Apple's sandbox, so the app asks for network access (to reach the server) and for files you choose (attachments, model files).
+    - **iOS** says why it wants the camera and the photo library; iOS shows that when asking you, and an app without it is stopped.
+    - **Linux** needs `libsecret` to build and the desktop's keyring to run, to keep you logged in.
+    - **Not yet:** a real iPhone, which waits for the Apple Developer account, and a Linux launcher entry.
