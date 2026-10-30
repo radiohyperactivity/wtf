@@ -6,8 +6,9 @@ import '../session.dart';
 import '../widgets/common.dart';
 import 'model_import.dart';
 
-/// What the inventory is set up with, rather than what it keeps: attributes
-/// (with their options), units and accounts; and importing model files.
+/// What the inventory is set up with, rather than what it keeps: classes,
+/// attributes (with their options), units and accounts; and importing model
+/// files.
 class ManageScreen extends StatelessWidget {
   const ManageScreen({super.key});
 
@@ -21,6 +22,14 @@ class ManageScreen extends StatelessWidget {
       body: Readable(
         child: ListView(
           children: [
+            ListTile(
+              leading: const Icon(Icons.category_outlined),
+              title: const Text('Classes'),
+              subtitle: const Text(
+                'What kinds of items there are, and their attributes',
+              ),
+              onTap: () => context.push('/classes'),
+            ),
             if (me.modelPrivilege.canRead)
               ListTile(
                 leading: const Icon(Icons.label_outline),

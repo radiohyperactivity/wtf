@@ -103,7 +103,7 @@ Flutter has standard size classes, measured in logical pixels, which are indepen
 
 | Width | Typical device | Navigation | Content |
 |-------|----------------|------------|---------|
-| under 600 | phone | bar at the bottom: Items, Locations, Classes, Manage, Me | one screen at a time |
+| under 600 | phone | bar at the bottom: Items, Locations, Manage, Me | one screen at a time |
 | 600–840 | small tablet, phone sideways | rail on the left | list and details side by side where it fits |
 | over 840 | tablet, desktop, browser | rail on the left | list and details side by side, the tree always visible |
 
@@ -387,3 +387,7 @@ Built with the server's tenants ([TENANTS.md](TENANTS.md)), API revision 11.
 ### Importing, in one place
 
 67. **Manage → Import** (model write privilege) is the one place to import a model file, since a file may hold units, attributes, classes or any of them (your idea). The Import buttons on the class tree and the Units screen, and "Import a model here…" in a class's menu, are gone (decisions 33, 60 and 61 described them). The preview says where a file's classes go, the top of the class tree to start with, and Change… chooses a class (or the top) to put them below; the dry run is then done again, since what is there already depends on where they go. A file without classes isn't asked. Export stays in a class's menu, as an export is of one class.
+
+### Classes under Manage
+
+68. **Classes are under Manage,** first in its list, and no longer a destination of their own (your idea): they are what the inventory is set up with, like attributes and units, and they are where an import's classes go. That leaves four destinations: Items, Locations, Manage and Me. Everyone sees Classes, as everyone sees Units; only Attributes needs model read. The class tree and class screens, and their history, belong to Manage in the bar and the rail, and their URLs (`/classes/…`) are as before. Browsing items by class is one tap further away; the Items screen's class field filters by class too.

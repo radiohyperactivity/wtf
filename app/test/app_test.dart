@@ -113,11 +113,16 @@ void main() {
     expect(storage.token, isNull);
   });
 
-  testWidgets('Manage holds attributes, units and accounts', (tester) async {
+  testWidgets('Manage holds classes, attributes, units and accounts', (
+    tester,
+  ) async {
     setSize(tester, 400, 800);
     await startApp(tester, FakeServer());
+    // Four destinations; classes aren't one.
+    expect(find.byType(NavigationDestination), findsNWidgets(4));
     await tester.tap(find.text('Manage'));
     await tester.pumpAndSettle();
+    expect(find.text('Classes'), findsOneWidget);
     expect(find.text('Units'), findsOneWidget);
     // This account may not read accounts.
     expect(find.text('Accounts'), findsNothing);
@@ -127,7 +132,7 @@ void main() {
     // Still under Manage.
     expect(
       tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex,
-      3,
+      2,
     );
   });
 
@@ -344,11 +349,18 @@ void main() {
     pickModelFile = () async => (name: 'mcu.json', text: file);
     addTearDown(() => pickModelFile = () async => null);
     await startApp(tester, fake);
-    // Importing is under Manage, and nowhere else.
-    await tester.tap(find.text('Classes'));
+    // Importing is under Manage, and nowhere else; so are the classes.
+    await tester.tap(find.text('Manage'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ListTile, 'Classes'));
     await tester.pumpAndSettle();
     expect(find.byIcon(Icons.upload_file), findsNothing);
-    await tester.tap(find.text('Manage'));
+    // The class tree belongs to Manage, and Back goes there.
+    expect(
+      tester.widget<NavigationRail>(find.byType(NavigationRail)).selectedIndex,
+      2,
+    );
+    await tester.tap(find.byTooltip('Back'));
     await tester.pumpAndSettle();
 
     // A dry run first: what it adds, and where.

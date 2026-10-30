@@ -16,7 +16,6 @@ class _Destination {
 const _destinations = [
   _Destination('/', 'Items', Icons.inventory_2_outlined, Icons.inventory_2),
   _Destination('/locations', 'Locations', Icons.place_outlined, Icons.place),
-  _Destination('/classes', 'Classes', Icons.category_outlined, Icons.category),
   _Destination('/manage', 'Manage', Icons.tune_outlined, Icons.tune),
   _Destination('/me', 'Me', Icons.person_outline, Icons.person),
 ];
@@ -30,14 +29,14 @@ class AppShell extends StatelessWidget {
   final String location;
   final Widget child;
 
-  /// The destination a screen belongs to: locations and classes (and their
-  /// history) to their trees, attributes, units and accounts to Manage,
-  /// everything else (items, stock, search results) to Items.
+  /// The destination a screen belongs to: locations (and their history) to
+  /// their tree, classes, attributes, units and accounts (and their history)
+  /// to Manage, everything else (items, stock, search results) to Items.
   int get _selected {
     var path = location.startsWith('/history/')
         ? location.substring('/history'.length)
         : location;
-    if (RegExp(r'^/(attributes|accounts|units)(/|$)').hasMatch(path)) {
+    if (RegExp(r'^/(classes|attributes|accounts|units)(/|$)').hasMatch(path)) {
       path = '/manage';
     }
     final i = _destinations.lastIndexWhere(
