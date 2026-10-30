@@ -165,7 +165,7 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('account', 'read');
+    PERFORM util.require('admin');
     RETURN (
         SELECT COALESCE(jsonb_agg(util.account_json(a.id) ORDER BY util.natural_key(a.email), a.id), '[]'::jsonb)
         FROM account a
@@ -182,7 +182,7 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('account', 'read');
+    PERFORM util.require('admin');
     IF NOT EXISTS (SELECT 1 FROM account WHERE id = p_id AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('account', p_id);
     END IF;
@@ -200,15 +200,12 @@ BEGIN
 END;
 $$;
 
--- Creates an account. p_password NULL creates it without a password: it
--- can't log in until one is set.
+-- Creates an account, a viewer unless p_role says otherwise. p_password
+-- NULL creates it without a password: it can't log in until one is set.
 CREATE FUNCTION account_create(
-    p_email             text,
-    p_password          text      DEFAULT NULL,
-    p_data_privilege    privilege DEFAULT 'none',
-    p_model_privilege   privilege DEFAULT 'none',
-    p_account_privilege privilege DEFAULT 'none',
-    p_history_privilege privilege DEFAULT 'none'
+    p_email    text,
+    p_password text DEFAULT NULL,
+    p_role     role DEFAULT 'viewer'
 ) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
@@ -216,12 +213,11 @@ AS $$
 DECLARE
     v_id     uuid;
 BEGIN
-    PERFORM util.require('account', 'write');
+    PERFORM util.require('admin');
     PERFORM util.check_email(p_email);
-    INSERT INTO account (tenant, email, password_hash,
-                         data_privilege, model_privilege, account_privilege, history_privilege)
+    INSERT INTO account (tenant, email, password_hash, role)
     VALUES (util.tenant(), btrim(p_email), util.password_hash(p_password),
-            p_data_privilege, p_model_privilege, p_account_privilege, p_history_privilege)
+            COALESCE(p_role, 'viewer'))
     RETURNING id INTO v_id;
 
     RETURN util.account_json(v_id);
@@ -229,10 +225,9 @@ END;
 $$;
 
 -- Changes the fields present in p_patch: email, password (null removes it:
--- the account can't log in), data_privilege, model_privilege,
--- account_privilege, history_privilege. Changing the password ends the
--- account's sessions (except the caller's own). You can't remove your own
--- account privilege. Deleted accounts can't be changed.
+-- the account can't log in) and role. Changing the password ends the
+-- account's sessions (except the caller's own). You can't change your own
+-- role, so there is always an admin. Deleted accounts can't be changed.
 CREATE FUNCTION account_patch(p_id uuid, p_patch jsonb) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
@@ -240,18 +235,16 @@ AS $$
 DECLARE
     v_self   uuid := (SELECT account FROM util.current_session());
 BEGIN
-    PERFORM util.require('account', 'write');
+    PERFORM util.require('admin');
     PERFORM util.check_patch(p_patch,
-        ARRAY['email', 'password', 'data_privilege', 'model_privilege', 'account_privilege', 'history_privilege'],
-        ARRAY['email', 'data_privilege', 'model_privilege', 'account_privilege', 'history_privilege']);
+        ARRAY['email', 'password', 'role'],
+        ARRAY['email', 'role']);
 
     IF NOT EXISTS (SELECT 1 FROM account WHERE id = p_id AND tenant = util.tenant() AND NOT deleted) THEN
         PERFORM util.raise_not_found('account', p_id);
     END IF;
-    IF p_id = v_self AND p_patch ? 'account_privilege'
-       AND (p_patch ->> 'account_privilege')::privilege <> 'read_write'
-    THEN
-        RAISE EXCEPTION 'You can''t remove your own account privilege'
+    IF p_id = v_self AND p_patch ? 'role' AND (p_patch ->> 'role')::role <> 'admin' THEN
+        RAISE EXCEPTION 'You can''t change your own role'
             USING ERRCODE = 'check_violation';
     END IF;
     IF p_patch ? 'email' THEN
@@ -259,18 +252,12 @@ BEGIN
     END IF;
 
     UPDATE account
-    SET email             = CASE WHEN p_patch ? 'email'
-                                 THEN btrim(p_patch ->> 'email') ELSE email END,
-        password_hash     = CASE WHEN p_patch ? 'password'
-                                 THEN util.password_hash(p_patch ->> 'password') ELSE password_hash END,
-        data_privilege    = CASE WHEN p_patch ? 'data_privilege'
-                                 THEN (p_patch ->> 'data_privilege')::privilege ELSE data_privilege END,
-        model_privilege   = CASE WHEN p_patch ? 'model_privilege'
-                                 THEN (p_patch ->> 'model_privilege')::privilege ELSE model_privilege END,
-        account_privilege = CASE WHEN p_patch ? 'account_privilege'
-                                 THEN (p_patch ->> 'account_privilege')::privilege ELSE account_privilege END,
-        history_privilege = CASE WHEN p_patch ? 'history_privilege'
-                                 THEN (p_patch ->> 'history_privilege')::privilege ELSE history_privilege END
+    SET email         = CASE WHEN p_patch ? 'email'
+                             THEN btrim(p_patch ->> 'email') ELSE email END,
+        password_hash = CASE WHEN p_patch ? 'password'
+                             THEN util.password_hash(p_patch ->> 'password') ELSE password_hash END,
+        role          = CASE WHEN p_patch ? 'role'
+                             THEN (p_patch ->> 'role')::role ELSE role END
     WHERE id = p_id;
 
     IF p_patch ? 'password' THEN
@@ -283,25 +270,22 @@ END;
 $$;
 
 -- Deletes an account: it is marked deleted (history keeps referring to it),
--- loses its password and privileges, and its sessions end. Its email can be
+-- loses its password and becomes a viewer, and its sessions end. Its email can be
 -- used for a new account. You can't delete your own account.
 CREATE FUNCTION account_delete(p_id uuid) RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('account', 'write');
+    PERFORM util.require('admin');
     IF p_id = (SELECT account FROM util.current_session()) THEN
         RAISE EXCEPTION 'You can''t delete your own account'
             USING ERRCODE = 'check_violation';
     END IF;
     UPDATE account
-    SET deleted           = true,
-        password_hash     = NULL,
-        data_privilege    = 'none',
-        model_privilege   = 'none',
-        account_privilege = 'none',
-        history_privilege = 'none'
+    SET deleted       = true,
+        password_hash = NULL,
+        role          = 'viewer'
     WHERE id = p_id
       AND tenant = util.tenant()
       AND NOT deleted;

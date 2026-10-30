@@ -86,7 +86,7 @@ func TestCLI(t *testing.T) {
 	e.reset(t)
 	c := e.cli(t)
 
-	contains(t, c.ok("whoami"), "admin@test.local", "read_write")
+	contains(t, c.ok("whoami"), "admin@test.local", "Role:     admin")
 
 	// The model: locations, attributes with units and options, classes.
 	c.ok("location", "add", "Garage")
@@ -195,8 +195,8 @@ func TestCLI(t *testing.T) {
 	// Accounts, login and logout through a profile. Accounts outlive reset(),
 	// so the email is new on every run.
 	bob := fmt.Sprintf("bob-%d@test.local", time.Now().UnixNano())
-	c.run(0, "secret-password\n", "account", "add", bob, "--password", "--data", "read")
-	contains(t, c.ok("account", "list"), bob, "read_only")
+	c.run(0, "secret-password\n", "account", "add", bob, "--password", "--role", "user")
+	contains(t, c.ok("account", "list"), bob, "user")
 	delete(c.vars, "WTF_TOKEN")
 	c.vars["WTF_PASSWORD"] = "secret-password"
 	c.ok("login", "--profile", "bob", "--email", bob)

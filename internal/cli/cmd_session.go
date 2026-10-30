@@ -164,7 +164,7 @@ func logoutCommand() command {
 func whoamiCommand() command {
 	return command{
 		name:    "whoami",
-		summary: "Show the logged-in account and its privileges.",
+		summary: "Show the logged-in account and its role.",
 		setup: func(fs *flag.FlagSet) func(*env, []string) error {
 			return func(e *env, args []string) error {
 				if err := wantArgs(args, 0, 0); err != nil {
@@ -183,17 +183,12 @@ func whoamiCommand() command {
 						"Email", a.Email,
 						"Server", e.api.Server,
 						"Profile", e.profile,
-						"Privileges", privileges(a))
+						"Role", a.Role)
 					return nil
 				})
 			}
 		},
 	}
-}
-
-func privileges(a account) string {
-	return fmt.Sprintf("data %s, model %s, account %s, history %s",
-		a.DataPrivilege, a.ModelPrivilege, a.AccountPrivilege, a.HistoryPrivilege)
 }
 
 func passwordCommand() command {

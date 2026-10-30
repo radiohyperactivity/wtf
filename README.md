@@ -198,7 +198,7 @@ curl -s -c cookies -H 'Host: smith.wtf.example' -H 'Content-Type: application/js
 curl -s -b cookies -H 'Host: smith.wtf.example' http://127.0.0.1:8080/api/v1/me
 ```
 
-The first account has every privilege and can create more accounts (`POST /accounts`). A lost password is replaced with `./wtfd account password --host smith --email …`. See [ACCOUNTS.md](ACCOUNTS.md).
+The first account is an admin and can create more accounts (`POST /accounts`). A lost password is replaced with `./wtfd account password --host smith --email …`. See [ACCOUNTS.md](ACCOUNTS.md).
 
 ### 9. Check
 

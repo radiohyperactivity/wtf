@@ -40,8 +40,8 @@ type environment struct {
 	apiUser   string
 	files     *files.Store
 
-	// The session of the account all requests are sent as by default, which
-	// has every privilege.
+	// The session of the account all requests are sent as by default, an
+	// admin.
 	token string
 }
 

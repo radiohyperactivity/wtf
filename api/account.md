@@ -17,38 +17,34 @@ The SQL is in [`db/repeatable/90_account.sql`](../db/repeatable/90_account.sql),
 
 Tokens are 32 random bytes, base64url-encoded. The database stores only their SHA-256 hash. A session expires after 30 days without use.
 
-## Privileges
+## Roles
 
-Every API function checks the logged-in account's privileges. Each privilege is `none`, `read_only` or `read_write`:
+Every API function checks the logged-in account's role with `util.require(p_role)`: the account's role must be at least `p_role`, in the order `viewer`, `user`, `admin` ([ACCOUNTS.md](../ACCOUNTS.md) has the table).
 
-| Privilege | Covers |
-|-----------|--------|
-| `data`    | items, values, stock, locations, attachments of those, label codes, search |
-| `model`   | classes, class attributes, attributes, options, attachments of classes. Reading them is also allowed with `data` read. |
-| `account` | the accounts |
-| `history` | reading history ([api/history.md](history.md)); `read_write` counts as `read_only` |
-
-- **Units** (reading quantities, unit families and units) and the account's own information (`me`, `password_change`, `logout`) need only a login. Turning quantities and families on and off, and importing units, need model write.
-- **Missing privilege:** the function raises 42501, which `wtfd` turns into a 403.
+- **Viewer:** reading, and the history of items and stock rows.
+- **User:** also items and stock rows, with their values and attachments.
+- **Admin:** also locations, classes, attributes, options, units for the tenant, model files, the accounts, and the rest of the history.
+- The account's own information (`me`, `password_change`, `logout`) needs only a login.
+- **Not allowed:** the function raises 42501, which `wtfd` turns into a 403.
 
 ## Accounts
 
-The account privilege is needed: `read` to list and get, `write` for everything else.
+These are for admins.
 
 - **`account_list()`** and **`account_get(p_id)`**.
-- **`account_create(p_email, p_password, p_data_privilege, p_model_privilege, p_account_privilege, p_history_privilege)`**:
+- **`account_create(p_email, p_password, p_role)`**:
   - the email is unique among accounts that aren't deleted, case-insensitively;
   - a password needs at least 8 characters and at most 72 bytes;
   - without a password, the account can't log in;
-  - privileges default to `none`.
-- **`account_patch(p_id, p_patch)`** takes the keys `email`, `password` (null removes it), `data_privilege`, `model_privilege`, `account_privilege` and `history_privilege`. Deleted accounts can't be changed.
+  - the role is `viewer` unless `p_role` says `user` or `admin`.
+- **`account_patch(p_id, p_patch)`** takes the keys `email`, `password` (null removes it) and `role`. Deleted accounts can't be changed.
   - Changing the password ends the account's sessions, except the caller's own.
-  - You can't remove your own `account` privilege (422).
+  - You can't change your own role (422), so there is always an admin.
 - **`account_delete(p_id)`** marks an account deleted, so history keeps referring to it.
-  - It can't log in, and it loses its password, privileges and sessions.
+  - It can't log in; it loses its password and sessions, and becomes a viewer.
   - Its email can be used again.
   - `account_list` leaves it out, while `account_get` still shows it (`deleted: true`).
   - You can't delete your own account (422).
-- **`account_history(p_id, …)`** shows the changes to an account (history privilege).
+- **`account_history(p_id, …)`** shows the changes to an account.
 
 The first account of a tenant is created with `wtfd tenant create`; `wtfd account create` adds another, and `wtfd account password` sets a lost password (see [WTFD.md](../WTFD.md)).

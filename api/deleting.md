@@ -70,7 +70,7 @@ Below a deleted node every row is marked explicitly, so a query only ever checks
 - **What goes together** comes from history: the rows marked deleted in the same transaction as the object, below it or belonging to it. Restoring a box brings back the compartments and stock deleted with it; a compartment deleted earlier, on its own, stays deleted. If history no longer has the deletion (purged), only the object itself comes back.
 - **Rules are checked again,** as if everything were new: names, live references, containers, values matching their attributes, required values (at commit). It all happens in one transaction, so either everything comes back or nothing does, with the message of the rule that failed. The functions "touch" the rows that belong to a restored one (`UPDATE … SET x = x`), so the triggers run again; history records nothing for that.
 - **`name`** gives the top object a new name, for when its old one has been taken since.
-- **Privileges** are those of deleting: data write for items, stock rows and locations; model write for classes, attributes and options. Restoring a class with items needs data write too, and restoring an item `with_parents` needs model write too.
+- **Roles** are those of deleting: users for items and stock rows; admins for locations, classes, attributes and options. Restoring an item `with_parents` restores classes too, so it is for admins.
 - **The result** is the restored object, as its `_get` returns it.
 - **Attachments and the photo** come back with their object, since they stayed linked to it.
 

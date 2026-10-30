@@ -582,50 +582,21 @@ func unitFamilyGroup() group {
 	}
 }
 
-// parsePrivilege accepts none, read, write and the API's names.
-func parsePrivilege(s string) (string, error) {
-	switch strings.ToLower(s) {
-	case "none", "no", "-":
-		return "none", nil
-	case "read", "r", "ro", "read_only", "read-only":
-		return "read_only", nil
-	case "write", "w", "rw", "read_write", "read-write":
-		return "read_write", nil
+// parseRole accepts viewer, user and admin, in any case.
+func parseRole(s string) (string, error) {
+	switch r := strings.ToLower(strings.TrimSpace(s)); r {
+	case "viewer", "user", "admin":
+		return r, nil
 	}
-	return "", usagef("privilege %q: use none, read or write", s)
+	return "", usagef("role %q: use viewer, user or admin", s)
 }
 
 func accountGroup() group {
 	printAccount := printAccountJSON
-	// privilegeFlags registers --data, --model, --account and --history.
-	privilegeFlags := func(fs *flag.FlagSet) map[string]*optString {
-		flags := map[string]*optString{}
-		for _, area := range []string{"data", "model", "account", "history"} {
-			o := &optString{}
-			fs.Var(o, area, area+" privilege: none, read or write")
-			flags[area] = o
-		}
-		return flags
-	}
-	applyPrivileges := func(body object, flags map[string]*optString) error {
-		for area, o := range flags {
-			if o.set {
-				p, err := parsePrivilege(o.value)
-				if err != nil {
-					return err
-				}
-				body[area+"_privilege"] = p
-			}
-		}
-		return nil
-	}
-	privilegeParams := map[string]param{}
-	for _, area := range []string{"data", "model", "account", "history"} {
-		privilegeParams[area] = arg("Privilege", privilegeList)
-	}
+	roleParams := map[string]param{"role": arg("Role", roleList)}
 	return group{
 		name:    "account",
-		summary: "Accounts (account privilege)",
+		summary: "Accounts (admins)",
 		commands: []command{
 			{
 				name:    "list",
@@ -643,9 +614,9 @@ func accountGroup() group {
 						if err := decode(data, &list); err != nil {
 							return err
 						}
-						t := newTable(e.stdout, "EMAIL", "DATA", "MODEL", "ACCOUNT", "HISTORY", "PASSWORD")
+						t := newTable(e.stdout, "EMAIL", "ROLE", "PASSWORD")
 						for _, a := range list {
-							t.row(a.Email, a.DataPrivilege, a.ModelPrivilege, a.AccountPrivilege, a.HistoryPrivilege, yesNo(a.HasPassword))
+							t.row(a.Email, a.Role, yesNo(a.HasPassword))
 						}
 						t.flush()
 						return nil
@@ -655,14 +626,15 @@ func accountGroup() group {
 			getCommand("account", "/accounts/", resolveAccountFn, printAccount),
 			{
 				name:    "add",
-				args:    "<email> [--password] [--data P] [--model P] [--account P] [--history P] [--edit]",
-				summary: "Create an account. --password prompts for one; without it the account can't log in yet.",
+				args:    "<email> [--password] [--role R] [--edit]",
+				summary: "Create an account, a viewer unless --role says user or admin. --password prompts for one; without it the account can't log in yet.",
 				params:  []param{arg("Email", nil)},
-				flags:   privilegeParams,
+				flags:   roleParams,
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
 					withPassword := fs.Bool("password", false, "prompt for a password")
 					editAfter := fs.Bool("edit", false, "open the new account in the edit form")
-					privs := privilegeFlags(fs)
+					var role optString
+					fs.Var(&role, "role", "role: viewer, user or admin")
 					return func(e *env, args []string) error {
 						if *editAfter {
 							if err := e.needTerminal("--edit"); err != nil {
@@ -673,8 +645,12 @@ func accountGroup() group {
 							return err
 						}
 						body := object{"email": args[0]}
-						if err := applyPrivileges(body, privs); err != nil {
-							return err
+						if role.set {
+							r, err := parseRole(role.value)
+							if err != nil {
+								return err
+							}
+							body["role"] = r
 						}
 						if *withPassword {
 							p, err := e.newPassword("Password for " + args[0] + ": ")
@@ -696,16 +672,17 @@ func accountGroup() group {
 			},
 			{
 				name:    "set",
-				args:    "<account> [--email E] [--password|--no-password] [--data P] [--model P] [--account P] [--history P]",
+				args:    "<account> [--email E] [--password|--no-password] [--role R]",
 				summary: "Change an account. A new password ends its sessions.",
 				params:  []param{arg("Account", completeAccounts)},
-				flags:   privilegeParams,
+				flags:   roleParams,
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
 					var email optString
 					fs.Var(&email, "email", "new email")
 					withPassword := fs.Bool("password", false, "prompt for a new password")
 					noPassword := fs.Bool("no-password", false, "remove the password (the account can't log in)")
-					privs := privilegeFlags(fs)
+					var role optString
+					fs.Var(&role, "role", "new role: viewer, user or admin")
 					return func(e *env, args []string) error {
 						if err := wantArgs(args, 1, 1); err != nil {
 							return err
@@ -721,8 +698,12 @@ func accountGroup() group {
 						if email.set {
 							body["email"] = email.value
 						}
-						if err := applyPrivileges(body, privs); err != nil {
-							return err
+						if role.set {
+							r, err := parseRole(role.value)
+							if err != nil {
+								return err
+							}
+							body["role"] = r
 						}
 						if *noPassword {
 							body["password"] = nil
@@ -780,7 +761,7 @@ func printAccountJSON(e *env, data json.RawMessage) error {
 	fields(e.stdout,
 		"Email", a.Email,
 		"Password", map[bool]string{true: "set", false: "none (can't log in)"}[a.HasPassword],
-		"Privileges", privileges(a),
+		"Role", a.Role,
 		"State", state,
 		"Id", a.ID)
 	return nil

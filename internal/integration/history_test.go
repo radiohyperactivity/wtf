@@ -73,10 +73,12 @@ func TestHistory(t *testing.T) {
 
 	// Deleted accounts: their history stays, they can't log in, and the email can be reused.
 	worker := str(t, e.expect(t, 201, "POST", "/accounts", obj("email", "worker@test.local",
-		"password", "worker-password", "data_privilege", "read_write")).body, "id")
+		"password", "worker-password", "role", "user")).body, "id")
 	workerToken := session(t, e.loginAs(t, 200, "worker@test.local", "worker-password"))
-	attic := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Attic"), as(workerToken)...).body, "id")
-	e.expect(t, 403, "GET", "/locations/"+attic+"/history", nil, as(workerToken)...) // no history privilege
+	attic := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Attic")).body, "id")
+	note := str(t, e.expect(t, 201, "POST", "/items", obj("name", "Note", "class", classID), as(workerToken)...).body, "id")
+	e.expect(t, 200, "GET", "/items/"+itemID+"/history", nil, as(workerToken)...)
+	e.expect(t, 403, "GET", "/locations/"+attic+"/history", nil, as(workerToken)...) // for admins
 
 	e.loginAs(t, 401, "worker@test.local", "wrong-password") // lockout counter: not logged
 	before, _ := historyOf(t, e, "/accounts/"+worker+"/history")
@@ -105,9 +107,9 @@ func TestHistory(t *testing.T) {
 		}
 	}
 	e.expect(t, 201, "POST", "/accounts", obj("email", "worker@test.local"))
-	_, rows = historyOf(t, e, "/locations/"+attic+"/history")
+	_, rows = historyOf(t, e, "/items/"+note+"/history")
 	if get(t, rows[0], "account", "email") != "worker@test.local" || get(t, rows[0], "account", "deleted") != true {
-		t.Errorf("who created the attic: %v", get(t, rows[0], "account"))
+		t.Errorf("who created the note: %v", get(t, rows[0], "account"))
 	}
 
 	// Purge.

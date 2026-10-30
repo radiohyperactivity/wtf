@@ -216,14 +216,14 @@ func TestConfigRoundTrip(t *testing.T) {
 	}
 }
 
-func TestParsePrivilege(t *testing.T) {
-	for in, want := range map[string]string{"read": "read_only", "RW": "read_write", "none": "none"} {
-		if got, err := parsePrivilege(in); err != nil || got != want {
+func TestParseRole(t *testing.T) {
+	for in, want := range map[string]string{"viewer": "viewer", "User": "user", " ADMIN": "admin"} {
+		if got, err := parseRole(in); err != nil || got != want {
 			t.Errorf("%q = %q, %v", in, got, err)
 		}
 	}
-	if _, err := parsePrivilege("admin"); err == nil {
-		t.Error("admin: want an error")
+	if _, err := parseRole("read_write"); err == nil {
+		t.Error("read_write: want an error")
 	}
 }
 
@@ -346,7 +346,7 @@ func TestCandidates(t *testing.T) {
 		{[]string{"--json", "stock", "m"}, "move", false},
 		{[]string{"attribute", "add", "Size", "--type", ""}, "choice", false},
 		{[]string{"attribute", "add", "Size", "--type=f"}, "--type=float", false},
-		{[]string{"account", "add", "a@b", "--data", ""}, "write", false},
+		{[]string{"account", "add", "a@b", "--role", ""}, "admin", false},
 		{[]string{"completion", ""}, "powershell", false},
 		{[]string{"attachment", "add", "item", "Drill", ""}, "", true},
 		{[]string{"attachment", "download", "x", "-o", ""}, "", true},

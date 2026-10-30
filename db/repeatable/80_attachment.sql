@@ -13,10 +13,11 @@
 -- attachment_create. "wtfd gc" takes the same lock before removing a file
 -- that no attachment has any more.
 --
--- Attachments of classes belong to the model (model privilege); all others
--- belong to the data (data privilege).
+-- Every account may look at attachments. Those of items and stock can be
+-- changed by users; those of locations and classes, which admins set up,
+-- only by admins.
 
--- Checks p_kind and the privilege for p_level ('read' or 'write'), and that
+-- Checks p_kind and the role for p_level ('read' or 'write'), and that
 -- the object p_owner exists in the session's tenant; for 'write', also that
 -- it is live (a deleted object's attachments are frozen with it).
 CREATE FUNCTION util.attachment_owner(p_kind text, p_owner uuid, p_level text) RETURNS void
@@ -28,13 +29,11 @@ BEGIN
         PERFORM util.raise_invalid(format('%L is not something attachments can be attached to', p_kind));
     END IF;
     IF p_level = 'read' THEN
-        IF p_kind = 'class' THEN
-            PERFORM util.require_model_read();
-        ELSE
-            PERFORM util.require('data', 'read');
-        END IF;
+        PERFORM util.require('viewer');
+    ELSIF p_kind IN ('item', 'stock') THEN
+        PERFORM util.require('user');
     ELSE
-        PERFORM util.require(CASE WHEN p_kind = 'class' THEN 'model' ELSE 'data' END, 'write');
+        PERFORM util.require('admin');
     END IF;
     EXECUTE format('SELECT EXISTS (SELECT 1 FROM %I WHERE id = $1 AND tenant = $2)', p_kind)
         INTO v_exists USING p_owner, util.tenant();

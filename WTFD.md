@@ -259,7 +259,7 @@ When the database knows what to do about an error, a `hint` says so (revision 2)
 | missing session cookie, `28000` (no or expired session), wrong login | `/problems/unauthenticated` | 401 (with `WWW-Authenticate: Cookie realm="WtF", cookie-name="wtf_session"`; an ended session's cookie is deleted) |
 | a changing request whose `Origin` is another site | `/problems/cross-site` | 403 |
 | an API version this server doesn't serve (`/api/v2/…`) | `/problems/unsupported-api-version` | 404, with `supported: [1]` |
-| `42501` missing privilege | `/problems/forbidden` | 403 |
+| `42501` not allowed for the role | `/problems/forbidden` | 403 |
 | too many failed logins | `/problems/too-many-attempts` | 429 (with `Retry-After: 60`) |
 | `P0002` not found, or unknown route | `/problems/not-found` | 404 |
 | `22023` invalid parameter, malformed JSON or body, bad UUID or query parameter | `/problems/invalid-input` | 400 |
@@ -377,7 +377,7 @@ With `--web-root DIR`, `wtfd` serves the web app (a Flutter web build) outside `
 | `GET /me` | `me` | |
 | `PUT /me/password` | `password_change` | `{current, new}` |
 | `GET /accounts` | `account_list` | |
-| `POST /accounts` | `account_create` | `{email, password?, data_privilege?, model_privilege?, account_privilege?}` |
+| `POST /accounts` | `account_create` | `{email, password?, role?}` |
 | `GET /accounts/{id}` | `account_get` | |
 | `PATCH /accounts/{id}` | `account_patch` | patch object |
 | `DELETE /accounts/{id}` | `account_delete` (marks the account deleted) | |
@@ -411,18 +411,18 @@ wtfd tenant list
 wtfd tenant rename --host bob --new-host robert --files-directory /var/lib/wtf/files
 ```
 
-`create` makes the tenant and its first account, with every privilege, and prints the account's generated password once. `host` is a DNS label that starts with a letter: `a`–`z`, `0`–`9` and `-`, at most 63 characters. `rename` changes the host and moves the tenant's directory in the files directory along with it. Deleting a tenant isn't built yet.
+`create` makes the tenant and its first account, an admin, and prints the account's generated password once. `host` is a DNS label that starts with a letter: `a`–`z`, `0`–`9` and `-`, at most 63 characters. `rename` changes the host and moves the tenant's directory in the files directory along with it. Deleting a tenant isn't built yet.
 
 ## The `account` action
 
-The operator creates an account with every privilege in a tenant, and recovers a lost password, as the DBA role:
+The operator creates an account in a tenant, and recovers a lost password, as the DBA role:
 
 ```sh
-wtfd account create --host bob --email anna@example.com
+wtfd account create --host bob --email anna@example.com [--role viewer|user|admin]
 wtfd account password --host bob --email anna@example.com
 ```
 
-`create` makes an account with every privilege. `password` gives an existing account a new password, lifts a lockout and ends its sessions. Both print the generated password once; the account should change it after logging in (`PUT /me/password`). Further accounts are made through the API (`POST /accounts`). See [ACCOUNTS.md](ACCOUNTS.md).
+`create` makes an account, an admin unless `--role` says viewer or user. `password` gives an existing account a new password, lifts a lockout and ends its sessions. Both print the generated password once; the account should change it after logging in (`PUT /me/password`). Further accounts are made through the API (`POST /accounts`). See [ACCOUNTS.md](ACCOUNTS.md).
 
 ## The `unit` action
 

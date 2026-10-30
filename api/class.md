@@ -7,7 +7,7 @@ The SQL is in [`db/repeatable/30_class.sql`](../db/repeatable/30_class.sql).
 Deleting marks classes deleted; they can be restored (`class_restore`). See [deleting.md](deleting.md). `class_delete` deletes one class, which must have no live subclasses or items (409 otherwise). `class_delete_tree(p_id, p_force, p_dry_run)` (`DELETE /classes/{id}?recursive=true`) deletes a class and every live class below it in one transaction, deepest first:
 
 - **Items block it:** if any of the classes has live items, nothing is deleted (23001, 409), and the message names the classes and their item counts (`MCU/Intel/No (3 items)`).
-- **`p_force`** (`force=true`) deletes those items too, with their live stock rows. This needs the data write privilege as well as model write.
+- **`p_force`** (`force=true`) deletes those items too, with their live stock rows.
 - **`p_dry_run`** deletes nothing; it only reports. Its route is a `GET`, `GET /classes/{id}/deletion?force=…`, so a server that doesn't know recursive deletes answers 404 rather than mistaking a preview for a delete. Unlike the delete, the preview reports items without `force` instead of failing.
 - **The result** is what was (or would be) deleted: `{classes: [{id, path}], items: [{id, code, name, class}], stock: <number of stock rows>}`, classes deepest first.
 

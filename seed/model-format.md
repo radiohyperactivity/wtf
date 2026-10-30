@@ -6,7 +6,7 @@ A model file describes part of an inventory's model in JSON: quantities and unit
 - **Export:** a class's menu → Export as a model file in the app; `wtf model export CLASS` in the CLI; `GET /api/v1/classes/{id}/model`.
 - **Examples:** [models/mcu.json](models/mcu.json), a model of microcontrollers; [units.json](units.json), the units every WtF starts with.
 
-"Model" is WtF's word for units, classes and attributes (the model privilege), as against the data: items, stock and locations. A model file carries no data. What units are, and how numbers are stored and shown, is explained in [units.md](units.md).
+"Model" is WtF's word for units, classes and attributes, as against the data: items, stock and locations. A model file carries no data. What units are, and how numbers are stored and shown, is explained in [units.md](units.md).
 
 ## An example
 
@@ -185,7 +185,7 @@ Any key that isn't in these tables (or `meta`) is refused.
   - whatever else the model's rules refuse.
 - **All or nothing.** With any conflict nothing in the file is imported, and every conflict is reported, so a file can be fixed in one go.
 - **A dry run** tells what would be added, what is there already and what conflicts, without keeping anything.
-- **Who:** an account with the model write privilege.
+- **Who:** an admin (ACCOUNTS.md).
 - **A file that isn't valid** is refused (400), saying where: a missing key, an unknown key, a name that appears twice, a factor that isn't a number, or a version this WtF doesn't read.
 - **Global units:** the operator imports a file of only quantities as units every tenant sees, with `wtfd unit import --global FILE` ([WTFD.md](../WTFD.md)). A name that some tenant already has for its own is a conflict.
 
@@ -198,7 +198,7 @@ An export is of one class, with everything below it:
 - **Attributes:** every attribute the assignments use, with its datatype, unit, unit lock and live options.
 - **Units:** the tenant's own units that the attributes need, with the family they are in and its quantity. All of the tenant's units in such a family go in, not only the one used: the family decides how values are shown. A family that is global is named, with only the tenant's units in it. Units every WtF has are left out.
 - **Defaults** are in the attribute's unit, as an import reads them.
-- **Who:** an account that can see the model (model or data read privilege).
+- **Who:** an admin, as only admins can import the file again (ACCOUNTS.md).
 
 So importing the file where the class is changes nothing, and importing it into another inventory sets up the same classes, attributes and units: exported again from there, the file is the same apart from `meta`.
 

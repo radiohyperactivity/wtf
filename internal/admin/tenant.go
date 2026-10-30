@@ -29,8 +29,8 @@ func tenantID(ctx context.Context, q querier, host string) (string, error) {
 	return id, err
 }
 
-// CreateTenant creates a tenant with host host, and its first account with
-// every privilege. It returns the account's generated password.
+// CreateTenant creates a tenant with host host, and its first account, an
+// admin. It returns the account's generated password.
 func CreateTenant(ctx context.Context, conn *pgx.Conn, host, email string) (string, error) {
 	var password string
 	err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
@@ -38,7 +38,7 @@ func CreateTenant(ctx context.Context, conn *pgx.Conn, host, email string) (stri
 			return hostError(host, err)
 		}
 		var err error
-		password, err = createAccount(ctx, tx, host, email)
+		password, err = createAccount(ctx, tx, host, email, "admin")
 		return err
 	})
 	return password, err

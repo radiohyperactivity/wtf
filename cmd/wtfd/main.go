@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 
 	"github.com/radiohyperactivity/wtf/db"
@@ -259,11 +260,11 @@ func runGC(args []string, stderr io.Writer) int {
 }
 
 const accountUsage = `Usage:
-  wtfd account create --host HOST --email EMAIL [database flags]
+  wtfd account create --host HOST --email EMAIL [--role ROLE] [database flags]
   wtfd account password --host HOST --email EMAIL [database flags]
 
-create makes an account with every privilege in the tenant with host HOST;
-password gives an account a new password, when it is lost. Both print a
+create makes an account in the tenant with host HOST, an admin unless
+--role says viewer or user; password gives an account a new password, when it is lost. Both print a
 generated password once.
 `
 
@@ -287,6 +288,10 @@ func runAccount(args []string, stdout, stderr io.Writer) int {
 	database := config.RegisterDatabase(fs)
 	host := fs.String("host", "", "the tenant's host (required)")
 	email := fs.String("email", "", "the account's email (required)")
+	role := "admin"
+	if command == "create" {
+		fs.StringVar(&role, "role", "admin", "the account's role: viewer, user or admin")
+	}
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return exitOK
@@ -299,6 +304,10 @@ func runAccount(args []string, stdout, stderr io.Writer) int {
 	}
 	if *host == "" || *email == "" {
 		fmt.Fprintf(stderr, "wtfd account %s: --host and --email are required\n", command)
+		return exitUsage
+	}
+	if !slices.Contains(admin.Roles, role) {
+		fmt.Fprintf(stderr, "wtfd account %s: role %q: use viewer, user or admin\n", command, role)
 		return exitUsage
 	}
 	if err := database.Validate(); err != nil {
@@ -322,7 +331,7 @@ func runAccount(args []string, stdout, stderr io.Writer) int {
 
 	var password string
 	if command == "create" {
-		password, err = admin.CreateAccount(ctx, conn, *host, *email)
+		password, err = admin.CreateAccount(ctx, conn, *host, *email, role)
 	} else {
 		password, err = admin.SetPassword(ctx, conn, *host, *email)
 	}
@@ -331,7 +340,7 @@ func runAccount(args []string, stdout, stderr io.Writer) int {
 		return exitFailure
 	}
 	if command == "create" {
-		fmt.Fprintf(stdout, "Account %s created, with every privilege.\n", *email)
+		fmt.Fprintf(stdout, "Account %s created, %s %s.\n", *email, map[bool]string{true: "an", false: "a"}[role == "admin"], role)
 	} else {
 		fmt.Fprintf(stdout, "New password for %s; its sessions have ended.\n", *email)
 	}

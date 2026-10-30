@@ -58,10 +58,9 @@ func TestDeleteTree(t *testing.T) {
 	}
 	e.expect(t, 200, "GET", "/items/"+item, nil)
 
-	// Forcing a class delete needs data write as well as model write.
-	email := fmt.Sprintf("modeller-%d@test.local", time.Now().UnixNano())
-	e.expect(t, 201, "POST", "/accounts", obj("email", email, "password", "secret-password",
-		"model_privilege", "read_write", "data_privilege", "read_only"))
+	// Deleting classes is for admins, even when it deletes items with them.
+	email := fmt.Sprintf("worker-%d@test.local", time.Now().UnixNano())
+	e.expect(t, 201, "POST", "/accounts", obj("email", email, "password", "secret-password", "role", "user"))
 	token := session(t, e.loginAs(t, 200, email, "secret-password"))
 	e.expect(t, 403, "DELETE", "/classes/"+a+"?recursive=true&force=true", nil, as(token)...)
 	e.expect(t, 200, "GET", "/classes/"+a, nil)

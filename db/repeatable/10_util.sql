@@ -1461,7 +1461,7 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- Sessions and privileges (see ACCOUNTS.md)
+-- Sessions and roles (see ACCOUNTS.md)
 -- ---------------------------------------------------------------------------
 
 -- Raises the "not authenticated" error (SQLSTATE 28000) that the REST layer
@@ -1483,16 +1483,13 @@ END;
 $$;
 
 -- The session of the current transaction (set by session_use): tenant,
--- account and privileges. Raises 28000 without a valid session. The tenant
+-- account and its role. Raises 28000 without a valid session. The tenant
 -- comes from the session (found by its secret token), never from a setting
 -- a caller could change.
 CREATE FUNCTION util.current_session(
-    OUT tenant            uuid,
-    OUT account           uuid,
-    OUT data_privilege    privilege,
-    OUT model_privilege   privilege,
-    OUT account_privilege privilege,
-    OUT history_privilege privilege
+    OUT tenant  uuid,
+    OUT account uuid,
+    OUT role    role
 )
 LANGUAGE plpgsql STABLE AS $$
 DECLARE
@@ -1502,8 +1499,8 @@ BEGIN
         PERFORM util.raise_unauthenticated('Not logged in');
     END IF;
 
-    SELECT s.tenant, a.id, a.data_privilege, a.model_privilege, a.account_privilege, a.history_privilege
-    INTO tenant, account, data_privilege, model_privilege, account_privilege, history_privilege
+    SELECT s.tenant, a.id, a.role
+    INTO tenant, account, role
     FROM session s
     JOIN account a ON a.tenant = s.tenant AND a.id = s.account
     WHERE s.token_hash = util.token_hash(v_token)
@@ -1525,32 +1522,14 @@ BEGIN
 END;
 $$;
 
--- Checks that the session's account has at least p_level ('read' or
--- 'write') in privilege area p_area ('data', 'model', 'account' or
--- 'history'). Raises 42501 (403) otherwise.
--- History is read-only: read_write counts as read_only there.
-CREATE FUNCTION util.require(p_area text, p_level text) RETURNS void
+-- Checks that the session's account has at least role p_role: 'viewer'
+-- (looking), 'user' (items and stock) or 'admin' (everything). Raises 42501
+-- (403) otherwise.
+CREATE FUNCTION util.require(p_role role) RETURNS void
 LANGUAGE plpgsql STABLE AS $$
-DECLARE
-    v_session   record;
-    v_privilege privilege;
 BEGIN
-    SELECT * INTO v_session FROM util.current_session();
-    v_privilege := CASE p_area
-        WHEN 'data'    THEN v_session.data_privilege
-        WHEN 'model'   THEN v_session.model_privilege
-        WHEN 'account' THEN v_session.account_privilege
-        WHEN 'history' THEN v_session.history_privilege
-    END;
-    IF v_privilege IS NULL THEN
-        RAISE EXCEPTION 'Unknown privilege area %', p_area;
-    END IF;
-
-    IF v_privilege = 'none'
-       OR (p_level = 'write' AND v_privilege <> 'read_write')
-    THEN
-        RAISE EXCEPTION 'This needs % % privilege',
-            CASE p_level WHEN 'write' THEN 'read-write' ELSE 'read' END, p_area
+    IF (SELECT role FROM util.current_session()) < p_role THEN
+        RAISE EXCEPTION 'This needs the % role', p_role
             USING ERRCODE = 'insufficient_privilege';
     END IF;
 END;
@@ -1595,32 +1574,14 @@ LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (
         SELECT jsonb_build_object(
-            'id',                a.id,
-            'email',             a.email,
-            'has_password',      a.password_hash IS NOT NULL,
-            'data_privilege',    a.data_privilege,
-            'model_privilege',   a.model_privilege,
-            'account_privilege', a.account_privilege,
-            'history_privilege', a.history_privilege,
-            'deleted',           a.deleted
+            'id',           a.id,
+            'email',        a.email,
+            'has_password', a.password_hash IS NOT NULL,
+            'role',         a.role,
+            'deleted',      a.deleted
         )
         FROM account a
         WHERE a.id = p_account
     );
-END;
-$$;
-
--- Reading the model (classes, attributes, options) is allowed with the model
--- or the data read privilege: entering data needs to see the model.
-CREATE FUNCTION util.require_model_read() RETURNS void
-LANGUAGE plpgsql STABLE AS $$
-DECLARE
-    v_session record;
-BEGIN
-    SELECT * INTO v_session FROM util.current_session();
-    IF v_session.model_privilege = 'none' AND v_session.data_privilege = 'none' THEN
-        RAISE EXCEPTION 'This needs read model or read data privilege'
-            USING ERRCODE = 'insufficient_privilege';
-    END IF;
 END;
 $$;

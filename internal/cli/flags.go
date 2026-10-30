@@ -211,7 +211,7 @@ func historyCommand(kind, prefix, list string, resolve func(*env, string) (strin
 	return command{
 		name:    "history",
 		args:    usage + " [--limit N] [--offset N]",
-		summary: summary + ", newest first (history privilege).",
+		summary: summary + ", newest first" + map[bool]string{true: ".", false: " (admins)."}[kind == "item" || kind == "stock"],
 		params:  params,
 		setup: func(fs *flag.FlagSet) func(*env, []string) error {
 			var p paging

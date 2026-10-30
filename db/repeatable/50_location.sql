@@ -16,7 +16,7 @@ DECLARE
     v_tenant  uuid;
     v_version bigint;
 BEGIN
-    PERFORM util.require('data', 'read');
+    PERFORM util.require('viewer');
     v_tenant := util.tenant();
     v_version := util.data_version(v_tenant, 'location');
     IF p_known_version IS NOT DISTINCT FROM v_version THEN
@@ -37,7 +37,7 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('data', 'read');
+    PERFORM util.require('viewer');
     IF NOT EXISTS (SELECT 1 FROM location WHERE id = p_id AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('location', p_id);
     END IF;
@@ -66,7 +66,7 @@ DECLARE
     v_rows    integer;
     v_total   bigint;
 BEGIN
-    PERFORM util.require('data', 'write');
+    PERFORM util.require('admin');
     v_tenant := util.tenant();
     IF p_parent IS NOT NULL AND NOT EXISTS (SELECT 1 FROM location WHERE id = p_parent AND tenant = v_tenant) THEN
         PERFORM util.raise_bad_reference('location', p_parent);
@@ -125,7 +125,7 @@ AS $$
 DECLARE
     v_tenant uuid;
 BEGIN
-    PERFORM util.require('data', 'write');
+    PERFORM util.require('admin');
     v_tenant := util.tenant();
     PERFORM util.check_patch(p_patch, ARRAY['name', 'parent', 'container', 'photo'], ARRAY['name', 'container']);
     IF NOT EXISTS (SELECT 1 FROM location WHERE id = p_id AND tenant = v_tenant) THEN
@@ -157,7 +157,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('data', 'write');
+    PERFORM util.require('admin');
     UPDATE location SET deleted = true WHERE id = p_id AND tenant = util.tenant();
 
     IF NOT FOUND THEN
@@ -188,7 +188,7 @@ DECLARE
     v_in_use    text;
     v_result    jsonb;
 BEGIN
-    PERFORM util.require('data', 'write');
+    PERFORM util.require('admin');
     IF NOT EXISTS (SELECT 1 FROM location WHERE id = p_id AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('location', p_id);
     END IF;
@@ -271,7 +271,7 @@ DECLARE
     v_stock       uuid[];
     v_child       uuid;
 BEGIN
-    PERFORM util.require('data', 'write');
+    PERFORM util.require('admin');
     PERFORM util.check_patch(p_options, ARRAY['name', 'parent', 'with_parents'], ARRAY['name', 'with_parents']);
     SELECT * INTO v_location FROM location WHERE id = p_id AND tenant = util.tenant() FOR UPDATE;
     IF NOT FOUND THEN
@@ -344,7 +344,7 @@ AS $$
 DECLARE
     v_tenant uuid;
 BEGIN
-    PERFORM util.require('data', 'read');
+    PERFORM util.require('viewer');
     v_tenant := util.tenant();
     PERFORM util.check_paging(p_limit, p_offset);
 
@@ -390,7 +390,7 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('data', 'read');
+    PERFORM util.require('viewer');
     IF NOT EXISTS (SELECT 1 FROM stock WHERE id = p_id AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('stock', p_id);
     END IF;
@@ -415,7 +415,7 @@ DECLARE
     v_tenant uuid;
     v_id     uuid;
 BEGIN
-    PERFORM util.require('data', 'write');
+    PERFORM util.require('user');
     v_tenant := util.tenant();
     IF NOT EXISTS (SELECT 1 FROM item WHERE id = p_item AND tenant = v_tenant) THEN
         PERFORM util.raise_bad_reference('item', p_item);
@@ -444,7 +444,7 @@ AS $$
 DECLARE
     v_tenant uuid;
 BEGIN
-    PERFORM util.require('data', 'write');
+    PERFORM util.require('user');
     v_tenant := util.tenant();
     PERFORM util.check_patch(p_patch, ARRAY['item', 'location', 'quantity', 'photo'], ARRAY['item', 'location']);
     IF NOT EXISTS (SELECT 1 FROM stock WHERE id = p_id AND tenant = v_tenant) THEN
@@ -499,7 +499,7 @@ DECLARE
     v_attachment stock_attachment;
     v_copy       uuid;
 BEGIN
-    PERFORM util.require('data', 'write');
+    PERFORM util.require('user');
     SELECT * INTO v_stock FROM stock WHERE id = p_id AND tenant = util.tenant() FOR UPDATE;
     IF NOT FOUND THEN
         PERFORM util.raise_not_found('stock', p_id);
@@ -597,7 +597,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('data', 'write');
+    PERFORM util.require('user');
     UPDATE stock SET deleted = true WHERE id = p_id AND tenant = util.tenant();
 
     IF NOT FOUND THEN
@@ -621,7 +621,7 @@ DECLARE
     v_stock    stock;
     v_location uuid;
 BEGIN
-    PERFORM util.require('data', 'write');
+    PERFORM util.require('user');
     PERFORM util.check_patch(p_options, ARRAY['location', 'with_parents'], ARRAY['location', 'with_parents']);
     SELECT * INTO v_stock FROM stock WHERE id = p_id AND tenant = util.tenant() FOR UPDATE;
     IF NOT FOUND THEN
@@ -674,7 +674,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('data', 'write');
+    PERFORM util.require('user');
     IF NOT EXISTS (SELECT 1 FROM stock WHERE id = p_stock AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('stock', p_stock);
     END IF;
@@ -691,7 +691,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('data', 'write');
+    PERFORM util.require('user');
     IF NOT EXISTS (SELECT 1 FROM stock WHERE id = p_stock AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('stock', p_stock);
     END IF;

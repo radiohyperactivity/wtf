@@ -27,11 +27,11 @@ The files are applied by `wtfd schema` (see [WTFD.md](WTFD.md)). Migrations run 
 ## Conventions
 
 - **Functions, not procedures.** Every API entry point is a `FUNCTION` returning `jsonb` (or `void` for deletes, which mark objects deleted).
-- **History.** Every change to the data is logged by a trigger: who, when, what changed. It can be read per object with the history privilege; see [api/history.md](api/history.md).
+- **History.** Every change to the data is logged by a trigger: who, when, what changed. It can be read per object, items and stock rows by every account and the rest by admins; see [api/history.md](api/history.md).
 - **Deleting marks objects** instead of removing them; see [api/deleting.md](api/deleting.md). Lists and trees leave deleted objects out; `_get` and `code_resolve` still return them, with `deleted: true`. A deleted object can't be changed, only restored (`<entity>_restore(p_id, p_options)`) or purged by the operator.
 - **Logins.** Every API function works on behalf of a logged-in account (see [ACCOUNTS.md](ACCOUNTS.md) and [api/account.md](api/account.md)).
   - `wtfd` calls `session_use(token, host)` first in each transaction; every function then works in the session's tenant only (TENANTS.md).
-  - The function checks the account's privilege (`data`, `model`, `account` or `history`; read or write).
+  - The function checks the account's role (`viewer`, `user` or `admin`; ACCOUNTS.md).
 - **Access.**
   - API functions are `SECURITY DEFINER`: they run with the privileges of their owner, `wtf_dba`, not those of the caller.
   - Each one pins `search_path = public, pg_temp`, so a caller can't redirect table or function names to objects of its own.
@@ -127,7 +127,7 @@ Functions raise standard SQLSTATEs. Suggested HTTP mapping for the REST layer:
 | `23503`  | `foreign_key_violation`         | On create/update: a referenced object doesn't exist | 422   |
 | `23502`  | `not_null_violation`            | A required parameter was NULL                               | 400   |
 | `28000`  | `invalid_authorization_specification` | Not logged in, or the session has expired              | 401   |
-| `42501`  | `insufficient_privilege`        | The account lacks the privilege                             | 403   |
+| `42501`  | `insufficient_privilege`        | The account's role doesn't allow it                         | 403   |
 
 ## JSON shapes
 
@@ -231,7 +231,7 @@ Suggested REST routes are only there to show intent. The REST design comes later
 | `password_change(p_current, p_new)` | void | `PUT /me/password` |
 | `account_list()` | [account] | `GET /accounts` |
 | `account_get(p_id)` | account | `GET /accounts/{id}` |
-| `account_create(p_email, p_password, p_data_privilege, p_model_privilege, p_account_privilege, p_history_privilege)` | account | `POST /accounts` |
+| `account_create(p_email, p_password, p_role)` | account | `POST /accounts` |
 | `account_patch(p_id, p_patch)` | account | `PATCH /accounts/{id}` |
 | `account_delete(p_id)` | void | `DELETE /accounts/{id}` |
 | `item_history(p_id, p_limit, p_offset)` | page of history entries | `GET /items/{id}/history` |

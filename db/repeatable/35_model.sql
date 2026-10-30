@@ -736,7 +736,7 @@ DECLARE
     v_tenant uuid;
     v_path   text;
 BEGIN
-    PERFORM util.require('model', 'write');
+    PERFORM util.require('admin');
     v_tenant := util.tenant();
     IF p_parent IS NOT NULL THEN
         IF NOT EXISTS (SELECT 1 FROM class WHERE id = p_parent AND tenant = v_tenant) THEN
@@ -852,7 +852,7 @@ DECLARE
     v_attributes uuid[];
     v_families   uuid[];
 BEGIN
-    PERFORM util.require_model_read();
+    PERFORM util.require('admin');
     v_tenant := util.tenant();
     IF NOT EXISTS (SELECT 1 FROM class WHERE id = p_class AND tenant = v_tenant) THEN
         PERFORM util.raise_not_found('class', p_class);

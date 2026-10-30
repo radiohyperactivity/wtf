@@ -23,7 +23,7 @@ Every function takes the kind of object (`p_kind`: `item`, `stock`, `location` o
 - **`attachment_delete(p_kind, p_owner, p_id)`** marks it deleted.
 - **`attachment_restore(p_kind, p_owner, p_id, p_options)`** restores it, as an ordinary attachment; its object must be live. There are no options.
 - **The photo** is set with the object's own patch: `{"photo": "<attachment id>"}`, or `null` for none (`item_patch`, `stock_patch`, `location_patch`, `class_patch`).
-- **Privileges:** attachments of classes belong to the model (model read or data read to read them, model write to change them); all others belong to the data (data read, data write). An attachment of a deleted object can't be added, changed or deleted (55000, 409).
+- **Roles:** every account can read attachments. Those of items and stock rows can be changed by users, those of locations and classes only by admins. An attachment of a deleted object can't be added, changed or deleted (55000, 409).
 
 ## Where attachments appear
 

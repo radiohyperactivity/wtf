@@ -23,7 +23,7 @@ Not recorded:
 
 ## Reading
 
-Each function needs the **history privilege**: `none` or `read_only`, where `read_write` counts as `read_only`. Entries come newest first, paged with `p_limit` and `p_offset`. They also work for deleted objects. Deleting an item, stock row, location, class, attribute, option or attachment is an `update` that sets `deleted` (see [deleting.md](deleting.md)). A `delete` entry is a cleared value, a removed class assignment, or a purge.
+**Who:** the history of items and stock rows is for every account; that of locations, classes, attributes and accounts, and of the top-level lists, for admins. Entries come newest first, paged with `p_limit` and `p_offset`. They also work for deleted objects. Deleting an item, stock row, location, class, attribute, option or attachment is an `update` that sets `deleted` (see [deleting.md](deleting.md)). A `delete` entry is a cleared value, a removed class assignment, or a purge.
 
 | Function | Route | Includes |
 |----------|-------|----------|
@@ -43,7 +43,7 @@ The last three are the histories of the lists themselves, so that a deleted top-
 
 Deleting an account doesn't remove it; it is marked `deleted`, so history can always say who did something.
 
-- It can't log in, and it loses its password, its privileges and its sessions.
+- It can't log in; it loses its password and its sessions, and becomes a viewer.
 - Its email can be used for a new account.
 - `account_list` leaves it out, while `account_get` still shows it, with `deleted: true`.
 

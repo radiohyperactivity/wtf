@@ -1,6 +1,6 @@
 // Package admin implements the operator's actions that bypass the REST API:
 // "wtfd tenant" (creating, listing and renaming tenants), "wtfd account"
-// (creating an account with every privilege, setting a password), "wtfd
+// (creating an account, setting a password), "wtfd
 // unit" (global units), "wtfd history purge" and "wtfd deleted purge". It
 // connects as the DBA role. See WTFD.md, ACCOUNTS.md and TENANTS.md.
 package admin
@@ -22,21 +22,24 @@ func Connect(ctx context.Context, cfg *pgx.ConnConfig) (*pgx.Conn, error) {
 	return pgx.ConnectConfig(ctx, cfg)
 }
 
-// CreateAccount creates an account with every privilege (read-write data,
-// model and account; read history) in the tenant with host host, such as
-// its first one. It returns the account's generated password.
-func CreateAccount(ctx context.Context, conn *pgx.Conn, host, email string) (string, error) {
+// Roles are the account roles (ACCOUNTS.md), from least to most.
+var Roles = []string{"viewer", "user", "admin"}
+
+// CreateAccount creates an account with role role ("viewer", "user" or
+// "admin") in the tenant with host host, such as its first one. It returns
+// the account's generated password.
+func CreateAccount(ctx context.Context, conn *pgx.Conn, host, email, role string) (string, error) {
 	var password string
 	err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
 		var err error
-		password, err = createAccount(ctx, tx, host, email)
+		password, err = createAccount(ctx, tx, host, email, role)
 		return err
 	})
 	return password, err
 }
 
 // createAccount is CreateAccount in a transaction of the caller's.
-func createAccount(ctx context.Context, tx pgx.Tx, host, email string) (string, error) {
+func createAccount(ctx context.Context, tx pgx.Tx, host, email, role string) (string, error) {
 	tenant, err := tenantID(ctx, tx, host)
 	if err != nil {
 		return "", err
@@ -49,11 +52,9 @@ func createAccount(ctx context.Context, tx pgx.Tx, host, email string) (string, 
 		return "", err
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO account (tenant, email, password_hash,
-		                     data_privilege, model_privilege, account_privilege, history_privilege)
-		VALUES ($1, btrim($2), extensions.crypt($3, extensions.gen_salt('bf')),
-		        'read_write', 'read_write', 'read_write', 'read_only')`,
-		tenant, email, password)
+		INSERT INTO account (tenant, email, password_hash, role)
+		VALUES ($1, btrim($2), extensions.crypt($3, extensions.gen_salt('bf')), $4::role)`,
+		tenant, email, password, role)
 	if err != nil {
 		return "", err
 	}

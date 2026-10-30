@@ -219,14 +219,11 @@ type page[T any] struct {
 }
 
 type account struct {
-	ID               string `json:"id"`
-	Email            string `json:"email"`
-	HasPassword      bool   `json:"has_password"`
-	DataPrivilege    string `json:"data_privilege"`
-	ModelPrivilege   string `json:"model_privilege"`
-	AccountPrivilege string `json:"account_privilege"`
-	HistoryPrivilege string `json:"history_privilege"`
-	Deleted          bool   `json:"deleted"`
+	ID          string `json:"id"`
+	Email       string `json:"email"`
+	HasPassword bool   `json:"has_password"`
+	Role        string `json:"role"`
+	Deleted     bool   `json:"deleted"`
 }
 
 type historyEntry struct {

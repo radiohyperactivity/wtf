@@ -157,10 +157,7 @@ func (s *server) routes() []route {
 		{"POST /accounts", s.create("account_create", "/accounts/", body(
 			field{key: "email", name: "p_email", typ: "text"},
 			field{key: "password", name: "p_password", typ: "text"},
-			field{key: "data_privilege", name: "p_data_privilege", typ: "privilege", optional: true},
-			field{key: "model_privilege", name: "p_model_privilege", typ: "privilege", optional: true},
-			field{key: "account_privilege", name: "p_account_privilege", typ: "privilege", optional: true},
-			field{key: "history_privilege", name: "p_history_privilege", typ: "privilege", optional: true},
+			field{key: "role", name: "p_role", typ: "role", optional: true},
 		))},
 		{"GET /accounts/{id}", s.read("account_get", id)},
 		{"PATCH /accounts/{id}", s.update("account_patch", id, patch("p_patch"))},

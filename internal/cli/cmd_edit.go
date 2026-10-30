@@ -675,29 +675,20 @@ func (e *env) editAccount(id string) error {
 	if v != a.Email {
 		p.patch["email"] = v
 	}
-	short := map[string]string{"none": "none", "read_only": "read", "read_write": "write"}
-	for _, f := range []struct{ key, label, current string }{
-		{"data_privilege", "Data privilege (none, read, write)", a.DataPrivilege},
-		{"model_privilege", "Model privilege", a.ModelPrivilege},
-		{"account_privilege", "Account privilege", a.AccountPrivilege},
-		{"history_privilege", "History privilege (none, read)", a.HistoryPrivilege},
-	} {
-		text := short[f.current]
-		for {
-			v, err := e.requiredField(f.label, text, privilegeList)
-			if err != nil {
-				return err
-			}
-			priv, err := parsePrivilege(v)
-			if err == nil {
-				if priv != f.current {
-					p.patch[f.key] = priv
-				}
-				break
-			}
-			fmt.Fprintln(e.stderr, err)
-			text = v
+	for text := a.Role; ; {
+		v, err := e.requiredField("Role (viewer, user, admin)", text, roleList)
+		if err != nil {
+			return err
 		}
+		role, err := parseRole(v)
+		if err == nil {
+			if role != a.Role {
+				p.patch["role"] = role
+			}
+			break
+		}
+		fmt.Fprintln(e.stderr, err)
+		text = v
 	}
 	for {
 		v, err := e.field("Password (keep, set or remove)", "keep", words("keep", "set", "remove"))

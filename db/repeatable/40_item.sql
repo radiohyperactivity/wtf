@@ -29,7 +29,7 @@ DECLARE
     v_tenant uuid;
     v_where  jsonb := '[]'::jsonb;
 BEGIN
-    PERFORM util.require('data', 'read');
+    PERFORM util.require('viewer');
     v_tenant := util.tenant();
     PERFORM util.check_paging(p_limit, p_offset);
 
@@ -102,7 +102,7 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('data', 'read');
+    PERFORM util.require('viewer');
     IF NOT EXISTS (SELECT 1 FROM item WHERE id = p_id AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('item', p_id);
     END IF;
@@ -133,7 +133,7 @@ DECLARE
     v_tenant uuid;
     v_id     uuid;
 BEGIN
-    PERFORM util.require('data', 'write');
+    PERFORM util.require('user');
     v_tenant := util.tenant();
     IF NOT EXISTS (SELECT 1 FROM class WHERE id = p_class AND tenant = v_tenant) THEN
         PERFORM util.raise_bad_reference('class', p_class);
@@ -162,7 +162,7 @@ AS $$
 DECLARE
     v_tenant uuid;
 BEGIN
-    PERFORM util.require('data', 'write');
+    PERFORM util.require('user');
     v_tenant := util.tenant();
     PERFORM util.check_patch(p_patch, ARRAY['class', 'name', 'unit', 'unit_lock', 'photo'], ARRAY['class', 'name', 'unit_lock']);
     IF NOT EXISTS (SELECT 1 FROM item WHERE id = p_id AND tenant = v_tenant) THEN
@@ -201,7 +201,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('data', 'write');
+    PERFORM util.require('user');
     UPDATE item SET deleted = true WHERE id = p_id AND tenant = util.tenant();
 
     IF NOT FOUND THEN
@@ -227,7 +227,7 @@ DECLARE
     v_class  uuid;
     v_stock  uuid[];
 BEGIN
-    PERFORM util.require('data', 'write');
+    PERFORM util.require('user');
     PERFORM util.check_patch(p_options, ARRAY['name', 'class', 'with_parents'], ARRAY['name', 'class', 'with_parents']);
     SELECT * INTO v_item FROM item WHERE id = p_id AND tenant = util.tenant() FOR UPDATE;
     IF NOT FOUND THEN
@@ -245,7 +245,7 @@ BEGIN
         IF p_options ? 'class' THEN
             PERFORM raise_deleted('class', v_class);
         ELSIF COALESCE((p_options ->> 'with_parents')::boolean, false) THEN
-            PERFORM util.require('model', 'write');
+            PERFORM util.require('admin');
             PERFORM util.restore_class_chain(v_class);
         ELSE
             PERFORM util.raise_restore_into_deleted(row_label('item', p_id),
@@ -281,7 +281,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('data', 'write');
+    PERFORM util.require('user');
     IF NOT EXISTS (SELECT 1 FROM item WHERE id = p_item AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('item', p_item);
     END IF;
@@ -297,7 +297,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('data', 'write');
+    PERFORM util.require('user');
     IF NOT EXISTS (SELECT 1 FROM item WHERE id = p_item AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('item', p_item);
     END IF;

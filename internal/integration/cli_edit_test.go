@@ -84,10 +84,10 @@ func TestCLIEdit(t *testing.T) {
 	out, _ = c.interact([]string{clear + "Shelf A\r", "\r", "\r"}, false, "location", "edit", "Garage/Shelf")
 	contains(t, out, "Path:  Garage/Shelf A")
 
-	// Account form: data write, keep the rest and the password.
+	// Account form: a user, keeping the email and the password.
 	c.run(0, "secret-password\n", "account", "add", "editor@test.local", "--password")
-	out, _ = c.interact([]string{"\r", clear + "write\r", "\r", "\r", "\r", "\r"}, false, "account", "edit", "editor@test.local")
-	contains(t, out, "data read_write, model none")
+	out, _ = c.interact([]string{"\r", clear + "user\r", "\r"}, false, "account", "edit", "editor@test.local")
+	contains(t, out, "Role:      user")
 	c.ok("account", "delete", "editor@test.local")
 
 	// --edit on add opens the form for the new object.

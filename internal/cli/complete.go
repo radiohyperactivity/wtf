@@ -385,9 +385,9 @@ func completeFiles(_ *env, _ []string, cur string, _ bool) []string {
 }
 
 var (
-	datatypes     = words("text", "integer", "float", "date", "boolean", "url", "choice")
-	privilegeList = words("none", "read", "write")
-	targetTypes   = words("item", "stock", "location", "class")
+	datatypes   = words("text", "integer", "float", "date", "boolean", "url", "choice")
+	roleList    = words("viewer", "user", "admin")
+	targetTypes = words("item", "stock", "location", "class")
 )
 
 // candidates returns the completions for the last of words (the arguments

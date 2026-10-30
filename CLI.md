@@ -73,7 +73,7 @@ wtf item add            # asks for everything, with Tab completion
 | `wtf option list <attribute>` / `get` / `add <attribute> <name>…` / `set --name N` / `delete` / `restore` | `/attributes/{id}/options`, `/options/{id}` |
 | `wtf attachment list <type> <ref>` / `add <type> <ref> <file> [--title T] [--photo]` / `get <type> <ref> <id>` / `download <type> <ref> <id> [-o FILE\|-]` / `set <type> <ref> <id> --title T` / `photo <type> <ref> <id\|none>` / `delete <type> <ref> <id>` / `restore <type> <ref> <id>` | attachments |
 | `wtf quantity list` / `get` / `available <q> on\|off\|default`, `wtf unit-family list [--quantity Q]` / `get` / `available <f> on\|off\|default`, `wtf unit list [--quantity Q] [--family F]` / `get` / `import <file> [--dry-run]` | units: global and the tenant's own, and which are available |
-| `wtf account list` / `get` / `add <email> [--password] [--data P] [--model P] [--account P] [--history P] [--edit]` / `set` / `edit` / `delete` / `history` | `/accounts` |
+| `wtf account list` / `get` / `add <email> [--password] [--role R] [--edit]` / `set` / `edit` / `delete` / `history` | `/accounts` |
 
 ## Interactive use
 
@@ -233,7 +233,7 @@ These follow your answers: all attributes offered, a picker on Tab Tab, bash, zs
 
 39. **`class delete` and `location delete` take `--recursive`** (added after review). It deletes the node and everything below it on the server, in one transaction: all or nothing.
     - **In use:** when any of the classes has items, or any of the locations has stock, nothing is deleted. The message lists where (`MCU/Intel/No (1 item)`) and suggests `--force`.
-    - **`--force`:** deletes those items (with their values, stock rows and attachments) or stock rows too. It only works with `--recursive`. Forcing a class delete needs the data write privilege as well as model write.
+    - **`--force`:** deletes those items (with their values, stock rows and attachments) or stock rows too. It only works with `--recursive`.
     - **Confirmation, always:** `wtf` asks first: `Delete class MCU/Intel and the 3 classes below it, with 1 item? [y/N]`. A script must pass `--yes`, or it gets an error. `--verbose` lists everything that will be deleted before the question. The counts come from a preview on the server, `GET …/deletion`. It is a `GET` so that a server too old for recursive deletes answers 404, and the client stops ("update wtfd"), instead of mistaking the preview for a delete.
     - **A plain delete that fails** because of children or items now suggests `--recursive`.
     - **Single deletes** of items, stock rows, attributes and so on still don't ask (decision 14).
@@ -252,7 +252,7 @@ These follow your answers: all attributes offered, a picker on Tab Tab, bash, zs
       - **Item and stock values:** one line per attribute of the class (per-unit ones for stock), and clearing a line removes the value, so the default applies again. Required values without a default can't be cleared.
     - **When changes are made:** only at the end, so Ctrl-C at any point changes nothing (exit code 130). They can take several requests. If one fails, the message says what was already saved (`Already saved: assigned Colour`). Then `Saved: …` or `No changes.`, and the object is shown.
     - **Fixed fields:** an item's or attribute's unit can only change to another unit of the same quantity, so it is only asked for when there is one, with Unit lock right after it. A stock row's item isn't in its form; use `stock set --item`.
-    - **Accounts:** the form asks for the email, the four privileges (none, read, write) and the password (keep, set or remove).
+    - **Accounts:** the form asks for the email, the role (viewer, user, admin) and the password (keep, set or remove).
     - **`--edit` on `add`:** creates the object (class, location, item, stock row, attribute, account or attachment), then opens its form. Without a terminal, `edit` and `--edit` fail before anything is created. Scripts use `set` and the other commands.
 
 ### Compartment boxes
@@ -342,7 +342,7 @@ Built with the server's tenants ([TENANTS.md](TENANTS.md)), API revision 11.
 
 52. **A profile is still one server address,** and the hostname in it picks the tenant: `wtf login https://smith.wtf.example`. Nothing else changes for logging in.
 53. **Unit ids are strings** (UUIDs). `--unit` still takes a symbol, a name, `"B (Binary bytes)"`, or an id.
-54. **`wtf quantity available <quantity> on|off|default`** and **`wtf unit-family available <family> on|off|default`** turn units on and off for the tenant (model write privilege); `default` follows the global default again. `list` and `get` have an AVAILABLE column: yes or no, with "(chosen)" when it is the tenant's own choice rather than the default. Completion offers only available units; the server refuses the others, and refuses to turn off what attributes or items use, naming them.
+54. **`wtf quantity available <quantity> on|off|default`** and **`wtf unit-family available <family> on|off|default`** turn units on and off for the tenant (admins); `default` follows the global default again. `list` and `get` have an AVAILABLE column: yes or no, with "(chosen)" when it is the tenant's own choice rather than the default. Completion offers only available units; the server refuses the others, and refuses to turn off what attributes or items use, naming them.
 
 ### Model files
 

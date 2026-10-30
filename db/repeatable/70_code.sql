@@ -12,7 +12,7 @@ DECLARE
     v_code   bigint;
     v_id     uuid;
 BEGIN
-    PERFORM util.require('data', 'read');
+    PERFORM util.require('viewer');
     v_tenant := util.tenant();
     v_code := util.code_value(p_code);
     SELECT id INTO v_id FROM location WHERE tenant = v_tenant AND code = v_code;

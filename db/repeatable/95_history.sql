@@ -1,6 +1,7 @@
 -- API: history. Explained in api/history.md.
 --
--- Every function needs the history privilege, returns the entries newest
+-- The history of items and stock rows is for every account, the rest for
+-- admins (ACCOUNTS.md). Every function returns the entries newest
 -- first, and is paged (p_limit, p_offset). Objects that have been deleted
 -- still have their history.
 
@@ -66,7 +67,7 @@ DECLARE
     v_id     text := quote_literal(p_id);
     v_stock  text;
 BEGIN
-    PERFORM util.require('history', 'read');
+    PERFORM util.require('viewer');
     -- The item's stock rows, including deleted ones.
     v_stock := format($q$(
         SELECT s.data ->> 'id' FROM history s
@@ -90,7 +91,7 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('history', 'read');
+    PERFORM util.require('viewer');
     RETURN util.history_page(format($q$
            (h.table_name = 'stock'       AND h.data ->> 'id'    = %1$s)
         OR (h.table_name = 'stock_value' AND h.data ->> 'stock' = %1$s)
@@ -109,7 +110,7 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('history', 'read');
+    PERFORM util.require('admin');
     RETURN util.history_page(format($q$
            (h.table_name = 'location'   AND h.data ->> 'id' = %1$s)
         OR (h.table_name = 'stock'      AND (h.data ->> 'location' = %1$s
@@ -131,7 +132,7 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('history', 'read');
+    PERFORM util.require('admin');
     RETURN util.history_page(format($q$
            (h.table_name = 'class'           AND h.data ->> 'id'    = %1$s)
         OR (h.table_name = 'class_attribute' AND h.data ->> 'class' = %1$s)
@@ -155,7 +156,7 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('history', 'read');
+    PERFORM util.require('admin');
     RETURN util.history_page($q$
         h.table_name = 'location'
         AND (h.data ->> 'parent' IS NULL
@@ -172,7 +173,7 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('history', 'read');
+    PERFORM util.require('admin');
     RETURN util.history_page($q$
         h.table_name = 'class'
         AND (h.data ->> 'parent' IS NULL
@@ -189,7 +190,7 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('history', 'read');
+    PERFORM util.require('admin');
     RETURN util.history_page(format($q$
            (h.table_name = 'attribute'        AND h.data ->> 'id'        = %1$s)
         OR (h.table_name = 'attribute_option' AND h.data ->> 'attribute' = %1$s)
@@ -204,7 +205,7 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('history', 'read');
+    PERFORM util.require('admin');
     RETURN util.history_page($q$
         h.table_name = 'attribute' AND (h.operation <> 'update' OR h.changes ? 'deleted')
     $q$, p_limit, p_offset);
@@ -218,7 +219,7 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('history', 'read');
+    PERFORM util.require('admin');
     RETURN util.history_page(format($q$
         h.table_name = 'account' AND h.data ->> 'id' = %s
     $q$, quote_literal(p_id)), p_limit, p_offset);

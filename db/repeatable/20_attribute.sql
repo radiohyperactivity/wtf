@@ -256,7 +256,7 @@ AS $$
 DECLARE
     v_tenant uuid;
 BEGIN
-    PERFORM util.require('model', 'write');
+    PERFORM util.require('admin');
     v_tenant := util.tenant();
     IF NOT EXISTS (SELECT 1 FROM quantity WHERE id = p_id AND (tenant IS NULL OR tenant = v_tenant)) THEN
         PERFORM util.raise_not_found('quantity', p_id);
@@ -325,7 +325,7 @@ AS $$
 DECLARE
     v_tenant uuid;
 BEGIN
-    PERFORM util.require('model', 'write');
+    PERFORM util.require('admin');
     v_tenant := util.tenant();
     IF NOT EXISTS (SELECT 1 FROM unit_family WHERE id = p_id AND (tenant IS NULL OR tenant = v_tenant)) THEN
         PERFORM util.raise_not_found('unit family', p_id);
@@ -395,7 +395,7 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require_model_read();
+    PERFORM util.require('viewer');
     RETURN (
         SELECT COALESCE(jsonb_agg(util.attribute_json(a.id) ORDER BY util.natural_key(a.name), a.id), '[]'::jsonb)
         FROM attribute a
@@ -414,7 +414,7 @@ AS $$
 DECLARE
     v_result jsonb;
 BEGIN
-    PERFORM util.require_model_read();
+    PERFORM util.require('viewer');
     IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_id AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('attribute', p_id);
     END IF;
@@ -457,7 +457,7 @@ DECLARE
     v_tenant uuid;
     v_id     uuid;
 BEGIN
-    PERFORM util.require('model', 'write');
+    PERFORM util.require('admin');
     v_tenant := util.tenant();
     PERFORM util.check_unit_choosable(v_tenant, p_unit);
     INSERT INTO attribute (tenant, name, datatype, unit, unit_lock)
@@ -480,7 +480,7 @@ AS $$
 DECLARE
     v_tenant uuid;
 BEGIN
-    PERFORM util.require('model', 'write');
+    PERFORM util.require('admin');
     v_tenant := util.tenant();
     PERFORM util.check_patch(p_patch,
                          ARRAY['name', 'datatype', 'unit', 'unit_lock'],
@@ -515,7 +515,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('model', 'write');
+    PERFORM util.require('admin');
     UPDATE attribute SET deleted = true WHERE id = p_id AND tenant = util.tenant();
 
     IF NOT FOUND THEN
@@ -533,7 +533,7 @@ AS $$
 DECLARE
     v_deleted boolean;
 BEGIN
-    PERFORM util.require('model', 'write');
+    PERFORM util.require('admin');
     PERFORM util.check_patch(p_options, ARRAY['name'], ARRAY['name']);
     SELECT deleted INTO v_deleted FROM attribute WHERE id = p_id AND tenant = util.tenant() FOR UPDATE;
     IF NOT FOUND THEN
@@ -561,7 +561,7 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require_model_read();
+    PERFORM util.require('viewer');
     IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_attribute AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('attribute', p_attribute);
     END IF;
@@ -580,7 +580,7 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require_model_read();
+    PERFORM util.require('viewer');
     IF NOT EXISTS (SELECT 1 FROM attribute_option WHERE id = p_id AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('attribute option', p_id);
     END IF;
@@ -596,7 +596,7 @@ DECLARE
     v_tenant uuid;
     v_id     uuid;
 BEGIN
-    PERFORM util.require('model', 'write');
+    PERFORM util.require('admin');
     v_tenant := util.tenant();
     IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_attribute AND tenant = v_tenant) THEN
         PERFORM util.raise_not_found('attribute', p_attribute);
@@ -617,7 +617,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('model', 'write');
+    PERFORM util.require('admin');
     PERFORM util.check_patch(p_patch, ARRAY['name'], ARRAY['name']);
 
     UPDATE attribute_option
@@ -638,7 +638,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('model', 'write');
+    PERFORM util.require('admin');
     UPDATE attribute_option SET deleted = true WHERE id = p_id AND tenant = util.tenant();
 
     IF NOT FOUND THEN
@@ -656,7 +656,7 @@ AS $$
 DECLARE
     v_deleted boolean;
 BEGIN
-    PERFORM util.require('model', 'write');
+    PERFORM util.require('admin');
     PERFORM util.check_patch(p_options, ARRAY['name'], ARRAY['name']);
     SELECT deleted INTO v_deleted FROM attribute_option WHERE id = p_id AND tenant = util.tenant() FOR UPDATE;
     IF NOT FOUND THEN

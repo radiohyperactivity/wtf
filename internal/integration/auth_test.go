@@ -55,15 +55,16 @@ func TestAuthentication(t *testing.T) {
 
 	me := e.expect(t, 200, "GET", "/me", nil).body
 	if str(t, me, "email") != adminEmail || get(t, me, "tenant") != nil ||
-		str(t, me, "data_privilege") != "read_write" {
+		str(t, me, "role") != "admin" {
 		t.Errorf("me: %v", me)
 	}
 
 	// Accounts: create one with a password, log in, change the password.
 	acct := e.expect(t, 201, "POST", "/accounts", obj(
-		"email", "Reader@Test.local", "password", "first-password", "data_privilege", "read_only")).body
+		"email", "Reader@Test.local", "password", "first-password")).body
 	acctID := str(t, acct, "id")
-	if get(t, acct, "model_privilege") != "none" || get(t, acct, "has_password") != true {
+	// A new account is a viewer unless told otherwise.
+	if get(t, acct, "role") != "viewer" || get(t, acct, "has_password") != true {
 		t.Errorf("new account: %v", acct)
 	}
 	e.expect(t, 409, "POST", "/accounts", obj("email", "reader@test.local")) // emails are case-insensitive
@@ -84,20 +85,13 @@ func TestAuthentication(t *testing.T) {
 	e.loginAs(t, 401, "reader@test.local", "first-password")
 	e.loginAs(t, 200, "reader@test.local", "second-password")
 
-	// Privileges: read-only data, no model, no accounts.
-	e.reset(t)
-	e.expect(t, 200, "GET", "/items", nil, reader...)
-	e.expect(t, 200, "GET", "/classes", nil, reader...) // reading the model is allowed with data read
-	e.expect(t, 403, "POST", "/locations", obj("name", "Shed"), reader...)
-	e.expect(t, 403, "POST", "/classes", obj("name", "Tools"), reader...)
-	e.expect(t, 403, "GET", "/accounts", nil, reader...)
-	e.expect(t, 200, "PATCH", "/accounts/"+acctID, obj("data_privilege", "none"))
-	e.expect(t, 403, "GET", "/items", nil, reader...)
-	e.expect(t, 200, "GET", "/quantities", nil, reader...) // system data: any login
+	e.expect(t, 400, "PATCH", "/accounts/"+acctID, obj("role", "owner"))
+	e.expect(t, 400, "PATCH", "/accounts/"+acctID, obj("role", nil))
 
 	// You can't lock yourself out.
 	self := str(t, e.expect(t, 200, "GET", "/me", nil).body, "id")
-	e.expect(t, 422, "PATCH", "/accounts/"+self, obj("account_privilege", "read_only"))
+	e.expect(t, 422, "PATCH", "/accounts/"+self, obj("role", "user"))
+	e.expect(t, 200, "PATCH", "/accounts/"+self, obj("role", "admin"))
 	e.expect(t, 422, "DELETE", "/accounts/"+self, nil)
 
 	// Using the session renews its cookie; logout ends the session and
@@ -118,8 +112,7 @@ func TestAuthentication(t *testing.T) {
 
 func TestLockout(t *testing.T) {
 	e := setup(t)
-	e.expect(t, 201, "POST", "/accounts", obj("email", "lockme@test.local", "password", "right-password",
-		"data_privilege", "read_only"))
+	e.expect(t, 201, "POST", "/accounts", obj("email", "lockme@test.local", "password", "right-password"))
 
 	for i := 0; i < 5; i++ {
 		e.loginAs(t, 401, "lockme@test.local", "wrong-password")
@@ -184,4 +177,56 @@ func TestLoginLog(t *testing.T) {
 	if strings.Contains(log, "password") {
 		t.Errorf("log mentions a password:\n%s", log)
 	}
+}
+
+// TestRoles: a viewer looks, a user changes items and stock, an admin
+// everything (ACCOUNTS.md).
+func TestRoles(t *testing.T) {
+	e := setup(t)
+	e.reset(t)
+	// Accounts outlive reset(), so the emails are new on every run.
+	login := func(role string) []string {
+		email := fmt.Sprintf("%s-%d@test.local", role, time.Now().UnixNano())
+		e.expect(t, 201, "POST", "/accounts", obj("email", email, "password", "secret-password", "role", role))
+		return as(session(t, e.loginAs(t, 200, email, "secret-password")))
+	}
+	viewer, user := login("viewer"), login("user")
+
+	shelf := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Shelf")).body, "id")
+	tools := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Tools")).body, "id")
+
+	// Looking: everyone.
+	for _, who := range [][]string{viewer, user} {
+		e.expect(t, 200, "GET", "/items", nil, who...)
+		e.expect(t, 200, "GET", "/classes", nil, who...)
+		e.expect(t, 200, "GET", "/attributes", nil, who...)
+		e.expect(t, 200, "GET", "/locations/"+shelf, nil, who...)
+		e.expect(t, 200, "GET", "/quantities", nil, who...)
+		e.expect(t, 403, "GET", "/accounts", nil, who...)
+		e.expect(t, 403, "GET", "/classes/"+tools+"/model", nil, who...)
+		e.expect(t, 403, "GET", "/locations/"+shelf+"/history", nil, who...)
+		e.expect(t, 403, "GET", "/classes/history", nil, who...)
+	}
+
+	// Items and stock: users.
+	e.expect(t, 403, "POST", "/items", obj("name", "Hammer", "class", tools), viewer...)
+	item := str(t, e.expect(t, 201, "POST", "/items", obj("name", "Hammer", "class", tools), user...).body, "id")
+	e.expect(t, 403, "POST", "/stock", obj("item", item, "location", shelf, "quantity", 1), viewer...)
+	stock := str(t, e.expect(t, 201, "POST", "/stock", obj("item", item, "location", shelf, "quantity", 1), user...).body, "id")
+	e.expect(t, 200, "PATCH", "/stock/"+stock, obj("quantity", 2), user...)
+	e.expect(t, 403, "PATCH", "/stock/"+stock, obj("quantity", 3), viewer...)
+	for _, who := range [][]string{viewer, user} {
+		e.expect(t, 200, "GET", "/items/"+item+"/history", nil, who...)
+		e.expect(t, 200, "GET", "/stock/"+stock+"/history", nil, who...)
+	}
+
+	// Setting up: admins.
+	e.expect(t, 403, "POST", "/locations", obj("name", "Shed"), user...)
+	e.expect(t, 403, "PATCH", "/locations/"+shelf, obj("name", "Top shelf"), user...)
+	e.expect(t, 403, "POST", "/classes", obj("name", "Parts"), user...)
+	e.expect(t, 403, "POST", "/attributes", obj("name", "Length", "datatype", "text"), user...)
+	e.expect(t, 403, "POST", "/model/import?dry_run=true", obj("format", "wtf-model", "version", 1), user...)
+	e.expect(t, 403, "POST", "/accounts", obj("email", "x@test.local"), user...)
+	e.expect(t, 200, "GET", "/classes/"+tools+"/model", nil)
+	e.expect(t, 200, "GET", "/locations/"+shelf+"/history", nil)
 }

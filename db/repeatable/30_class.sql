@@ -16,7 +16,7 @@ DECLARE
     v_tenant  uuid;
     v_version bigint;
 BEGIN
-    PERFORM util.require_model_read();
+    PERFORM util.require('viewer');
     v_tenant := util.tenant();
     v_version := util.data_version(v_tenant, 'class');
     IF p_known_version IS NOT DISTINCT FROM v_version THEN
@@ -38,7 +38,7 @@ LANGUAGE plpgsql STABLE
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require_model_read();
+    PERFORM util.require('viewer');
     IF NOT EXISTS (SELECT 1 FROM class WHERE id = p_id AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('class', p_id);
     END IF;
@@ -58,7 +58,7 @@ DECLARE
     v_tenant uuid;
     v_id     uuid;
 BEGIN
-    PERFORM util.require('model', 'write');
+    PERFORM util.require('admin');
     v_tenant := util.tenant();
     IF p_parent IS NOT NULL AND NOT EXISTS (SELECT 1 FROM class WHERE id = p_parent AND tenant = v_tenant) THEN
         PERFORM util.raise_bad_reference('class', p_parent);
@@ -83,7 +83,7 @@ AS $$
 DECLARE
     v_tenant uuid;
 BEGIN
-    PERFORM util.require('model', 'write');
+    PERFORM util.require('admin');
     v_tenant := util.tenant();
     PERFORM util.check_patch(p_patch, ARRAY['name', 'parent', 'container', 'photo'], ARRAY['name', 'container']);
     IF NOT EXISTS (SELECT 1 FROM class WHERE id = p_id AND tenant = v_tenant) THEN
@@ -115,7 +115,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('model', 'write');
+    PERFORM util.require('admin');
     UPDATE class SET deleted = true WHERE id = p_id AND tenant = util.tenant();
 
     IF NOT FOUND THEN
@@ -145,7 +145,7 @@ DECLARE
     v_in_use  text;
     v_result  jsonb;
 BEGIN
-    PERFORM util.require('model', 'write');
+    PERFORM util.require('admin');
     IF NOT EXISTS (SELECT 1 FROM class WHERE id = p_id AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('class', p_id);
     END IF;
@@ -193,7 +193,6 @@ BEGIN
                 USING ERRCODE = 'restrict_violation',
                       HINT = 'Delete the items first, or force the delete to delete them too.';
         END IF;
-        PERFORM util.require('data', 'write');
     END IF;
 
     IF NOT p_dry_run THEN
@@ -229,7 +228,7 @@ DECLARE
     v_stock       uuid[];
     v_child       uuid;
 BEGIN
-    PERFORM util.require('model', 'write');
+    PERFORM util.require('admin');
     PERFORM util.check_patch(p_options, ARRAY['name', 'parent', 'with_parents'], ARRAY['name', 'with_parents']);
     SELECT * INTO v_class FROM class WHERE id = p_id AND tenant = util.tenant() FOR UPDATE;
     IF NOT FOUND THEN
@@ -270,9 +269,6 @@ BEGIN
     v_stock := ARRAY(
         SELECT id FROM stock
         WHERE item = ANY (v_items) AND deleted AND id IN (SELECT util.deleted_in('stock', v_transaction)));
-    IF cardinality(v_items) > 0 THEN
-        PERFORM util.require('data', 'write');
-    END IF;
 
     UPDATE class
     SET deleted = false,
@@ -320,7 +316,7 @@ DECLARE
     v_boolean boolean;
     v_option  uuid;
 BEGIN
-    PERFORM util.require('model', 'write');
+    PERFORM util.require('admin');
     v_tenant := util.tenant();
     IF NOT EXISTS (SELECT 1 FROM class WHERE id = p_class AND tenant = v_tenant) THEN
         PERFORM util.raise_not_found('class', p_class);
@@ -364,7 +360,7 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public, pg_temp
 AS $$
 BEGIN
-    PERFORM util.require('model', 'write');
+    PERFORM util.require('admin');
     IF NOT EXISTS (SELECT 1 FROM class WHERE id = p_class AND tenant = util.tenant()) THEN
         PERFORM util.raise_not_found('class', p_class);
     END IF;

@@ -24,7 +24,7 @@ All data access goes through the functions described in [API.md](API.md). The ER
 | `stock`           | The physical things: a quantity of an item at a location.                        |
 | `tenant`          | One inventory: its `host` (the first label of its hostnames) and `code`, the next label code of its locations, items and stock rows (see [TENANTS.md](TENANTS.md) and [api/code.md](api/code.md)). |
 | `tenant_quantity`, `tenant_unit_family` | A tenant's choices of which quantities and unit families it has available; only where it differs from the default. |
-| `account`         | A user: email, bcrypt password hash, and the data, model, account and history privileges (see [ACCOUNTS.md](ACCOUNTS.md)). |
+| `account`         | A user: email, bcrypt password hash, and role: viewer, user or admin (see [ACCOUNTS.md](ACCOUNTS.md)). |
 | `session`         | A login: the SHA-256 of its token, its account and when it was last used. |
 | `history`         | One entry per changed row of data: when, transaction, account, table, operation, the row, and the changed columns (see [api/history.md](api/history.md)). |
 | `item_attachment`, `stock_attachment`, `location_attachment`, `class_attachment` | The files attached to an item, stock row, location or class: id, the object, MIME type, SHA-256 hash, size and title. The bytes live on disk in `wtfd`'s files directory, named by the hash (see [api/attachment.md](api/attachment.md)). |

@@ -24,7 +24,7 @@ const tenantUsage = `Usage:
   wtfd tenant list [database flags]
   wtfd tenant rename --host HOST --new-host NEW --files-directory DIR [database flags]
 
-create makes a tenant and its first account, with every privilege, and
+create makes a tenant and its first account, an admin, and
 prints the account's generated password once. HOST is the first label of the
 hostnames that reach the tenant: "bob" for bob.wtf.example. rename changes
 it, and moves the tenant's directory in the files directory along.
@@ -83,7 +83,7 @@ func runTenant(args []string, stdout, stderr io.Writer) int {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(stdout, "Tenant %s created, with the account %s, which has every privilege.\n", *host, *email)
+			fmt.Fprintf(stdout, "Tenant %s created, with the account %s, an admin.\n", *host, *email)
 			fmt.Fprintf(stdout, "Password: %s\n", password)
 			fmt.Fprintln(stdout, "The password is shown only this once; change it after logging in (PUT /me/password).")
 		case "list":
