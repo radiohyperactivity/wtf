@@ -17,7 +17,7 @@ All data access goes through the functions described in [API.md](API.md). The ER
 | `attribute`       | A global, reusable property definition ("Weight", "Voltage") with a fixed datatype, an optional unit and Unit lock. |
 | `attribute_option`| An allowed option for a `choice` attribute ("0805", "0603", "THT"). Listed in natural order by the API (DIP4 before DIP10). |
 | `class_attribute` | Assigns an attribute to a class (and thereby to all its descendants): with an optional default, as per kind or per unit, and optionally required. |
-| `item`            | A *kind* of thing ("M3x10 hex screw", "Makita DHP482 drill"). Belongs to exactly one class, and optionally has the unit its stock is measured in (none = pieces), with Unit lock. |
+| `item`            | A *kind* of thing ("M3x10 hex screw", "Makita DHP482 drill"). Belongs to exactly one class, and optionally has the unit its stock is measured in (none = counted), with Unit lock. |
 | `value`           | The value of one per-kind attribute for one item. Numbers with a unit are in the base unit. |
 | `stock_value`     | The value of one per-unit attribute for one stock row (serial number, purchase date, …). Same rules as `value`. |
 | `location`        | A place in a tree (House → Garage → Shelf 2 → Bin 4).                            |
@@ -62,7 +62,7 @@ All data access goes through the functions described in [API.md](API.md). The ER
 - The same symbol may be in several families of one quantity (`B` in decimal and binary bytes), but only for units that convert the same (trigger).
 - Every number that has a unit (values, defaults, stock quantities) is stored in the base unit of the unit's quantity. The database never converts stored numbers.
 - Each quantity has a datatype: `integer` for Count, `float` for everything else. An attribute with a unit must have its quantity's datatype (trigger).
-- Stock quantities of an item without a unit (pieces), or with an integer quantity, must be whole numbers (triggers).
+- Stock quantities of an item without a unit (counted), or with an integer quantity, must be whole numbers (triggers).
 - An attribute's or item's unit can only change to another unit of the same quantity, in any family (e.g. mm → in). Adding a unit where there was none, or removing one, is not allowed (trigger).
 - Unit lock can only be set together with a unit (CHECK).
 - An absent `value` row means "no value". Rows where every typed column is NULL are not allowed.

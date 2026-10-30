@@ -358,7 +358,7 @@ class _QuantityFieldState extends State<QuantityField> {
       controller: controller,
       decoration: InputDecoration(
         labelText: units == null
-            ? 'Quantity (pieces)'
+            ? 'Quantity'
             : 'Quantity (${units.unit.familyName})',
         hintText: units == null ? null : measureHint(units, controller),
         helperText: 'Empty: ${widget.emptyMeans}',

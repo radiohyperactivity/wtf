@@ -961,7 +961,7 @@ BEGIN
 END;
 $$;
 
--- quantity is in the base unit of the item's unit (pieces if none); display
+-- quantity is in the base unit of the item's unit (counted if none); display
 -- is the same quantity as it is shown (see util.display_json).
 -- location is just the id: the client resolves it from its cached location
 -- tree. photo is the stock row photo, item.photo the item photo.

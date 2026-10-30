@@ -80,7 +80,7 @@ func TestCLIInteractive(t *testing.T) {
 	// "Scr" to the path), unit (skipped), the required Length, then
 	// the optional Colour (picked with Tab Tab, filtering on "bl").
 	out, prompts := c.interact([]string{"M3 screw\r", "Scr", "\t", "\r", "\r", "12mm\r", "\t", "\t", "b", "l", "\r", "\r", "\r"}, false, "item", "add") // the last: no stock
-	contains(t, prompts, "Name: ", "Class: ", "Unit (Enter: counted in pieces)", "Length (required) (m, or another unit of Metric length): ", "Colour [red]")
+	contains(t, prompts, "Name: ", "Class: ", "Unit (Enter: counted one by one)", "Length (required) (m, or another unit of Metric length): ", "Colour [red]")
 	contains(t, out, "M3 screw", "Hardware/Screws", "1.2 cm", "blue")
 
 	// Stock: the location by Tab, a quantity, and the per-unit Serial.

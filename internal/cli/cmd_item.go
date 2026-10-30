@@ -164,7 +164,7 @@ func itemGroup() group {
 				},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
 					classRef := fs.String("class", "", "the item's class (required)")
-					unitRef := fs.String("unit", "", "unit of its stock quantities, e.g. m or g (default: counted in pieces)")
+					unitRef := fs.String("unit", "", "unit of its stock quantities, e.g. m or g (default: counted one by one)")
 					unitLock := fs.Bool("unit-lock", false, "always show its stock in that unit, instead of scaling within the unit's family")
 					editAfter := fs.Bool("edit", false, "open the new item in the edit form")
 					var values stringList
@@ -188,7 +188,7 @@ func itemGroup() group {
 						}
 						body["class"] = classID
 						if *unitRef == "" {
-							if *unitRef, err = e.offer("Unit (Enter: counted in pieces)", arg("", completeUnits), args); err != nil {
+							if *unitRef, err = e.offer("Unit (Enter: counted one by one)", arg("", completeUnits), args); err != nil {
 								return err
 							}
 						}

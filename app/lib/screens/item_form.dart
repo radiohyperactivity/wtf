@@ -146,9 +146,9 @@ class _ItemFormState extends State<_ItemForm> {
     final picked = await pickUnit(
       context,
       query: query,
-      // A new item may be counted in pieces; an existing one can only change
-      // to another unit of the same quantity, as in the CLI.
-      noneLabel: _editing ? null : 'None: counted in pieces',
+      // A new item may be counted; an existing one can only change to
+      // another unit of the same quantity, as in the CLI.
+      noneLabel: _editing ? null : 'None: counted one by one',
       quantityId: _editing ? current?.quantity.id : null,
     );
     if (picked == null) return;
@@ -296,7 +296,7 @@ class _ItemFormState extends State<_ItemForm> {
                 const SizedBox(height: 16),
                 InputDecorator(
                   decoration: const InputDecoration(
-                    labelText: 'Stock is measured in',
+                    labelText: 'Stock',
                     border: OutlineInputBorder(),
                   ),
                   child: PickerKeys(
@@ -307,7 +307,9 @@ class _ItemFormState extends State<_ItemForm> {
                         children: [
                           Expanded(
                             child: Text(
-                              _unit == null ? 'pieces' : unitLabel(_unit!),
+                              _unit == null
+                                  ? 'counted'
+                                  : 'measured in ${unitLabel(_unit!)}',
                             ),
                           ),
                           const Icon(Icons.arrow_drop_down),

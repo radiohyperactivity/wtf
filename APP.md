@@ -178,7 +178,7 @@ These are decisions I made without you, recorded for review. You asked me to cop
     - **Existing values:** they appear as shown elsewhere (`18 V`, `32 KiB`), which reads back to the same number. So saving without changes sends nothing.
 12. **New items.**
     - **Stock afterwards:** as in the CLI (decision 43), the app asks once "Add stock for …?". Yes opens the stock form, and the item's screen follows.
-    - **Units:** a new item can have any unit, or pieces. An existing item can only change to another unit of the same quantity, and only if it has one (CLI decision 41).
+    - **Units:** a new item can have any unit, or none: it is counted. An existing item can only change to another unit of the same quantity, and only if it has one (CLI decision 41).
 13. **Moving stock.**
     - **How much:** an empty quantity moves all of it. Uncounted rows can only move whole, so they get no quantity field.
     - **What you see afterwards:** the server answers with the row at the destination, which may be the same row, a new one split off, or one it was merged into. The app shows that row.

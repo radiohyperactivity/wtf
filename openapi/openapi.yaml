@@ -559,7 +559,7 @@ paths:
                 name: { type: string }
                 unit:
                   oneOf: [{ $ref: "#/components/schemas/Uuid" }, { type: "null" }]
-                  description: Unit stock is measured in, an available one; none means pieces.
+                  description: Unit stock is measured in, an available one; none means it is counted.
                 unit_lock: { type: boolean, default: false, description: Always show stock in the unit, instead of scaling it within its family. }
                 values:
                   type: object
@@ -752,7 +752,7 @@ paths:
                 location: { $ref: "#/components/schemas/Uuid" }
                 quantity:
                   type: [number, "null"]
-                  description: In the base unit of the item's unit (pieces if none); null = not counted.
+                  description: In the base unit of the item's unit (counted if none); null = not counted.
                 values:
                   type: object
                   description: Per-unit values, keyed by attribute id.

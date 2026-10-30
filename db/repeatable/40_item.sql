@@ -116,7 +116,7 @@ $$;
 -- given as JSON null gets no value. Class defaults are never stored on the
 -- item; item_get shows them for attributes without a value. Required
 -- attributes without a default must be given (checked at commit).
--- p_unit is the unit stock is measured in (NULL = pieces), and must be
+-- p_unit is the unit stock is measured in (NULL = counted), and must be
 -- available; with p_unit_lock, stock is always shown in it, as for
 -- attributes.
 CREATE FUNCTION item_create(

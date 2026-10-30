@@ -398,7 +398,7 @@ BEGIN
 END;
 $$;
 
--- p_quantity is in the base unit of the item's unit (pieces if none);
+-- p_quantity is in the base unit of the item's unit (counted if none);
 -- NULL = present but not counted. p_values sets per-unit values:
 -- {"<attribute id>": <value>, ...}. Required per-unit attributes without a
 -- default must be given (checked at commit).

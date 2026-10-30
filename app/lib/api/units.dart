@@ -233,7 +233,7 @@ class UnitChoice {
 
 /// Converts input such as "12mm" to the base unit of the unit's quantity. A
 /// plain number is in [plainIn] if given (a unit picked next to the field),
-/// else in the attribute's or item's unit. Without units (pieces) only plain
+/// else in the attribute's or item's unit. Without units (counted) only plain
 /// numbers are accepted. [integer] demands a whole result.
 Decimal parseMeasure(
   String input,

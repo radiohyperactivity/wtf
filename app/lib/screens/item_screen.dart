@@ -151,10 +151,10 @@ class ItemScreen extends StatelessWidget {
                             : null,
                       ),
                       Field(
-                        'Stock in',
+                        'Stock',
                         item.unit == null
-                            ? 'pieces'
-                            : unitLabel(item.unit!, lock: item.unitLock),
+                            ? 'counted'
+                            : 'measured in ${unitLabel(item.unit!, lock: item.unitLock)}',
                       ),
                       ...valueFields(item.values),
                       MissingNote(item.missing.map((m) => m.name).toList()),

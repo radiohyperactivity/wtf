@@ -287,7 +287,7 @@ Future<ItemListed?> pickItem(
   );
 }
 
-/// A chosen unit; [unit] null is "none" (pieces, or no unit).
+/// A chosen unit; [unit] null is "none" (counted, or no unit).
 class PickedUnit {
   const PickedUnit(this.unit);
 

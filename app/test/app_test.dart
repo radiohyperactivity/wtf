@@ -631,7 +631,11 @@ void main() {
       narrow.top,
       greaterThan(tester.getRect(find.text('Voltage')).bottom),
     );
-    expect(narrow.bottom, lessThan(tester.getRect(find.text('Stock')).top));
+    // The section heading, not the item's "Stock: counted".
+    expect(
+      narrow.bottom,
+      lessThan(tester.getRect(find.text('Stock').last).top),
+    );
     expect(narrow.width, 400 - 32);
 
     // On the location, the stock row has its item's photo; a row's own
@@ -1003,7 +1007,7 @@ void main() {
     );
     await tester.tap(find.text('Garage/Shelf 2'));
     await tester.pumpAndSettle();
-    await tester.enterText(field('Quantity (pieces)'), '1');
+    await tester.enterText(field('Quantity'), '1');
     await tester.tap(find.widgetWithText(FilledButton, 'Move'));
     await tester.pumpAndSettle();
 

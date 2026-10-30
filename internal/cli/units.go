@@ -113,7 +113,7 @@ func (e *env) familyUnits(u *unit) ([]unit, error) {
 // parseMeasure converts input such as "12mm" to the base unit of u's
 // quantity, where u is the unit of an attribute or item. A plain number is
 // in u. Any unit of the quantity is accepted; a symbol is looked up in u's
-// family first. With u nil (pieces) only plain numbers are accepted.
+// family first. With u nil (counted) only plain numbers are accepted.
 func (e *env) parseMeasure(input string, u *unit) (json.Number, error) {
 	r, symbol, err := splitMeasure(input)
 	if err != nil {
@@ -219,7 +219,7 @@ func parseYesNo(input string) (bool, bool) {
 }
 
 // parseQuantity parses a stock quantity for an item with the given unit
-// (nil: pieces).
+// (nil: counted).
 func (e *env) parseQuantity(input string, u *unit) (json.Number, error) {
 	return e.parseMeasure(input, u)
 }

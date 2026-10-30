@@ -586,7 +586,7 @@ class _Describer {
               ? 'Item $name moved here from class ${n._cls(c?.old).name}'
               : 'Moved from class ${n._cls(c?.old).name} to ${n._cls(c?.now).name}',
         'unit' =>
-          'Unit: ${n.unitName(c?.old, 'pieces')} → ${n.unitName(c?.now, 'pieces')}',
+          'Unit: ${n.unitName(c?.old, 'none (counted)')} → ${n.unitName(c?.now, 'none (counted)')}',
         'unit_lock' => 'Unit lock ${c?.now == true ? 'on' : 'off'}',
         'photo' => _photo('Item photo', c?.now),
         _ => null,

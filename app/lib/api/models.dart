@@ -730,7 +730,7 @@ class ItemSummary {
   /// The item photo.
   final Attachment? photo;
 
-  /// The unit stock is measured in; null means pieces.
+  /// The unit stock is measured in; null means it is counted.
   final Unit? unit;
   final bool unitLock;
   final bool deleted;
