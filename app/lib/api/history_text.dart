@@ -889,10 +889,13 @@ class _Describer {
     final out = <HistoryLine>[];
     for (final column in e.changes.keys) {
       final c = e.change(column);
-      final privilege = privilegeKeys[column];
+      final privilege = _oldPrivileges[column];
       final line = switch (column) {
+        'role' =>
+          'Role: ${Role.parse(c?.old).label} → ${Role.parse(c?.now).label}',
+        // Before roles (ACCOUNTS.md), accounts had four privileges.
         _ when privilege != null =>
-          '$privilege: ${privilegeOf(column, c?.old).label} → ${privilegeOf(column, c?.now).label}',
+          '$privilege privilege: ${_oldPrivilege(c?.old)} → ${_oldPrivilege(c?.now)}',
         'email' => 'Email: ${c?.old} → ${c?.now}',
         'password' => 'Password changed',
         'has_password' => c?.now == true ? 'Password set' : 'Password removed',
@@ -914,3 +917,18 @@ String _join(List<String> parts) {
   if (parts.length < 2) return parts.join();
   return '${parts.sublist(0, parts.length - 1).join(', ')} and ${parts.last}';
 }
+
+/// The privileges accounts had before roles, as old history entries name
+/// them.
+const _oldPrivileges = {
+  'data_privilege': 'Data',
+  'model_privilege': 'Model',
+  'account_privilege': 'Account',
+  'history_privilege': 'History',
+};
+
+String _oldPrivilege(Object? value) => switch (value) {
+  'read_only' => 'read only',
+  'read_write' => 'read and write',
+  _ => 'none',
+};

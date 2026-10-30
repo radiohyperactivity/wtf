@@ -109,8 +109,8 @@ Future<Json?> _askWhere(
 }
 
 /// The banner at the top of a deleted object's screen: when and by whom it
-/// was deleted (with the history privilege), and Restore (with the
-/// privilege to delete it). A stock row a move merged into another can't be
+/// was deleted (from its history, which admins may read, and everyone for
+/// items and stock rows), and Restore (when the role may delete it). A stock row a move merged into another can't be
 /// restored; the banner leads to that row instead.
 class DeletedBanner extends StatelessWidget {
   const DeletedBanner({
@@ -159,7 +159,9 @@ class DeletedBanner extends StatelessWidget {
                 ),
               ],
             ),
-            if (session.canReadHistory)
+            if (session.isAdmin ||
+                kind == RestoreKind.item ||
+                kind == RestoreKind.stock)
               Padding(
                 padding: const EdgeInsets.only(left: 36, top: 4),
                 child: _DeletedWhen(kind: kind, id: id),

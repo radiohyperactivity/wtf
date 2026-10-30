@@ -13,10 +13,7 @@ const account = {
   'id': 'a1',
   'email': 'bbj@bbj.io',
   'has_password': true,
-  'data_privilege': 'read_write',
-  'model_privilege': 'read_only',
-  'account_privilege': 'none',
-  'history_privilege': 'read_only',
+  'role': 'user',
   'deleted': false,
 };
 
@@ -58,8 +55,7 @@ void main() {
 
     final me = await client.login('bbj@bbj.io', 'secret');
     expect(me.email, 'bbj@bbj.io');
-    expect(me.dataPrivilege, Privilege.readWrite);
-    expect(me.accountPrivilege, Privilege.none);
+    expect(me.role, Role.user);
     expect(stored, 'tok123');
     expect(client.serverRevision, 1);
     expect(seen.first.method, 'POST');
@@ -263,12 +259,14 @@ void main() {
     expect(changes, [TreeKind.locations]);
   });
 
-  test('history can only be read', () {
-    final a = Account.fromJson({...account, 'history_privilege': 'read_write'});
-    expect(a.privileges['history_privilege'], Privilege.readOnly);
-    expect(a.privileges['data_privilege'], Privilege.readWrite);
-    final me = Me.fromJson({...account, 'history_privilege': 'read_write'});
-    expect(me.historyPrivilege, Privilege.readOnly);
+  test('roles, each with what the ones before it can do', () {
+    expect(Account.fromJson(account).role, Role.user);
+    expect(Me.fromJson({...account, 'role': 'admin'}).role, Role.admin);
+    // An unknown role counts as a viewer: the server decides anyway.
+    expect(Me.fromJson({...account, 'role': 'owner'}).role, Role.viewer);
+    expect(Role.admin.atLeast(Role.user), isTrue);
+    expect(Role.user.atLeast(Role.user), isTrue);
+    expect(Role.viewer.atLeast(Role.user), isFalse);
   });
 
   test('server addresses', () {

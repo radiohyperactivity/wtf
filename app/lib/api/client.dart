@@ -13,7 +13,7 @@ import 'units.dart';
 /// The API version and revision this app was built for.
 const apiPath = '/api/v1';
 const apiVersion = 1;
-const apiRevision = 12;
+const apiRevision = 13;
 
 const sessionCookie = 'wtf_session';
 
@@ -814,27 +814,21 @@ class ApiClient {
   Future<Account> account(String id) async =>
       Account.fromJson(await _call('GET', '/accounts/$id') as Json);
 
-  /// [privileges] by their API names (data_privilege, …); without a password
-  /// the account can't log in.
+  /// Without a password the account can't log in.
   Future<Account> createAccount({
     required String email,
     String? password,
-    Map<String, Privilege> privileges = const {},
+    Role role = Role.viewer,
   }) async => Account.fromJson(
     await _call(
       'POST',
       '/accounts',
-      body: {
-        'email': email,
-        'password': ?password,
-        for (final MapEntry(:key, :value) in privileges.entries)
-          key: value.json,
-      },
+      body: {'email': email, 'password': ?password, 'role': role.json},
     ) as Json,
   );
 
-  /// PATCH /accounts/{id} with any of email, password (null: none) and the
-  /// four privileges (by their API names).
+  /// PATCH /accounts/{id} with any of email, password (null: none) and
+  /// role.
   Future<Account> patchAccount(String id, Map<String, Object?> changes) async =>
       Account.fromJson(
         await _call('PATCH', '/accounts/$id', body: changes) as Json,

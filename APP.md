@@ -89,10 +89,10 @@ Every screen has a URL. In the web app it shows in the address bar, and it works
 | `/stock/1C3D/edit` | Edit a stock row: location, quantity, per-unit values. |
 | `/history/<kind>/<id>` | The history of an item, stock row, location, class, attribute or account, in words, by day (decision 23). |
 | `/history/<kind>` | The history of the top level of the locations or classes, or of the list of attributes: what was added, moved to or from the top level, deleted or restored. The History button on the tree and on Attributes opens it. |
-| `/me` | Your account: email, privileges, appearance (light, dark or as the system), change password, log out. |
-| `/manage` | Links to attributes, units and accounts. |
+| `/me` | Your account: email, role, appearance (light, dark or as the system), change password, log out. |
+| `/admin` | For admins: links to classes, attributes, units and accounts; importing and exporting model files (decision 69). |
 | `/attributes`, `/attributes/<id>` | The attributes; one attribute with its options (add, rename, delete). |
-| `/accounts`, `/accounts/<id>` | The accounts: email, privileges, password (keep, set or remove). |
+| `/accounts`, `/accounts/<id>` | The accounts: email, role, password (keep, set or remove). |
 | `/units` | The units by quantity and family, for reference; Import adds more from a model file. |
 
 **Choosing things:** wherever a location or class must be chosen, a picker with search and the tree replaces the CLI's typing with Tab. Units work as in the CLI: you can type `12mm` or `2.5 m` into a number field, and the app converts and checks it as you type, with the same rules as the CLI (decision 1).
@@ -103,7 +103,7 @@ Flutter has standard size classes, measured in logical pixels, which are indepen
 
 | Width | Typical device | Navigation | Content |
 |-------|----------------|------------|---------|
-| under 600 | phone | bar at the bottom: Items, Locations, Manage, Me | one screen at a time |
+| under 600 | phone | bar at the bottom: Items, Locations, Admin (admins only), Me | one screen at a time |
 | 600–840 | small tablet, phone sideways | rail on the left | list and details side by side where it fits |
 | over 840 | tablet, desktop, browser | rail on the left | list and details side by side, the tree always visible |
 
@@ -186,7 +186,7 @@ These are decisions I made without you, recorded for review. You asked me to cop
     - **The form:** two fields, columns and rows, with a preview ("40 compartments, A1 … H5").
     - **Big grids:** over 1000 locations, the app asks first and then sends `confirm`, as the server requires.
     - **Parents:** missing parents aren't created (decision 5).
-15. **Privileges.** Buttons for changes the account may not make are hidden: data write for items, stock and locations, model write for classes and attributes, account write for accounts. The server checks anyway. (Locations were first wrongly tied to model write; fixed with decision 24.)
+15. **Privileges.** Buttons for changes the account may not make are hidden: data write for items, stock and locations, model write for classes and attributes, account write for accounts. The server checks anyway. (Locations were first wrongly tied to model write; fixed with decision 24. Since decision 69, roles.)
 16. **An ended session sends you to the login.** A 401 means the session has ended. The native apps also notice the deleted cookie, while the web app notices the 401.
 
 17. **What this app adds or changes shows at once** (your rule, not a decision of mine). The client keeps the class and location trees for the session, and revalidates them on every use. After a change to a tree (adding, renaming, moving or deleting a class or location, grids included), it fetches that tree again before the change counts as done. It then tells every screen still showing that tree, including the screens underneath, which load again. Unit families and units are kept for the session as well, but they can't be changed through the API.
@@ -391,3 +391,12 @@ Built with the server's tenants ([TENANTS.md](TENANTS.md)), API revision 11.
 ### Classes under Manage
 
 68. **Classes are under Manage,** first in its list, and no longer a destination of their own (your idea): they are what the inventory is set up with, like attributes and units, and they are where an import's classes go. That leaves four destinations: Items, Locations, Manage and Me. Everyone sees Classes, as everyone sees Units; only Attributes needs model read. The class tree and class screens, and their history, belong to Manage in the bar and the rail, and their URLs (`/classes/…`) are as before. Browsing items by class is one tap further away; the Items screen's class field filters by class too.
+
+### Roles: viewers, users and admins
+
+69. **One role per account** (your design; ACCOUNTS.md has the table), in place of the four privileges: users keep the items and stock, admins set the inventory up, viewers look.
+    - **Admin** is the new name of Manage (`/admin`), and only admins see it: Items, Locations, Admin and Me for them, Items, Locations and Me for the others. Its screens (classes, attributes, units, accounts), making and changing locations, and the history of anything but items and stock rows send others to Items, even when opened by URL. An item's class isn't a link for them.
+    - **Admin → Export** asks which class, and saves it as the class's menu does. Exports are for admins only, as only they can import the file again (your rule).
+    - **Users** add, change, delete and restore items and stock rows, with their values and attachments, and put stock in any location; **viewers** get none of those buttons. Everyone sees the history of items and stock rows.
+    - **Accounts** have one Role field; a new account is a viewer unless another role is chosen. Your own role can't be changed (the server refuses it), so the field is greyed out for you. Me shows your role.
+    - **Old history:** account entries from before roles still read, as "Data privilege: read only → read and write".

@@ -61,7 +61,7 @@ class ItemScreen extends StatelessWidget {
         }
 
         // A deleted item can only be looked at, and restored.
-        final write = session.canWriteData && !item.deleted;
+        final write = session.canWriteItems && !item.deleted;
 
         Future<void> delete() async {
           final ok = await confirm(
@@ -85,14 +85,13 @@ class ItemScreen extends StatelessWidget {
           appBar: AppBar(
             title: Text(item.name),
             actions: [
-              if (session.canReadHistory)
-                IconButton(
-                  icon: const Icon(Icons.history),
-                  tooltip: 'History',
-                  onPressed: () => context.push(
-                    '/history/items/${item.id}?title=${Uri.encodeComponent(item.name)}',
-                  ),
+              IconButton(
+                icon: const Icon(Icons.history),
+                tooltip: 'History',
+                onPressed: () => context.push(
+                  '/history/items/${item.id}?title=${Uri.encodeComponent(item.name)}',
                 ),
+              ),
               if (write) ...[
                 IconButton(
                   icon: const Icon(Icons.edit_outlined),
@@ -133,7 +132,7 @@ class ItemScreen extends StatelessWidget {
                       kind: RestoreKind.item,
                       id: item.id,
                       label: item.name,
-                      canRestore: session.canWriteData,
+                      canRestore: session.canWriteItems,
                       onRestored: reload,
                     ),
                   // The class's values are details like the code and class.
@@ -146,7 +145,10 @@ class ItemScreen extends StatelessWidget {
                       Field(
                         'Class',
                         item.cls.pathText,
-                        onTap: () => open('/classes/${item.cls.id}'),
+                        // The class screens are for admins.
+                        onTap: session.isAdmin
+                            ? () => open('/classes/${item.cls.id}')
+                            : null,
                       ),
                       Field(
                         'Stock in',

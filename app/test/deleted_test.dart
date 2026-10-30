@@ -460,6 +460,36 @@ void main() {
     },
   );
 
+  test("an account's role, and its privileges from before roles", () async {
+    final fake = FakeServer();
+    final client = ApiClient(
+      Uri.parse('http://wtf.test:8080'),
+      httpClient: fake.client,
+      manageCookie: true,
+      session: 'tok',
+    );
+    const anna = {'id': 'u-anna', 'email': 'anna@example.com'};
+    final entries = [
+      entry(2, 't2', 'account', 'update', anna, {
+        'role': {'old': 'viewer', 'new': 'user'},
+      }),
+      entry(1, 't1', 'account', 'update', anna, {
+        'data_privilege': {'old': 'read_only', 'new': 'read_write'},
+      }),
+    ].map(HistoryEntry.fromJson).toList();
+    final names = HistoryNames(client);
+    await names.load(entries);
+    final lines = historyEvents(
+      entries,
+      names,
+      const HistoryFocus('accounts', 'u-anna'),
+    ).map((e) => e.lines.single.text);
+    expect(lines, [
+      'Role: Viewer → User',
+      'Data privilege: read only → read and write',
+    ]);
+  });
+
   test('the history of all attributes names each attribute', () async {
     final fake = FakeServer();
     final client = ApiClient(

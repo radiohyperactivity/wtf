@@ -1,6 +1,6 @@
 // Model files (seed/model-format.md): units, attributes and classes set up
-// for one use. Importing one, from Manage; exporting a class with
-// everything below it, from its menu.
+// for one use, for admins. Importing one, from Admin; exporting a class with
+// everything below it, from Admin or the class's menu.
 
 import 'dart:convert';
 
@@ -131,6 +131,24 @@ String _imported(ModelImport r) {
 
 String _count(int n, String one, [String? many]) =>
     '$n ${n == 1 ? one : (many ?? '${one}s')}';
+
+/// Admin → Export: asks which class, then exports it as [exportModelFile]
+/// does.
+Future<void> exportChosenClass(BuildContext context) async {
+  final client = context.read<Session>().client;
+  final id = await pickNode(
+    context,
+    TreeKind.classes,
+    title: 'Export which class?',
+  );
+  if (id == null || !context.mounted) return;
+  try {
+    final name = (await client.tree(TreeKind.classes))[id]?.name ?? 'model';
+    if (context.mounted) await exportModelFile(context, id, name);
+  } catch (e) {
+    if (context.mounted) showError(context, e);
+  }
+}
 
 /// Exports the class [classId], named [name], with everything below it as a
 /// model file, like `wtf model export`, and saves it as "[name].json".

@@ -210,7 +210,7 @@ class _ItemSearchScreenState extends State<ItemSearchScreen> {
         title: const Text('Items'),
         actions: [TextButton(onPressed: _clear, child: const Text('Clear'))],
       ),
-      floatingActionButton: session.canWriteData
+      floatingActionButton: session.canWriteItems
           ? FloatingActionButton.extended(
               onPressed: () => context.push(
                 _classId == null ? '/items/new' : '/items/new?class=$_classId',

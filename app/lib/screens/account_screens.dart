@@ -7,15 +7,7 @@ import '../session.dart';
 import '../widgets/common.dart';
 import '../widgets/select_keys.dart';
 
-String _privilegeSummary(Account a) => privilegeKeys.entries
-    .where((e) => a.privileges[e.key]!.canRead)
-    .map(
-      (e) =>
-          '${e.value.split(',').first}${a.privileges[e.key]!.canWrite ? ' ✎' : ''}',
-    )
-    .join(' · ');
-
-/// The accounts, like `wtf account list`.
+/// The accounts, like `wtf account list`. Only admins get here.
 class AccountsScreen extends StatelessWidget {
   const AccountsScreen({super.key});
 
@@ -27,19 +19,17 @@ class AccountsScreen extends StatelessWidget {
       load: session.client.accounts,
       builder: (context, accounts, reload) => Scaffold(
         appBar: AppBar(title: const Text('Accounts')),
-        floatingActionButton: session.canWriteAccounts
-            ? FloatingActionButton.extended(
-                onPressed: () async {
-                  final created = await showAccountDialog(context);
-                  if (created != null && context.mounted) {
-                    await context.push('/accounts/${created.id}');
-                  }
-                  reload();
-                },
-                icon: const Icon(Icons.person_add_alt),
-                label: const Text('New account'),
-              )
-            : null,
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: () async {
+            final created = await showAccountDialog(context);
+            if (created != null && context.mounted) {
+              await context.push('/accounts/${created.id}');
+            }
+            reload();
+          },
+          icon: const Icon(Icons.person_add_alt),
+          label: const Text('New account'),
+        ),
         body: Readable(
           child: ListView(
             padding: const EdgeInsets.only(bottom: 88),
@@ -54,9 +44,9 @@ class AccountsScreen extends StatelessWidget {
                   title: Text(a.deleted ? '${a.email} (deleted)' : a.email),
                   subtitle: Text(
                     [
+                      a.role.label,
                       if (!a.hasPassword) 'no password',
-                      _privilegeSummary(a),
-                    ].where((s) => s.isNotEmpty).join(' · '),
+                    ].join(' · '),
                   ),
                   onTap: () async {
                     await context.push('/accounts/${a.id}');
@@ -71,7 +61,7 @@ class AccountsScreen extends StatelessWidget {
   }
 }
 
-/// One account, like `wtf account get`.
+/// One account, like `wtf account get`. Only admins get here.
 class AccountScreen extends StatelessWidget {
   const AccountScreen({super.key, required this.id});
 
@@ -91,15 +81,14 @@ class AccountScreen extends StatelessWidget {
           appBar: AppBar(
             title: Text(a.email),
             actions: [
-              if (session.canReadHistory)
-                IconButton(
-                  icon: const Icon(Icons.history),
-                  tooltip: 'History',
-                  onPressed: () => context.push(
-                    '/history/accounts/${a.id}?title=${Uri.encodeComponent(a.email)}',
-                  ),
+              IconButton(
+                icon: const Icon(Icons.history),
+                tooltip: 'History',
+                onPressed: () => context.push(
+                  '/history/accounts/${a.id}?title=${Uri.encodeComponent(a.email)}',
                 ),
-              if (session.canWriteAccounts && !a.deleted) ...[
+              ),
+              if (!a.deleted) ...[
                 IconButton(
                   icon: const Icon(Icons.edit_outlined),
                   tooltip: 'Edit',
@@ -137,11 +126,9 @@ class AccountScreen extends StatelessWidget {
               children: [
                 const SizedBox(height: 8),
                 Field('Email', a.email, note: own ? '(you)' : null),
+                Field('Role', a.role.label),
                 Field('Password', a.hasPassword ? 'set' : "none: can't log in"),
                 if (a.deleted) const Field('Deleted', 'yes'),
-                const SectionTitle('Privileges'),
-                for (final MapEntry(:key, :value) in privilegeKeys.entries)
-                  Field(value, a.privileges[key]!.label),
               ],
             ),
           ),
@@ -154,16 +141,16 @@ class AccountScreen extends StatelessWidget {
 enum _PasswordChange { keep, set, remove }
 
 /// Creates an account, or changes [current], like `wtf account add` and
-/// `wtf account edit`: email, the four privileges, and the password (keep,
-/// set or remove). Returns the account, or null when cancelled.
+/// `wtf account edit`: email, role, and the password (keep, set or
+/// remove). A new account is a viewer unless another role is chosen; your
+/// own role can't be changed. Returns the account, or null when cancelled.
 Future<Account?> showAccountDialog(BuildContext context, {Account? current}) {
-  final client = context.read<Session>().client;
+  final session = context.read<Session>();
+  final client = session.client;
   final email = TextEditingController(text: current?.email ?? '');
   final password = TextEditingController();
-  final privileges = {
-    for (final k in privilegeKeys.keys)
-      k: current?.privileges[k] ?? Privilege.none,
-  };
+  var role = current?.role ?? Role.viewer;
+  final own = current != null && current.id == session.me?.id;
   var change = current == null ? _PasswordChange.set : _PasswordChange.keep;
   String? error;
   return showDialog<Account>(
@@ -191,14 +178,12 @@ Future<Account?> showAccountDialog(BuildContext context, {Account? current}) {
                 saved = await client.createAccount(
                   email: e,
                   password: password.text,
-                  privileges: privileges,
+                  role: role,
                 );
               } else {
                 saved = await client.patchAccount(current.id, {
                   if (e != current.email) 'email': e,
-                  for (final k in privilegeKeys.keys)
-                    if (privileges[k] != current.privileges[k])
-                      k: privileges[k]!.json,
+                  if (role != current.role) 'role': role.json,
                   if (change == _PasswordChange.set) 'password': password.text,
                   if (change == _PasswordChange.remove) 'password': null,
                 });
@@ -227,33 +212,29 @@ Future<Account?> showAccountDialog(BuildContext context, {Account? current}) {
                       decoration: const InputDecoration(labelText: 'Email'),
                     ),
                     const SizedBox(height: 8),
-                    for (final MapEntry(:key, :value) in privilegeKeys.entries)
-                      SelectKeys<Privilege>(
-                        options: [
-                          for (final p in Privilege.values)
-                            if (p != Privilege.readWrite ||
-                                !readOnlyPrivileges.contains(key))
-                              (p, p.label),
-                        ],
-                        value: privileges[key],
-                        onChanged: (p) => setState(() => privileges[key] = p),
-                        child: DropdownButtonFormField<Privilege>(
-                          initialValue: privileges[key],
-                          decoration: InputDecoration(labelText: value),
-                          items: [
-                            for (final p in Privilege.values)
-                              if (p != Privilege.readWrite ||
-                                  !readOnlyPrivileges.contains(key))
-                                DropdownMenuItem(
-                                  value: p,
-                                  child: Text(p.label),
-                                ),
-                          ],
-                          onChanged: (p) => setState(
-                            () => privileges[key] = p ?? Privilege.none,
-                          ),
+                    SelectKeys<Role>(
+                      options: [for (final r in Role.values) (r, r.label)],
+                      value: role,
+                      onChanged: (r) {
+                        if (!own) setState(() => role = r);
+                      },
+                      child: DropdownButtonFormField<Role>(
+                        initialValue: role,
+                        decoration: InputDecoration(
+                          labelText: 'Role',
+                          helperText: own
+                              ? "You can't change your own role."
+                              : role.description,
                         ),
+                        items: [
+                          for (final r in Role.values)
+                            DropdownMenuItem(value: r, child: Text(r.label)),
+                        ],
+                        onChanged: own
+                            ? null
+                            : (r) => setState(() => role = r ?? Role.viewer),
                       ),
+                    ),
                     const SizedBox(height: 8),
                     if (current != null)
                       SegmentedButton<_PasswordChange>(

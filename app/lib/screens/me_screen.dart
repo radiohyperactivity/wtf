@@ -5,7 +5,7 @@ import '../session.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 
-/// The logged-in account, like `wtf whoami`: email, server, privileges;
+/// The logged-in account, like `wtf whoami`: email, server, role;
 /// the appearance; changing the password (`wtf password`) and logging out.
 class MeScreen extends StatelessWidget {
   const MeScreen({super.key});
@@ -31,18 +31,11 @@ class MeScreen extends StatelessWidget {
                 title: Text(server.toString()),
                 subtitle: const Text('Server'),
               ),
-            const SectionTitle('Privileges'),
-            for (final (label, privilege) in [
-              ('Items and stock', me.dataPrivilege),
-              ('Classes and locations', me.modelPrivilege),
-              ('Accounts', me.accountPrivilege),
-              ('History', me.historyPrivilege),
-            ])
-              ListTile(
-                dense: true,
-                title: Text(label),
-                trailing: Text(privilege.label),
-              ),
+            ListTile(
+              leading: const Icon(Icons.badge_outlined),
+              title: Text(me.role.label),
+              subtitle: Text('Role: ${me.role.description.toLowerCase()}'),
+            ),
             const SectionTitle('Appearance on this device'),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),

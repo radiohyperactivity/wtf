@@ -45,7 +45,7 @@ class StockScreen extends StatelessWidget {
         final (stock, locations, path) = data;
         final place = locations[stock.location];
         // A deleted row can only be looked at, and restored.
-        final write = session.canWriteData && !stock.deleted;
+        final write = session.canWriteItems && !stock.deleted;
 
         Future<void> delete() async {
           final ok = await confirm(
@@ -70,14 +70,13 @@ class StockScreen extends StatelessWidget {
           appBar: AppBar(
             title: Text('${stock.item.name} · ${stock.code}'),
             actions: [
-              if (session.canReadHistory)
-                IconButton(
-                  icon: const Icon(Icons.history),
-                  tooltip: 'History',
-                  onPressed: () => context.push(
-                    '/history/stock/${stock.id}?title=${Uri.encodeComponent('${stock.item.name} ${stock.code}')}',
-                  ),
+              IconButton(
+                icon: const Icon(Icons.history),
+                tooltip: 'History',
+                onPressed: () => context.push(
+                  '/history/stock/${stock.id}?title=${Uri.encodeComponent('${stock.item.name} ${stock.code}')}',
                 ),
+              ),
               if (write) ...[
                 IconButton(
                   icon: const Icon(Icons.edit_outlined),
@@ -136,7 +135,7 @@ class StockScreen extends StatelessWidget {
                       kind: RestoreKind.stock,
                       id: stock.id,
                       label: 'stock row ${stock.code}',
-                      canRestore: session.canWriteData,
+                      canRestore: session.canWriteItems,
                       onRestored: reload,
                       mergedInto: stock.mergedInto,
                       onOpenMerged: () =>

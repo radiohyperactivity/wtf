@@ -795,9 +795,12 @@ class _AttachmentScreenState extends State<AttachmentScreen> {
   Widget build(BuildContext context) {
     final session = context.watch<Session>();
     final client = session.client;
-    final write = widget.ownerPath.startsWith('/classes/')
-        ? session.canWriteModel
-        : session.canWriteData;
+    // Admins set up locations and classes; users keep items and stock.
+    final write =
+        widget.ownerPath.startsWith('/classes/') ||
+            widget.ownerPath.startsWith('/locations/')
+        ? session.isAdmin
+        : session.canWriteItems;
     return Loader<Attachment>(
       title: 'Attachment',
       load: () => client.attachment(widget.ownerPath, widget.id),

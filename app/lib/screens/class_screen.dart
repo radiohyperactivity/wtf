@@ -54,7 +54,7 @@ class ClassScreen extends StatelessWidget {
         final c = data.cls;
         final node = data.tree[c.id];
         // A deleted class can only be looked at, and restored.
-        final write = session.canWriteModel && !c.deleted;
+        final write = session.isAdmin && !c.deleted;
 
         Future<void> open(String path) async {
           await context.push(path);
@@ -146,7 +146,7 @@ class ClassScreen extends StatelessWidget {
           appBar: AppBar(
             title: Text(c.name),
             actions: [
-              if (session.canReadHistory)
+              if (session.isAdmin)
                 IconButton(
                   icon: const Icon(Icons.history),
                   tooltip: 'History',
@@ -154,8 +154,9 @@ class ClassScreen extends StatelessWidget {
                     '/history/classes/${c.id}?title=${Uri.encodeComponent(c.pathText)}',
                   ),
                 ),
-              // Anyone who sees the class can export it; the rest changes it.
-              if (!c.deleted)
+              // For admins, as are the class screens: changing the class,
+              // and exporting it.
+              if (write)
                 PopupMenuButton<String>(
                   onSelected: (action) async {
                     switch (action) {
@@ -182,33 +183,27 @@ class ClassScreen extends StatelessWidget {
                         }
                     }
                   },
-                  itemBuilder: (context) => [
-                    if (write) ...const [
-                      PopupMenuItem(value: 'edit', child: Text('Edit')),
-                      PopupMenuItem(
-                        value: 'add',
-                        child: Text('Add a class below'),
-                      ),
-                      PopupMenuItem(
-                        value: 'assign',
-                        child: Text('Assign an attribute'),
-                      ),
-                    ],
-                    const PopupMenuItem(
+                  itemBuilder: (context) => const [
+                    PopupMenuItem(value: 'edit', child: Text('Edit')),
+                    PopupMenuItem(
+                      value: 'add',
+                      child: Text('Add a class below'),
+                    ),
+                    PopupMenuItem(
+                      value: 'assign',
+                      child: Text('Assign an attribute'),
+                    ),
+                    PopupMenuItem(
                       value: 'export',
                       child: Text('Export as a model file…'),
                     ),
-                    if (write)
-                      const PopupMenuItem(
-                        value: 'delete',
-                        child: Text('Delete…'),
-                      ),
+                    PopupMenuItem(value: 'delete', child: Text('Delete…')),
                   ],
                 ),
             ],
           ),
           floatingActionButton:
-              session.canWriteData && !c.container && !c.deleted
+              session.canWriteItems && !c.container && !c.deleted
               ? FloatingActionButton.extended(
                   onPressed: () => open('/items/new?class=${c.id}'),
                   icon: const Icon(Icons.add),
@@ -226,7 +221,7 @@ class ClassScreen extends StatelessWidget {
                       kind: RestoreKind.cls,
                       id: c.id,
                       label: c.name,
-                      canRestore: session.canWriteModel,
+                      canRestore: session.isAdmin,
                       onRestored: reload,
                     ),
                   WithPhoto(

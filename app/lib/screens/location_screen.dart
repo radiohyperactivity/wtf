@@ -78,15 +78,15 @@ class LocationScreen extends StatelessWidget {
           reload();
         }
 
-        // Locations belong to the data privilege. A deleted one can only be
-        // looked at, and restored.
-        final write = session.canWriteData && !l.deleted;
+        // Admins set up locations, users put stock in them. A deleted one
+        // can only be looked at, and restored.
+        final write = session.isAdmin && !l.deleted;
 
         return Scaffold(
           appBar: AppBar(
             title: Text(l.name),
             actions: [
-              if (session.canReadHistory)
+              if (session.isAdmin)
                 IconButton(
                   icon: const Icon(Icons.history),
                   tooltip: 'History',
@@ -129,7 +129,7 @@ class LocationScreen extends StatelessWidget {
             ],
           ),
           floatingActionButton:
-              session.canWriteData && !l.container && !l.deleted
+              session.canWriteItems && !l.container && !l.deleted
               ? FloatingActionButton.extended(
                   onPressed: () => open('/stock/new?location=${l.id}'),
                   icon: const Icon(Icons.add),
@@ -147,7 +147,7 @@ class LocationScreen extends StatelessWidget {
                       kind: RestoreKind.location,
                       id: l.id,
                       label: l.name,
-                      canRestore: session.canWriteData,
+                      canRestore: session.isAdmin,
                       onRestored: reload,
                     ),
                   WithPhoto(

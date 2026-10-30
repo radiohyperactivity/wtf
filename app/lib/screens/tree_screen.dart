@@ -71,7 +71,7 @@ class _TreeScreenState extends State<TreeScreen> {
             actions: [
               // What was added at the top, moved there or away, deleted or
               // restored: how a deleted top-level node is found.
-              if (session.canReadHistory)
+              if (session.isAdmin)
                 IconButton(
                   icon: const Icon(Icons.history),
                   tooltip: 'History',
@@ -103,9 +103,8 @@ class _TreeScreenState extends State<TreeScreen> {
               ),
             ],
           ),
-          // Locations belong to the data privilege, classes to the model one.
-          floatingActionButton:
-              (_locations ? session.canWriteData : session.canWriteModel)
+          // Admins set up locations and classes.
+          floatingActionButton: session.isAdmin
               ? FloatingActionButton.extended(
                   onPressed: () async {
                     await context.push(

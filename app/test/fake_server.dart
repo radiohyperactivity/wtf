@@ -10,10 +10,10 @@ import 'package:http/testing.dart';
 const _headers = {'content-type': 'application/json', 'api-revision': '2'};
 
 class FakeServer {
-  FakeServer({this.privilege = 'read_write'});
+  FakeServer({this.role = 'admin'});
 
-  /// The data and model privilege of the account.
-  final String privilege;
+  /// The role of the account: viewer, user or admin.
+  final String role;
 
   /// Requests that changed something: "POST /api/v1/stock {…}".
   final List<String> changes = [];
@@ -265,10 +265,7 @@ class FakeServer {
   Map<String, dynamic> get me => {
     'id': 'a1',
     'email': 'anna@example.com',
-    'data_privilege': privilege,
-    'model_privilege': privilege,
-    'account_privilege': 'none',
-    'history_privilege': 'read_only',
+    'role': role,
   };
 
   /// The bodies of POST /model/import with quantities, as sent, with

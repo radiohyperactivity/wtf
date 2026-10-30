@@ -223,13 +223,17 @@ class Session extends ChangeNotifier {
     notifyListeners();
   }
 
-  // What the account may do; the server checks it anyway, the app only
-  // hides what would be refused.
-  bool get canWriteData => me?.dataPrivilege.canWrite ?? false;
-  bool get canWriteModel => me?.modelPrivilege.canWrite ?? false;
-  bool get canReadHistory => me?.historyPrivilege.canRead ?? false;
-  bool get canReadAccounts => me?.accountPrivilege.canRead ?? false;
-  bool get canWriteAccounts => me?.accountPrivilege.canWrite ?? false;
+  // What the account's role allows (ACCOUNTS.md); the server checks it
+  // anyway, the app only hides what would be refused. Every account sees
+  // everything but the accounts, and the history of items and stock rows.
+
+  /// Users and admins: items and stock rows, with their values and
+  /// attachments.
+  bool get canWriteItems => me?.role.atLeast(Role.user) ?? false;
+
+  /// Admins: locations, classes, attributes, units, model files, accounts,
+  /// and the rest of the history.
+  bool get isAdmin => me?.role == Role.admin;
 
   ApiClient _newClient(Uri server, String? token) {
     late final ApiClient client;

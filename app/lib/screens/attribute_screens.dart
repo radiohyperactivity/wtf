@@ -51,7 +51,7 @@ class _AttributesScreenState extends State<AttributesScreen> {
             actions: [
               // Attributes added, deleted or restored: how a deleted one is
               // found.
-              if (session.canReadHistory)
+              if (session.isAdmin)
                 IconButton(
                   icon: const Icon(Icons.history),
                   tooltip: 'History',
@@ -61,7 +61,7 @@ class _AttributesScreenState extends State<AttributesScreen> {
                 ),
             ],
           ),
-          floatingActionButton: session.canWriteModel
+          floatingActionButton: session.isAdmin
               ? FloatingActionButton.extended(
                   onPressed: () async {
                     final created = await showAttributeDialog(context);
@@ -134,7 +134,7 @@ class AttributeScreen extends StatelessWidget {
       load: () => client.attribute(id),
       builder: (context, a, reload) {
         // A deleted attribute can only be looked at, and restored.
-        final write = session.canWriteModel && !a.deleted;
+        final write = session.isAdmin && !a.deleted;
 
         Future<void> run(Future<void> Function() change) async {
           try {
@@ -149,7 +149,7 @@ class AttributeScreen extends StatelessWidget {
           appBar: AppBar(
             title: Text(a.name),
             actions: [
-              if (session.canReadHistory)
+              if (session.isAdmin)
                 IconButton(
                   icon: const Icon(Icons.history),
                   tooltip: 'History',
@@ -198,7 +198,7 @@ class AttributeScreen extends StatelessWidget {
                     kind: RestoreKind.attribute,
                     id: a.id,
                     label: a.name,
-                    canRestore: session.canWriteModel,
+                    canRestore: session.isAdmin,
                     onRestored: reload,
                   ),
                 const SizedBox(height: 8),
@@ -550,7 +550,7 @@ class _UnitsScreenState extends State<UnitsScreen> {
   @override
   Widget build(BuildContext context) {
     final client = context.read<Session>().client;
-    final write = context.watch<Session>().canWriteModel;
+    final write = context.watch<Session>().isAdmin;
     return Loader<(List<Quantity>, List<UnitFamily>)>(
       title: 'Units',
       load: () async =>

@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import 'api/client.dart';
 import 'screens/account_screens.dart';
+import 'screens/admin_screen.dart';
 import 'screens/attribute_screens.dart';
 import 'screens/class_screen.dart';
 import 'screens/history_screen.dart';
@@ -13,7 +14,6 @@ import 'screens/item_form.dart';
 import 'screens/item_screen.dart';
 import 'screens/location_screen.dart';
 import 'screens/login_screen.dart';
-import 'screens/manage_screen.dart';
 import 'screens/me_screen.dart';
 import 'screens/node_form.dart';
 import 'screens/search_screen.dart';
@@ -80,6 +80,8 @@ GoRouter buildRouter(Session session) => GoRouter(
           ? from
           : '/';
     }
+    // The server would refuse the rest of an admin screen anyway.
+    if (!session.isAdmin && adminOnly(state.matchedLocation)) return '/';
     return null;
   },
   routes: [
@@ -120,8 +122,8 @@ GoRouter buildRouter(Session session) => GoRouter(
           },
         ),
         GoRoute(
-          path: '/manage',
-          builder: (context, state) => const ManageScreen(),
+          path: '/admin',
+          builder: (context, state) => const AdminScreen(),
         ),
 
         GoRoute(

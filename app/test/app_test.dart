@@ -113,23 +113,29 @@ void main() {
     expect(storage.token, isNull);
   });
 
-  testWidgets('Manage holds classes, attributes, units and accounts', (
+  testWidgets('Admin holds classes, attributes, units and accounts', (
     tester,
   ) async {
     setSize(tester, 400, 800);
     await startApp(tester, FakeServer());
     // Four destinations; classes aren't one.
     expect(find.byType(NavigationDestination), findsNWidgets(4));
-    await tester.tap(find.text('Manage'));
+    await tester.tap(find.text('Admin'));
     await tester.pumpAndSettle();
-    expect(find.text('Classes'), findsOneWidget);
-    expect(find.text('Units'), findsOneWidget);
-    // This account may not read accounts.
-    expect(find.text('Accounts'), findsNothing);
+    for (final entry in [
+      'Classes',
+      'Attributes',
+      'Units',
+      'Import',
+      'Export',
+      'Accounts',
+    ]) {
+      expect(find.widgetWithText(ListTile, entry), findsOneWidget);
+    }
     await tester.tap(find.text('Attributes'));
     await tester.pumpAndSettle();
     expect(find.text('Voltage'), findsOneWidget);
-    // Still under Manage.
+    // Still under Admin.
     expect(
       tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex,
       2,
@@ -141,7 +147,7 @@ void main() {
   ) async {
     setSize(tester, 1000);
     await startApp(tester, FakeServer());
-    await tester.tap(find.text('Manage'));
+    await tester.tap(find.text('Admin'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Attributes'));
     await tester.pumpAndSettle();
@@ -254,7 +260,7 @@ void main() {
       ]),
     ]);
     await startApp(tester, fake);
-    await tester.tap(find.text('Manage'));
+    await tester.tap(find.text('Admin'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Units'));
     await tester.pumpAndSettle();
@@ -350,7 +356,7 @@ void main() {
     addTearDown(() => pickModelFile = () async => null);
     await startApp(tester, fake);
     // Importing is under Manage, and nowhere else; so are the classes.
-    await tester.tap(find.text('Manage'));
+    await tester.tap(find.text('Admin'));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(ListTile, 'Classes'));
     await tester.pumpAndSettle();
@@ -404,7 +410,7 @@ void main() {
     );
   });
 
-  testWidgets('export a class as a model file, also with read privilege', (
+  testWidgets('export a class as a model file, from Admin or its menu', (
     tester,
   ) async {
     setSize(tester, 1000);
@@ -412,16 +418,13 @@ void main() {
     saveDownloadedFile = (name, bytes) async =>
         saved.add((name, utf8.decode(bytes)));
     addTearDown(() => saveDownloadedFile = (name, bytes) async {});
-    await startApp(tester, FakeServer(privilege: 'read_only'));
-    GoRouter.of(tester.element(find.byType(Scaffold).first))
-        .push('/classes/c-drills');
+    await startApp(tester, FakeServer());
+    await tester.tap(find.text('Admin'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(PopupMenuButton<String>).last);
+    await tester.tap(find.widgetWithText(ListTile, 'Export'));
     await tester.pumpAndSettle();
-    // Only exporting: the rest changes the class.
-    expect(find.text('Edit'), findsNothing);
-    expect(find.text('Delete…'), findsNothing);
-    await tester.tap(find.text('Export as a model file…'));
+    expect(find.text('Export which class?'), findsOneWidget);
+    await tester.tap(find.text('Tools/Drills'));
     await tester.pumpAndSettle();
     // Named after the class, indented, its keys in the format's order.
     expect(saved.single.$1, 'Drills.json');
@@ -430,6 +433,15 @@ void main() {
       startsWith('{\n  "format": "wtf-model",\n  "version": 1,\n  "meta": {'),
     );
     expect(saved.single.$2, endsWith('}\n'));
+
+    GoRouter.of(tester.element(find.byType(Scaffold).first))
+        .push('/classes/c-drills');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(PopupMenuButton<String>).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Export as a model file…'));
+    await tester.pumpAndSettle();
+    expect(saved.map((s) => s.$1), ['Drills.json', 'Drills.json']);
   });
 
   testWidgets('import units from a model file: a preview, then the units', (
@@ -441,7 +453,7 @@ void main() {
     pickModelFile = () async => (name: 'pressure.json', text: file);
     addTearDown(() => pickModelFile = () async => null);
     await startApp(tester, fake);
-    await tester.tap(find.text('Manage'));
+    await tester.tap(find.text('Admin'));
     await tester.pumpAndSettle();
     final import = find.widgetWithText(ListTile, 'Import');
 
@@ -1468,16 +1480,55 @@ void main() {
     expect(fake.stock.every((s) => s['deleted'] == true), isTrue);
   });
 
-  testWidgets('read-only accounts get no buttons that would be refused', (
-    tester,
-  ) async {
+  testWidgets('viewers get no buttons that would be refused', (tester) async {
     setSize(tester, 1000);
-    await startApp(tester, FakeServer(privilege: 'read_only'));
+    await startApp(tester, FakeServer(role: 'viewer'));
     expect(find.text('New item'), findsNothing);
+    expect(find.text('Admin'), findsNothing);
     await search(tester, 'drill');
     await tester.tap(find.text('Cordless drill'));
     await tester.pumpAndSettle();
     expect(find.text('Add stock'), findsNothing);
     expect(find.byTooltip('Edit'), findsNothing);
+    // The history of items is for everyone.
+    expect(find.byTooltip('History'), findsOneWidget);
+  });
+
+  testWidgets('users keep items and stock; admins set up the rest', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    await startApp(tester, FakeServer(role: 'user'));
+    final rail = find.byType(NavigationRail);
+    expect(
+      find.descendant(of: rail, matching: find.text('Admin')),
+      findsNothing,
+    );
+    expect(find.text('New item'), findsOneWidget);
+    await search(tester, 'drill');
+    await tester.tap(find.text('Cordless drill'));
+    await tester.pumpAndSettle();
+    expect(find.text('Add stock'), findsOneWidget);
+    expect(find.byTooltip('Edit'), findsOneWidget);
+
+    // Locations: no new ones, no changing them, no history; stock, yes.
+    await tester.tap(
+      find.descendant(of: rail, matching: find.text('Locations')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('New location'), findsNothing);
+    expect(find.byTooltip('History'), findsNothing);
+
+    // Admin screens, even by URL, lead to Items.
+    for (final path in ['/admin', '/classes/c-drills', '/accounts']) {
+      GoRouter.of(tester.element(find.byType(Scaffold).first)).go(path);
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<NavigationRail>(rail).selectedIndex,
+        0,
+        reason: path,
+      );
+      expect(find.text('New item'), findsOneWidget, reason: path);
+    }
   });
 }

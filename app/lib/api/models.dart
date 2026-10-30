@@ -7,57 +7,46 @@ typedef Json = Map<String, dynamic>;
 Json? _obj(Object? o) => o as Json?;
 List<Json> _list(Object? o) => (o as List?)?.cast<Json>() ?? const [];
 
-enum Privilege {
-  none('none'),
-  readOnly('read_only'),
-  readWrite('read_write');
+/// What an account may do (ACCOUNTS.md); each role can do what the ones
+/// before it can.
+enum Role {
+  /// Looks at everything but the accounts.
+  viewer('Viewer', 'Looks, and changes nothing'),
 
-  const Privilege(this.json);
+  /// Also keeps the items and the stock.
+  user('User', 'Items and stock'),
 
-  final String json;
+  /// Also sets up locations, classes, attributes, units and accounts.
+  admin('Admin', 'Everything, also setting up the inventory');
 
-  static Privilege parse(Object? value) =>
-      values.firstWhere((p) => p.json == value, orElse: () => none);
+  const Role(this.label, this.description);
 
-  String get label => switch (this) {
-    none => 'None',
-    readOnly => 'Read only',
-    readWrite => 'Read and write',
-  };
+  final String label;
+  final String description;
 
-  bool get canRead => this != none;
-  bool get canWrite => this == readWrite;
+  /// As the API names it.
+  String get json => name;
+
+  /// An unknown role counts as a viewer: the server decides anyway.
+  static Role parse(Object? value) =>
+      values.firstWhere((r) => r.name == value, orElse: () => viewer);
+
+  bool atLeast(Role other) => index >= other.index;
 }
 
 /// The logged-in account: GET /me, and the login answer.
 class Me {
-  const Me({
-    required this.id,
-    required this.email,
-    required this.dataPrivilege,
-    required this.modelPrivilege,
-    required this.accountPrivilege,
-    required this.historyPrivilege,
-  });
+  const Me({required this.id, required this.email, required this.role});
 
   factory Me.fromJson(Json json) => Me(
     id: json['id'] as String,
     email: json['email'] as String,
-    dataPrivilege: Privilege.parse(json['data_privilege']),
-    modelPrivilege: Privilege.parse(json['model_privilege']),
-    accountPrivilege: Privilege.parse(json['account_privilege']),
-    historyPrivilege: privilegeOf(
-      'history_privilege',
-      json['history_privilege'],
-    ),
+    role: Role.parse(json['role']),
   );
 
   final String id;
   final String email;
-  final Privilege dataPrivilege;
-  final Privilege modelPrivilege;
-  final Privilege accountPrivilege;
-  final Privilege historyPrivilege;
+  final Role role;
 }
 
 class NamedRef {
@@ -1037,32 +1026,12 @@ class Deletion {
   final int stock;
 }
 
-/// The privileges of an account, by their API names.
-const privilegeKeys = {
-  'data_privilege': 'Items and stock',
-  'model_privilege': 'Classes, locations and attributes',
-  'account_privilege': 'Accounts',
-  'history_privilege': 'History',
-};
-
-/// Privileges that can only be read: history is written by the database's
-/// triggers alone, and its read_write counts as read_only.
-const readOnlyPrivileges = {'history_privilege'};
-
-/// [value] as it applies to the privilege [key].
-Privilege privilegeOf(String key, Object? value) {
-  final p = Privilege.parse(value);
-  return readOnlyPrivileges.contains(key) && p == Privilege.readWrite
-      ? Privilege.readOnly
-      : p;
-}
-
 class Account {
   const Account({
     required this.id,
     required this.email,
     required this.hasPassword,
-    required this.privileges,
+    required this.role,
     this.deleted = false,
   });
 
@@ -1070,18 +1039,14 @@ class Account {
     id: json['id'] as String,
     email: json['email'] as String,
     hasPassword: json['has_password'] as bool? ?? false,
-    privileges: {
-      for (final k in privilegeKeys.keys) k: privilegeOf(k, json[k]),
-    },
+    role: Role.parse(json['role']),
     deleted: json['deleted'] as bool? ?? false,
   );
 
   final String id;
   final String email;
   final bool hasPassword;
-
-  /// By their API names (data_privilege, …).
-  final Map<String, Privilege> privileges;
+  final Role role;
 
   /// Deleted accounts can't log in; they stay because history refers to them.
   final bool deleted;
