@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=WtF
+GenericName=Where to Find
+Comment=A register of the things you own and where they are
+Exec=/opt/wtf/wtf
+Icon=io.bbj.wtf
+Categories=Utility;
+StartupNotify=true

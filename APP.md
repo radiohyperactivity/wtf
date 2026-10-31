@@ -409,4 +409,9 @@ Built with the server's tenants ([TENANTS.md](TENANTS.md)), API revision 11.
     - **macOS** apps run in Apple's sandbox, so the app asks for network access (to reach the server) and for files you choose (attachments, model files).
     - **iOS** says why it wants the camera and the photo library; iOS shows that when asking you, and an app without it is stopped.
     - **Linux** needs `libsecret` to build and the desktop's keyring to run, to keep you logged in.
-    - **Not yet:** a real iPhone, which waits for the Apple Developer account, and a Linux launcher entry.
+    - **Not yet:** a real iPhone, which waits for the Apple Developer account.
+71. **Linux is installed from a `.deb`** (your choice, for now), made on venus by `scripts/build-deb.sh`, for Debian, Ubuntu and their relatives. Without a launcher entry the desktop shows a generic icon and no WtF among the apps, and something has to put that entry in place.
+    - **The package** puts the app in `/opt/wtf` (Flutter's bundle wants its `lib/` and `data/` beside it), the launcher entry in `/usr/share/applications/io.bbj.wtf.desktop` (`app/linux/packaging/`) and the logo, as it is, in `/usr/share/icons/hicolor/scalable/apps/io.bbj.wtf.svg`. Both are named after the app ID, which is how the desktop matches the running window to them. Nothing goes in `/usr/bin`, where `wtf` is the command-line tool.
+    - **It's called `wtf-app`,** leaving `wtf` for the command-line tool. Its version is the app's (`pubspec.yaml`); the system libraries it needs are worked out by `dpkg-shlibdeps`.
+    - **Installing** is `sudo apt install ./wtf-app_<version>_amd64.deb`; updates are a newer `.deb` installed the same way, as there's no package repository.
+    - **Later** (TODO.md): a Flatpak, or instructions for building it yourself.
