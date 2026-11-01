@@ -56,7 +56,7 @@ func (e *env) fetchPage(l listing, limit, offset int) (json.RawMessage, page[jso
 	var pg page[json.RawMessage]
 	data, err := e.api.Get(e.ctx, l.path, q)
 	if err == nil {
-		err = decode(data, &pg)
+		err = e.decode(data, &pg)
 	}
 	return data, pg, err
 }

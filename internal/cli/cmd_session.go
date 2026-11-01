@@ -6,8 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 
@@ -64,13 +67,21 @@ func (e *env) newPassword(prompt string) (string, error) {
 func loginCommand() command {
 	return command{
 		name:    "login",
-		args:    "[--server URL] [--email EMAIL] [--profile NAME]",
+		args:    "[--server URL] [--email EMAIL] [--profile NAME] [--stay DURATION|forever]",
 		summary: "Log in. Password: prompted, or WTF_PASSWORD.",
 		setup: func(fs *flag.FlagSet) func(*env, []string) error {
 			email := fs.String("email", "", "account email (default: the profile's)")
+			stay := fs.String("stay", "", "how long the session lasts unused, e.g. 30d or 12h, or forever (default: the last one given, or forever)")
 			return func(e *env, args []string) error {
 				if err := wantArgs(args, 0, 0); err != nil {
 					return err
+				}
+				if *stay == "" {
+					*stay = e.config.Stay
+				}
+				maxIdle, err := parseStay(*stay)
+				if err != nil {
+					return usagef("--stay: %v", err)
 				}
 				p := e.config.Profiles[e.profile]
 				if p == nil {
@@ -98,14 +109,15 @@ func loginCommand() command {
 				}
 
 				anonymous := client.New(server, "")
-				data, header, err := anonymous.Do(e.ctx, http.MethodPost, "/login", nil, object{"email": *email, "password": password})
+				body := object{"email": *email, "password": password, "client": clientName(), "max_idle": maxIdle}
+				data, header, err := anonymous.Do(e.ctx, http.MethodPost, "/login", nil, body)
 				if err != nil {
 					return err
 				}
 				var result struct {
 					Account account `json:"account"`
 				}
-				if err := decode(data, &result); err != nil {
+				if err := e.decode(data, &result); err != nil {
 					return err
 				}
 				// The session comes as a cookie; the CLI keeps it in the profile
@@ -117,6 +129,9 @@ func loginCommand() command {
 				p.Server, p.Email, p.Token = strings.TrimRight(server, "/"), result.Account.Email, token
 				e.config.Profiles[e.profile] = p
 				e.config.Current = e.profile
+				if *stay != "" {
+					e.config.Stay = *stay
+				}
 				if err := e.config.save(); err != nil {
 					return err
 				}
@@ -176,7 +191,7 @@ func whoamiCommand() command {
 				}
 				return e.emit(data, func() error {
 					var a account
-					if err := decode(data, &a); err != nil {
+					if err := e.decode(data, &a); err != nil {
 						return err
 					}
 					fields(e.stdout,
@@ -194,11 +209,17 @@ func whoamiCommand() command {
 func passwordCommand() command {
 	return command{
 		name:    "password",
-		summary: "Change your password. Your other sessions end.",
+		args:    "[--log-out-others | --keep-others]",
+		summary: "Change your password, and log out your other sessions or keep them (asked when no flag says).",
 		setup: func(fs *flag.FlagSet) func(*env, []string) error {
+			logOut := fs.Bool("log-out-others", false, "end your other sessions")
+			keep := fs.Bool("keep-others", false, "keep your other sessions")
 			return func(e *env, args []string) error {
 				if err := wantArgs(args, 0, 0); err != nil {
 					return err
+				}
+				if *logOut && *keep {
+					return usagef("give --log-out-others or --keep-others, not both")
 				}
 				current, err := e.readPassword("Current password: ")
 				if err != nil {
@@ -208,7 +229,14 @@ func passwordCommand() command {
 				if err != nil {
 					return err
 				}
-				if _, _, err := e.api.Do(e.ctx, http.MethodPut, "/me/password", nil, object{"current": current, "new": next}); err != nil {
+				end := *logOut
+				if !*logOut && !*keep {
+					if end, err = e.yesNo("Log out your other devices too?"); err != nil {
+						return err
+					}
+				}
+				body := object{"current": current, "new": next, "end_other_sessions": end}
+				if _, _, err := e.api.Do(e.ctx, http.MethodPut, "/me/password", nil, body); err != nil {
 					return err
 				}
 				if !e.json {
@@ -283,6 +311,147 @@ func profileGroup() group {
 							e.config.Current = ""
 						}
 						return e.config.save()
+					}
+				},
+			},
+		},
+	}
+}
+
+// parseStay reads a session's lifetime for "wtf login --stay": "forever" (or
+// nothing) for a session that lasts until logging out, or how long it may go
+// unused, as a Go duration (12h) or in days (30d). It returns the seconds the
+// API takes, or nil for forever.
+func parseStay(s string) (any, error) {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.EqualFold(s, "forever") {
+		return nil, nil
+	}
+	var d time.Duration
+	if days, ok := strings.CutSuffix(s, "d"); ok {
+		n, err := strconv.Atoi(days)
+		if err != nil {
+			return nil, fmt.Errorf("%q is not a number of days", s)
+		}
+		d = time.Duration(n) * 24 * time.Hour
+	} else {
+		var err error
+		if d, err = time.ParseDuration(s); err != nil {
+			return nil, fmt.Errorf("%q is not a duration (like 30d or 12h) or forever", s)
+		}
+	}
+	if d < time.Second {
+		return nil, fmt.Errorf("%q is too short", s)
+	}
+	return int64(d / time.Second), nil
+}
+
+// clientName is what the CLI calls itself at login, so that the list of
+// sessions says which device each is: "wtf on <host name>".
+func clientName() string {
+	if host, err := os.Hostname(); err == nil && host != "" {
+		return "wtf on " + host
+	}
+	return "wtf"
+}
+
+// yesNo asks a yes or no question until it gets an answer.
+func (e *env) yesNo(question string) (bool, error) {
+	for {
+		v, err := e.readLine(question + " [yes/no] ")
+		if err != nil {
+			return false, err
+		}
+		if b, ok := parseYesNo(v); ok {
+			return b, nil
+		}
+		fmt.Fprintln(e.stderr, "Answer yes or no.")
+	}
+}
+
+// sessionsGroup is the logged-in account's own sessions: its devices.
+func sessionsGroup() group {
+	return group{
+		name:    "sessions",
+		summary: "Your sessions (the devices you are logged in on)",
+		commands: []command{
+			{
+				name:    "list",
+				summary: "List your sessions, most recently used first; * marks this one.",
+				setup: func(fs *flag.FlagSet) func(*env, []string) error {
+					return func(e *env, args []string) error {
+						if err := wantArgs(args, 0, 0); err != nil {
+							return err
+						}
+						data, err := e.api.Get(e.ctx, "/me/sessions", nil)
+						if err != nil {
+							return err
+						}
+						return e.emit(data, func() error {
+							var list []session
+							if err := e.decode(data, &list); err != nil {
+								return err
+							}
+							t := newTable(e.stdout, "", "ID", "CLIENT", "LAST USED", "FROM", "EXPIRES")
+							for _, s := range list {
+								mark := ""
+								if s.Current {
+									mark = "*"
+								}
+								client, from, expires := "", "", "when logged out"
+								if s.Client != nil {
+									client = *s.Client
+								}
+								if len(s.Usage) > 0 {
+									from = s.Usage[0].Address
+								}
+								if s.Expires != nil {
+									expires = localTime(*s.Expires)
+								}
+								t.row(mark, s.ID, client, localTime(s.LastUsed), from, expires)
+							}
+							t.flush()
+							return nil
+						})
+					}
+				},
+			},
+			{
+				name:    "logout",
+				args:    "<session id> | --others",
+				summary: "End one of your sessions (this one logs out), or with --others all but this one.",
+				setup: func(fs *flag.FlagSet) func(*env, []string) error {
+					others := fs.Bool("others", false, "end all your sessions but this one")
+					return func(e *env, args []string) error {
+						if *others {
+							if err := wantArgs(args, 0, 0); err != nil {
+								return err
+							}
+							data, _, err := e.api.Do(e.ctx, http.MethodPost, "/me/sessions/logout-others", nil, nil)
+							if err != nil {
+								return err
+							}
+							return e.emit(data, func() error {
+								var r struct {
+									Ended int `json:"ended"`
+								}
+								if err := e.decode(data, &r); err != nil {
+									return err
+								}
+								fmt.Fprintf(e.stdout, "Ended %s.\n", count(r.Ended, "other session", "other sessions"))
+								return nil
+							})
+						}
+						if err := wantArgs(args, 1, 1); err != nil {
+							return err
+						}
+						if _, _, err := e.api.Do(e.ctx, http.MethodDelete, "/me/sessions/"+url.PathEscape(args[0]), nil, nil); err != nil {
+							return err
+						}
+						if !e.json {
+							fmt.Fprintln(e.stdout, "Session ended.")
+						}
+						return nil
 					}
 				},
 			},

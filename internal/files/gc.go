@@ -9,14 +9,29 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// hashUsed tells whether any attachment of tenant $1 has the file with hash
-// $2.
-const hashUsed = `SELECT EXISTS (SELECT 1 FROM item_attachment WHERE tenant = $1 AND hash = $2)
-	OR EXISTS (SELECT 1 FROM stock_attachment WHERE tenant = $1 AND hash = $2)
-	OR EXISTS (SELECT 1 FROM location_attachment WHERE tenant = $1 AND hash = $2)
-	OR EXISTS (SELECT 1 FROM class_attachment WHERE tenant = $1 AND hash = $2)`
+// hashUsed tells whether any attachment of tenant $1, live or deleted, has
+// the file with hash $2. An attachment's tenant is its owner's: an item's
+// through its class, a stock row's through its location.
+const hashUsed = `SELECT EXISTS (
+	SELECT 1
+	FROM public.attachment a
+	LEFT JOIN public.item i      ON i.id = a.item
+	LEFT JOIN public.class ic    ON ic.id = i.class
+	LEFT JOIN public.stock s     ON s.id = a.stock
+	LEFT JOIN public.location sl ON sl.id = s.location
+	LEFT JOIN public.location l  ON l.id = a.location
+	LEFT JOIN public.class c     ON c.id = a.class
+	WHERE a.hash = $2
+	  AND coalesce(ic.tenant, sl.tenant, l.tenant, c.tenant) = $1)`
+
+// expiredSessions removes every tenant's expired sessions: those that sat
+// unused for longer than their max_idle. Sessions aren't in history, so no
+// action is needed.
+const expiredSessions = `DELETE FROM public.session
+	WHERE max_idle IS NOT NULL AND last_used <= now() - max_idle`
 
 // GCOptions configures GC.
 type GCOptions struct {
@@ -29,8 +44,9 @@ type GCOptions struct {
 
 // GCResult reports what GC removed, or with DryRun, would remove.
 type GCResult struct {
-	Files int
-	Bytes int64
+	Files    int
+	Bytes    int64
+	Sessions int64 // expired sessions
 }
 
 // GC removes files that no attachment references, in every tenant's
@@ -38,7 +54,8 @@ type GCResult struct {
 //
 //   - files on disk whose hash no attachment of the tenant has: their
 //     attachments were deleted, or an upload's database insert failed;
-//   - abandoned uploads in the tenant's tmp directory.
+//   - abandoned uploads in the tenant's tmp directory;
+//   - and, in the database, every tenant's expired sessions.
 //
 // Files younger than MinAge are left alone, so uploads in progress are safe.
 // Each removal takes the file's advisory lock (as uploads do) and re-checks
@@ -54,13 +71,24 @@ func GC(ctx context.Context, o GCOptions) (GCResult, error) {
 	defer conn.Close(context.Background())
 
 	var result GCResult
+	if o.DryRun {
+		err = conn.QueryRow(ctx, "SELECT count(*) FROM public.session WHERE max_idle IS NOT NULL AND last_used <= now() - max_idle").
+			Scan(&result.Sessions)
+	} else {
+		var tag pgconn.CommandTag
+		tag, err = conn.Exec(ctx, expiredSessions)
+		result.Sessions = tag.RowsAffected()
+	}
+	if err != nil {
+		return result, fmt.Errorf("expired sessions: %w", err)
+	}
 	hosts, err := o.Store.Hosts()
 	if err != nil {
 		return result, err
 	}
 	for _, host := range hosts {
 		var tenant string
-		err := conn.QueryRow(ctx, "SELECT id FROM tenant WHERE host = $1", host).Scan(&tenant)
+		err := conn.QueryRow(ctx, "SELECT id::text FROM public.tenant WHERE host = $1", host).Scan(&tenant)
 		if errors.Is(err, pgx.ErrNoRows) {
 			o.Logger.Warn("a directory of no tenant, left alone", "directory", host)
 			continue
@@ -157,7 +185,7 @@ func gcTenant(ctx context.Context, conn *pgx.Conn, o GCOptions, tenant, host str
 func removeUnreferenced(ctx context.Context, conn *pgx.Conn, store *Store, tenant, hash string) (bool, error) {
 	removed := false
 	err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(file_lock_key($1))", hash); err != nil {
+		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(attachment.file_lock_key($1))", hash); err != nil {
 			return err
 		}
 		var referenced bool

@@ -37,6 +37,13 @@ func (s *server) upload(kind, kindPath string) handlerFunc {
 			return invalidInput("%q in the path is not a UUID", target)
 		}
 		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(transferTimeout))
+		// The host and the session are checked before anything is written
+		// to the files directory: nothing is kept for a host that picks no
+		// tenant, or for a request without a valid session.
+		if _, err := s.callJSON(r.Context(), "account.me", nil); err != nil {
+			return err
+		}
+		who := callerOf(r.Context())
 
 		mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if mediaType != "multipart/form-data" {
@@ -84,7 +91,7 @@ func (s *server) upload(kind, kindPath string) handlerFunc {
 					return invalidInput("the \"file\" part needs a file name")
 				}
 				contentType = part.Header.Get("Content-Type")
-				store, err := s.files.Tenant(tenantOf(r.Context()))
+				store, err := s.files.Tenant(who.host)
 				if err != nil {
 					return err
 				}
@@ -129,24 +136,23 @@ func (s *server) upload(kind, kindPath string) handlerFunc {
 		if strings.TrimSpace(title) == "" {
 			title = fileName
 		}
+		// One transaction of its own: the file's lock (which "wtfd gc" takes
+		// too), the file put in place, and the attachment recorded.
 		var result string
-		sess, _ := r.Context().Value(sessionKey{}).(session)
 		err = pgx.BeginFunc(r.Context(), s.pool, func(tx pgx.Tx) error {
-			if err := useSession(r.Context(), tx, sess, tenantOf(r.Context())); err != nil {
-				return err
-			}
-			if _, err := tx.Exec(r.Context(), "SELECT attachment_lock($1)", staged.Hash); err != nil {
+			sql, values := callSQL("attachment.lock", who, []arg{{name: "p_hash", typ: "text", value: staged.Hash}})
+			if _, err := tx.Exec(r.Context(), sql, values...); err != nil {
 				return err
 			}
 			if err := staged.Place(); err != nil {
 				return err
 			}
 			placed = true
-			sql, values := callSQL("attachment_create", []arg{
-				{name: "p_kind", typ: "text", value: kind},
+			sql, values = callSQL("attachment.create", who, []arg{
+				{name: "p_kind", typ: "public.owner_kind", value: kind},
 				{name: "p_owner", typ: "uuid", value: target},
 				{name: "p_hash", typ: "text", value: staged.Hash},
-				{name: "p_type", typ: "text", value: contentType},
+				{name: "p_media_type", typ: "text", value: contentType},
 				{name: "p_size", typ: "bigint", value: staged.Size},
 				{name: "p_title", typ: "text", value: title},
 				{name: "p_photo", typ: "boolean", value: photo},
@@ -192,24 +198,25 @@ func (s *server) download(kind string) handlerFunc {
 }
 
 func (s *server) sendAttachment(w http.ResponseWriter, r *http.Request, kind string) error {
-	args, err := collect(r, []param{constant("p_kind", "text", kind), path("p_owner", "id"), path("p_id", "attachment")})
+	args, err := collect(r, []param{constant("p_kind", "public.owner_kind", kind), path("p_owner", "id"),
+		path("p_attachment", "attachment")})
 	if err != nil {
 		return err
 	}
-	result, err := s.callJSON(r.Context(), "attachment_get", args)
+	result, err := s.callJSON(r.Context(), "attachment.get", args)
 	if err != nil {
 		return err
 	}
 	var a struct {
 		Title string `json:"title"`
-		Type  string `json:"type"`
+		Type  string `json:"media_type"`
 		Hash  string `json:"hash"`
 	}
 	if err := json.Unmarshal(result, &a); err != nil {
 		return err
 	}
 
-	store, err := s.files.Tenant(tenantOf(r.Context()))
+	store, err := s.files.Tenant(callerOf(r.Context()).host)
 	if err != nil {
 		return err
 	}

@@ -22,7 +22,7 @@ type querier interface {
 // tenantID returns the id of the tenant with host host.
 func tenantID(ctx context.Context, q querier, host string) (string, error) {
 	var id string
-	err := q.QueryRow(ctx, "SELECT id FROM tenant WHERE host = lower($1)", host).Scan(&id)
+	err := q.QueryRow(ctx, "SELECT id::text FROM public.tenant WHERE host = lower($1)", host).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", fmt.Errorf("there is no tenant with host %q", host)
 	}
@@ -34,7 +34,7 @@ func tenantID(ctx context.Context, q querier, host string) (string, error) {
 func CreateTenant(ctx context.Context, conn *pgx.Conn, host, email string) (string, error) {
 	var password string
 	err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "INSERT INTO tenant (host) VALUES ($1)", host); err != nil {
+		if _, err := tx.Exec(ctx, "INSERT INTO public.tenant (host) VALUES ($1)", host); err != nil {
 			return hostError(host, err)
 		}
 		var err error
@@ -71,13 +71,18 @@ type Tenant struct {
 func ListTenants(ctx context.Context, conn *pgx.Conn) ([]Tenant, error) {
 	rows, err := conn.Query(ctx, `
 		SELECT t.host,
-		       (SELECT count(*) FROM account a WHERE a.tenant = t.id AND NOT a.deleted),
-		       (SELECT count(*) FROM item i WHERE i.tenant = t.id AND NOT i.deleted),
-		       (SELECT count(*) FROM item_attachment a WHERE a.tenant = t.id)
-		       + (SELECT count(*) FROM stock_attachment a WHERE a.tenant = t.id)
-		       + (SELECT count(*) FROM location_attachment a WHERE a.tenant = t.id)
-		       + (SELECT count(*) FROM class_attachment a WHERE a.tenant = t.id)
-		FROM tenant t
+		       (SELECT count(*) FROM public.account a WHERE a.tenant = t.id AND a.deleted IS NULL),
+		       (SELECT count(*) FROM public.item i JOIN public.class c ON c.id = i.class
+		        WHERE c.tenant = t.id AND i.deleted IS NULL),
+		       (SELECT count(*) FROM public.attachment a
+		        LEFT JOIN public.item i     ON i.id = a.item
+		        LEFT JOIN public.class ic   ON ic.id = i.class
+		        LEFT JOIN public.stock s    ON s.id = a.stock
+		        LEFT JOIN public.location sl ON sl.id = s.location
+		        LEFT JOIN public.location l ON l.id = a.location
+		        LEFT JOIN public.class c    ON c.id = a.class
+		        WHERE coalesce(ic.tenant, sl.tenant, l.tenant, c.tenant) = t.id)
+		FROM public.tenant t
 		ORDER BY t.host`)
 	if err != nil {
 		return nil, err
@@ -116,7 +121,7 @@ func RenameTenant(ctx context.Context, conn *pgx.Conn, store *files.Store, host,
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	_, err = conn.Exec(ctx, "UPDATE tenant SET host = $2 WHERE host = $1", host, newHost)
+	_, err = conn.Exec(ctx, "UPDATE public.tenant SET host = $2 WHERE host = $1", host, newHost)
 	if err != nil {
 		if moved {
 			if back := os.Rename(to.Dir(), from.Dir()); back != nil {
@@ -135,7 +140,8 @@ func RenameTenant(ctx context.Context, conn *pgx.Conn, store *files.Store, host,
 // /model/import does.
 func ImportGlobalUnits(ctx context.Context, conn *pgx.Conn, data []byte, dryRun bool) ([]byte, error) {
 	var report string
-	err := conn.QueryRow(ctx, "SELECT util.model_import(NULL, $1::jsonb, NULL, NULL, $2)::text", string(data), dryRun).Scan(&report)
+	err := conn.QueryRow(ctx, "SELECT model.import_file(NULL, NULL, $1::jsonb, NULL, NULL, $2)::text",
+		string(data), dryRun).Scan(&report)
 	return []byte(report), err
 }
 
@@ -143,7 +149,7 @@ func ImportGlobalUnits(ctx context.Context, conn *pgx.Conn, data []byte, dryRun 
 // family (kind "family"), named name, is available to tenants that haven't
 // chosen.
 func SetUnitStandard(ctx context.Context, conn *pgx.Conn, kind, name string, available bool) error {
-	table := map[string]string{"quantity": "quantity", "family": "unit_family"}[kind]
+	table := map[string]string{"quantity": "public.quantity", "family": "public.unit_family"}[kind]
 	if table == "" {
 		return fmt.Errorf("unknown kind %q", kind)
 	}

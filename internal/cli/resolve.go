@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -144,7 +145,7 @@ func (e *env) lookupCode(ref string) (codeResult, bool, error) {
 		return codeResult{}, false, err
 	}
 	var r codeResult
-	if err := decode(data, &r); err != nil {
+	if err := e.decode(data, &r); err != nil {
 		return codeResult{}, false, err
 	}
 	return r, true, nil
@@ -156,7 +157,7 @@ func (e *env) get(path string, query url.Values, v any) error {
 	if err != nil {
 		return err
 	}
-	return decode(data, v)
+	return e.decode(data, v)
 }
 
 func (e *env) locationTree() (*treeIndex, error) {
@@ -235,7 +236,7 @@ func (e *env) resolveLocation(ref string) (string, error) {
 		return "", err
 	} else if ok && r.Type == "location" {
 		var l location
-		return l.ID, decode(r.Object, &l)
+		return l.ID, e.decode(r.Object, &l)
 	}
 	return e.resolveNode(ix, "location", ref)
 }
@@ -311,10 +312,10 @@ func (e *env) resolveItem(ref string) (string, error) {
 			switch r.Type {
 			case "item":
 				var it item
-				return it.ID, decode(r.Object, &it)
+				return it.ID, e.decode(r.Object, &it)
 			case "stock":
 				var s stock
-				return s.Item.ID, decode(r.Object, &s)
+				return s.Item.ID, e.decode(r.Object, &s)
 			}
 			return "", fmt.Errorf("%s is the code of a %s, not of an item", normalizeCode(ref), r.Type)
 		}
@@ -366,7 +367,7 @@ func (e *env) resolveStock(ref string) (string, error) {
 		return "", err
 	} else if ok && r.Type == "stock" {
 		var s stock
-		return s.ID, decode(r.Object, &s)
+		return s.ID, e.decode(r.Object, &s)
 	}
 	itemRef, locationRef, at := strings.Cut(ref, "@")
 	itemID, err := e.resolveItem(itemRef)
@@ -402,7 +403,7 @@ func (e *env) resolveStock(ref string) (string, error) {
 	}
 	var candidates []string
 	for _, s := range rows {
-		candidates = append(candidates, s.Code+"  "+ix.pathString(s.Location)+"  "+formatQuantity(s.Quantity, s.Display))
+		candidates = append(candidates, s.Code+"  "+ix.pathString(s.Location)+"  "+formatQuantity(s.Amount, s.Display))
 	}
 	if i, ok, err := e.choose(fmt.Sprintf("Which stock of %q? ", it.Name), candidates); ok {
 		if err != nil {
@@ -460,14 +461,122 @@ func (e *env) resolveOption(attributeID, ref string) (string, error) {
 	return "", fmt.Errorf("no option named %q", ref)
 }
 
-// unitFamilies returns all unit families, each with its units.
+// unitFamilies returns all unit families the tenant sees, each with its
+// units. They are kept in the cache directory and revalidated by their
+// version (ETag) on every use, as the trees are; each unit is given its
+// family and quantity, which the list leaves out.
 func (e *env) unitFamilies() ([]unitFamily, error) {
-	if e.cache.families == nil {
-		if err := e.cachedGet("/unit-families", "unit-families", &e.cache.families); err != nil {
+	if e.cache.families != nil {
+		return e.cache.families, nil
+	}
+	var cached familyList
+	_, have := e.readCache("unit-families", &cached)
+	var headers []string
+	if have {
+		headers = []string{"If-None-Match", fmt.Sprintf(`"%d"`, cached.Version)}
+	}
+	data, _, err := e.api.Do(e.ctx, http.MethodGet, "/unit-families", nil, nil, headers...)
+	if err != nil {
+		return nil, err
+	}
+	list := cached
+	if data != nil || !have {
+		if err := decode(data, &list); err != nil {
 			return nil, err
 		}
+		e.writeCache("unit-families", list)
 	}
+	for i := range list.Families {
+		f := &list.Families[i]
+		for j := range f.Units {
+			f.Units[j].Family.ID, f.Units[j].Family.Name = f.ID, f.Name
+			f.Units[j].Quantity = f.Quantity
+		}
+	}
+	e.cache.families = list.Families
 	return e.cache.families, nil
+}
+
+// familyList is GET /unit-families' answer, and how the client keeps it.
+type familyList struct {
+	Version  int64        `json:"version"`
+	Families []unitFamily `json:"families"`
+}
+
+// decode unmarshals API JSON into v, as decode does, and fills in the
+// units given by id only from the unit families the client keeps.
+func (e *env) decode(data []byte, v any) error {
+	if err := decode(data, v); err != nil {
+		return err
+	}
+	return e.fillUnits(v)
+}
+
+var unitType = reflect.TypeFor[unit]()
+
+// fillUnits replaces every unit in v that has only its id by the whole
+// unit, from the unit families. A unit not among them is left as it is.
+func (e *env) fillUnits(v any) error {
+	var index map[string]unit
+	var err error
+	var walk func(r reflect.Value)
+	walk = func(r reflect.Value) {
+		if err != nil {
+			return
+		}
+		switch r.Kind() {
+		case reflect.Pointer, reflect.Interface:
+			if !r.IsNil() {
+				walk(r.Elem())
+			}
+		case reflect.Struct:
+			if r.Type() == unitType {
+				if !r.CanAddr() {
+					return
+				}
+				u := r.Addr().Interface().(*unit)
+				if u.ID == "" || u.Symbol != "" {
+					return
+				}
+				if index == nil {
+					if index, err = e.unitIndex(); err != nil {
+						return
+					}
+				}
+				if full, ok := index[u.ID]; ok {
+					*u = full
+				}
+				return
+			}
+			for i := 0; i < r.NumField(); i++ {
+				if r.Type().Field(i).IsExported() {
+					walk(r.Field(i))
+				}
+			}
+		case reflect.Slice, reflect.Array:
+			for i := 0; i < r.Len(); i++ {
+				walk(r.Index(i))
+			}
+		}
+	}
+	walk(reflect.ValueOf(v))
+	return err
+}
+
+// unitIndex returns every unit the tenant sees by id, each with its family
+// and quantity.
+func (e *env) unitIndex() (map[string]unit, error) {
+	families, err := e.unitFamilies()
+	if err != nil {
+		return nil, err
+	}
+	index := map[string]unit{}
+	for _, f := range families {
+		for _, u := range f.Units {
+			index[u.ID] = u
+		}
+	}
+	return index, nil
 }
 
 // resolveFamily returns the id of a unit family given by id or name.

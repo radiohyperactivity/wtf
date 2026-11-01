@@ -41,7 +41,7 @@ type deletedLocations struct {
 			Name string `json:"name"`
 		} `json:"item"`
 		Location string       `json:"location"`
-		Quantity *json.Number `json:"quantity"`
+		Amount   *json.Number `json:"amount"`
 	} `json:"stock"`
 }
 
@@ -149,7 +149,7 @@ type treeDeletion struct {
 
 func classDeletion(data json.RawMessage) (treeDeletion, error) {
 	var d deletedClasses
-	if err := decode(data, &d); err != nil || len(d.Classes) == 0 {
+	if err := json.Unmarshal(data, &d); err != nil || len(d.Classes) == 0 {
 		return treeDeletion{}, errors.New("unexpected answer to a recursive delete")
 	}
 	top := d.Classes[len(d.Classes)-1] // deepest first, so the class itself is last
@@ -189,7 +189,7 @@ func classDeletion(data json.RawMessage) (treeDeletion, error) {
 
 func locationDeletion(data json.RawMessage) (treeDeletion, error) {
 	var d deletedLocations
-	if err := decode(data, &d); err != nil || len(d.Locations) == 0 {
+	if err := json.Unmarshal(data, &d); err != nil || len(d.Locations) == 0 {
 		return treeDeletion{}, errors.New("unexpected answer to a recursive delete")
 	}
 	top := d.Locations[len(d.Locations)-1]
@@ -217,7 +217,7 @@ func locationDeletion(data json.RawMessage) (treeDeletion, error) {
 		rows = nil
 		for _, s := range d.Stock {
 			perLocation[s.Location]++
-			rows = append(rows, []string{"  " + s.Code, s.Item.Name, formatQuantity(s.Quantity, nil), "at " + paths[s.Location]})
+			rows = append(rows, []string{"  " + s.Code, s.Item.Name, formatQuantity(s.Amount, nil), "at " + paths[s.Location]})
 		}
 		t.listing = append(t.listing, tableLines(nil, rows, false)...)
 	}

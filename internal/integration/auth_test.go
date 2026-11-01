@@ -147,7 +147,7 @@ func TestLoginLog(t *testing.T) {
 	e.expect(t, 201, "POST", "/accounts", obj("email", email, "password", "secret-password"))
 
 	var buf bytes.Buffer
-	handler := serve.NewHandler(e.api, slog.New(slog.NewTextHandler(&buf, nil)), 1<<20, e.files, testMaxAttachment, "")
+	handler := serve.NewHandler(e.api, slog.New(slog.NewTextHandler(&buf, nil)), 1<<20, e.files, testMaxAttachment, "", nil)
 	login := func(password string) int {
 		data, _ := json.Marshal(map[string]string{"email": email, "password": password})
 		req := httptest.NewRequest("POST", "/api/v1/login", bytes.NewReader(data))

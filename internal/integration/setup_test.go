@@ -77,10 +77,9 @@ var (
 // schema up to date. It skips the test when no test database is configured.
 func setup(t *testing.T) *environment {
 	t.Helper()
-	// The API is rewritten in part 3 of the refactor
-	// (2026-10-31-api-refactor.md), and these tests with it; until then the
-	// database has the new schema, which the old API can't use.
-	t.Skip("the API's tests are rewritten with the API, in part 3 of the refactor")
+	// These tests are rewritten for the new API in step 4 of the API
+	// refactor (2026-10-31-api-refactor.md); until then they are skipped.
+	t.Skip("the API's tests are rewritten in step 4 of the API refactor")
 	setupOnce.Do(func() { shared, skipMsg, setupErr = connect() })
 	if skipMsg != "" {
 		t.Skip(skipMsg)
@@ -159,7 +158,7 @@ func connect() (*environment, string, error) {
 	e := &environment{
 		dba:       dba,
 		api:       api,
-		handler:   serve.NewHandler(api, quiet, 1<<20, store, testMaxAttachment, ""),
+		handler:   serve.NewHandler(api, quiet, 1<<20, store, testMaxAttachment, "", nil),
 		dbaConfig: dbaConfig,
 		apiUser:   database.APIUser,
 		files:     store,
@@ -190,7 +189,7 @@ func (e *environment) login(email, password string) (string, error) {
 
 // loginTo logs in at hostname (and so to its tenant).
 func (e *environment) loginTo(hostname, email, password string) (string, error) {
-	data, _ := json.Marshal(map[string]string{"email": email, "password": password})
+	data, _ := json.Marshal(map[string]any{"email": email, "password": password, "client": "integration test", "max_idle": nil})
 	req := httptest.NewRequest("POST", "/api/v1/login", bytes.NewReader(data))
 	req.Host = hostname
 	rec := httptest.NewRecorder()
@@ -267,13 +266,17 @@ func getenv(name, fallback string) string {
 }
 
 // reset deletes all user data, of every tenant, and the tenants' choices
-// of units. Tenants, units and accounts stay.
+// of units, with the history and the actions that only they refer to.
+// Tenants, units and accounts stay.
 func (e *environment) reset(t *testing.T) {
 	t.Helper()
-	_, err := e.dba.Exec(context.Background(),
-		"TRUNCATE history, item_attachment, stock_attachment, location_attachment, class_attachment, stock_value, stock, value, item, class_attribute, attribute_option, attribute, class, location, tenant_quantity, tenant_unit_family")
-	if err != nil {
-		t.Fatal(err)
+	for _, sql := range []string{
+		"TRUNCATE public.history, public.attachment, public.stock_value, public.stock, public.item_value, public.item, public.class_attribute, public.attribute_option, public.attribute, public.class, public.location, public.tenant_quantity, public.tenant_unit_family",
+		"DELETE FROM public.action a WHERE NOT EXISTS (SELECT 1 FROM public.account x WHERE x.deleted = a.id)",
+	} {
+		if _, err := e.dba.Exec(context.Background(), sql); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -367,7 +370,7 @@ func num(t *testing.T, v any, path ...any) float64 {
 // symbol.
 func (e *environment) unit(t *testing.T, family, symbol string) string {
 	t.Helper()
-	for _, f := range e.expect(t, 200, "GET", "/unit-families", nil).body.([]any) {
+	for _, f := range get(t, e.expect(t, 200, "GET", "/unit-families", nil).body, "families").([]any) {
 		if str(t, f, "name") != family {
 			continue
 		}
@@ -397,14 +400,15 @@ func (e *environment) tenantStore(t *testing.T) *files.Store {
 func (e *environment) dropTenantUnits(t *testing.T) {
 	t.Helper()
 	for _, sql := range []string{
-		"DELETE FROM value v USING attribute a, unit u WHERE v.attribute = a.id AND a.unit = u.id AND u.tenant IS NOT NULL",
-		"DELETE FROM stock_value v USING attribute a, unit u WHERE v.attribute = a.id AND a.unit = u.id AND u.tenant IS NOT NULL",
-		"DELETE FROM class_attribute ca USING attribute a, unit u WHERE ca.attribute = a.id AND a.unit = u.id AND u.tenant IS NOT NULL",
-		"DELETE FROM attribute a USING unit u WHERE a.unit = u.id AND u.tenant IS NOT NULL",
-		"DELETE FROM item i USING unit u WHERE i.unit = u.id AND u.tenant IS NOT NULL",
-		"DELETE FROM unit WHERE tenant IS NOT NULL",
-		"DELETE FROM unit_family WHERE tenant IS NOT NULL",
-		"DELETE FROM quantity WHERE tenant IS NOT NULL",
+		"DELETE FROM public.item_value v USING public.attribute a, public.unit u WHERE v.attribute = a.id AND a.unit = u.id AND u.tenant IS NOT NULL",
+		"DELETE FROM public.stock_value v USING public.attribute a, public.unit u WHERE v.attribute = a.id AND a.unit = u.id AND u.tenant IS NOT NULL",
+		"DELETE FROM public.class_attribute ca USING public.attribute a, public.unit u WHERE ca.attribute = a.id AND a.unit = u.id AND u.tenant IS NOT NULL",
+		"DELETE FROM public.attribute a USING public.unit u WHERE a.unit = u.id AND u.tenant IS NOT NULL",
+		"DELETE FROM public.stock s USING public.item i, public.unit u WHERE s.item = i.id AND i.unit = u.id AND u.tenant IS NOT NULL",
+		"DELETE FROM public.item i USING public.unit u WHERE i.unit = u.id AND u.tenant IS NOT NULL",
+		"DELETE FROM public.unit WHERE tenant IS NOT NULL",
+		"DELETE FROM public.unit_family WHERE tenant IS NOT NULL",
+		"DELETE FROM public.quantity WHERE tenant IS NOT NULL",
 	} {
 		if _, err := e.dba.Exec(context.Background(), sql); err != nil {
 			t.Error(err)

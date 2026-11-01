@@ -275,13 +275,13 @@ func (e *env) editClass(id string) error {
 	for _, ca := range c.Attributes {
 		from := ""
 		if ca.Inherited {
-			from = "inherited from " + ix.pathString(ca.DefinedOnClass)
+			from = "inherited from " + ix.pathString(ca.AssignedTo)
 		}
 		var notes []string
 		if hasDefault(ca) {
 			notes = append(notes, "default "+formatDefault(ca))
 		}
-		if ca.PerUnit {
+		if ca.Scope == "stock" {
 			notes = append(notes, "per unit")
 		}
 		if ca.Required {
@@ -331,7 +331,7 @@ func (e *env) editClass(id string) error {
 		if err != nil {
 			return err
 		}
-		perUnit, err := e.yesNoField("  Per unit (values on stock rows)", cur.PerUnit)
+		perUnit, err := e.yesNoField("  Per unit (values on stock rows)", cur.Scope == "stock")
 		if err != nil {
 			return err
 		}
@@ -339,7 +339,7 @@ func (e *env) editClass(id string) error {
 		if err != nil {
 			return err
 		}
-		attrID, body := a.ID, object{"default": def, "per_unit": perUnit, "required": required}
+		attrID, body := a.ID, object{"default": def, "scope": scopeOf(perUnit), "required": required}
 		p.add("assigned "+a.Name, func() error {
 			_, err := e.do(http.MethodPut, "/classes/"+id+"/attributes/"+attrID, body)
 			return err
@@ -367,7 +367,7 @@ func (e *env) editValues(p *editPlan, owner, classID string, perUnit bool, value
 	}
 	header := false
 	for _, ca := range c.Attributes {
-		if ca.PerUnit != perUnit {
+		if (ca.Scope == "stock") != perUnit {
 			continue
 		}
 		if !header {
@@ -470,11 +470,11 @@ func (e *env) editStock(id string) error {
 	e.editTitle("stock " + s.Code + " of " + s.Item.Name)
 	p := newPlan("/stock/" + id)
 	current := ""
-	if s.Quantity != nil {
-		current = formatQuantity(s.Quantity, s.Display)
+	if s.Amount != nil {
+		current = formatQuantity(s.Amount, s.Display)
 	}
 	for {
-		v, err := e.field("Quantity (empty: uncounted)", current, nil)
+		v, err := e.field("Amount (empty: uncounted)", current, nil)
 		if err != nil {
 			return err
 		}
@@ -482,12 +482,12 @@ func (e *env) editStock(id string) error {
 			break
 		}
 		if v == "" {
-			p.patch["quantity"] = nil
+			p.patch["amount"] = nil
 			break
 		}
 		q, err := e.parseQuantity(v, s.Item.Unit)
 		if err == nil {
-			p.patch["quantity"] = q
+			p.patch["amount"] = q
 			break
 		}
 		fmt.Fprintln(e.stderr, err)
@@ -528,10 +528,10 @@ func (e *env) editAttribute(id string) error {
 	}
 	datatype := a.Datatype
 	for {
-		if v, err = e.requiredField("Type (text, integer, float, date, boolean, url, choice)", datatype, datatypes); err != nil {
+		if v, err = e.requiredField("Type (text, integer, decimal, date, boolean, url, choice)", datatype, datatypes); err != nil {
 			return err
 		}
-		if strings.Contains(" text integer float date boolean url choice ", " "+v+" ") {
+		if strings.Contains(" text integer decimal date boolean url choice ", " "+v+" ") {
 			break
 		}
 		fmt.Fprintf(e.stderr, "%q is not a type.\n", v)
@@ -542,7 +542,7 @@ func (e *env) editAttribute(id string) error {
 	}
 	datatype = v
 	// As for items, the unit is only asked for when there is one.
-	if a.Unit != nil && (datatype == "integer" || datatype == "float") {
+	if a.Unit != nil && (datatype == "integer" || datatype == "decimal") {
 		if err := e.editUnit(p, a.Unit, a.UnitLock); err != nil {
 			return err
 		}
@@ -663,7 +663,7 @@ func (e *env) editAccount(id string) error {
 	if err := e.get("/accounts/"+id, nil, &a); err != nil {
 		return err
 	}
-	if a.Deleted {
+	if a.Deleted != nil {
 		return errors.New("a deleted account can't be changed")
 	}
 	e.editTitle("account " + a.Email)
@@ -711,6 +711,13 @@ func (e *env) editAccount(id string) error {
 		}
 		break
 	}
+	if _, ok := p.patch["password"]; ok {
+		end, err := e.yesNoField("Log out its sessions too", true)
+		if err != nil {
+			return err
+		}
+		p.patch["end_sessions"] = end
+	}
 	if err := e.apply(p); err != nil {
 		return err
 	}
@@ -722,7 +729,7 @@ func (e *env) editCreated(data json.RawMessage, edit func(*env, string) error) e
 	var created struct {
 		ID string `json:"id"`
 	}
-	if err := decode(data, &created); err != nil {
+	if err := e.decode(data, &created); err != nil {
 		return err
 	}
 	return edit(e, created.ID)

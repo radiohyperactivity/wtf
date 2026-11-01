@@ -61,7 +61,7 @@ func modelGroup() group {
 						e.wrote("/classes")
 						e.wrote("/attributes")
 						var report modelReport
-						if err := decode(data, &report); err != nil {
+						if err := e.decode(data, &report); err != nil {
 							return err
 						}
 						if err := e.emit(data, func() error {

@@ -65,7 +65,7 @@ func findCommand() command {
 // renderFound shows each found item with its stock rows.
 func (e *env) renderFound(data json.RawMessage, _ bool) ([]string, error) {
 	var pg page[itemRow]
-	if err := decode(data, &pg); err != nil {
+	if err := e.decode(data, &pg); err != nil {
 		return nil, err
 	}
 	classes, err := e.classTree()
@@ -85,7 +85,7 @@ func (e *env) renderFound(data json.RawMessage, _ bool) ([]string, error) {
 		lines = append(lines, fmt.Sprintf("%-6s %s  (%s)", r.Code, r.Name, classes.pathString(r.Class)))
 		var rows [][]string
 		for _, s := range it.Stock {
-			rows = append(rows, []string{"      ", s.Code, locations.pathString(s.Location), formatQuantity(s.Quantity, s.Display)})
+			rows = append(rows, []string{"      ", s.Code, locations.pathString(s.Location), formatQuantity(s.Amount, s.Display)})
 		}
 		lines = append(lines, tableLines(nil, rows, false)...)
 		if len(it.Stock) == 0 {
@@ -205,9 +205,7 @@ func itemGroup() group {
 						if err := e.askValues(classID, false, v); err != nil {
 							return err
 						}
-						if len(v) > 0 {
-							body["values"] = v
-						}
+						body["values"] = v
 						data, err := e.do(http.MethodPost, "/items", body)
 						if err != nil {
 							return err
@@ -215,7 +213,7 @@ func itemGroup() group {
 						var created struct {
 							ID string `json:"id"`
 						}
-						if err := decode(data, &created); err != nil {
+						if err := e.decode(data, &created); err != nil {
 							return err
 						}
 						if *editAfter {
@@ -289,7 +287,7 @@ func itemGroup() group {
 // renderItems formats a page of item_list.
 func (e *env) renderItems(data json.RawMessage, header bool) ([]string, error) {
 	var pg page[itemRow]
-	if err := decode(data, &pg); err != nil {
+	if err := e.decode(data, &pg); err != nil {
 		return nil, err
 	}
 	classes, err := e.classTree()
@@ -377,7 +375,7 @@ func (e *env) showItem(id string) error {
 
 func (e *env) printItemJSON(data json.RawMessage) error {
 	var it item
-	if err := decode(data, &it); err != nil {
+	if err := e.decode(data, &it); err != nil {
 		return err
 	}
 	locations, err := e.locationTree()
@@ -410,7 +408,7 @@ func (e *env) printItemJSON(data json.RawMessage) error {
 	fmt.Fprintln(w, "Stock:")
 	for _, s := range it.Stock {
 		t := newTable(w)
-		t.row("  "+s.Code, locations.pathString(s.Location), formatQuantity(s.Quantity, s.Display))
+		t.row("  "+s.Code, locations.pathString(s.Location), formatQuantity(s.Amount, s.Display))
 		t.flush()
 		printValues(w, "      ", s.Values)
 		printMissing(w, "      ", s.Missing)
@@ -485,9 +483,9 @@ func stockGroup() group {
 			},
 			{
 				name:    "add",
-				args:    "<item> <location> [quantity] [--value ATTRIBUTE=VALUE]… [--edit]",
-				summary: "Put an item at a location. Without a quantity it is uncounted; quantities may carry units (2.5m).",
-				params:  []param{arg("Item", completeItems), locationParam, {name: "Quantity", optional: true, variadic: true}},
+				args:    "<item> <location> [amount] [--value ATTRIBUTE=VALUE]… [--edit]",
+				summary: "Put an item at a location. Without an amount it is uncounted; amounts may carry units (2.5m).",
+				params:  []param{arg("Item", completeItems), locationParam, {name: "Amount", optional: true, variadic: true}},
 				flags:   map[string]param{"value": arg("Value", completeAssignment)},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
 					var values stringList
@@ -516,7 +514,7 @@ func stockGroup() group {
 						}
 						quantity := strings.Join(args[2:], " ")
 						if quantity == "" {
-							if quantity, err = e.offer("Quantity (Enter: uncounted)", param{}, args); err != nil {
+							if quantity, err = e.offer("Amount (Enter: uncounted)", param{}, args); err != nil {
 								return err
 							}
 						}
@@ -537,9 +535,9 @@ func stockGroup() group {
 			},
 			{
 				name:    "move",
-				args:    "<stock> <location> [quantity]",
+				args:    "<stock> <location> [amount]",
 				summary: "Move a stock row, or part of it, to another location. Rows with the same values merge.",
-				params:  []param{stockParam, locationParam, {name: "Quantity", optional: true, variadic: true}},
+				params:  []param{stockParam, locationParam, {name: "Amount", optional: true, variadic: true}},
 				setup: simple(func(e *env, args []string) error {
 					if err := wantArgs(args, 2, -1); err != nil {
 						return err
@@ -552,10 +550,10 @@ func stockGroup() group {
 					if err != nil {
 						return err
 					}
-					body := object{"location": locationID}
+					body := object{"location": locationID, "amount": nil}
 					quantity := strings.Join(args[2:], " ")
 					if quantity == "" {
-						if quantity, err = e.offer("Quantity (Enter: all of it)", param{}, args); err != nil {
+						if quantity, err = e.offer("Amount (Enter: all of it)", param{}, args); err != nil {
 							return err
 						}
 					}
@@ -564,7 +562,7 @@ func stockGroup() group {
 						if err := e.get("/stock/"+stockID, nil, &s); err != nil {
 							return err
 						}
-						if body["quantity"], err = e.parseQuantity(quantity, s.Item.Unit); err != nil {
+						if body["amount"], err = e.parseQuantity(quantity, s.Item.Unit); err != nil {
 							return err
 						}
 					}
@@ -577,8 +575,8 @@ func stockGroup() group {
 			},
 			{
 				name:    "set",
-				args:    "<stock> [--quantity Q|none] [--location L] [--item I]",
-				summary: "Change a stock row's quantity (none: uncounted), location or item.",
+				args:    "<stock> [--amount A|none] [--location L] [--item I]",
+				summary: "Change a stock row's amount (none: uncounted), location or item.",
 				params:  []param{stockParam},
 				flags: map[string]param{
 					"location": locationParam,
@@ -586,7 +584,7 @@ func stockGroup() group {
 				},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
 					var quantity, locationRef, itemRef optString
-					fs.Var(&quantity, "quantity", "new quantity, or none for uncounted")
+					fs.Var(&quantity, "amount", "new amount, or none for uncounted")
 					fs.Var(&locationRef, "location", "new location (no merging; see 'stock move')")
 					fs.Var(&itemRef, "item", "new item")
 					return func(e *env, args []string) error {
@@ -609,7 +607,7 @@ func stockGroup() group {
 							}
 						}
 						if quantity.set {
-							body["quantity"] = nil
+							body["amount"] = nil
 							if !isNone(quantity.value) {
 								// The unit is the (possibly new) item's.
 								itemID := ""
@@ -626,7 +624,7 @@ func stockGroup() group {
 								if err := e.get("/items/"+itemID, nil, &it); err != nil {
 									return err
 								}
-								if body["quantity"], err = e.parseQuantity(quantity.value, it.Unit); err != nil {
+								if body["amount"], err = e.parseQuantity(quantity.value, it.Unit); err != nil {
 									return err
 								}
 							}
@@ -655,7 +653,7 @@ func stockGroup() group {
 // renderStock formats a page of stock_list.
 func (e *env) renderStock(data json.RawMessage, header bool) ([]string, error) {
 	var pg page[stock]
-	if err := decode(data, &pg); err != nil {
+	if err := e.decode(data, &pg); err != nil {
 		return nil, err
 	}
 	locations, err := e.locationTree()
@@ -664,14 +662,14 @@ func (e *env) renderStock(data json.RawMessage, header bool) ([]string, error) {
 	}
 	var rows [][]string
 	for _, s := range pg.Rows {
-		rows = append(rows, []string{s.Code, s.Item.Name, locations.pathString(s.Location), formatQuantity(s.Quantity, s.Display)})
+		rows = append(rows, []string{s.Code, s.Item.Name, locations.pathString(s.Location), formatQuantity(s.Amount, s.Display)})
 	}
-	return tableLines([]string{"CODE", "ITEM", "LOCATION", "QUANTITY"}, rows, header), nil
+	return tableLines([]string{"CODE", "ITEM", "LOCATION", "AMOUNT"}, rows, header), nil
 }
 
 func (e *env) printStockJSON(data json.RawMessage) error {
 	var s stock
-	if err := decode(data, &s); err != nil {
+	if err := e.decode(data, &s); err != nil {
 		return err
 	}
 	locations, err := e.locationTree()
@@ -681,7 +679,7 @@ func (e *env) printStockJSON(data json.RawMessage) error {
 	w := e.stdout
 	deleted, merged := deletedNote(s.Deleted, "stock", s.Code), ""
 	if s.MergedInto != nil {
-		deleted, merged = "yes", s.MergedInto.Code+" (a move added its quantity to that row)"
+		deleted, merged = "yes", s.MergedInto.Code+" (a move added its amount to that row)"
 	}
 	fields(w,
 		"Code", s.Code,
@@ -689,7 +687,7 @@ func (e *env) printStockJSON(data json.RawMessage) error {
 		"Merged into", merged,
 		"Item", s.Item.Code+"  "+s.Item.Name,
 		"Location", locations.pathString(s.Location),
-		"Quantity", formatQuantity(s.Quantity, s.Display),
+		"Amount", formatQuantity(s.Amount, s.Display),
 		"Id", s.ID)
 	if len(s.Values) > 0 {
 		fmt.Fprintln(w, "Values:")
@@ -704,13 +702,13 @@ func (e *env) printStockJSON(data json.RawMessage) error {
 // uncounted), values as given, and on a terminal the per-unit values it
 // still needs (all of them in an interactive session).
 func (e *env) createStock(it item, locationID, quantity string, values object) (json.RawMessage, error) {
-	body := object{"item": it.ID, "location": locationID}
+	body := object{"item": it.ID, "location": locationID, "amount": nil}
 	if quantity != "" {
 		q, err := e.parseQuantity(quantity, it.Unit)
 		if err != nil {
 			return nil, err
 		}
-		body["quantity"] = q
+		body["amount"] = q
 	}
 	if values == nil {
 		values = object{}
@@ -718,9 +716,7 @@ func (e *env) createStock(it item, locationID, quantity string, values object) (
 	if err := e.askValues(it.Class.ID, true, values); err != nil {
 		return nil, err
 	}
-	if len(values) > 0 {
-		body["values"] = values
-	}
+	body["values"] = values
 	return e.do(http.MethodPost, "/stock", body)
 }
 
@@ -747,7 +743,7 @@ func (e *env) offerStock(itemID string) error {
 	if err != nil {
 		return err
 	}
-	quantity, err := e.offer("Quantity (Enter: uncounted)", param{}, nil)
+	quantity, err := e.offer("Amount (Enter: uncounted)", param{}, nil)
 	if err != nil {
 		return err
 	}

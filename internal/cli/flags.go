@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -85,7 +86,7 @@ func (e *env) parseWhere(list []string) (string, error) {
 		op, text := m[2], strings.TrimSpace(m[3])
 		filter := object{"attribute": a.ID, "op": op}
 		switch a.Datatype {
-		case "integer", "float", "date":
+		case "integer", "decimal", "date":
 			if op == "~" {
 				return "", usagef("--where %q: %s can be compared with =, >, >=, <, <= or a range LOW..HIGH", s, a.Name)
 			}
@@ -210,12 +211,12 @@ func historyCommand(kind, prefix, list string, resolve func(*env, string) (strin
 	}
 	return command{
 		name:    "history",
-		args:    usage + " [--limit N] [--offset N]",
-		summary: summary + ", newest first" + map[bool]string{true: ".", false: " (admins)."}[kind == "item" || kind == "stock"],
+		args:    usage + " [--limit N] [--before ID]",
+		summary: summary + ", newest first, a page at a time" + map[bool]string{true: ".", false: " (admins)."}[kind == "item" || kind == "stock"],
 		params:  params,
 		setup: func(fs *flag.FlagSet) func(*env, []string) error {
-			var p paging
-			p.register(fs)
+			limit := fs.Int("limit", 100, "show this many entries (1–1000)")
+			before := fs.String("before", "", "show the entries older than this one (by its id)")
 			return func(e *env, args []string) error {
 				if err := wantArgs(args, minArgs, 1); err != nil {
 					return err
@@ -228,16 +229,30 @@ func historyCommand(kind, prefix, list string, resolve func(*env, string) (strin
 					}
 					path = prefix + id + "/history"
 				}
-				return e.list(p, listing{
-					path:  path,
-					empty: "No history.",
-					render: func(data json.RawMessage, _ bool) ([]string, error) {
-						var pg page[historyEntry]
-						if err := decode(data, &pg); err != nil {
-							return nil, err
-						}
-						return historyLines(pg.Rows), nil
-					},
+				query := url.Values{"limit": {strconv.Itoa(*limit)}}
+				if *before != "" {
+					query.Set("before", *before)
+				}
+				data, err := e.api.Get(e.ctx, path, query)
+				if err != nil {
+					return err
+				}
+				return e.emit(data, func() error {
+					var pg historyPage
+					if err := e.decode(data, &pg); err != nil {
+						return err
+					}
+					if len(pg.Rows) == 0 {
+						fmt.Fprintln(e.stderr, "No history.")
+						return nil
+					}
+					for _, line := range historyLines(pg.Rows) {
+						fmt.Fprintln(e.stdout, line)
+					}
+					if pg.More {
+						fmt.Fprintf(e.stderr, "There is more; see it with --before %s.\n", pg.Rows[len(pg.Rows)-1].ID)
+					}
+					return nil
 				})
 			}
 		},
@@ -289,6 +304,7 @@ func objectParam(kind string) param {
 // setUnit puts a new attribute's or item's unit (by unitRef) and Unit lock
 // into body. Without a unit, Unit lock is refused.
 func (e *env) setUnit(body object, unitRef string, lock bool) error {
+	body["unit"], body["unit_lock"] = nil, lock
 	if unitRef == "" {
 		if lock {
 			return usagef("--unit-lock needs --unit")
@@ -300,9 +316,6 @@ func (e *env) setUnit(body object, unitRef string, lock bool) error {
 		return err
 	}
 	body["unit"] = u.ID
-	if lock {
-		body["unit_lock"] = true
-	}
 	return nil
 }
 

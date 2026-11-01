@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -31,7 +32,10 @@ type Options struct {
 	MaxAttachmentSize  int
 	Scripts            fs.FS  // the embedded schema scripts, to check the database against
 	WebRoot            string // the web app's files; "" serves no web app
-	Logger             *slog.Logger
+	// TrustedProxies are the reverse proxies whose X-Forwarded-For is
+	// believed for the client's address (WTFD_TRUSTED_PROXIES).
+	TrustedProxies []netip.Prefix
+	Logger         *slog.Logger
 }
 
 type server struct {
@@ -41,10 +45,7 @@ type server struct {
 	files         *files.Store // every tenant's directory is in it
 	maxAttachment int64
 	webRoot       string
-
-	// tenantKnown replaces the database's tenant_known in tests without a
-	// database.
-	tenantKnown func(ctx context.Context, host string) (bool, error)
+	trusted       []netip.Prefix
 }
 
 // Run serves the API until ctx is cancelled, then shuts down gracefully.
@@ -71,7 +72,8 @@ func Run(ctx context.Context, o Options) error {
 	}
 
 	httpServer := &http.Server{
-		Handler:           NewHandler(pool, o.Logger, int64(o.MaxRequestBodySize), o.Files, int64(o.MaxAttachmentSize), o.WebRoot),
+		Handler: NewHandler(pool, o.Logger, int64(o.MaxRequestBodySize), o.Files, int64(o.MaxAttachmentSize),
+			o.WebRoot, o.TrustedProxies),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
@@ -101,10 +103,12 @@ func Run(ctx context.Context, o Options) error {
 
 // NewHandler returns the HTTP handler: the API, and the web app from webRoot
 // if it isn't "". Run uses it; integration tests use it directly, without a
-// listening socket.
+// listening socket. trusted are the reverse proxies whose X-Forwarded-For
+// is believed.
 func NewHandler(pool *pgxpool.Pool, log *slog.Logger, maxRequestBodySize int64,
-	store *files.Store, maxAttachmentSize int64, webRoot string) http.Handler {
-	s := &server{pool: pool, log: log, maxBody: maxRequestBodySize, files: store, maxAttachment: maxAttachmentSize, webRoot: webRoot}
+	store *files.Store, maxAttachmentSize int64, webRoot string, trusted []netip.Prefix) http.Handler {
+	s := &server{pool: pool, log: log, maxBody: maxRequestBodySize, files: store, maxAttachment: maxAttachmentSize,
+		webRoot: webRoot, trusted: trusted}
 	return s.handler()
 }
 
@@ -121,7 +125,7 @@ func CheckSchema(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS) error {
 // scripts embedded in this binary.
 func checkSchema(ctx context.Context, pool *pgxpool.Pool, expected schema.Fingerprint) error {
 	var text string
-	if err := pool.QueryRow(ctx, "SELECT schema_version()::text").Scan(&text); err != nil {
+	if err := pool.QueryRow(ctx, "SELECT meta.schema_version()::text").Scan(&text); err != nil {
 		return fmt.Errorf("reading the schema version failed (%w); run 'wtfd schema'", err)
 	}
 	var actual schema.Fingerprint
@@ -175,7 +179,7 @@ func (s *server) handler() http.Handler {
 		writeProblem(w, notFound)
 	})
 
-	return s.logRequests(s.withTenant(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return s.logRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		switch {
 		case path == healthPath || path == apiPrefix || strings.HasPrefix(path, apiPrefix+"/"):
@@ -192,25 +196,29 @@ func (s *server) handler() http.Handler {
 		default:
 			web.ServeHTTP(w, r)
 		}
-	})))
+	}))
 }
 
 // wrap turns a handlerFunc into an http.Handler: it requires the session
-// cookie (unless anonymous) and passes it on in the context, limits the
-// request body and converts returned errors into problem responses.
+// cookie (unless anonymous), at once and without the database, passes the
+// caller (the session's token, the host and the client's address) on in the
+// context, limits the request body and converts returned errors into
+// problem responses.
 func (s *server) wrap(h handlerFunc, maxBody int64, anonymous bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		who := caller{host: hostLabel(r), address: clientAddress(r, s.trusted)}
 		if !anonymous {
 			token, ok := sessionToken(r)
 			if !ok {
 				writeProblem(w, unauthenticated)
 				return
 			}
-			// The session lasts 30 days from its last use, and so does the
-			// cookie: each answer renews it.
+			// Each answer renews the cookie; the database decides how long
+			// the session itself lasts.
 			setSessionCookie(w, r, token, sessionMaxAge)
-			r = r.WithContext(context.WithValue(r.Context(), sessionKey{}, session{token: token}))
+			who.token = token
 		}
+		r = r.WithContext(context.WithValue(r.Context(), callerKey{}, who))
 		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		err := h(w, r)
 		if err == nil {
@@ -267,6 +275,7 @@ func (s *server) logRequests(next http.Handler) http.Handler {
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", rec.status,
+			"address", clientAddress(r, s.trusted),
 			"duration", time.Since(start).Round(time.Microsecond))
 	})
 }

@@ -225,7 +225,7 @@ func printAttachments(w io.Writer, indent string, list []attachment, photo *atta
 		if photo != nil && photo.ID == a.ID {
 			note = photoName
 		}
-		t.row(indent+"  "+a.ID, a.Title, a.Type, formatSize(a.Size), note)
+		t.row(indent+"  "+a.ID, a.Title, a.MediaType, formatSize(a.Size), note)
 	}
 	t.flush()
 }
@@ -258,21 +258,26 @@ func (e *env) pageFooter(total, limit, offset, shown int) {
 	fmt.Fprintln(e.stderr)
 }
 
+// localTime shows an API timestamp in local time, to the second.
+func localTime(at string) string {
+	if t, err := time.Parse(time.RFC3339Nano, at); err == nil {
+		return t.Local().Format("2006-01-02 15:04:05")
+	}
+	return at
+}
+
 // historyLines formats history entries, newest first, one block per entry.
 func historyLines(rows []historyEntry) []string {
 	var lines []string
 	for _, h := range rows {
-		who := "(system)"
-		if h.Account != nil {
-			who = h.Account.Email
-			if h.Account.Deleted {
+		who := "(wtfd)"
+		if a := h.Action.Account; a != nil {
+			who = a.Email
+			if a.Deleted {
 				who += " (deleted)"
 			}
 		}
-		when := h.HappenedAt
-		if t, err := time.Parse(time.RFC3339Nano, h.HappenedAt); err == nil {
-			when = t.Local().Format("2006-01-02 15:04:05")
-		}
+		when := localTime(h.Action.At)
 		lines = append(lines, fmt.Sprintf("%s  %s  %s %s%s", when, who, h.Operation, h.Table, historySubject(h)))
 		if h.Operation == "update" {
 			for _, k := range sortedKeys(h.Changes) {

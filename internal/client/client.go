@@ -25,7 +25,7 @@ import (
 const (
 	APIPath     = "/api/v1"
 	APIVersion  = 1
-	APIRevision = 2
+	APIRevision = 1
 )
 
 // SessionCookie is the cookie the API keeps the session in.
@@ -60,6 +60,10 @@ type Problem struct {
 	Hint      string `json:"hint"` // what to do about it, when the server knows (revision 2)
 	SQLState  string `json:"sqlstate"`
 	Supported []int  `json:"supported"` // API versions, in an unsupported-api-version problem
+	// In a restore-into-deleted problem: the request field that restores it
+	// somewhere else, and that "with_parents": true restores what it is in too.
+	PlaceKey    string `json:"place_key"`
+	WithParents bool   `json:"with_parents"`
 }
 
 // Problem types the client produces or explains itself.
@@ -67,6 +71,9 @@ const (
 	// OldServer is a 404 from a server that doesn't know /api/v1 at all.
 	OldServer          = "/problems/old-server"
 	UnsupportedVersion = "/problems/unsupported-api-version"
+	// RestoreIntoDeleted is a restore refused because what the object is in
+	// (its class, parent or location) is deleted.
+	RestoreIntoDeleted = "/problems/restore-into-deleted"
 )
 
 func (p *Problem) Error() string {

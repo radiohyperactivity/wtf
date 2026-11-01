@@ -90,7 +90,7 @@ func (e *env) askValues(classID string, perUnit bool, values object) error {
 	}
 	var list []classAttribute
 	for _, a := range c.Attributes {
-		if _, given := values[a.Attribute.ID]; a.PerUnit == perUnit && !given {
+		if _, given := values[a.Attribute.ID]; (a.Scope == "stock") == perUnit && !given {
 			list = append(list, a)
 		}
 	}
@@ -163,4 +163,13 @@ func valueHint(a attribute) string {
 		return "(Tab Tab: options)"
 	}
 	return ""
+}
+
+// scopeOf is the scope of an assignment: "stock" when its values belong to
+// stock rows, "item" when to the item.
+func scopeOf(perUnit bool) string {
+	if perUnit {
+		return "stock"
+	}
+	return "item"
 }

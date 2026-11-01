@@ -230,7 +230,7 @@ func (e *env) valueCandidates(a *attribute, cur string) []string {
 		return []string{"yes", "no"}
 	case "date":
 		return []string{"today", "yesterday", "tomorrow"}
-	case "integer", "float":
+	case "integer", "decimal":
 		if a.Unit == nil {
 			return nil
 		}
@@ -385,7 +385,7 @@ func completeFiles(_ *env, _ []string, cur string, _ bool) []string {
 }
 
 var (
-	datatypes   = words("text", "integer", "float", "date", "boolean", "url", "choice")
+	datatypes   = words("text", "integer", "decimal", "date", "boolean", "url", "choice")
 	roleList    = words("viewer", "user", "admin")
 	targetTypes = words("item", "stock", "location", "class")
 )

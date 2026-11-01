@@ -46,14 +46,14 @@ func attachmentGroup() group {
 						Attachments json.RawMessage `json:"attachments"`
 						Stock       []itemStock     `json:"stock"`
 					}
-					if err := decode(data, &obj); err != nil {
+					if err := e.decode(data, &obj); err != nil {
 						return err
 					}
 					if e.json {
 						return e.printJSON(obj.Attachments)
 					}
 					var list []attachment
-					if err := decode(obj.Attachments, &list); err != nil {
+					if err := e.decode(obj.Attachments, &list); err != nil {
 						return err
 					}
 					printAttachments(e.stdout, "", list, obj.Photo, photoName(args[0]))
@@ -115,7 +115,7 @@ func attachmentGroup() group {
 							return err
 						}
 						var a attachment
-						if decode(data, &a) == nil && a.Deleted {
+						if e.decode(data, &a) == nil && a.Deleted != nil {
 							fmt.Fprintf(e.stdout, "Deleted:  yes; restore it with 'wtf attachment restore %s %q %s'\n",
 								args[0], args[1], args[2])
 						}
@@ -147,7 +147,7 @@ func attachmentGroup() group {
 							if err := e.get(path, nil, &a); err != nil {
 								return err
 							}
-							name = filepath.Base(mediatype.DownloadName(a.Title, a.Type))
+							name = filepath.Base(mediatype.DownloadName(a.Title, a.MediaType))
 							if name == "." || name == string(filepath.Separator) || name == "" {
 								name = a.ID
 							}
@@ -264,7 +264,7 @@ func attachmentGroup() group {
 					if err != nil {
 						return err
 					}
-					data, err := e.do(http.MethodPost, path+"/restore", object{})
+					data, err := e.do(http.MethodPost, path+"/restore", nil)
 					if err != nil {
 						return err
 					}
@@ -328,7 +328,7 @@ func codeCommand() command {
 			}
 			return e.emit(data, func() error {
 				var r codeResult
-				if err := decode(data, &r); err != nil {
+				if err := e.decode(data, &r); err != nil {
 					return err
 				}
 				fmt.Fprintf(e.stdout, "%s is %s.\n\n", code, article(r.Type))
@@ -364,7 +364,7 @@ func quantityGroup() group {
 					}
 					return e.emit(data, func() error {
 						var list []quantity
-						if err := decode(data, &list); err != nil {
+						if err := e.decode(data, &list); err != nil {
 							return err
 						}
 						t := newTable(e.stdout, "NAME", "TYPE", "AVAILABLE")
@@ -395,7 +395,7 @@ func quantityGroup() group {
 					}
 					return e.emit(data, func() error {
 						var q quantity
-						if err := decode(data, &q); err != nil {
+						if err := e.decode(data, &q); err != nil {
 							return err
 						}
 						fields(e.stdout, "Name", q.Name, "Type", q.Datatype, "Available", availability(q.Available, q.Choice))
@@ -466,7 +466,7 @@ func unitsGroup() group {
 						}
 						return e.emit(data, func() error {
 							var list []unit
-							if err := decode(data, &list); err != nil {
+							if err := e.decode(data, &list); err != nil {
 								return err
 							}
 							printUnits(e, list)
@@ -494,7 +494,7 @@ func unitsGroup() group {
 					}
 					return e.emit(data, func() error {
 						var u unit
-						if err := decode(data, &u); err != nil {
+						if err := e.decode(data, &u); err != nil {
 							return err
 						}
 						printUnits(e, []unit{u})
@@ -536,7 +536,7 @@ func unitFamilyGroup() group {
 						}
 						return e.emit(data, func() error {
 							var list []unitFamily
-							if err := decode(data, &list); err != nil {
+							if err := e.decode(data, &list); err != nil {
 								return err
 							}
 							t := newTable(e.stdout, "NAME", "QUANTITY", "UNITS", "AVAILABLE")
@@ -568,7 +568,7 @@ func unitFamilyGroup() group {
 					}
 					return e.emit(data, func() error {
 						var f unitFamily
-						if err := decode(data, &f); err != nil {
+						if err := e.decode(data, &f); err != nil {
 							return err
 						}
 						fields(e.stdout, "Name", f.Name, "Quantity", f.Quantity.Name, "Available", availability(f.Available, f.Choice))
@@ -611,7 +611,7 @@ func accountGroup() group {
 					}
 					return e.emit(data, func() error {
 						var list []account
-						if err := decode(data, &list); err != nil {
+						if err := e.decode(data, &list); err != nil {
 							return err
 						}
 						t := newTable(e.stdout, "EMAIL", "ROLE", "PASSWORD")
@@ -644,7 +644,7 @@ func accountGroup() group {
 						if err := wantArgs(args, 1, 1); err != nil {
 							return err
 						}
-						body := object{"email": args[0]}
+						body := object{"email": args[0], "password": nil, "role": "viewer"}
 						if role.set {
 							r, err := parseRole(role.value)
 							if err != nil {
@@ -672,8 +672,8 @@ func accountGroup() group {
 			},
 			{
 				name:    "set",
-				args:    "<account> [--email E] [--password|--no-password] [--role R]",
-				summary: "Change an account. A new password ends its sessions.",
+				args:    "<account> [--email E] [--password|--no-password [--log-out|--keep-sessions]] [--role R]",
+				summary: "Change an account. With a new password (or none), its sessions end or stay, as --log-out or --keep-sessions says, or as asked.",
 				params:  []param{arg("Account", completeAccounts)},
 				flags:   roleParams,
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
@@ -681,6 +681,8 @@ func accountGroup() group {
 					fs.Var(&email, "email", "new email")
 					withPassword := fs.Bool("password", false, "prompt for a new password")
 					noPassword := fs.Bool("no-password", false, "remove the password (the account can't log in)")
+					logOut := fs.Bool("log-out", false, "with a new password: end the account's sessions")
+					keep := fs.Bool("keep-sessions", false, "with a new password: keep the account's sessions")
 					var role optString
 					fs.Var(&role, "role", "new role: viewer, user or admin")
 					return func(e *env, args []string) error {
@@ -715,6 +717,20 @@ func accountGroup() group {
 							}
 							body["password"] = p
 						}
+						if *logOut && *keep {
+							return usagef("--log-out and --keep-sessions exclude each other")
+						}
+						if _, ok := body["password"]; ok {
+							end := *logOut
+							if !*logOut && !*keep {
+								if end, err = e.yesNo("Log out the account's sessions too?"); err != nil {
+									return err
+								}
+							}
+							body["end_sessions"] = end
+						} else if *logOut || *keep {
+							return usagef("--log-out and --keep-sessions go with --password or --no-password")
+						}
 						if len(body) == 0 {
 							return usagef("nothing to change")
 						}
@@ -736,12 +752,12 @@ func accountGroup() group {
 // printAttachmentJSON prints an attachment.
 func printAttachmentJSON(e *env, data json.RawMessage) error {
 	var a attachment
-	if err := decode(data, &a); err != nil {
+	if err := e.decode(data, &a); err != nil {
 		return err
 	}
 	fields(e.stdout,
 		"Title", a.Title,
-		"Type", a.Type,
+		"Type", a.MediaType,
 		"Size", formatSize(a.Size),
 		"SHA-256", a.Hash,
 		"Id", a.ID)
@@ -751,11 +767,11 @@ func printAttachmentJSON(e *env, data json.RawMessage) error {
 // printAccountJSON prints an account.
 func printAccountJSON(e *env, data json.RawMessage) error {
 	var a account
-	if err := decode(data, &a); err != nil {
+	if err := e.decode(data, &a); err != nil {
 		return err
 	}
 	state := ""
-	if a.Deleted {
+	if a.Deleted != nil {
 		state = "deleted"
 	}
 	fields(e.stdout,
@@ -819,7 +835,7 @@ func availableCommand(kind string) command {
 			}
 			return e.emit(data, func() error {
 				var f unitFamily // a quantity has the same fields that are shown
-				if err := decode(data, &f); err != nil {
+				if err := e.decode(data, &f); err != nil {
 					return err
 				}
 				fmt.Fprintf(e.stdout, "%s: available %s.\n", f.Name, availability(f.Available, f.Choice))

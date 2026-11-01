@@ -1,9 +1,6 @@
 package serve
 
 import (
-	"bufio"
-	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,7 +9,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -24,28 +20,27 @@ import (
 
 func testServer() *server {
 	return &server{
-		log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
-		maxBody:     1 << 20,
-		tenantKnown: func(context.Context, string) (bool, error) { return true, nil },
+		log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		maxBody: 1 << 20,
 	}
 }
 
-// Every route must be documented in openapi.yaml, and vice versa.
+// Every route must be documented in openapi.json, and every path in it be
+// a route.
 func TestRoutesMatchOpenAPI(t *testing.T) {
-	pathLine := regexp.MustCompile(`^  (/\S*):\s*$`)
-	methodLine := regexp.MustCompile(`^    (get|post|put|patch|delete):\s*$`)
-
+	var spec struct {
+		Paths map[string]map[string]json.RawMessage `json:"paths"`
+	}
+	if err := json.Unmarshal(openapi.Spec, &spec); err != nil {
+		t.Fatal(err)
+	}
 	var documented []string
-	current := ""
-	scanner := bufio.NewScanner(bytes.NewReader(openapi.Spec))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if m := pathLine.FindStringSubmatch(line); m != nil {
-			current = m[1]
-		} else if m := methodLine.FindStringSubmatch(line); m != nil && current != "" {
-			documented = append(documented, strings.ToUpper(m[1])+" "+current)
-		} else if strings.HasPrefix(line, "components:") {
-			break
+	for path, operations := range spec.Paths {
+		for method := range operations {
+			switch method {
+			case "get", "post", "put", "patch", "delete":
+				documented = append(documented, strings.ToUpper(method)+" "+path)
+			}
 		}
 	}
 
@@ -58,27 +53,29 @@ func TestRoutesMatchOpenAPI(t *testing.T) {
 	slices.Sort(routed)
 	for _, r := range routed {
 		if !slices.Contains(documented, r) {
-			t.Errorf("route %s is not in openapi.yaml", r)
+			t.Errorf("route %s is not in openapi.json", r)
 		}
 	}
 	for _, d := range documented {
 		if !slices.Contains(routed, d) {
-			t.Errorf("openapi.yaml documents %s, which has no route", d)
+			t.Errorf("openapi.json documents %s, which has no route", d)
 		}
 	}
 }
 
 func TestCallSQL(t *testing.T) {
-	sql, values := callSQL("item_list", []arg{
+	sql, values := callSQL("item.list", caller{token: "tok", host: "bob"}, []arg{
 		{name: "p_class", typ: "uuid", optional: true},
 		{name: "p_search", typ: "text", value: "drill", optional: true},
 		{name: "p_name", typ: "text"},
 	})
-	want := "SELECT item_list(p_search => $1::text, p_name => $2::text)"
+	want := "SELECT item.list(p_request => ROW($1::text, $2::text, $3::inet)::public.request, " +
+		"p_search => $4::text, p_name => $5::text)"
 	if sql != want {
 		t.Errorf("sql = %q, want %q", sql, want)
 	}
-	if len(values) != 2 || values[0] != "drill" || values[1] != nil {
+	if len(values) != 5 || values[0] != "tok" || values[1] != "bob" || values[2] != nil ||
+		values[3] != "drill" || values[4] != nil {
 		t.Errorf("values = %#v", values)
 	}
 }
@@ -112,13 +109,24 @@ func TestProblemFor(t *testing.T) {
 		{"23001", http.MethodDelete, 409},
 		{"23503", http.MethodPost, 422},
 		{"57014", http.MethodGet, 503},
+		{"55000", http.MethodPost, 409},
+		{"WT001", http.MethodPost, 409},
 		{"42883", http.MethodGet, 500},
+		{"P0001", http.MethodPost, 500},
 	}
 	for _, tt := range tests {
 		p, _ := problemFor(&pgconn.PgError{Code: tt.code, Message: "m"}, tt.method)
 		if p.Status != tt.status {
 			t.Errorf("%s on %s: status %d, want %d", tt.code, tt.method, p.Status, tt.status)
 		}
+	}
+	p, _ := problemFor(&pgconn.PgError{Code: "55000", Message: "m"}, http.MethodPost)
+	if p.Type != "/problems/wrong-state" {
+		t.Errorf("55000: %s", p.Type)
+	}
+	p, _ = problemFor(&pgconn.PgError{Code: "WT001", Message: "m", Detail: "class"}, http.MethodPost)
+	if p.Type != "/problems/restore-into-deleted" || p.PlaceKey != "class" || !p.WithParents || p.Detail != "m" {
+		t.Errorf("WT001: %+v", p)
 	}
 	if p, ok := problemFor(errors.New("boom"), http.MethodGet); ok || p.Status != 500 {
 		t.Errorf("unexpected error mapped to %d, %v", p.Status, ok)
@@ -148,7 +156,9 @@ func TestBody(t *testing.T) {
 		t.Errorf("unexpected args: %#v", got)
 	}
 
-	for _, bad := range []string{`{"nmae": "x"}`, `{"name": 5}`, `{"quantity": "5"}`, `[1]`, `not json`} {
+	for _, bad := range []string{`{"nmae": "x"}`, `{"name": 5}`, `{"quantity": "5"}`, `[1]`, `not json`,
+		// Every field the function has no default for must be there.
+		`{"name": "Drill", "parent": null, "quantity": 2.5}`} {
 		if _, err := params(request(bad)); err == nil {
 			t.Errorf("body %s should be rejected", bad)
 		}
@@ -254,7 +264,7 @@ func TestSessionCookie(t *testing.T) {
 	rec := httptest.NewRecorder()
 	setSessionCookie(rec, httptest.NewRequest(http.MethodPost, "http://wtf.lan/api/v1/login", nil), "tok", sessionMaxAge)
 	c := rec.Header().Get("Set-Cookie")
-	for _, want := range []string{"wtf_session=tok", "Path=/api", "Max-Age=2592000", "HttpOnly", "SameSite=Strict"} {
+	for _, want := range []string{"wtf_session=tok", "Path=/api", "Max-Age=34560000", "HttpOnly", "SameSite=Strict"} {
 		if !strings.Contains(c, want) {
 			t.Errorf("cookie %q lacks %q", c, want)
 		}
@@ -348,9 +358,63 @@ func TestHostLabel(t *testing.T) {
 			t.Errorf("%s: %q, want %q", host, got, want)
 		}
 	}
-	for _, label := range []string{"192", "::1", "", "-bob", "bob-", "b_b"} {
-		if hostPattern.MatchString(label) {
-			t.Errorf("%q can be a tenant's host", label)
+}
+
+// The client's address is the connection's, unless that is a trusted
+// proxy: then the last address in X-Forwarded-For that isn't one.
+func TestClientAddress(t *testing.T) {
+	trusted, err := ParseTrustedProxies("10.0.0.0/8, 192.0.2.1 ::1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		remote, forwarded, want string
+	}{
+		{"198.51.100.7:4000", "", "198.51.100.7"},
+		{"198.51.100.7:4000", "203.0.113.9", "198.51.100.7"}, // not a proxy: its header isn't believed
+		{"192.0.2.1:4000", "203.0.113.9", "203.0.113.9"},
+		{"192.0.2.1:4000", "6.6.6.6, 203.0.113.9, 10.1.2.3", "203.0.113.9"},
+		{"192.0.2.1:4000", "", "192.0.2.1"},
+		{"[::1]:4000", "2001:db8::5", "2001:db8::5"},
+		{"192.0.2.1:4000", "not an address", ""},
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.RemoteAddr = c.remote
+		if c.forwarded != "" {
+			r.Header.Set("X-Forwarded-For", c.forwarded)
 		}
+		if got := clientAddress(r, trusted); got != c.want {
+			t.Errorf("%s with %q: %q, want %q", c.remote, c.forwarded, got, c.want)
+		}
+	}
+	if _, err := ParseTrustedProxies("10.0.0.0/33"); err == nil {
+		t.Error("a bad network was accepted")
+	}
+	if got, _ := ParseTrustedProxies(""); len(got) != 0 {
+		t.Errorf("empty: %v", got)
+	}
+}
+
+// The trees leave the database flat, each node with its parent, and are
+// nested here, children in the database's order.
+func TestNest(t *testing.T) {
+	nodes := []json.RawMessage{
+		json.RawMessage(`{"id": "a", "name": "A", "parent": null}`),
+		json.RawMessage(`{"id": "b", "name": "B", "parent": "a"}`),
+		json.RawMessage(`{"id": "c", "name": "C", "parent": null}`),
+		json.RawMessage(`{"id": "d", "name": "D", "parent": "a"}`),
+		json.RawMessage(`{"id": "e", "name": "E", "parent": "missing"}`),
+	}
+	tree, err := testServer().nest(nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _ := json.Marshal(tree)
+	want := `[{"children":[{"children":[],"id":"b","name":"B","parent":"a"},` +
+		`{"children":[],"id":"d","name":"D","parent":"a"}],"id":"a","name":"A","parent":null},` +
+		`{"children":[],"id":"c","name":"C","parent":null},` +
+		`{"children":[],"id":"e","name":"E","parent":"missing"}]`
+	if string(out) != want {
+		t.Errorf("nested:\n%s\nwant\n%s", out, want)
 	}
 }

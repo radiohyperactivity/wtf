@@ -26,7 +26,7 @@ func treeCommand(kind, path string) command {
 			}
 			return e.emit(data, func() error {
 				var t tree
-				if err := decode(data, &t); err != nil {
+				if err := e.decode(data, &t); err != nil {
 					return err
 				}
 				if len(t.Tree) == 0 {
@@ -125,16 +125,13 @@ func nodeAddCommand(kind, path string, resolve func(*env, string) (string, error
 					confirmed = true
 				}
 				for _, m := range missing {
-					body := object{"name": m}
-					if parentID != "" {
-						body["parent"] = parentID
-					}
+					body := newNode(kind, m, parentID, false)
 					data, err := e.do(http.MethodPost, path, body)
 					if err != nil {
 						return fmt.Errorf("creating %s %q: %w", kind, m, err)
 					}
 					var created node
-					if err := decode(data, &created); err != nil {
+					if err := e.decode(data, &created); err != nil {
 						return err
 					}
 					parentID = created.ID
@@ -142,13 +139,7 @@ func nodeAddCommand(kind, path string, resolve func(*env, string) (string, error
 						fmt.Fprintf(e.stdout, "Created %s %s.\n", kind, m)
 					}
 				}
-				body := object{"name": name}
-				if parentID != "" {
-					body["parent"] = parentID
-				}
-				if *container {
-					body["container"] = true
-				}
+				body := newNode(kind, name, parentID, *container)
 				if columns > 0 {
 					body["grid"] = object{"columns": columns, "rows": rows, "confirm": confirmed}
 				}
@@ -158,7 +149,7 @@ func nodeAddCommand(kind, path string, resolve func(*env, string) (string, error
 				}
 				if *editAfter {
 					var created node
-					if err := decode(data, &created); err != nil {
+					if err := e.decode(data, &created); err != nil {
 						return err
 					}
 					return e.editNode(kind, created.ID)
@@ -379,7 +370,7 @@ func locationGroup() group {
 
 func (e *env) printLocationJSON(data json.RawMessage) error {
 	var l location
-	if err := decode(data, &l); err != nil {
+	if err := e.decode(data, &l); err != nil {
 		return err
 	}
 	fields(e.stdout,
@@ -430,7 +421,7 @@ func classGroup() group {
 						if err != nil {
 							return err
 						}
-						body := object{"default": nil, "per_unit": *perUnit, "required": *required}
+						body := object{"default": nil, "scope": scopeOf(*perUnit), "required": *required}
 						if def.set && !isNone(def.value) {
 							if body["default"], err = e.parseValue(a, def.value); err != nil {
 								return err
@@ -474,7 +465,7 @@ func classGroup() group {
 
 func (e *env) printClassJSON(data json.RawMessage) error {
 	var c class
-	if err := decode(data, &c); err != nil {
+	if err := e.decode(data, &c); err != nil {
 		return err
 	}
 	w := e.stdout
@@ -496,10 +487,10 @@ func (e *env) printClassJSON(data json.RawMessage) error {
 			if a.Inherited {
 				from = "inherited"
 				if classes, err := e.classTree(); err == nil {
-					from = "from " + classes.pathString(a.DefinedOnClass)
+					from = "from " + classes.pathString(a.AssignedTo)
 				}
 			}
-			t.row("  "+a.Attribute.Name, datatypeName(a.Attribute), def, yesNo(a.PerUnit), yesNo(a.Required), from)
+			t.row("  "+a.Attribute.Name, datatypeName(a.Attribute), def, yesNo(a.Scope == "stock"), yesNo(a.Required), from)
 		}
 		t.flush()
 	}
@@ -534,7 +525,7 @@ func attributeGroup() group {
 					}
 					return e.emit(data, func() error {
 						var list []attribute
-						if err := decode(data, &list); err != nil {
+						if err := e.decode(data, &list); err != nil {
 							return err
 						}
 						t := newTable(e.stdout, "NAME", "TYPE", "UNIT")
@@ -550,7 +541,7 @@ func attributeGroup() group {
 			{
 				name:    "add",
 				args:    "<name> --type T [--unit U [--unit-lock]] [--edit]",
-				summary: "Create an attribute. Types: text, integer, float, date, boolean, url, choice; with a unit, the type follows from it.",
+				summary: "Create an attribute. Types: text, integer, decimal, date, boolean, url, choice; with a unit, the type follows from it.",
 				params:  []param{arg("Name", nil)},
 				flags: map[string]param{
 					"type": arg("Type", datatypes),
@@ -558,7 +549,7 @@ func attributeGroup() group {
 				},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
 					datatype := fs.String("type", "", "datatype (required without --unit)")
-					unitRef := fs.String("unit", "", "unit of integer and float values, e.g. mm; any unit of its family is accepted")
+					unitRef := fs.String("unit", "", "unit of integer and decimal values, e.g. mm; any unit of its family is accepted")
 					unitLock := fs.Bool("unit-lock", false, "always show values in that unit, instead of scaling within the unit's family")
 					editAfter := fs.Bool("edit", false, "open the new attribute in the edit form")
 					return func(e *env, args []string) error {
@@ -577,12 +568,12 @@ func attributeGroup() group {
 							}
 							*datatype = u.Quantity.Datatype
 						}
-						if err := e.need(datatype, "type", arg("Type (text, integer, float, date, boolean, url, choice)", datatypes), args); err != nil {
+						if err := e.need(datatype, "type", arg("Type (text, integer, decimal, date, boolean, url, choice)", datatypes), args); err != nil {
 							return err
 						}
 						body := object{"name": args[0], "datatype": *datatype}
 						var err error
-						if *unitRef == "" && (*datatype == "integer" || *datatype == "float") {
+						if *unitRef == "" && (*datatype == "integer" || *datatype == "decimal") {
 							if *unitRef, err = e.offer("Unit (Enter: none)", arg("", completeUnits), args); err != nil {
 								return err
 							}
@@ -656,7 +647,7 @@ func attributeGroup() group {
 
 func (e *env) printAttributeJSON(data json.RawMessage) error {
 	var a attribute
-	if err := decode(data, &a); err != nil {
+	if err := e.decode(data, &a); err != nil {
 		return err
 	}
 	units := ""
@@ -709,7 +700,7 @@ func optionGroup() group {
 	}
 	printOption := func(e *env, data json.RawMessage) error {
 		var o option
-		if err := decode(data, &o); err != nil {
+		if err := e.decode(data, &o); err != nil {
 			return err
 		}
 		fields(e.stdout, "Name", o.Name, "Attribute", o.Attribute, "Id", o.ID)
@@ -738,7 +729,7 @@ func optionGroup() group {
 					}
 					return e.emit(data, func() error {
 						var list []option
-						if err := decode(data, &list); err != nil {
+						if err := e.decode(data, &list); err != nil {
 							return err
 						}
 						t := newTable(e.stdout, "NAME", "ID")
@@ -865,4 +856,17 @@ func columnLabel(n int) string {
 		n /= 26
 	}
 	return label
+}
+
+// newNode is the body that creates a class or location: every field, as
+// creating requires, with a location's grid null (none).
+func newNode(kind, name, parentID string, container bool) object {
+	body := object{"name": name, "parent": nil, "container": container}
+	if parentID != "" {
+		body["parent"] = parentID
+	}
+	if kind == "location" {
+		body["grid"] = nil
+	}
+	return body
 }

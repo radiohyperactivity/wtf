@@ -25,5 +25,6 @@ var groups = []group{
 	unitsGroup(),
 	unitFamilyGroup(),
 	accountGroup(),
+	sessionsGroup(),
 	profileGroup(),
 }

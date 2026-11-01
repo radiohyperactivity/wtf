@@ -1,63 +1,28 @@
 package serve
 
 import (
-	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"strings"
-
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Routes that work without logging in.
 var anonymousRoutes = map[string]bool{
-	"GET /health":       true,
-	"GET /openapi.yaml": true,
-	"POST /login":       true,
-}
-
-// session is the login of a request: its session token.
-type session struct {
-	token string
-}
-
-type sessionKey struct{}
-
-// querier is satisfied by both the pool and a transaction.
-type querier interface {
-	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-}
-
-// inSession runs fn in a transaction that first starts the request's session
-// (session_use), so the database knows the account and its tenant, which
-// must be the tenant of the request's hostname. Anonymous requests run fn
-// directly.
-func (s *server) inSession(ctx context.Context, fn func(q querier) error) error {
-	sess, ok := ctx.Value(sessionKey{}).(session)
-	if !ok {
-		return fn(s.pool)
-	}
-	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := useSession(ctx, tx, sess, tenantOf(ctx)); err != nil {
-			return err
-		}
-		return fn(tx)
-	})
-}
-
-func useSession(ctx context.Context, tx pgx.Tx, sess session, host string) error {
-	_, err := tx.Exec(ctx, "SELECT session_use($1, $2)", sess.token, host)
-	return err
+	"GET /health":  true,
+	"GET /openapi": true,
+	"POST /login":  true,
 }
 
 // The session travels in a cookie, for every client: browsers keep it
-// themselves, other clients (the CLI, the apps) store it and send it back
-// in a Cookie header. See WTFD.md, "Logins".
+// themselves, other clients (the CLI, the apps) store it and send it back in
+// a Cookie header. The database decides how long a session lasts (as the
+// user chose when logging in); the cookie is kept for as long as browsers
+// keep one. See WTFD.md, "Logins".
 const (
 	sessionCookie = "wtf_session"
-	sessionMaxAge = 30 * 24 * 60 * 60 // seconds; the session expires after 30 days without use
+	sessionMaxAge = 400 * 24 * 60 * 60 // seconds: 400 days, the longest browsers keep a cookie
 )
 
 // sessionToken returns the token of the session cookie.
@@ -67,6 +32,13 @@ func sessionToken(r *http.Request) (string, bool) {
 		return "", false
 	}
 	return c.Value, true
+}
+
+// sessionID is a session's id as the database gives it: the SHA-256 of its
+// token, in hex.
+func sessionID(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }
 
 // setSessionCookie sends the session cookie. It is HttpOnly (scripts on a page
@@ -93,7 +65,28 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, token string, maxA
 // first: once the 204 is written, headers can't change any more.
 func (s *server) logout(w http.ResponseWriter, r *http.Request) error {
 	setSessionCookie(w, r, "", 0)
-	return s.remove("logout")(w, r)
+	return s.remove("account.logout")(w, r)
+}
+
+// sessionLogout ends one of the caller's sessions, DELETE
+// /me/sessions/{id}; the current one's id logs out as POST /logout does,
+// and deletes the cookie.
+func (s *server) sessionLogout(w http.ResponseWriter, r *http.Request) error {
+	if sessionID(callerOf(r.Context()).token) == strings.ToLower(r.PathValue("id")) {
+		setSessionCookie(w, r, "", 0)
+	}
+	return s.remove("account.session_logout", pathText("p_session", "id"))(w, r)
+}
+
+// logoutOthers ends the caller's other sessions, POST
+// /me/sessions/logout-others, and says how many: {"ended": n}.
+func (s *server) logoutOthers(w http.ResponseWriter, r *http.Request) error {
+	result, err := s.callJSON(r.Context(), "account.session_logout_others", nil)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, []byte(`{"ended":`+string(result)+`}`))
+	return nil
 }
 
 var unauthenticated = &problem{
@@ -103,19 +96,22 @@ var unauthenticated = &problem{
 	Detail: "Log in with POST " + apiPrefix + "/login, which sets the session cookie \"" + sessionCookie + "\", and send it with every request.",
 }
 
-// login: POST /login {email, password}, to the tenant of the request's
-// hostname.
+// login: POST /login {email, password, client, max_idle}, to the tenant of
+// the request's hostname. client is what the client calls itself ("WtF on
+// Pixel 9"), and may be null; max_idle is how long, in seconds, the session
+// may sit unused before it expires, or null for never. Both are required.
 func (s *server) login(w http.ResponseWriter, r *http.Request) error {
 	args, err := collect(r, []param{body(
 		field{key: "email", name: "p_email", typ: "text"},
 		field{key: "password", name: "p_password", typ: "text"},
+		field{key: "client", name: "p_client", typ: "text"},
+		field{key: "max_idle", name: "p_max_idle", typ: "seconds"},
 	)})
 	if err != nil {
 		return err
 	}
-	email := args[0].value
-	args = append(args, arg{name: "p_host", typ: "text", value: tenantOf(r.Context())})
-	result, err := s.callJSON(r.Context(), "login", args)
+	email, client := args[0].value, args[2].value
+	result, err := s.callJSON(r.Context(), "account.login", args)
 	if err != nil {
 		return err
 	}
@@ -124,9 +120,10 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) error {
 	if err := json.Unmarshal(result, &outcome); err != nil {
 		return err
 	}
-	// Every login attempt is logged: who and from where. Passwords never
-	// are.
-	attrs := []any{"host", tenantOf(r.Context()), "email", email, "remote", r.RemoteAddr}
+	// Every login attempt is logged: who, with what and from where.
+	// Passwords never are.
+	who := callerOf(r.Context())
+	attrs := []any{"host", who.host, "email", email, "client", client, "address", who.address}
 	if string(outcome["ok"]) != "true" {
 		var reason string
 		_ = json.Unmarshal(outcome["reason"], &reason)

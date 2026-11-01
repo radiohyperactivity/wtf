@@ -138,7 +138,7 @@ func (e *env) askRestorePlace(rk restoreKind, p *client.Problem, body object, pl
 // in something deleted, or nil.
 func intoDeleted(err error) *client.Problem {
 	var p *client.Problem
-	if errors.As(err, &p) && p.Type == "/problems/deleted" && strings.Contains(p.Hint, "with_parents") {
+	if errors.As(err, &p) && p.Type == client.RestoreIntoDeleted {
 		return p
 	}
 	return nil
@@ -160,7 +160,7 @@ func (e *env) resolveDeleted(rk restoreKind, ref string) (string, error) {
 			var o struct {
 				ID string `json:"id"`
 			}
-			return o.ID, decode(r.Object, &o)
+			return o.ID, e.decode(r.Object, &o)
 		}
 		if ok {
 			return "", fmt.Errorf("%s is the code of %s, not of %s", normalizeCode(ref), article(r.Type), article(rk.kind))
@@ -184,7 +184,7 @@ func (e *env) resolvePlace(rk restoreKind, ref string) (any, error) {
 
 func (e *env) printOptionJSON(data json.RawMessage) error {
 	var o option
-	if err := decode(data, &o); err != nil {
+	if err := e.decode(data, &o); err != nil {
 		return err
 	}
 	fields(e.stdout, "Name", o.Name, "Attribute", o.Attribute, "Deleted", deletedNote(o.Deleted, "option", o.ID), "Id", o.ID)
@@ -193,9 +193,13 @@ func (e *env) printOptionJSON(data json.RawMessage) error {
 
 // deletedNote is the "Deleted" field of a deleted object: how to restore it.
 // It is empty for a live one, so fields leaves the line out.
-func deletedNote(deleted bool, kind, ref string) string {
-	if !deleted {
+func deletedNote(d *deleted, kind, ref string) string {
+	if d == nil {
 		return ""
 	}
-	return "yes; restore it with 'wtf " + kind + " restore " + ref + "'"
+	by := "by wtfd"
+	if d.Account != nil {
+		by = "by " + d.Account.Email
+	}
+	return fmt.Sprintf("yes, %s %s; restore it with 'wtf %s restore %s'", localTime(d.At), by, kind, ref)
 }

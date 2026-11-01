@@ -116,3 +116,13 @@ Part 3 is written on the same branch as parts 1 and 2, after them, and the three
 - **2026-11-01:** decision 17, `/api/v1/openapi` in YAML or JSON.
 - **2026-11-01:** decision 17 revised: JSON as the master, served as YAML too.
 - **2026-11-01:** the routes reviewed and accepted; the plan written. All three parts are planned.
+- **2026-11-01 (overnight):** steps 1 to 3 done (`wtfd serve`, `wtfd`'s own work, the CLI); the API's integration tests are skipped until step 4 rewrites them. Decided on my own along the way, by what the plan implies:
+  - An upload checks the session (`account.me`) before the file is staged, so that a request without a valid session stores nothing.
+  - Query flags (`force`, `dry_run`) that are absent mean false; `parent` in a query that is absent means none (top level).
+  - `GET /unit-families` answers `{version, families}`, as the other versioned answers do; nested tree nodes keep their `parent`.
+  - The CLI fills in the units of an answer from the families it keeps (one walk over the decoded value, by field type), in place of a lookup at each place a unit is shown.
+  - The CLI's sessions are `wtf sessions list` and `wtf sessions logout <id>` / `--others`: the CLI's groups have no default command, so the plan's bare `wtf sessions` is `wtf sessions list`.
+  - `wtf login --stay` takes `forever`, a Go duration (`12h`) or days (`30d`); the configuration keeps the last one given, the default for the next login; without one it is `forever`. The client name is `wtf on <host name>`.
+  - The CLI's `wtf class assign` keeps its `--per-unit` flag, sent as `scope: "stock"`; the stock commands' `--quantity` and their prompts and headings say "amount", by principle 2.
+  - The CLI always sends every field creating requires (`unit` and `unit_lock`, `values`, `amount`, `parent`, `container`, `grid`, `password`, `role`, with null or the old default where none is given); `wtf account add` without `--role` is still a viewer.
+  - An admin's `wtf account edit --password` or `--no-password` takes `--log-out` / `--keep-sessions`, or asks; the edit form asks too. Removing a password also says whether the sessions end, as `account.patch` wants `end_sessions` with any change of password.

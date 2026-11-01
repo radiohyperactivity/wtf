@@ -13,18 +13,44 @@ import (
 )
 
 // arg is one argument of a database function call. Arguments are passed in
-// named notation (p_id => $1::uuid), so their order doesn't matter.
+// named notation (p_item => $4::uuid), so their order doesn't matter.
 type arg struct {
-	name     string // parameter name, e.g. "p_id"
+	name     string // parameter name, e.g. "p_item"
 	typ      string // SQL type the value is cast to, e.g. "uuid"
 	value    any    // nil means SQL NULL
 	optional bool   // when value is nil, leave the argument out so the function's default applies
 }
 
-// callSQL builds "SELECT fn(p_a => $1::type, …)" and its argument values.
-func callSQL(fn string, args []arg) (string, []any) {
-	var parts []string
-	var values []any
+// caller is who a request comes from, as every function the API calls is
+// told in its first argument, p_request: the session cookie's token ("" for
+// none), the first label of the request's hostname, and the client's
+// address ("" when it can't be told).
+type caller struct {
+	token, host, address string
+}
+
+type callerKey struct{}
+
+// callerOf returns the caller of a request, which wrap puts in its context.
+func callerOf(ctx context.Context) caller {
+	c, _ := ctx.Value(callerKey{}).(caller)
+	return c
+}
+
+// nullable turns "" into SQL NULL.
+func nullable(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// callSQL builds "SELECT fn(p_request => ROW($1, $2, $3)::public.request,
+// p_a => $4::type, …)" and its argument values: the caller first, then the
+// arguments.
+func callSQL(fn string, who caller, args []arg) (string, []any) {
+	parts := []string{"p_request => ROW($1::text, $2::text, $3::inet)::public.request"}
+	values := []any{nullable(who.token), who.host, nullable(who.address)}
 	for _, a := range args {
 		if a.optional && a.value == nil {
 			continue
@@ -35,13 +61,13 @@ func callSQL(fn string, args []arg) (string, []any) {
 	return fmt.Sprintf("SELECT %s(%s)", fn, strings.Join(parts, ", ")), values
 }
 
-// callJSON calls a function that returns jsonb and returns the JSON text.
+// callJSON calls a function that returns jsonb, as the request's caller, and
+// returns the JSON text. One statement, so one round trip, in a transaction
+// of its own.
 func (s *server) callJSON(ctx context.Context, fn string, args []arg) ([]byte, error) {
-	sql, values := callSQL(fn, args)
+	sql, values := callSQL(fn, callerOf(ctx), args)
 	var out *string
-	if err := s.inSession(ctx, func(q querier) error {
-		return q.QueryRow(ctx, sql+"::text", values...).Scan(&out)
-	}); err != nil {
+	if err := s.pool.QueryRow(ctx, sql+"::text", values...).Scan(&out); err != nil {
 		return nil, err
 	}
 	if out == nil {
@@ -52,11 +78,9 @@ func (s *server) callJSON(ctx context.Context, fn string, args []arg) ([]byte, e
 
 // callVoid calls a function that returns void.
 func (s *server) callVoid(ctx context.Context, fn string, args []arg) error {
-	sql, values := callSQL(fn, args)
-	return s.inSession(ctx, func(q querier) error {
-		_, err := q.Exec(ctx, sql, values...)
-		return err
-	})
+	sql, values := callSQL(fn, callerOf(ctx), args)
+	_, err := s.pool.Exec(ctx, sql, values...)
+	return err
 }
 
 // param extracts function arguments from a request.
@@ -83,8 +107,8 @@ func pathText(name, key string) param {
 }
 
 // query passes the optional query parameter key. typ is "uuid", "text",
-// "integer", "boolean" or "jsonb"; all but text are validated here for
-// clearer errors.
+// "integer", "bigint", "boolean" or "jsonb"; all but text are validated
+// here for clearer errors.
 func query(name, key, typ string) param {
 	return func(r *http.Request) ([]arg, error) {
 		if !r.URL.Query().Has(key) {
@@ -96,8 +120,8 @@ func query(name, key, typ string) param {
 			if !uuidPattern.MatchString(v) {
 				return nil, invalidInput("query parameter %s=%q is not a UUID", key, v)
 			}
-		case "integer":
-			if _, err := strconv.Atoi(v); err != nil {
+		case "integer", "bigint":
+			if _, err := strconv.ParseInt(v, 10, 64); err != nil {
 				return nil, invalidInput("query parameter %s=%q is not a whole number", key, v)
 			}
 		case "boolean":
@@ -113,6 +137,16 @@ func query(name, key, typ string) param {
 	}
 }
 
+// refused refuses a request that has query parameter key, with message.
+func refused(key, message string) param {
+	return func(r *http.Request) ([]arg, error) {
+		if r.URL.Query().Has(key) {
+			return nil, invalidInput("%s", message)
+		}
+		return nil, nil
+	}
+}
+
 // constant passes a fixed argument.
 func constant(name, typ string, value any) param {
 	return func(*http.Request) ([]arg, error) {
@@ -121,45 +155,65 @@ func constant(name, typ string, value any) param {
 }
 
 // field maps a key of the JSON request body to a function argument.
-// typ is the SQL type: "uuid", "text" and "datatype" take a JSON string,
-// "numeric" a JSON number, "integer" a whole one, "boolean" true or false, and "jsonb" any JSON
-// value. A missing key or JSON null is passed as SQL NULL, or, for an
-// optional field, left out so the function's default applies.
+// typ is the SQL type: "uuid", "text", "datatype", "role" and "scope" take
+// a JSON string, "numeric" a JSON number, "integer" a whole one, "boolean"
+// true or false, "seconds" a whole number of seconds (as an interval), and
+// "jsonb" any JSON value. JSON null is passed as SQL NULL. A key the
+// accessor has no default for must be given, even if as null; an optional
+// one may be left out, so that the function's default applies.
 type field struct {
 	key, name, typ string
 	optional       bool
 }
 
-// body passes fields of the JSON request body. Unknown keys are rejected.
+// body passes fields of the JSON request body. Unknown keys are refused.
 func body(fields ...field) param {
 	return func(r *http.Request) ([]arg, error) {
 		object, err := readObject(r)
 		if err != nil {
 			return nil, err
 		}
-
-		known := map[string]bool{}
-		var args []arg
-		for _, f := range fields {
-			known[f.key] = true
-			raw, ok := object[f.key]
-			if !ok || string(raw) == "null" {
-				args = append(args, arg{name: f.name, typ: f.typ, optional: f.optional})
-				continue
-			}
-			value, err := fieldValue(f, raw)
-			if err != nil {
-				return nil, err
-			}
-			args = append(args, arg{name: f.name, typ: f.typ, value: value})
-		}
-		for key := range object {
-			if !known[key] {
-				return nil, invalidInput("unknown field %q", key)
-			}
-		}
-		return args, nil
+		return fieldArgs(object, fields)
 	}
+}
+
+// fieldArgs takes the fields of a JSON object apart into arguments.
+func fieldArgs(object map[string]json.RawMessage, fields []field) ([]arg, error) {
+	known := map[string]bool{}
+	var args []arg
+	for _, f := range fields {
+		known[f.key] = true
+		raw, ok := object[f.key]
+		if !ok && !f.optional {
+			return nil, invalidInput("field %q is required (it may be null)", f.key)
+		}
+		if !ok || string(raw) == "null" {
+			args = append(args, arg{name: f.name, typ: f.sqlType(), optional: f.optional})
+			continue
+		}
+		value, err := fieldValue(f, raw)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, arg{name: f.name, typ: f.sqlType(), value: value})
+	}
+	for key := range object {
+		if !known[key] {
+			return nil, invalidInput("unknown field %q", key)
+		}
+	}
+	return args, nil
+}
+
+// sqlType is the type the field's argument is cast to.
+func (f field) sqlType() string {
+	switch f.typ {
+	case "datatype", "role", "scope":
+		return "public." + f.typ
+	case "seconds":
+		return "interval"
+	}
+	return f.typ
 }
 
 func fieldValue(f field, raw json.RawMessage) (any, error) {
@@ -177,6 +231,12 @@ func fieldValue(f field, raw json.RawMessage) (any, error) {
 			return nil, invalidInput("field %q must be a whole number", f.key)
 		}
 		return n, nil
+	case "seconds":
+		var n int64
+		if err := json.Unmarshal(raw, &n); err != nil || n <= 0 {
+			return nil, invalidInput("field %q must be a whole number of seconds, more than 0, or null", f.key)
+		}
+		return fmt.Sprintf("%d seconds", n), nil
 	case "boolean":
 		var b bool
 		if err := json.Unmarshal(raw, &b); err != nil {
@@ -204,8 +264,8 @@ func patch(name string) param {
 	}
 }
 
-// readObject reads the request body as a JSON object. An empty body counts as
-// an empty object.
+// readObject reads the request body as a JSON object. An empty body counts
+// as an empty object.
 func readObject(r *http.Request) (map[string]json.RawMessage, error) {
 	data, err := io.ReadAll(r.Body)
 	if err != nil {

@@ -176,6 +176,12 @@ func runServe(args []string, stderr io.Writer) int {
 		return exitFailure
 	}
 
+	trusted, err := serve.ParseTrustedProxies(settings.TrustedProxies)
+	if err != nil {
+		log.Error("failed", "error", fmt.Errorf("--trusted-proxies: %w", err))
+		return exitFailure
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -188,6 +194,7 @@ func runServe(args []string, stderr io.Writer) int {
 		MaxAttachmentSize:  settings.MaxAttachmentSize,
 		Scripts:            db.Scripts,
 		WebRoot:            settings.WebRoot,
+		TrustedProxies:     trusted,
 		Logger:             log,
 	})
 	if err != nil {
@@ -255,7 +262,7 @@ func runGC(args []string, stderr io.Writer) int {
 	if *dryRun {
 		verb = "would remove"
 	}
-	log.Info(verb, "files", result.Files, "bytes", result.Bytes)
+	log.Info(verb, "files", result.Files, "bytes", result.Bytes, "expired_sessions", result.Sessions)
 	return exitOK
 }
 

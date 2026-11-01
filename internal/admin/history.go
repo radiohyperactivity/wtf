@@ -18,14 +18,16 @@ func PurgeHistory(ctx context.Context, conn *pgx.Conn, host string, olderThan ti
 	if err != nil {
 		return 0, err
 	}
-	const where = ` WHERE happened_at < now() - $1::interval AND ($2::uuid IS NULL OR tenant = $2)`
+	// An entry is as old as the action it was part of.
+	const old = `a.id = h.action AND a.at < now() - $1::interval AND ($2::uuid IS NULL OR h.tenant = $2)`
 	age := fmt.Sprintf("%d seconds", int64(olderThan.Seconds()))
 	if dryRun {
 		var n int64
-		err := conn.QueryRow(ctx, "SELECT count(*) FROM history"+where, age, tenant).Scan(&n)
+		err := conn.QueryRow(ctx, "SELECT count(*) FROM public.history h, public.action a WHERE "+old,
+			age, tenant).Scan(&n)
 		return n, err
 	}
-	tag, err := conn.Exec(ctx, "DELETE FROM history"+where, age, tenant)
+	tag, err := conn.Exec(ctx, "DELETE FROM public.history h USING public.action a WHERE "+old, age, tenant)
 	return tag.RowsAffected(), err
 }
 

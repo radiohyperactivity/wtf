@@ -203,6 +203,10 @@ type Serve struct {
 	MaxRequestBodySize int
 	MaxAttachmentSize  int
 	WebRoot            string
+	// TrustedProxies are the reverse proxies (addresses and networks)
+	// whose X-Forwarded-For header is believed for the client's address;
+	// parsed by serve.ParseTrustedProxies.
+	TrustedProxies string
 
 	env env
 }
@@ -220,6 +224,8 @@ func RegisterServe(fs *flag.FlagSet) *Serve {
 		"largest accepted request body in bytes (env WTFD_MAX_REQUEST_BODY_SIZE)")
 	fs.IntVar(&s.MaxAttachmentSize, "max-attachment-size", s.env.int("WTFD_MAX_ATTACHMENT_SIZE", 100<<20),
 		"largest accepted attachment in bytes (env WTFD_MAX_ATTACHMENT_SIZE)")
+	fs.StringVar(&s.TrustedProxies, "trusted-proxies", s.env.string("WTFD_TRUSTED_PROXIES", ""),
+		"reverse proxies whose X-Forwarded-For is believed, as addresses or networks separated by commas; none if empty (env WTFD_TRUSTED_PROXIES)")
 	return s
 }
 

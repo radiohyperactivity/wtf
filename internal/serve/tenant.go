@@ -1,22 +1,16 @@
 package serve
 
 import (
-	"context"
 	"net"
 	"net/http"
-	"regexp"
+	"net/netip"
 	"strings"
 )
 
 // A request's tenant is picked by the first label of its hostname: "bob" for
-// bob.wtf.example (TENANTS.md). A hostname that picks no tenant gets 404,
-// except for /api/health.
-
-// hostPattern is what a tenant's host can be: a DNS label that starts with
-// a letter. An IP address never matches.
-var hostPattern = regexp.MustCompile(`^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`)
-
-type tenantKey struct{}
+// bob.wtf.example (TENANTS.md). wtfd passes the label to the database with
+// every call, and the database answers 404 when it picks no tenant; wtfd
+// doesn't look the tenant up itself.
 
 // hostLabel returns the first label of the request's hostname, lower-cased
 // and without the port: "bob" for "Bob.wtf.example:8080".
@@ -29,45 +23,76 @@ func hostLabel(r *http.Request) string {
 	return label
 }
 
-// tenantOf returns the host of the tenant a request was let in for.
-func tenantOf(ctx context.Context) string {
-	host, _ := ctx.Value(tenantKey{}).(string)
-	return host
-}
-
-// knownTenant tells whether a tenant has host label host.
-func (s *server) knownTenant(ctx context.Context, host string) (bool, error) {
-	if !hostPattern.MatchString(host) {
-		return false, nil
+// clientAddress returns the address a request came from, for the session's
+// trail and the logs: the connection's own address, or, when the connection
+// comes from one of the trusted proxies, the last address in
+// X-Forwarded-For that isn't a trusted proxy itself (each proxy appends the
+// address it got the request from, so the entries before the last untrusted
+// one may have been made up by the client). "" when it can't be told.
+func clientAddress(r *http.Request, trusted []netip.Prefix) string {
+	remote := remoteAddr(r.RemoteAddr)
+	if !remote.IsValid() {
+		return ""
 	}
-	if s.tenantKnown != nil {
-		return s.tenantKnown(ctx, host)
+	if !isTrusted(remote, trusted) {
+		return remote.String()
 	}
-	var known bool
-	err := s.pool.QueryRow(ctx, "SELECT tenant_known($1)", host).Scan(&known)
-	return known, err
-}
-
-// withTenant lets a request through to next with its tenant in the
-// context, or answers 404 when its hostname picks none.
-func (s *server) withTenant(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == healthPath {
-			next.ServeHTTP(w, r)
-			return
-		}
-		host := hostLabel(r)
-		known, err := s.knownTenant(r.Context(), host)
+	var hops []string
+	for _, header := range r.Header.Values("X-Forwarded-For") {
+		hops = append(hops, strings.Split(header, ",")...)
+	}
+	for i := len(hops) - 1; i >= 0; i-- {
+		addr, err := netip.ParseAddr(strings.TrimSpace(hops[i]))
 		if err != nil {
-			s.log.Error("request failed", "method", r.Method, "path", r.URL.Path, "error", err)
-			writeProblem(w, internalError)
-			return
+			return ""
 		}
-		if !known {
-			s.log.Debug("no tenant for this hostname", "host", r.Host)
-			writeProblem(w, notFound)
-			return
+		addr = addr.Unmap()
+		if !isTrusted(addr, trusted) {
+			return addr.String()
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), tenantKey{}, host)))
-	})
+	}
+	return remote.String()
+}
+
+// remoteAddr parses http.Request.RemoteAddr ("192.0.2.1:5000").
+func remoteAddr(s string) netip.Addr {
+	if ap, err := netip.ParseAddrPort(s); err == nil {
+		return ap.Addr().Unmap()
+	}
+	if a, err := netip.ParseAddr(s); err == nil {
+		return a.Unmap()
+	}
+	return netip.Addr{}
+}
+
+func isTrusted(addr netip.Addr, trusted []netip.Prefix) bool {
+	for _, p := range trusted {
+		if p.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// ParseTrustedProxies reads WTFD_TRUSTED_PROXIES: addresses and networks
+// (192.0.2.1, 10.0.0.0/8, ::1), separated by commas or spaces.
+func ParseTrustedProxies(s string) ([]netip.Prefix, error) {
+	var list []netip.Prefix
+	for _, item := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' }) {
+		if strings.Contains(item, "/") {
+			p, err := netip.ParsePrefix(item)
+			if err != nil {
+				return nil, err
+			}
+			list = append(list, p.Masked())
+			continue
+		}
+		a, err := netip.ParseAddr(item)
+		if err != nil {
+			return nil, err
+		}
+		a = a.Unmap()
+		list = append(list, netip.PrefixFrom(a, a.BitLen()))
+	}
+	return list, nil
 }

@@ -38,7 +38,8 @@ func CreateAccount(ctx context.Context, conn *pgx.Conn, host, email, role string
 	return password, err
 }
 
-// createAccount is CreateAccount in a transaction of the caller's.
+// createAccount is CreateAccount in a transaction of the caller's. The
+// change is an action of wtfd's own (no account), as history needs one.
 func createAccount(ctx context.Context, tx pgx.Tx, host, email, role string) (string, error) {
 	tenant, err := tenantID(ctx, tx, host)
 	if err != nil {
@@ -48,12 +49,12 @@ func createAccount(ctx context.Context, tx pgx.Tx, host, email, role string) (st
 	if err != nil {
 		return "", err
 	}
-	if _, err := tx.Exec(ctx, "SELECT util.check_email($1)", email); err != nil {
+	if _, err := tx.Exec(ctx, "SELECT util.begin_action($1::uuid)", tenant); err != nil {
 		return "", err
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO account (tenant, email, password_hash, role)
-		VALUES ($1, btrim($2), extensions.crypt($3, extensions.gen_salt('bf')), $4::role)`,
+		INSERT INTO public.account (tenant, email, password_hash, role)
+		VALUES ($1, account.clean_email($2), account.password_hash($3), $4::public.role)`,
 		tenant, email, password, role)
 	if err != nil {
 		return "", err
@@ -74,12 +75,15 @@ func SetPassword(ctx context.Context, conn *pgx.Conn, host, email string) (strin
 		if err != nil {
 			return err
 		}
+		if _, err := tx.Exec(ctx, "SELECT util.begin_action($1::uuid)", tenant); err != nil {
+			return err
+		}
 		var id string
 		err = tx.QueryRow(ctx, `
-			UPDATE account
-			SET password_hash = extensions.crypt($3, extensions.gen_salt('bf')),
+			UPDATE public.account
+			SET password_hash = account.password_hash($3),
 			    failed_logins = 0, last_failed_login = NULL
-			WHERE tenant = $1 AND lower(email) = lower(btrim($2)) AND NOT deleted
+			WHERE tenant = $1 AND lower(email) = lower(btrim($2)) AND deleted IS NULL
 			RETURNING id`,
 			tenant, email, password).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -88,7 +92,7 @@ func SetPassword(ctx context.Context, conn *pgx.Conn, host, email string) (strin
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, "DELETE FROM session WHERE account = $1", id)
+		_, err = tx.Exec(ctx, "DELETE FROM public.session WHERE account = $1", id)
 		return err
 	})
 	if err != nil {

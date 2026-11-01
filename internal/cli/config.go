@@ -17,10 +17,13 @@ type Profile struct {
 	Token  string `json:"token,omitempty"`
 }
 
-// Config is the client configuration file: named profiles and the current one.
+// Config is the client configuration file: named profiles and the current
+// one, and how long a login lasts unless "wtf login --stay" says otherwise
+// (the last --stay given; "forever" when none was).
 type Config struct {
 	Current  string              `json:"current"`
 	Profiles map[string]*Profile `json:"profiles"`
+	Stay     string              `json:"stay,omitempty"`
 
 	path string
 }

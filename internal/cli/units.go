@@ -182,7 +182,7 @@ func ratNumber(r *big.Rat) json.Number {
 func (e *env) parseValue(a *attribute, input string) (any, error) {
 	input = strings.TrimSpace(input)
 	switch a.Datatype {
-	case "integer", "float":
+	case "integer", "decimal":
 		n, err := e.parseMeasure(input, a.Unit)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", a.Name, err)

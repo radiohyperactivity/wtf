@@ -345,7 +345,7 @@ func TestCandidates(t *testing.T) {
 		{[]string{"item", "add", "X", "--"}, "--class", false},
 		{[]string{"--json", "stock", "m"}, "move", false},
 		{[]string{"attribute", "add", "Size", "--type", ""}, "choice", false},
-		{[]string{"attribute", "add", "Size", "--type=f"}, "--type=float", false},
+		{[]string{"attribute", "add", "Size", "--type=d"}, "--type=decimal", false},
 		{[]string{"account", "add", "a@b", "--role", ""}, "admin", false},
 		{[]string{"completion", ""}, "powershell", false},
 		{[]string{"attachment", "add", "item", "Drill", ""}, "", true},
