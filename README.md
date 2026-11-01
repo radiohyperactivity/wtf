@@ -344,6 +344,7 @@ The performance test (`TestPerformance`, in `performance_test.go`) runs only whe
 ```sh
 export WTFD_TEST_PERF=1000,10000,50000          # the item counts, smallest first
 export WTFD_TEST_PERF_REPORT=perf.md            # optional
+export WTFD_TEST_PERF_NEIGHBOUR=200000          # optional: another tenant of that size, kept for the run
 go test ./internal/integration/ -run TestPerformance -v -timeout 120m
 ```
 

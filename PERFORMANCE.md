@@ -50,6 +50,33 @@ The classes and locations stop growing at 50,000 items (500 and 510), so the tre
 
 **Loading goes through the rules,** one statement per kind of row: about 0.6 ms per item or stock row, and 0.35 ms per value. 200,000 items took 11 minutes to load.
 
+## With another large tenant
+
+The same sizes again, the second time alongside another tenant of 200,000 items (with its 400,000 stock rows and 800,000 values), loaded first and kept for the whole run. Each size's tenant is deleted after it is timed, so the first series had the database to itself. Median times in milliseconds, measured the same evening:
+
+| Operation | 1k alone | 1k with | 10k alone | 10k with | 50k alone | 50k with | 200k alone | 200k with |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `item.list`, first page | 20 | 34 | 34 | 46 | 83 | 104 | 291 | 327 |
+| `item.list`, a class group | 14 | 42 | 23 | 45 | 28 | 59 | 70 | 107 |
+| `item.list`, a number filter | 19 | 37 | 72 | 85 | 266 | 289 | 984 | 1028 |
+| `item.list`, two filters | 18 | 36 | 104 | 128 | 422 | 516 | 1702 | 1727 |
+| `item.list`, search of one word | 21 | 39 | 137 | 154 | 578 | 681 | 2585 | 2582 |
+| `stock.list`, a room (a tenth) | 11 | 29 | 25 | 95 | 48 | 184 | 181 | 323 |
+| `stock.list`, all, first page | 12 | 31 | 33 | 56 | 138 | 272 | 614 | 744 |
+| `class.delete_tree`, dry run of a group | 8 | 24 | 31 | 44 | 119 | 139 | 508 | 541 |
+| `item.get`, `code.resolve` | 3–7 | 3–6 | 3 | 3 | 3 | 4 | 3 | 4 |
+| the trees, `class.get`, `attribute.list` | 1–3 | 1–4 | 1–5 | 1–5 | 1–21 | 1–21 | 1–21 | 1–21 |
+| writes | 2–9 | 2–10 | 2–10 | 2–10 | 2–13 | 2–16 | 2–14 | 2–16 |
+| loading 1,000 items, per row (items, stock, values) | 0.36, 0.36, 0.09 | 0.50, 0.51, 0.21 | | | | | | |
+| loading 200,000 items, per row | | | | | | | 0.46, 0.50, 0.18 | 0.58, 0.59, 0.28 |
+
+- **Single reads, the trees and writes don't change.** They find their rows by index.
+- **Every list costs a small tenant about 15–30 ms more,** whatever it lists: at 1,000 items, lists go from 11–29 ms to 29–48 ms. The extra is about the same at every size, so it matters most to small tenants and is lost in the noise at 200,000 items. It looks like a fixed scan of something the size of the whole database; which part of the plan does it isn't found yet.
+- **`stock.list` of a location's subtree is hit hardest:** 4 times slower at 10,000 and 50,000 items (25 to 95 ms, 48 to 184 ms). The planner probably reads all the stock rows of the database, not the subtree's, once the table is large; not confirmed.
+- **Loading is 25–130 % slower** with the neighbour, the values most: the rules' checks are slower on larger tables.
+
+The first series repeats the first run within about 10 % (lower where the first run had the smaller sizes' tenants left in the database).
+
 ## What was changed
 
 The first run, at 1,000 items, took 2.4–2.7 s for every filtered or searched `item.list` and 150 ms for a plain page. Four changes brought that to the figures above:

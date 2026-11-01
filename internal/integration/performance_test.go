@@ -21,6 +21,11 @@ import (
 // the rules; then the reads and the writes are timed. Without
 // WTFD_TEST_PERF it is skipped. Run it with -v to see the tables, and with
 // WTFD_TEST_PERF_REPORT=<file> to also write them as Markdown.
+//
+// Each size's tenant is deleted after it is timed, so that the sizes don't
+// weigh on each other. WTFD_TEST_PERF_NEIGHBOUR=<items> first loads another
+// tenant of that size, kept for the whole run, to show what the other
+// tenants of a database cost a tenant.
 func TestPerformance(t *testing.T) {
 	sizes := os.Getenv("WTFD_TEST_PERF")
 	if sizes == "" {
@@ -28,6 +33,15 @@ func TestPerformance(t *testing.T) {
 	}
 	var report strings.Builder
 	fmt.Fprintf(&report, "# Performance, %s\n", time.Now().Format("2006-01-02 15:04"))
+	if field := os.Getenv("WTFD_TEST_PERF_NEIGHBOUR"); field != "" {
+		n, err := strconv.Atoi(field)
+		if err != nil || n < 100 {
+			t.Fatalf("WTFD_TEST_PERF_NEIGHBOUR: %q is not a number of items (at least 100)", field)
+		}
+		begin := time.Now()
+		loadPerfTenant(t, n)
+		fmt.Fprintf(&report, "\nWith another tenant of %d items in the database (loaded in %.0f s).\n", n, time.Since(begin).Seconds())
+	}
 	for _, field := range strings.Split(sizes, ",") {
 		n, err := strconv.Atoi(strings.TrimSpace(field))
 		if err != nil || n < 100 {
@@ -102,6 +116,7 @@ type perfTenant struct {
 func runPerformance(t *testing.T, n int) string {
 	p := loadPerfTenant(t, n)
 	at, d := p.at, p.at.admin.d
+	t.Cleanup(func() { deletePerfTenant(t, d, at.id) })
 	admin, user, viewer := at.admin, at.user, at.viewer
 	ctx := context.Background()
 	tenant, loads := at.id, p.loads
@@ -214,6 +229,30 @@ func runPerformance(t *testing.T, n int) string {
 	}
 	t.Log(out.String())
 	return out.String()
+}
+
+// deletePerfTenant deletes what loadPerfTenant and the timed writes made in
+// a tenant, children first, and analyses the tables again. The tenant and
+// its accounts stay.
+func deletePerfTenant(t *testing.T, d *testDatabase, tenant string) {
+	for _, sql := range []string{
+		`DELETE FROM public.stock_value v USING public.stock s, public.location l
+		 WHERE v.stock = s.id AND l.id = s.location AND l.tenant = $1`,
+		`DELETE FROM public.stock s USING public.location l WHERE l.id = s.location AND l.tenant = $1`,
+		`DELETE FROM public.item_value v USING public.item i, public.class c
+		 WHERE v.item = i.id AND c.id = i.class AND c.tenant = $1`,
+		`DELETE FROM public.item i USING public.class c WHERE c.id = i.class AND c.tenant = $1`,
+		`DELETE FROM public.class_attribute ca USING public.class c WHERE c.id = ca.class AND c.tenant = $1`,
+		`DELETE FROM public.attribute_option o USING public.attribute a WHERE a.id = o.attribute AND a.tenant = $1`,
+		`DELETE FROM public.attribute WHERE tenant = $1`,
+		`DELETE FROM public.class WHERE tenant = $1`,
+		`DELETE FROM public.location WHERE tenant = $1`,
+	} {
+		d.mustExec(t, sql, tenant)
+	}
+	if _, err := d.dba.Exec(context.Background(), "VACUUM ANALYZE"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // loadPerfTenant makes a tenant of n items (perfShape), loading it with
