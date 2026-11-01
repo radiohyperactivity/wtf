@@ -1,6 +1,6 @@
 # PL/pgSQL accessor refactor – plan
 
-**Status: planned; principles confirmed, topics decided, functions reviewed.** Part 2 of 3, after the database model ([2026-10-31-database-refactor.md](2026-10-31-database-refactor.md)) and before the API ([2026-10-31-api-refactor.md](2026-10-31-api-refactor.md)).
+**Status: steps 1–4 written and tested (2026-11-01, overnight), the benchmark next; the documents (step 5) come with part 3.** Part 2 of 3, after the database model ([2026-10-31-database-refactor.md](2026-10-31-database-refactor.md)) and before the API ([2026-10-31-api-refactor.md](2026-10-31-api-refactor.md)).
 
 ## How we work
 
@@ -192,3 +192,12 @@ Part 2 is written on the same branch as part 1, and goes live with it and part 3
 - **2026-11-01:** the review of the functions done (67–84 by the patterns checked, 69, 72 and 74 in detail); decision 35; the plan written.
 - **2026-11-01:** `attribute.option_list` (function 27) goes, by API decision 8; 83 API functions.
 - **2026-11-01:** `error.restore_into_deleted` raises `WT001`, with the place key in `DETAIL` (API decision 14); decision 20 otherwise unchanged.
+- **2026-11-01 (overnight):** steps 1–4 written: the shared pieces in `11_util.sql` and `10_error.sql`, the 83 functions in their schemas' scripts, and tests (`internal/integration/accessors_test.go`: the catalogue checks of step 3, and sessions, roles, tenant isolation, deleting and restoring, items and the list, model import of step 4).
+- **2026-11-01 (overnight, decided on my own; to review):**
+    - **The scripts are numbered for what SQL helpers need first:** `13_attachment` (its JSON helpers are used by classes, locations, items and stock), `30_attribute` before `31_class` (`class.attributes_json` uses `attribute.json`), `40_location`, `41_stock`, `42_item` (`item.detail_json` uses `stock.json` and `stock.missing_attributes`). `stock.detail_json` is PL/pgSQL, as it uses `item.json`, made later. The history pages (`item.history` and the others) are written in `70_history.sql`, beside `history.page`, though they are in their objects' schemas.
+    - **API decisions 5, 7 and 11 are applied in the accessors** already, as the API is a thin layer: the units' tidy lists (a unit inside its family without its family and quantity, a quantity's `base_unit` as an id), `deleted` as `null` or `{action, at, account: {id, email}}` (each JSON helper takes `p_deleted jsonb`, built by `util.deleted_json` from the action's row and its account's), and a session's `max_idle` in seconds.
+    - **`meta.schema_version()` takes no request:** `wtfd` calls it for itself when it starts, before any request, and it tells nothing about a tenant. The catalogue test makes it the one exception.
+    - **`attribute.try_parse_value` checks a date with `pg_input_is_valid`,** which needs no `EXCEPTION` block, so parsing stays free of subtransactions (decision 33). Its output parameter `boolean` is quoted, as `boolean` can't be a parameter's name otherwise.
+    - **`model.import_file`** (the core, which `wtfd unit import --global` calls with no tenant) **runs the rules that wait for commit early** (`SET CONSTRAINTS ALL IMMEDIATE`) when it has no conflicts, so that a dry run is refused as the import would be; with conflicts nothing is kept anyway.
+    - **`model.export` stays `json`, not `jsonb`,** so that the file keeps its keys in the order people read them; the top class's inherited assignments come through `model.export_class(p_class, p_inherited)`.
+    - **A few reviewed lines didn't run as written** and were corrected: `SELECT o.*, a.deleted IS NULL INTO v_option, v_live` (a row and a value can't share an `INTO`), `unnest` of an array of rows (it expands into columns; `generate_subscripts` instead), and `item.list`'s cast of a page row with its position to `public.item` (joined by id instead).
