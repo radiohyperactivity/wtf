@@ -14,8 +14,8 @@ Decisions marked *(yours)* were made by you; the rest are mine, made while you w
 
 ## Isolation: explicit filters *(yours)*
 
-6. **A table has `tenant` only where it can't be derived** (since the database refactor of 31 October 2026, its decision 1): accounts, actions, classes, attributes, locations, a tenant's own quantities, families and units, its choices of units, history and the tree versions. The rest reach their tenant through a NOT NULL foreign key: an item through its class, a stock row through its location, a value through its item or stock row, an attachment through its owner. Before, every table had `tenant` and composite foreign keys.
-7. **The tenant of a request comes from its session,** never from a value the caller can set: `util.session(p_request, role)` finds the session by its token's hash in the tenant of the request's host, and returns the session, its tenant and its account. A change's action is made in that tenant, and history takes the tenant from the action.
+6. **A table has `tenant` only where it can't be derived** (since the database refactor of 31 October 2026, its decision 1): accounts, classes, attributes, locations, a tenant's own quantities, families and units, its choices of units, and the tree versions. The rest reach their tenant through a NOT NULL foreign key: an item through its class, a stock row through its location, a value through its item or stock row, an attachment through its owner. Before, every table had `tenant` and composite foreign keys.
+7. **The tenant of a request comes from its session,** never from a value the caller can set: `util.session(p_request, role)` finds the session by its token's hash in the tenant of the request's host, and returns the session, its tenant and its account.
 8. **The rule for API functions:**
    - **Every id that comes from the request is checked against the tenant where it enters:** `WHERE id = p_id AND tenant = v_tenant`. Anything else answers 404, as if it didn't exist.
    - **Every query that starts from a table, not from a checked id, filters by tenant:** lists, searches, trees, look-ups by name or code, uniqueness checks.
@@ -57,11 +57,11 @@ Decisions marked *(yours)* were made by you; the rest are mine, made while you w
 19. **`wtfd gc`** goes through every tenant's directory. A directory that belongs to no tenant is reported, never removed.
 20. **Renaming a tenant** (`wtfd tenant rename`) changes `host` and moves the directory together. A bare `UPDATE` would leave the files behind.
 
-## History, versions, purging
+## Versions
 
-21. **History is per tenant:** every entry has its tenant, and the history calls show only your own.
+21. **History was per tenant,** until history was dropped on 1 November 2026 ([2026-11-01-dropping-deleted-and-history.md](2026-11-01-dropping-deleted-and-history.md)).
 22. **Versions** (`data_version`, the ETag of the class and location trees and of the unit families) are per tenant: `(tenant, name)`.
-23. **`wtfd history purge` and `wtfd deleted purge`** work on every tenant, or on one with `--host`.
+23. **`wtfd history purge` and `wtfd deleted purge`** worked on every tenant, or on one with `--host`; both went with history and "mark as deleted".
 
 ## Operator commands
 
@@ -79,7 +79,7 @@ Run as the DBA role, like the other `wtfd` actions:
 
 `wtfd tenant create` is the convenient way; three `INSERT`s (tenant, account, with a bcrypt password) do the same.
 
-**Not built yet:** deleting a tenant. Its rows are spread over every table, and the history triggers would log the deletion of each one; a later `wtfd tenant delete` will remove it all and its directory.
+**Not built yet:** deleting a tenant. Without history it is simple: one transaction of deletes in order (stock, items, locations, classes, attributes, the tenant's own units, families and quantities, accounts, the tenant), then its files directory, after a confirmation; a later `wtfd tenant delete` ([2026-11-01-dropping-deleted-and-history.md](2026-11-01-dropping-deleted-and-history.md), decision 10).
 
 ## The schema
 

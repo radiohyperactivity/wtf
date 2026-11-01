@@ -110,7 +110,7 @@ func TestProblemFor(t *testing.T) {
 		{"23503", http.MethodPost, 422},
 		{"57014", http.MethodGet, 503},
 		{"55000", http.MethodPost, 409},
-		{"WT001", http.MethodPost, 409},
+		{"WT001", http.MethodGet, 410},
 		{"42883", http.MethodGet, 500},
 		{"P0001", http.MethodPost, 500},
 	}
@@ -124,9 +124,9 @@ func TestProblemFor(t *testing.T) {
 	if p.Type != "/problems/wrong-state" {
 		t.Errorf("55000: %s", p.Type)
 	}
-	p, _ = problemFor(&pgconn.PgError{Code: "WT001", Message: "m", Detail: "class"}, http.MethodPost)
-	if p.Type != "/problems/restore-into-deleted" || p.PlaceKey != "class" || !p.WithParents || p.Detail != "m" {
-		t.Errorf("WT001: %+v", p)
+	p, _ = problemFor(&pgconn.PgError{Code: "WT001", Message: "m"}, http.MethodGet)
+	if p.Type != "/problems/gone" {
+		t.Errorf("WT001: %s", p.Type)
 	}
 	if p, ok := problemFor(errors.New("boom"), http.MethodGet); ok || p.Status != 500 {
 		t.Errorf("unexpected error mapped to %d, %v", p.Status, ok)

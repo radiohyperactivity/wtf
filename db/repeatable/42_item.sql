@@ -63,10 +63,9 @@ CREATE TRIGGER check_container
     FOR EACH ROW EXECUTE FUNCTION item.check_container();
 
 CREATE TRIGGER check_container_change
-    BEFORE UPDATE OF class, deleted ON public.item
+    BEFORE UPDATE OF class ON public.item
     FOR EACH ROW
-    WHEN (OLD.class <> NEW.class
-          OR (OLD.deleted IS NOT NULL AND NEW.deleted IS NULL))
+    WHEN (OLD.class <> NEW.class)
     EXECUTE FUNCTION item.check_container();
 
 -- An item value's attribute must apply to the item's class, with its values
@@ -102,17 +101,11 @@ CREATE TRIGGER check_value_applies_change
     WHEN (OLD.item <> NEW.item OR OLD.attribute <> NEW.attribute)
     EXECUTE FUNCTION item.check_value_applies();
 
--- When an item changes class, or is restored, all its values must still
--- apply: each item value's attribute must apply to the class with its
--- values on the item, and each value on its live stock rows must apply
--- with its values on each stock row. The class's attributes are worked out
--- once, and all the values are checked against them in one query.
---
--- On restore this closes a gap: while an item is deleted, its class can
--- lose an assignment (class.check_values_still_apply only checks live
--- items), and the restored item would otherwise bring back a value that no
--- longer applies. Its stock rows, restored after it, are checked by
--- stock.check_values_still_apply.
+-- When an item changes class, all its values must still apply: each item
+-- value's attribute must apply to the class with its values on the item,
+-- and each value on its stock rows must apply with its values on each stock
+-- row. The class's attributes are worked out once, and all the values are
+-- checked against them in one query.
 CREATE FUNCTION item.check_values_still_apply()
 RETURNS trigger
 LANGUAGE plpgsql AS $$
@@ -136,7 +129,6 @@ BEGIN
         JOIN public.stock_value sv ON sv.stock = s.id
         LEFT JOIN applies a ON a.attribute = sv.attribute
         WHERE s.item = NEW.id
-          AND s.deleted IS NULL
           AND a.scope IS DISTINCT FROM 'stock'
     ) w;
     IF v_wrong IS NOT NULL THEN
@@ -151,22 +143,21 @@ END;
 $$;
 
 CREATE TRIGGER check_values_still_apply
-    BEFORE UPDATE OF class, deleted ON public.item
+    BEFORE UPDATE OF class ON public.item
     FOR EACH ROW
-    WHEN (OLD.class <> NEW.class
-          OR (OLD.deleted IS NOT NULL AND NEW.deleted IS NULL))
+    WHEN (OLD.class <> NEW.class)
     EXECUTE FUNCTION item.check_values_still_apply();
 
--- A new or restored item, or one moved to another class, must have a value
+-- A new item, or one moved to another class, must have a value
 -- for each attribute that is required for it: assigned as required to its
 -- class (or a class above it), with its values on the item, and without a
 -- default value (item.missing_attributes says which). When it moved to
--- another class, its live stock rows must have the values the new class
+-- another class, its stock rows must have the values the new class
 -- requires of each stock row too.
 --
 -- It runs at commit, so an item can be created first and its values added
 -- afterwards, in the same transaction. By then the item may have been
--- deleted again, or purged; it is then left alone.
+-- deleted again; it is then left alone.
 --
 -- Making an attribute required later never blocks anything: items that
 -- already exist without a value are reported as missing it, through the
@@ -180,7 +171,7 @@ DECLARE
 BEGIN
     SELECT i.name INTO v_name
     FROM public.item i
-    WHERE i.id = NEW.id AND i.deleted IS NULL;
+    WHERE i.id = NEW.id;
     IF NOT FOUND THEN
         RETURN NULL;
     END IF;
@@ -193,15 +184,14 @@ BEGIN
             USING ERRCODE = 'check_violation';
     END IF;
 
-    -- New and restored stock rows are checked by stock.check_required, so
-    -- this is only needed when the item changed class: all its live stock
-    -- rows, in one call.
+    -- New stock rows are checked by stock.check_required, so this is only
+    -- needed when the item changed class: all its stock rows, in one call.
     IF TG_OP = 'UPDATE' AND OLD.class <> NEW.class THEN
         v_missing := ARRAY(
             SELECT DISTINCT m.attribute
             FROM stock.missing_attributes(ARRAY(
                      SELECT s.id FROM public.stock s
-                     WHERE s.item = NEW.id AND s.deleted IS NULL)) m);
+                     WHERE s.item = NEW.id)) m);
         IF cardinality(v_missing) > 0 THEN
             RAISE EXCEPTION 'Stock rows of item "%" are missing required attributes: %',
                 v_name, error.attribute_names(v_missing)
@@ -218,21 +208,20 @@ CREATE CONSTRAINT TRIGGER check_required
     FOR EACH ROW EXECUTE FUNCTION item.check_required();
 
 CREATE CONSTRAINT TRIGGER check_required_change
-    AFTER UPDATE OF class, deleted ON public.item
+    AFTER UPDATE OF class ON public.item
     DEFERRABLE INITIALLY DEFERRED
     FOR EACH ROW
-    WHEN (OLD.class <> NEW.class
-          OR (OLD.deleted IS NOT NULL AND NEW.deleted IS NULL))
+    WHEN (OLD.class <> NEW.class)
     EXECUTE FUNCTION item.check_required();
 
--- A required item value can't be removed from a live item: one whose
+-- A required item value can't be removed from an item: one whose
 -- attribute is assigned as required to the item's class (or a class above
 -- it), with its values on the item, and without a default value.
 --
 -- It runs at commit, so a value can be removed and set again in the same
--- transaction. An item that has been deleted or purged by then is left
--- alone, and is looked up first, so that purging an item, which removes
--- its values with it, costs one look-up per value.
+-- transaction. An item that has been deleted by then is left alone, and is
+-- looked up first, so that deleting an item, which removes its values with
+-- it, costs one look-up per value.
 CREATE FUNCTION item.check_required_value_removal()
 RETURNS trigger
 LANGUAGE plpgsql AS $$
@@ -241,7 +230,7 @@ DECLARE
 BEGIN
     SELECT i.name INTO v_item
     FROM public.item i
-    WHERE i.id = OLD.item AND i.deleted IS NULL;
+    WHERE i.id = OLD.item;
     IF NOT FOUND THEN
         RETURN NULL;
     END IF;
@@ -261,115 +250,13 @@ CREATE CONSTRAINT TRIGGER check_required_value_removal
     DEFERRABLE INITIALLY DEFERRED
     FOR EACH ROW EXECUTE FUNCTION item.check_required_value_removal();
 
--- A live item's class must be live: an item can't be created in, moved
--- into or restored into a deleted class.
---
--- When an item is restored, its values come back with it, so they must
--- refer to live attributes and options too: while the item was deleted,
--- an attribute or option it uses may have been deleted as well (their
--- deletable rules only count values on live items). The attributes and
--- options are locked for sharing first, so that they can't be deleted
--- while this transaction restores the item.
-CREATE FUNCTION item.check_live()
-RETURNS trigger
-LANGUAGE plpgsql AS $$
-DECLARE
-    v_deleted uuid[];
-BEGIN
-    PERFORM util.check_live('class', NEW.class);
-
-    IF TG_OP = 'UPDATE' AND OLD.deleted IS NOT NULL THEN
-        PERFORM 1 FROM public.attribute a
-        WHERE a.id IN (SELECT v.attribute FROM public.item_value v WHERE v.item = NEW.id)
-        FOR SHARE;
-        PERFORM 1 FROM public.attribute_option o
-        WHERE o.id IN (SELECT v.option FROM public.item_value v WHERE v.item = NEW.id)
-        FOR SHARE;
-
-        SELECT array_agg(v.attribute) INTO v_deleted
-        FROM public.item_value v
-        JOIN public.attribute a             ON a.id = v.attribute
-        LEFT JOIN public.attribute_option o ON o.id = v.option
-        WHERE v.item = NEW.id
-          AND (a.deleted IS NOT NULL OR o.deleted IS NOT NULL);
-        IF v_deleted IS NOT NULL THEN
-            RAISE EXCEPTION 'Item "%" can''t be restored: its values for % refer to deleted attributes or options',
-                NEW.name, error.attribute_names(v_deleted)
-                USING ERRCODE = 'object_not_in_prerequisite_state',
-                      HINT = 'Restore those attributes or options first.';
-        END IF;
-    END IF;
-
-    RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER check_live
-    BEFORE INSERT ON public.item
-    FOR EACH ROW EXECUTE FUNCTION item.check_live();
-
-CREATE TRIGGER check_live_change
-    BEFORE UPDATE OF class, deleted ON public.item
-    FOR EACH ROW
-    WHEN (OLD.class <> NEW.class
-          OR (OLD.deleted IS NOT NULL AND NEW.deleted IS NULL))
-    EXECUTE FUNCTION item.check_live();
-
--- An item value's item, attribute and option must be live. A value has no
--- deleted of its own: it belongs to its item, and comes back with it
--- (item.check_live checks it then).
-CREATE FUNCTION item.check_value_live()
-RETURNS trigger
-LANGUAGE plpgsql AS $$
-BEGIN
-    PERFORM util.check_live('item', NEW.item);
-    PERFORM util.check_live('attribute', NEW.attribute);
-    PERFORM util.check_live('attribute_option', NEW.option);
-    RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER check_value_live
-    BEFORE INSERT ON public.item_value
-    FOR EACH ROW EXECUTE FUNCTION item.check_value_live();
-
-CREATE TRIGGER check_value_live_change
-    BEFORE UPDATE OF item, attribute, option ON public.item_value
-    FOR EACH ROW
-    WHEN (OLD.item <> NEW.item
-          OR OLD.attribute <> NEW.attribute
-          OR OLD.option IS DISTINCT FROM NEW.option)
-    EXECUTE FUNCTION item.check_value_live();
-
--- An item can only be deleted while it has no live stock rows. Its values
--- and attachments stay as they are, and come back with it.
-CREATE FUNCTION item.check_deletable()
-RETURNS trigger
-LANGUAGE plpgsql AS $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM public.stock s
-               WHERE s.item = NEW.id AND s.deleted IS NULL) THEN
-        RAISE EXCEPTION 'Item "%" still has stock', NEW.name
-            USING ERRCODE = 'restrict_violation';
-    END IF;
-    RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER check_deletable
-    BEFORE UPDATE OF deleted ON public.item
-    FOR EACH ROW
-    WHEN (OLD.deleted IS NULL AND NEW.deleted IS NOT NULL)
-    EXECUTE FUNCTION item.check_deletable();
-
 -- ---------------------------------------------------------------------------
 -- Helpers
 -- ---------------------------------------------------------------------------
 
--- An item as the API shows it, from its row, its photo's JSON and what its
--- deleted says (NULL for a live item). Its unit is the unit's id, which
--- clients look up in the unit families they keep.
-CREATE FUNCTION item.json(p_item public.item, p_photo jsonb, p_deleted jsonb)
+-- An item as the API shows it, from its row and its photo's JSON. Its unit
+-- is the unit's id, which clients look up in the unit families they keep.
+CREATE FUNCTION item.json(p_item public.item, p_photo jsonb)
 RETURNS jsonb
 LANGUAGE sql IMMUTABLE AS $$
     SELECT jsonb_build_object(
@@ -379,21 +266,19 @@ LANGUAGE sql IMMUTABLE AS $$
         'class',     p_item.class,
         'unit',      p_item.unit,
         'unit_lock', p_item.unit_lock,
-        'photo',     p_photo,
-        'deleted',   p_deleted
+        'photo',     p_photo
     );
 $$;
 
 -- The attribute filters of item.list, p_where, checked once and returned as
 -- typed rows: a list of {attribute, op, value}, each attribute one of
--- tenant p_tenant's live ones. What each datatype takes:
+-- tenant p_tenant's. What each datatype takes:
 --   integer, decimal, date: op =, >, >=, <, <=, with one value, or between
 --                           with [low, high]; numbers in the base unit,
 --                           dates as YYYY-MM-DD
 --   text, url:              op = (letter case ignored) or contains
 --   choice:                 op = with one option, or in with a list of
---                           them, each by id or name (deleted options too,
---                           as values may still refer to them)
+--                           them, each by id or name
 --   boolean:                op = with true or false
 -- A number or date filter's value is in low (and high, for between).
 CREATE FUNCTION item.parse_filters(p_tenant uuid, p_where jsonb)
@@ -435,7 +320,7 @@ BEGIN
             PERFORM error.invalid('A filter needs the id of an attribute');
         END IF;
         SELECT a.* INTO v_attribute FROM public.attribute a
-        WHERE a.id = (v_filter ->> 'attribute')::uuid AND a.tenant = p_tenant AND a.deleted IS NULL;
+        WHERE a.id = (v_filter ->> 'attribute')::uuid AND a.tenant = p_tenant;
         IF NOT FOUND THEN
             PERFORM error.not_found('attribute', v_filter ->> 'attribute');
         END IF;
@@ -505,7 +390,7 @@ BEGIN
                 FROM public.attribute_option o
                 WHERE o.attribute = v_attribute.id
                   AND (o.id::text = lower(v_element #>> '{}') OR lower(o.name) = lower(v_element #>> '{}'))
-                ORDER BY o.deleted IS NOT NULL, o.id
+                ORDER BY o.id::text = lower(v_element #>> '{}') DESC, o.id
                 LIMIT 1;
                 IF NOT FOUND THEN
                     PERFORM error.invalid(format('%s has no option %s', v_attribute.name, v_element));
@@ -601,11 +486,10 @@ $$;
 -- An item as item.get shows it: its class (with its path), its values (its
 -- own, and the class defaults it shows where it has none), the required
 -- values it lacks, its photo and attachments, and its stock rows, each with
--- its values, what it lacks, its photo and attachments. A live item lists
--- its live stock rows; a deleted one the rows deleted together with it,
--- which restoring it brings back. One walk up the class tree for the
--- attributes, shared by the item's values and every stock row's.
-CREATE FUNCTION item.detail_json(p_tenant uuid, p_item public.item, p_deleted jsonb)
+-- its values, what it lacks, its photo and attachments. One walk up the
+-- class tree for the attributes, shared by the item's values and every
+-- stock row's.
+CREATE FUNCTION item.detail_json(p_tenant uuid, p_item public.item)
 RETURNS jsonb
 LANGUAGE sql STABLE AS $$
     WITH effective AS (
@@ -616,8 +500,6 @@ LANGUAGE sql STABLE AS $$
     rows AS (
         SELECT s.* FROM public.stock s
         WHERE s.item = p_item.id
-          AND (CASE WHEN p_item.deleted IS NULL THEN s.deleted IS NULL
-                    ELSE s.deleted = p_item.deleted AND s.merged_into IS NULL END)
     ),
     -- Every value shown, of the item (stock NULL) and of each stock row:
     -- its own, or the default where it has none.
@@ -645,7 +527,7 @@ LANGUAGE sql STABLE AS $$
     values_json AS (
         SELECT x.stock,
                jsonb_agg(jsonb_build_object(
-                   'attribute',  attribute.json(x.a, NULL),
+                   'attribute',  attribute.json(x.a),
                    'value',      util.typed_value_json((x.a).datatype, x.text, x.number, x.date, x.boolean, o),
                    'display',    CASE WHEN d.unit IS NOT NULL
                                       THEN jsonb_build_object('value', d.value, 'unit', d.unit) END,
@@ -670,18 +552,17 @@ LANGUAGE sql STABLE AS $$
     attachments AS (
         SELECT a.stock, array_agg(a ORDER BY a.title COLLATE public.natural, a.id) AS list
         FROM public.attachment a
-        WHERE (a.item = p_item.id OR a.stock IN (SELECT id FROM rows)) AND a.deleted IS NULL
+        WHERE a.item = p_item.id OR a.stock IN (SELECT id FROM rows)
         GROUP BY a.stock
     )
-    SELECT item.json(p_item, attachment.json(ph, NULL), p_deleted) || jsonb_build_object(
-        'class',       class.json(c, NULL, NULL) || jsonb_build_object('path', class.path_json(c.id)),
+    SELECT item.json(p_item, attachment.json(ph)) || jsonb_build_object(
+        'class',       class.json(c, NULL) || jsonb_build_object('path', class.path_json(c.id)),
         'values',      coalesce((SELECT list FROM values_json WHERE stock IS NULL), '[]'),
         'missing',     coalesce((SELECT list FROM missing_json WHERE stock IS NULL), '[]'),
         'attachments', attachment.list_json(p_item.photo,
                            (SELECT list FROM attachments WHERE stock IS NULL)),
         'stock', coalesce((
-            SELECT jsonb_agg(stock.json(r::public.stock, attachment.json(rp, NULL),
-                                        CASE WHEN r.deleted IS NOT NULL THEN p_deleted END)
+            SELECT jsonb_agg(stock.json(r::public.stock, attachment.json(rp))
                              || jsonb_build_object(
                                     'display',     CASE WHEN d.unit IS NOT NULL
                                                         THEN jsonb_build_object('value', d.value, 'unit', d.unit) END,
@@ -706,17 +587,17 @@ $$;
 -- Functions the API calls
 -- ---------------------------------------------------------------------------
 
--- A page of the tenant's live items, by name, each with its stock total (in
+-- A page of the tenant's items, by name, each with its stock total (in
 -- the unit that suits it), whether it lacks a required value, and its
 -- photo; with the number of items that match. Optional:
 --   p_class   only items in this class or the classes below it
 --   p_search  words; each must occur (letter case ignored) in the item's
 --             name, a class in its class path, or a text, url or choice
 --             value it shows (its own, or the class default), on the item
---             or on a live stock row; the words may match in different places
+--             or on a stock row; the words may match in different places
 --   p_where   attribute filters, all of which must match (item.parse_filters
 --             says which ops each datatype takes); an attribute with values
---             on each stock row matches when any live stock row does
+--             on each stock row matches when any of its stock rows does
 -- The page is built in one query: the candidates' classes are worked out
 -- once, what they show is joined for only the attributes needed, and the
 -- stock totals and what is missing are worked out for the page at once.
@@ -759,7 +640,7 @@ BEGIN
         candidates AS (
             SELECT i.id, i.class, i.name FROM public.item i
             JOIN public.class c ON c.id = i.class
-            WHERE c.tenant = v_session.tenant AND i.deleted IS NULL
+            WHERE c.tenant = v_session.tenant
               AND (p_class IS NULL OR i.class IN (SELECT id FROM subtree))
         ),
         -- What the candidates show, for the attributes the filters and the
@@ -786,7 +667,7 @@ BEGIN
                    coalesce(sv.option, e.default_option)
             FROM candidates c
             JOIN effective e ON e.class = c.class AND e.scope = 'stock'
-            JOIN public.stock s ON s.item = c.id AND s.deleted IS NULL
+            JOIN public.stock s ON s.item = c.id
             LEFT JOIN public.stock_value sv ON sv.stock = s.id AND sv.attribute = e.attribute
         ),
         -- Each candidate class's path names, once per class.
@@ -830,7 +711,7 @@ BEGIN
         totals AS (
             SELECT s.item, sum(s.amount) AS total, bool_or(s.amount IS NULL) AS uncounted
             FROM public.stock s
-            WHERE s.item IN (SELECT id FROM page) AND s.deleted IS NULL
+            WHERE s.item IN (SELECT id FROM page)
             GROUP BY s.item
         ),
         incomplete AS (
@@ -838,8 +719,7 @@ BEGIN
             UNION
             SELECT s.item
             FROM stock.missing_attributes(ARRAY(SELECT s.id FROM public.stock s
-                                                WHERE s.item IN (SELECT id FROM page)
-                                                  AND s.deleted IS NULL)) m
+                                                WHERE s.item IN (SELECT id FROM page))) m
             JOIN public.stock s ON s.id = m.stock
         )
         SELECT jsonb_build_object(
@@ -847,7 +727,7 @@ BEGIN
             'limit',  p_limit,
             'offset', p_offset,
             'rows',   coalesce((
-                SELECT jsonb_agg(item.json(i, attachment.json(ph, NULL), NULL) || jsonb_build_object(
+                SELECT jsonb_agg(item.json(i, attachment.json(ph)) || jsonb_build_object(
                            'stock', jsonb_build_object(
                                         'total',     coalesce(t.total, 0),
                                         'display',   CASE WHEN d.unit IS NOT NULL THEN
@@ -865,8 +745,7 @@ BEGIN
 END;
 $$;
 
--- One of the tenant's items, as item.detail_json shows it. A deleted item
--- is returned too, saying when and by whom it was deleted.
+-- One of the tenant's items, as item.detail_json shows it.
 CREATE FUNCTION item.get(p_request public.request, p_item uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -876,11 +755,9 @@ DECLARE
     v_session record := util.session(p_request, 'viewer');
     v_result  jsonb;
 BEGIN
-    SELECT item.detail_json(v_session.tenant, i, util.deleted_json(d, db)) INTO v_result
+    SELECT item.detail_json(v_session.tenant, i) INTO v_result
     FROM public.item i
-    JOIN public.class c         ON c.id = i.class
-    LEFT JOIN public.action d   ON d.id = i.deleted
-    LEFT JOIN public.account db ON db.id = d.account
+    JOIN public.class c ON c.id = i.class
     WHERE i.id = p_item AND c.tenant = v_session.tenant;
     IF NOT FOUND THEN
         PERFORM error.not_found('item', p_item::text);
@@ -923,16 +800,15 @@ BEGIN
     END IF;
     PERFORM unit.check_choosable(v_session.tenant, p_unit);
 
-    PERFORM util.begin_action(v_session);
     INSERT INTO public.item (code, class, name, unit, unit_lock)
     VALUES (tenant.take_codes(v_session.tenant, 1), p_class, v_name, p_unit, p_unit_lock)
     RETURNING * INTO v_item;
     PERFORM item.values_set(v_session.tenant, v_item.id, p_values);
-    RETURN item.detail_json(v_session.tenant, v_item, NULL);
+    RETURN item.detail_json(v_session.tenant, v_item);
 END;
 $$;
 
--- Changes the fields of one of the tenant's live items that p_patch has:
+-- Changes the fields of one of the tenant's items that p_patch has:
 -- class, name, unit, unit_lock, and photo (the id of one of its own image
 -- attachments, or null). The rules refuse a class whose attributes don't
 -- fit the item's values (naming them), a class that is a container, and a
@@ -960,9 +836,6 @@ BEGIN
     IF NOT FOUND THEN
         PERFORM error.not_found('item', p_item::text);
     END IF;
-    IF v_item.deleted IS NOT NULL THEN
-        PERFORM error.deleted('item', p_item);
-    END IF;
 
     v_class := coalesce((p_patch ->> 'class')::uuid, v_item.class);
     IF v_class <> v_item.class AND NOT EXISTS (
@@ -978,7 +851,6 @@ BEGIN
         PERFORM error.invalid('photo must be the id of an attachment, or null');
     END IF;
 
-    PERFORM util.begin_action(v_session);
     UPDATE public.item i
     SET class     = v_class,
         name      = CASE WHEN p_patch ? 'name' THEN util.trim_and_check(p_patch ->> 'name') ELSE i.name END,
@@ -987,14 +859,13 @@ BEGIN
         photo     = CASE WHEN p_patch ? 'photo' THEN (p_patch ->> 'photo')::uuid ELSE i.photo END
     WHERE i.id = p_item
     RETURNING * INTO v_item;
-    RETURN item.detail_json(v_session.tenant, v_item, NULL);
+    RETURN item.detail_json(v_session.tenant, v_item);
 END;
 $$;
 
--- Deletes one of the tenant's items: it is marked deleted, by this call's
--- action, with its values and attachments as they are. An item with live
--- stock rows can't be deleted (409; the rule item.check_deletable says so):
--- its stock goes first.
+-- Deletes one of the tenant's items, with its values and attachments. An
+-- item with stock rows can't be deleted (409): its stock goes first. The
+-- foreign key refuses the same; this says what is in the way.
 CREATE FUNCTION item.delete(p_request public.request, p_item uuid)
 RETURNS void
 LANGUAGE plpgsql
@@ -1002,46 +873,8 @@ SECURITY DEFINER SET search_path = pg_catalog, pg_temp
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'user');
-    v_action  uuid := util.begin_action(v_session);
-BEGIN
-    UPDATE public.item i
-    SET deleted = v_action
-    FROM public.class c
-    WHERE i.id = p_item AND c.id = i.class AND c.tenant = v_session.tenant
-      AND i.deleted IS NULL;
-    IF NOT FOUND THEN
-        IF EXISTS (SELECT 1 FROM public.item i JOIN public.class c ON c.id = i.class
-                   WHERE i.id = p_item AND c.tenant = v_session.tenant) THEN
-            PERFORM error.deleted('item', p_item);
-        END IF;
-        PERFORM error.not_found('item', p_item::text);
-    END IF;
-END;
-$$;
-
--- Restores a deleted item of the tenant, with the stock rows deleted
--- together with it, by the same action (never rows merged into another).
--- p_options, each optional:
---   name          a new name
---   class         a class to restore it in instead
---   with_parents  true: also restore its deleted class, and the deleted
---                 classes above that, from the top down (for admins)
--- An item whose class is deleted can't be restored without class or
--- with_parents (409, naming both ways out). Returns the item as item.get
--- does.
-CREATE FUNCTION item.restore(p_request public.request, p_item uuid, p_options jsonb)
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
-AS $$
-DECLARE
-    v_session record := util.session(p_request, 'user');
     v_item    public.item;
-    v_action  uuid;              -- the action that deleted the item
-    v_class   uuid;
 BEGIN
-    PERFORM util.check_patch(p_options, ARRAY['name', 'class', 'with_parents'],
-                             ARRAY['name', 'class', 'with_parents']);
     SELECT i.* INTO v_item
     FROM public.item i
     JOIN public.class c ON c.id = i.class
@@ -1050,42 +883,15 @@ BEGIN
     IF NOT FOUND THEN
         PERFORM error.not_found('item', p_item::text);
     END IF;
-    IF v_item.deleted IS NULL THEN
-        PERFORM error.not_deleted('item', p_item);
+    IF EXISTS (SELECT 1 FROM public.stock s WHERE s.item = p_item) THEN
+        PERFORM error.in_use(format('Item "%s" still has stock', v_item.name),
+                             'Delete its stock rows first.');
     END IF;
-    v_action := v_item.deleted;
-
-    v_class := coalesce((p_options ->> 'class')::uuid, v_item.class);
-    IF NOT EXISTS (SELECT 1 FROM public.class c WHERE c.id = v_class AND c.tenant = v_session.tenant) THEN
-        PERFORM error.bad_reference('class', v_class);
-    END IF;
-
-    PERFORM util.begin_action(v_session);
-    IF (SELECT c.deleted FROM public.class c WHERE c.id = v_class) IS NOT NULL THEN
-        IF p_options ? 'class' THEN
-            PERFORM error.deleted('class', v_class);
-        ELSIF NOT coalesce((p_options ->> 'with_parents')::boolean, false) THEN
-            PERFORM error.restore_into_deleted(error.row_label('item', p_item),
-                format('class "%s"', util.path_text(class.path_json(v_class))), 'class');
-        ELSIF v_session.role < 'admin' THEN
-            PERFORM error.forbidden('Restoring the classes it is in needs the role admin');
-        END IF;
-        PERFORM class.restore_parents(v_class);
-    END IF;
-
-    UPDATE public.item i
-    SET deleted = NULL,
-        name    = CASE WHEN p_options ? 'name' THEN util.trim_and_check(p_options ->> 'name') ELSE i.name END,
-        class   = v_class
-    WHERE i.id = p_item
-    RETURNING * INTO v_item;
-    UPDATE public.stock s SET deleted = NULL
-    WHERE s.item = p_item AND s.deleted = v_action AND s.merged_into IS NULL;
-    RETURN item.detail_json(v_session.tenant, v_item, NULL);
+    DELETE FROM public.item i WHERE i.id = p_item;
 END;
 $$;
 
--- Sets one value of one of the tenant's live items: inserts it, or replaces
+-- Sets one value of one of the tenant's items: inserts it, or replaces
 -- the one there. Numbers of an attribute with a unit are in the base unit;
 -- a JSON null is refused (remove a value with value delete). The rules
 -- refuse a value that doesn't fit the attribute's datatype, or whose
@@ -1107,20 +913,16 @@ BEGIN
     IF NOT FOUND THEN
         PERFORM error.not_found('item', p_item::text);
     END IF;
-    IF v_item.deleted IS NOT NULL THEN
-        PERFORM error.deleted('item', p_item);
-    END IF;
     IF p_value IS NULL OR jsonb_typeof(p_value) = 'null' THEN
         PERFORM error.invalid('Remove a value with value delete');
     END IF;
 
-    PERFORM util.begin_action(v_session);
     PERFORM item.values_set(v_session.tenant, p_item, jsonb_build_object(p_attribute::text, p_value));
-    RETURN item.detail_json(v_session.tenant, v_item, NULL);
+    RETURN item.detail_json(v_session.tenant, v_item);
 END;
 $$;
 
--- Removes one value of one of the tenant's live items. A required value
+-- Removes one value of one of the tenant's items. A required value
 -- without a default can't be removed (checked at the end of the
 -- transaction). Returns the item as item.get does, which then shows the
 -- class default, if there is one.
@@ -1140,15 +942,11 @@ BEGIN
     IF NOT FOUND THEN
         PERFORM error.not_found('item', p_item::text);
     END IF;
-    IF v_item.deleted IS NOT NULL THEN
-        PERFORM error.deleted('item', p_item);
-    END IF;
 
-    PERFORM util.begin_action(v_session);
     DELETE FROM public.item_value v WHERE v.item = p_item AND v.attribute = p_attribute;
     IF NOT FOUND THEN
         PERFORM error.not_found('value', format('of attribute %s on item "%s"', p_attribute, v_item.name));
     END IF;
-    RETURN item.detail_json(v_session.tenant, v_item, NULL);
+    RETURN item.detail_json(v_session.tenant, v_item);
 END;
 $$;

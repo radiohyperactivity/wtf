@@ -33,7 +33,7 @@ func TestItemListBenchmark(t *testing.T) {
 	}
 
 	start := time.Now()
-	if err := d.inAction(t, at.id, func(tx pgx.Tx, _ string) error {
+	if err := d.inTx(t, func(tx pgx.Tx) error {
 		for _, sql := range []string{
 			// 10 classes at the top, each with 49 below it, the attributes
 			// assigned at the top.

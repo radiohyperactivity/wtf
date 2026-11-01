@@ -97,10 +97,9 @@ CREATE TRIGGER check_container
     FOR EACH ROW EXECUTE FUNCTION stock.check_container();
 
 CREATE TRIGGER check_container_change
-    BEFORE UPDATE OF location, deleted ON public.stock
+    BEFORE UPDATE OF location ON public.stock
     FOR EACH ROW
-    WHEN (OLD.location <> NEW.location
-          OR (OLD.deleted IS NOT NULL AND NEW.deleted IS NULL))
+    WHEN (OLD.location <> NEW.location)
     EXECUTE FUNCTION stock.check_container();
 
 -- A stock value's attribute must apply to the class of the stock row's
@@ -137,16 +136,10 @@ CREATE TRIGGER check_value_applies_change
     WHEN (OLD.stock <> NEW.stock OR OLD.attribute <> NEW.attribute)
     EXECUTE FUNCTION stock.check_value_applies();
 
--- When a stock row moves to another item, or is restored, all its values
--- must still apply: each value's attribute must apply to the class of the
--- row's item, with its values on each stock row. The class's attributes
--- are worked out once, and all the row's values are checked against them
--- in one query.
---
--- On restore this closes the same gap as item.check_values_still_apply:
--- while a stock row is deleted, its item's class can lose an assignment,
--- and the restored row would otherwise bring back a value that no longer
--- applies.
+-- When a stock row moves to another item, all its values must still apply:
+-- each value's attribute must apply to the class of the row's item, with
+-- its values on each stock row. The class's attributes are worked out once,
+-- and all the row's values are checked against them in one query.
 CREATE FUNCTION stock.check_values_still_apply()
 RETURNS trigger
 LANGUAGE plpgsql AS $$
@@ -174,13 +167,12 @@ END;
 $$;
 
 CREATE TRIGGER check_values_still_apply
-    BEFORE UPDATE OF item, deleted ON public.stock
+    BEFORE UPDATE OF item ON public.stock
     FOR EACH ROW
-    WHEN (OLD.item <> NEW.item
-          OR (OLD.deleted IS NOT NULL AND NEW.deleted IS NULL))
+    WHEN (OLD.item <> NEW.item)
     EXECUTE FUNCTION stock.check_values_still_apply();
 
--- A new or restored stock row, or one moved to another item, must have a
+-- A new stock row, or one moved to another item, must have a
 -- value for each attribute that is required for it: assigned as required
 -- to the class of the row's item (or a class above it), with its values on
 -- each stock row, and without a default value (stock.missing_attributes
@@ -189,7 +181,7 @@ CREATE TRIGGER check_values_still_apply
 -- It runs at commit, so a stock row can be created first and its values
 -- added afterwards, in the same transaction; a partial move, which creates
 -- a stock row and then copies the values to it, relies on this. By then
--- the row may have been deleted again, or purged; it is then left alone.
+-- the row may have been deleted again; it is then left alone.
 CREATE FUNCTION stock.check_required()
 RETURNS trigger
 LANGUAGE plpgsql AS $$
@@ -200,7 +192,7 @@ BEGIN
     SELECT i.name INTO v_item
     FROM public.stock s
     JOIN public.item i ON i.id = s.item
-    WHERE s.id = NEW.id AND s.deleted IS NULL;
+    WHERE s.id = NEW.id;
     IF NOT FOUND THEN
         RETURN NULL;
     END IF;
@@ -222,17 +214,17 @@ CREATE CONSTRAINT TRIGGER check_required
     FOR EACH ROW EXECUTE FUNCTION stock.check_required();
 
 CREATE CONSTRAINT TRIGGER check_required_change
-    AFTER UPDATE OF item, deleted ON public.stock
+    AFTER UPDATE OF item ON public.stock
     DEFERRABLE INITIALLY DEFERRED
     FOR EACH ROW
-    WHEN (OLD.item <> NEW.item
-          OR (OLD.deleted IS NOT NULL AND NEW.deleted IS NULL))
+    WHEN (OLD.item <> NEW.item)
     EXECUTE FUNCTION stock.check_required();
 
--- A required stock value can't be removed from a live stock row. It runs at
+-- A required stock value can't be removed from a stock row. It runs at
 -- commit, so a value can be removed and set again in the same transaction.
--- A stock row that has been deleted or purged by then is left alone, and is
--- looked up first, so that purging a stock row costs one look-up per value.
+-- A stock row that has been deleted by then (its values go with it) is left
+-- alone, and is looked up first, so that deleting a stock row costs one
+-- look-up per value.
 CREATE FUNCTION stock.check_required_value_removal()
 RETURNS trigger
 LANGUAGE plpgsql AS $$
@@ -242,7 +234,7 @@ BEGIN
     SELECT i.name INTO v_item
     FROM public.stock s
     JOIN public.item i ON i.id = s.item
-    WHERE s.id = OLD.stock AND s.deleted IS NULL;
+    WHERE s.id = OLD.stock;
     IF NOT FOUND THEN
         RETURN NULL;
     END IF;
@@ -262,104 +254,23 @@ CREATE CONSTRAINT TRIGGER check_required_value_removal
     DEFERRABLE INITIALLY DEFERRED
     FOR EACH ROW EXECUTE FUNCTION stock.check_required_value_removal();
 
--- A live stock row's item and location must be live. When a stock row is
--- restored, its values come back with it, so they must refer to live
--- attributes and options too; see item.check_live for why, and for the
--- locks.
-CREATE FUNCTION stock.check_live()
-RETURNS trigger
-LANGUAGE plpgsql AS $$
-DECLARE
-    v_deleted uuid[];
-BEGIN
-    PERFORM util.check_live('item', NEW.item);
-    PERFORM util.check_live('location', NEW.location);
-
-    IF TG_OP = 'UPDATE' AND OLD.deleted IS NOT NULL THEN
-        PERFORM 1 FROM public.attribute a
-        WHERE a.id IN (SELECT sv.attribute FROM public.stock_value sv WHERE sv.stock = NEW.id)
-        FOR SHARE;
-        PERFORM 1 FROM public.attribute_option o
-        WHERE o.id IN (SELECT sv.option FROM public.stock_value sv WHERE sv.stock = NEW.id)
-        FOR SHARE;
-
-        SELECT array_agg(sv.attribute) INTO v_deleted
-        FROM public.stock_value sv
-        JOIN public.attribute a             ON a.id = sv.attribute
-        LEFT JOIN public.attribute_option o ON o.id = sv.option
-        WHERE sv.stock = NEW.id
-          AND (a.deleted IS NOT NULL OR o.deleted IS NOT NULL);
-        IF v_deleted IS NOT NULL THEN
-            RAISE EXCEPTION '% can''t be restored: its values for % refer to deleted attributes or options',
-                error.row_label('stock', NEW.id), error.attribute_names(v_deleted)
-                USING ERRCODE = 'object_not_in_prerequisite_state',
-                      HINT = 'Restore those attributes or options first.';
-        END IF;
-    END IF;
-
-    RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER check_live
-    BEFORE INSERT ON public.stock
-    FOR EACH ROW EXECUTE FUNCTION stock.check_live();
-
-CREATE TRIGGER check_live_change
-    BEFORE UPDATE OF item, location, deleted ON public.stock
-    FOR EACH ROW
-    WHEN (OLD.item <> NEW.item
-          OR OLD.location <> NEW.location
-          OR (OLD.deleted IS NOT NULL AND NEW.deleted IS NULL))
-    EXECUTE FUNCTION stock.check_live();
-
--- A stock value's stock row, attribute and option must be live. A value has
--- no deleted of its own: it belongs to its stock row, and comes back with
--- it (stock.check_live checks it then).
-CREATE FUNCTION stock.check_value_live()
-RETURNS trigger
-LANGUAGE plpgsql AS $$
-BEGIN
-    PERFORM util.check_live('stock', NEW.stock);
-    PERFORM util.check_live('attribute', NEW.attribute);
-    PERFORM util.check_live('attribute_option', NEW.option);
-    RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER check_value_live
-    BEFORE INSERT ON public.stock_value
-    FOR EACH ROW EXECUTE FUNCTION stock.check_value_live();
-
-CREATE TRIGGER check_value_live_change
-    BEFORE UPDATE OF stock, attribute, option ON public.stock_value
-    FOR EACH ROW
-    WHEN (OLD.stock <> NEW.stock
-          OR OLD.attribute <> NEW.attribute
-          OR OLD.option IS DISTINCT FROM NEW.option)
-    EXECUTE FUNCTION stock.check_value_live();
-
 -- ---------------------------------------------------------------------------
 -- Helpers
 -- ---------------------------------------------------------------------------
 
--- A stock row as the API shows it, from its row, its photo's JSON and what
--- its deleted says (NULL for a live row). Its amount is in the base unit of
--- its item's unit. location is the id: clients look it up in the location
--- tree they keep. merged_into, for a row a move merged into another, is the
--- row it went into.
-CREATE FUNCTION stock.json(p_stock public.stock, p_photo jsonb, p_deleted jsonb)
+-- A stock row as the API shows it, from its row and its photo's JSON. Its
+-- amount is in the base unit of its item's unit. location is the id:
+-- clients look it up in the location tree they keep.
+CREATE FUNCTION stock.json(p_stock public.stock, p_photo jsonb)
 RETURNS jsonb
 LANGUAGE sql IMMUTABLE AS $$
     SELECT jsonb_build_object(
-        'id',          p_stock.id,
-        'code',        util.code_text(p_stock.code),
-        'item',        p_stock.item,
-        'location',    p_stock.location,
-        'amount',      p_stock.amount,
-        'photo',       p_photo,
-        'deleted',     p_deleted,
-        'merged_into', p_stock.merged_into
+        'id',       p_stock.id,
+        'code',     util.code_text(p_stock.code),
+        'item',     p_stock.item,
+        'location', p_stock.location,
+        'amount',   p_stock.amount,
+        'photo',    p_photo
     );
 $$;
 
@@ -384,12 +295,11 @@ $$;
 
 -- A stock row as stock.get shows it: its item, its amount and how it is
 -- shown, its values (its own, and the class defaults it shows where it has
--- none), the required values it lacks, its photo and attachments, and for a
--- row a move merged into another, that row's id and code. One walk up the
--- item's class tree for the values, one for what is missing. Shared by the
--- functions that return a stock row after changing it. (PL/pgSQL, as it
--- uses item.json, which is made after this script.)
-CREATE FUNCTION stock.detail_json(p_tenant uuid, p_stock public.stock, p_deleted jsonb)
+-- none), the required values it lacks, and its photo and attachments. One
+-- walk up the item's class tree for the values, one for what is missing.
+-- Shared by the functions that return a stock row after changing it.
+-- (PL/pgSQL, as it uses item.json, which is made after this script.)
+CREATE FUNCTION stock.detail_json(p_tenant uuid, p_stock public.stock)
 RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
@@ -411,15 +321,13 @@ BEGIN
             WHERE sv.stock IS NOT NULL OR num_nonnulls(e.default_text, e.default_number, e.default_date,
                                                  e.default_boolean, e.default_option) = 1
         )
-        SELECT stock.json(p_stock, attachment.json(ph, NULL), p_deleted) || jsonb_build_object(
-            'item',        item.json(i, attachment.json(iph, NULL), NULL),
+        SELECT stock.json(p_stock, attachment.json(ph)) || jsonb_build_object(
+            'item',        item.json(i, attachment.json(iph)),
             'display',     CASE WHEN d.unit IS NOT NULL
                                 THEN jsonb_build_object('value', d.value, 'unit', d.unit) END,
-            'merged_into', CASE WHEN m.id IS NOT NULL
-                                THEN jsonb_build_object('id', m.id, 'code', util.code_text(m.code)) END,
             'values',      coalesce((
                 SELECT jsonb_agg(jsonb_build_object(
-                           'attribute',  attribute.json(x.a, NULL),
+                           'attribute',  attribute.json(x.a),
                            'value',      util.typed_value_json((x.a).datatype, x.text, x.number, x.date, x.boolean, o),
                            'display',    CASE WHEN vd.unit IS NOT NULL
                                               THEN jsonb_build_object('value', vd.value, 'unit', vd.unit) END,
@@ -436,36 +344,34 @@ BEGIN
             'attachments', attachment.list_json(p_stock.photo, (
                 SELECT array_agg(a ORDER BY a.title COLLATE public.natural, a.id)
                 FROM public.attachment a
-                WHERE a.stock = p_stock.id AND a.deleted IS NULL)))
+                WHERE a.stock = p_stock.id)))
         FROM public.item i
         LEFT JOIN public.attachment ph  ON ph.id = p_stock.photo
         LEFT JOIN public.attachment iph ON iph.id = i.photo
-        LEFT JOIN public.stock m        ON m.id = p_stock.merged_into
         LEFT JOIN LATERAL unit.display(p_tenant, p_stock.amount, i.unit, i.unit_lock) d ON true
         WHERE i.id = p_stock.item
     );
 END;
 $$;
 
--- Whether stock rows p_a and p_b have exactly the same values: the same
--- attributes, with the same value each.
-CREATE FUNCTION stock.values_equal(p_a uuid, p_b uuid)
-RETURNS boolean
+-- The attributes whose values differ between stock rows p_a and p_b: those
+-- one row has and the other hasn't, and those with another value. Empty
+-- when the rows have exactly the same values.
+CREATE FUNCTION stock.values_differing(p_a uuid, p_b uuid)
+RETURNS uuid[]
 LANGUAGE sql STABLE AS $$
-    SELECT NOT EXISTS (
-        SELECT 1
-        FROM (SELECT * FROM public.stock_value WHERE stock = p_a) a
-        FULL JOIN (SELECT * FROM public.stock_value WHERE stock = p_b) b ON b.attribute = a.attribute
-        WHERE a.attribute IS NULL OR b.attribute IS NULL
-           OR (a.text, a.number, a.date, a.boolean, a.option)
-              IS DISTINCT FROM (b.text, b.number, b.date, b.boolean, b.option)
-    );
+    SELECT coalesce(array_agg(coalesce(a.attribute, b.attribute)), '{}')
+    FROM (SELECT * FROM public.stock_value WHERE stock = p_a) a
+    FULL JOIN (SELECT * FROM public.stock_value WHERE stock = p_b) b ON b.attribute = a.attribute
+    WHERE a.attribute IS NULL OR b.attribute IS NULL
+       OR (a.text, a.number, a.date, a.boolean, a.option)
+          IS DISTINCT FROM (b.text, b.number, b.date, b.boolean, b.option);
 $$;
 
--- Copies stock row p_from's live attachments to stock row p_to (the same
--- files: an attachment's content is found by its hash), and makes the copy
--- of p_photo, p_from's photo, p_to's photo. The copies' ids are made first,
--- so that the photo can refer to its copy.
+-- Copies stock row p_from's attachments to stock row p_to (the same files:
+-- an attachment's content is found by its hash), and makes the copy of
+-- p_photo, p_from's photo, p_to's photo. The copies' ids are made first, so
+-- that the photo can refer to its copy.
 CREATE FUNCTION stock.copy_attachments(p_from uuid, p_photo uuid, p_to uuid)
 RETURNS void
 LANGUAGE plpgsql AS $$
@@ -473,7 +379,7 @@ BEGIN
     DROP TABLE IF EXISTS pg_temp.copied;
     CREATE TEMPORARY TABLE pg_temp.copied ON COMMIT DROP AS
     SELECT a.id AS old, uuidv7() AS new
-    FROM public.attachment a WHERE a.stock = p_from AND a.deleted IS NULL;
+    FROM public.attachment a WHERE a.stock = p_from;
     INSERT INTO public.attachment (id, stock, media_type, hash, size, title)
     SELECT c.new, p_to, a.media_type, a.hash, a.size, a.title
     FROM pg_temp.copied c JOIN public.attachment a ON a.id = c.old;
@@ -486,10 +392,10 @@ $$;
 -- Functions the API calls
 -- ---------------------------------------------------------------------------
 
--- A page of the tenant's live stock rows, by item name, each with its item,
--- its amount and how it is shown, and its photo; with the number that
--- match. Optional: p_item, only that item's rows; p_location, only the rows
--- in that location or the locations below it.
+-- A page of the tenant's stock rows, by item name, each with its item, its
+-- amount and how it is shown, and its photo; with the number that match.
+-- Optional: p_item, only that item's rows; p_location, only the rows in
+-- that location or the locations below it.
 CREATE FUNCTION stock.list(
     p_request  public.request,
     p_item     uuid    DEFAULT NULL,
@@ -527,7 +433,7 @@ BEGIN
             FROM public.stock s
             JOIN public.location l ON l.id = s.location
             JOIN public.item i     ON i.id = s.item
-            WHERE l.tenant = v_session.tenant AND s.deleted IS NULL
+            WHERE l.tenant = v_session.tenant
               AND (p_item IS NULL OR s.item = p_item)
               AND (p_location IS NULL OR s.location IN (SELECT id FROM subtree))
         ),
@@ -542,9 +448,9 @@ BEGIN
             'limit',  p_limit,
             'offset', p_offset,
             'rows',   coalesce((
-                SELECT jsonb_agg(stock.json(p.row, attachment.json(ph, NULL), NULL)
+                SELECT jsonb_agg(stock.json(p.row, attachment.json(ph))
                                  || jsonb_build_object(
-                                        'item',    item.json(p.item, attachment.json(iph, NULL), NULL),
+                                        'item',    item.json(p.item, attachment.json(iph)),
                                         'display', CASE WHEN d.unit IS NOT NULL
                                                         THEN jsonb_build_object('value', d.value, 'unit', d.unit) END)
                                  ORDER BY p.position)
@@ -557,8 +463,7 @@ BEGIN
 END;
 $$;
 
--- One of the tenant's stock rows, as stock.detail_json shows it. A deleted
--- row is returned too, saying when and by whom it was deleted.
+-- One of the tenant's stock rows, as stock.detail_json shows it.
 CREATE FUNCTION stock.get(p_request public.request, p_stock uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -568,11 +473,9 @@ DECLARE
     v_session record := util.session(p_request, 'viewer');
     v_result  jsonb;
 BEGIN
-    SELECT stock.detail_json(v_session.tenant, s, util.deleted_json(d, db)) INTO v_result
+    SELECT stock.detail_json(v_session.tenant, s) INTO v_result
     FROM public.stock s
-    JOIN public.location l      ON l.id = s.location
-    LEFT JOIN public.action d   ON d.id = s.deleted
-    LEFT JOIN public.account db ON db.id = d.account
+    JOIN public.location l ON l.id = s.location
     WHERE s.id = p_stock AND l.tenant = v_session.tenant;
     IF NOT FOUND THEN
         PERFORM error.not_found('stock row', p_stock::text);
@@ -610,21 +513,20 @@ BEGIN
         PERFORM error.bad_reference('location', p_location);
     END IF;
 
-    PERFORM util.begin_action(v_session);
     INSERT INTO public.stock (code, item, location, amount)
     VALUES (tenant.take_codes(v_session.tenant, 1), p_item, p_location, p_amount)
     RETURNING * INTO v_stock;
     PERFORM stock.values_set(v_session.tenant, v_stock.id, p_values);
-    RETURN stock.detail_json(v_session.tenant, v_stock, NULL);
+    RETURN stock.detail_json(v_session.tenant, v_stock);
 END;
 $$;
 
--- Corrects the fields of one of the tenant's live stock rows that p_patch
--- has: item, location, amount (null: not counted), and photo (the id of one
--- of its own image attachments, or null). To move things, use stock.move,
--- which keeps the history of a move as a move; this is for corrections. The
--- rules refuse an item whose class doesn't take the row's values, and a
--- location that is a container. Returns the row as stock.get does.
+-- Corrects the fields of one of the tenant's stock rows that p_patch has:
+-- item, location, amount (null: not counted), and photo (the id of one of
+-- its own image attachments, or null). To move things, use stock.move; this
+-- is for corrections. The rules refuse an item whose class doesn't take the
+-- row's values, and a location that is a container. Returns the row as
+-- stock.get does.
 CREATE FUNCTION stock.patch(p_request public.request, p_stock uuid, p_patch jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -645,9 +547,6 @@ BEGIN
     FOR UPDATE OF s;
     IF NOT FOUND THEN
         PERFORM error.not_found('stock row', p_stock::text);
-    END IF;
-    IF v_stock.deleted IS NOT NULL THEN
-        PERFORM error.deleted('stock', p_stock);
     END IF;
 
     v_item  := coalesce((p_patch ->> 'item')::uuid, v_stock.item);
@@ -670,7 +569,6 @@ BEGIN
         PERFORM error.invalid('photo must be the id of an attachment, or null');
     END IF;
 
-    PERFORM util.begin_action(v_session);
     UPDATE public.stock s
     SET item     = v_item,
         location = v_place,
@@ -678,23 +576,19 @@ BEGIN
         photo    = CASE WHEN p_patch ? 'photo' THEN (p_patch ->> 'photo')::uuid ELSE s.photo END
     WHERE s.id = p_stock
     RETURNING * INTO v_stock;
-    RETURN stock.detail_json(v_session.tenant, v_stock, NULL);
+    RETURN stock.detail_json(v_session.tenant, v_stock);
 END;
 $$;
 
--- Moves one of the tenant's live stock rows, or part of it, to another of
--- its locations. p_amount NULL moves the whole row; otherwise it is the
--- amount to move (in the base unit of the item's unit), and the row must be
--- counted.
---
--- If the destination holds exactly one live counted row of the same item,
--- with exactly the same values, and the moved row has no attachments, the
--- moved amount is added to that row: a whole row is then marked deleted, by
--- this call's action, with merged_into that row. Otherwise a whole row
--- changes location, and a part is split off into a new row at the
--- destination, with a code of its own, copies of the values and of the
--- live attachments (the same files), and the copy of the photo as its
--- photo. Returns the row at the destination, as stock.get does.
+-- Moves one of the tenant's stock rows, or part of it, to another of its
+-- locations. p_amount NULL moves the whole row; otherwise it is the amount
+-- to move (in the base unit of the item's unit), and the row must be
+-- counted. A whole row changes location and keeps its code; a part is split
+-- off into a new row at the destination, with a code of its own, copies of
+-- the values and of the attachments (the same files), and the copy of the
+-- photo as its photo. It never merges into a row at the destination:
+-- stock.merge does that, when the user asks. Returns the row at the
+-- destination, as stock.get does.
 CREATE FUNCTION stock.move(p_request public.request, p_stock uuid, p_location uuid, p_amount numeric)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -703,10 +597,7 @@ AS $$
 DECLARE
     v_session record := util.session(p_request, 'user');
     v_stock   public.stock;
-    v_amount  numeric;
-    v_whole   boolean;
-    v_target  public.stock;
-    v_action  uuid;
+    v_split   public.stock;
 BEGIN
     SELECT s.* INTO v_stock
     FROM public.stock s
@@ -715,9 +606,6 @@ BEGIN
     FOR UPDATE OF s;
     IF NOT FOUND THEN
         PERFORM error.not_found('stock row', p_stock::text);
-    END IF;
-    IF v_stock.deleted IS NOT NULL THEN
-        PERFORM error.deleted('stock', p_stock);
     END IF;
     IF NOT EXISTS (SELECT 1 FROM public.location l
                    WHERE l.id = p_location AND l.tenant = v_session.tenant) THEN
@@ -732,62 +620,102 @@ BEGIN
                                          v_stock.amount));
         END IF;
     END IF;
-    v_amount := coalesce(p_amount, v_stock.amount);
-    v_whole  := p_amount IS NULL OR p_amount = v_stock.amount;
 
-    v_action := util.begin_action(v_session);
-
-    -- The row to merge into: the destination's one live counted row of this
-    -- item, if it has the same values and the moved row no attachments.
-    -- Locked, so that two moves into it add up.
-    IF v_amount IS NOT NULL
-       AND NOT EXISTS (SELECT 1 FROM public.attachment a
-                       WHERE a.stock = p_stock AND a.deleted IS NULL) THEN
-        SELECT t.* INTO v_target
-        FROM public.stock t
-        WHERE t.item = v_stock.item AND t.location = p_location
-          AND t.amount IS NOT NULL AND t.deleted IS NULL AND t.id <> p_stock
-        FOR UPDATE;
-        IF NOT FOUND OR (SELECT count(*) FROM public.stock t
-                         WHERE t.item = v_stock.item AND t.location = p_location
-                           AND t.amount IS NOT NULL AND t.deleted IS NULL AND t.id <> p_stock) <> 1
-           OR NOT stock.values_equal(p_stock, v_target.id) THEN
-            v_target := NULL;
-        END IF;
-    END IF;
-
-    IF v_target.id IS NOT NULL THEN
-        UPDATE public.stock t SET amount = t.amount + v_amount
-        WHERE t.id = v_target.id RETURNING * INTO v_target;
-        IF v_whole THEN
-            UPDATE public.stock s SET deleted = v_action, merged_into = v_target.id WHERE s.id = p_stock;
-        ELSE
-            UPDATE public.stock s SET amount = s.amount - v_amount WHERE s.id = p_stock;
-        END IF;
-        RETURN stock.detail_json(v_session.tenant, v_target, NULL);
-    END IF;
-
-    IF v_whole THEN
+    IF p_amount IS NULL OR p_amount = v_stock.amount THEN
         UPDATE public.stock s SET location = p_location WHERE s.id = p_stock RETURNING * INTO v_stock;
-        RETURN stock.detail_json(v_session.tenant, v_stock, NULL);
+        RETURN stock.detail_json(v_session.tenant, v_stock);
     END IF;
 
     -- A part, split off into a new row.
-    UPDATE public.stock s SET amount = s.amount - v_amount WHERE s.id = p_stock;
+    UPDATE public.stock s SET amount = s.amount - p_amount WHERE s.id = p_stock;
     INSERT INTO public.stock (code, item, location, amount)
-    VALUES (tenant.take_codes(v_session.tenant, 1), v_stock.item, p_location, v_amount)
-    RETURNING * INTO v_target;
+    VALUES (tenant.take_codes(v_session.tenant, 1), v_stock.item, p_location, p_amount)
+    RETURNING * INTO v_split;
     INSERT INTO public.stock_value (stock, attribute, text, number, date, boolean, option)
-    SELECT v_target.id, v.attribute, v.text, v.number, v.date, v.boolean, v.option
+    SELECT v_split.id, v.attribute, v.text, v.number, v.date, v.boolean, v.option
     FROM public.stock_value v WHERE v.stock = p_stock;
-    PERFORM stock.copy_attachments(p_stock, v_stock.photo, v_target.id);
-    SELECT t.* INTO v_target FROM public.stock t WHERE t.id = v_target.id;
-    RETURN stock.detail_json(v_session.tenant, v_target, NULL);
+    PERFORM stock.copy_attachments(p_stock, v_stock.photo, v_split.id);
+    SELECT s.* INTO v_split FROM public.stock s WHERE s.id = v_split.id;
+    RETURN stock.detail_json(v_session.tenant, v_split);
 END;
 $$;
 
--- Deletes one of the tenant's stock rows: it is marked deleted, by this
--- call's action, with its values and attachments as they are.
+-- Adds p_amount of one of the tenant's stock rows (NULL: all of it) to
+-- another of its rows, p_into, which may be at another location. Both rows
+-- must be of the same item and counted, and have exactly the same values
+-- (422 otherwise, naming the attributes that differ), as nothing about a
+-- row may be lost by merging. Merging all of it deletes the row, whose
+-- label then answers "gone" (code.resolve), and its attachments move to
+-- p_into, which keeps its own photo; merging part of it leaves the row with
+-- the rest, and its attachments with it. Returns p_into as stock.get does.
+CREATE FUNCTION stock.merge(p_request public.request, p_stock uuid, p_into uuid, p_amount numeric)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+    v_session   record := util.session(p_request, 'user');
+    v_stock     public.stock;
+    v_into      public.stock;
+    v_amount    numeric;
+    v_differing uuid[];
+BEGIN
+    -- Both rows locked, in the order of their ids, so that two merges of
+    -- the same rows the other way round can't wait for each other.
+    PERFORM 1 FROM public.stock s
+    JOIN public.location l ON l.id = s.location
+    WHERE s.id IN (p_stock, p_into) AND l.tenant = v_session.tenant
+    ORDER BY s.id
+    FOR UPDATE OF s;
+    SELECT s.* INTO v_stock
+    FROM public.stock s JOIN public.location l ON l.id = s.location
+    WHERE s.id = p_stock AND l.tenant = v_session.tenant;
+    IF NOT FOUND THEN
+        PERFORM error.not_found('stock row', p_stock::text);
+    END IF;
+    SELECT s.* INTO v_into
+    FROM public.stock s JOIN public.location l ON l.id = s.location
+    WHERE s.id = p_into AND l.tenant = v_session.tenant;
+    IF NOT FOUND THEN
+        PERFORM error.bad_reference('stock row', p_into);
+    END IF;
+
+    IF p_into = p_stock THEN
+        PERFORM error.not_allowed('A stock row can''t be merged into itself');
+    END IF;
+    IF v_into.item <> v_stock.item THEN
+        PERFORM error.not_allowed(format('%s and %s are of different items, so they can''t be merged',
+                                         error.row_label('stock', p_stock), error.row_label('stock', p_into)));
+    END IF;
+    IF v_stock.amount IS NULL OR v_into.amount IS NULL THEN
+        PERFORM error.not_allowed('Only counted stock rows can be merged; give both an amount first');
+    END IF;
+    v_differing := stock.values_differing(p_stock, p_into);
+    IF cardinality(v_differing) > 0 THEN
+        PERFORM error.not_allowed(format('%s and %s have different values for %s, so they can''t be merged',
+                                         error.row_label('stock', p_stock), error.row_label('stock', p_into),
+                                         error.attribute_names(v_differing)));
+    END IF;
+    IF p_amount IS NOT NULL AND (p_amount <= 0 OR p_amount > v_stock.amount) THEN
+        PERFORM error.invalid(format('The amount to merge must be more than 0 and at most %s',
+                                     v_stock.amount));
+    END IF;
+    v_amount := coalesce(p_amount, v_stock.amount);
+
+    UPDATE public.stock s SET amount = s.amount + v_amount WHERE s.id = p_into RETURNING * INTO v_into;
+    IF v_amount = v_stock.amount THEN
+        -- The photo first, as it refers to one of the attachments that move.
+        UPDATE public.stock s SET photo = NULL WHERE s.id = p_stock;
+        UPDATE public.attachment a SET stock = p_into WHERE a.stock = p_stock;
+        DELETE FROM public.stock s WHERE s.id = p_stock;
+    ELSE
+        UPDATE public.stock s SET amount = s.amount - v_amount WHERE s.id = p_stock;
+    END IF;
+    RETURN stock.detail_json(v_session.tenant, v_into);
+END;
+$$;
+
+-- Deletes one of the tenant's stock rows, with its values and attachments.
 CREATE FUNCTION stock.delete(p_request public.request, p_stock uuid)
 RETURNS void
 LANGUAGE plpgsql
@@ -795,96 +723,22 @@ SECURITY DEFINER SET search_path = pg_catalog, pg_temp
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'user');
-    v_action  uuid := util.begin_action(v_session);
 BEGIN
-    UPDATE public.stock s
-    SET deleted = v_action
-    FROM public.location l
-    WHERE s.id = p_stock AND l.id = s.location AND l.tenant = v_session.tenant
-      AND s.deleted IS NULL;
+    DELETE FROM public.stock s
+    USING public.location l
+    WHERE s.id = p_stock AND l.id = s.location AND l.tenant = v_session.tenant;
     IF NOT FOUND THEN
         PERFORM error.not_found('stock row', p_stock::text);
     END IF;
 END;
 $$;
 
--- Restores a deleted stock row of the tenant. A row a move merged into
--- another can't be restored (409): its amount is in that row now. A row
--- whose item is deleted can't either: restoring the item brings back the
--- rows deleted with it. p_options, each optional:
---   location      a location to restore it in instead
---   with_parents  true: also restore its deleted location, and the deleted
---                 locations above that, from the top down (for admins)
--- A row at a deleted location can't be restored without location or
--- with_parents (409, naming both ways out). Returns the row as stock.get
--- does.
-CREATE FUNCTION stock.restore(p_request public.request, p_stock uuid, p_options jsonb)
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
-AS $$
-DECLARE
-    v_session  record := util.session(p_request, 'user');
-    v_stock    public.stock;
-    v_location uuid;
-BEGIN
-    PERFORM util.check_patch(p_options, ARRAY['location', 'with_parents'],
-                             ARRAY['location', 'with_parents']);
-    SELECT s.* INTO v_stock
-    FROM public.stock s
-    JOIN public.location l ON l.id = s.location
-    WHERE s.id = p_stock AND l.tenant = v_session.tenant
-    FOR UPDATE OF s;
-    IF NOT FOUND THEN
-        PERFORM error.not_found('stock row', p_stock::text);
-    END IF;
-    IF v_stock.deleted IS NULL THEN
-        PERFORM error.not_deleted('stock', p_stock);
-    END IF;
-    IF v_stock.merged_into IS NOT NULL THEN
-        PERFORM error.wrong_state(format(
-            'This stock row was merged into stock row %s, and can''t be restored; '
-            'move part of that row to split it off again',
-            (SELECT util.code_text(m.code) FROM public.stock m WHERE m.id = v_stock.merged_into)));
-    END IF;
-    IF (SELECT i.deleted FROM public.item i WHERE i.id = v_stock.item) IS NOT NULL THEN
-        PERFORM error.wrong_state(format(
-            '%s belongs to %s, which is deleted; restoring the item also restores the stock rows deleted with it',
-            error.row_label('stock', p_stock), error.row_label('item', v_stock.item)));
-    END IF;
-
-    v_location := coalesce((p_options ->> 'location')::uuid, v_stock.location);
-    IF NOT EXISTS (SELECT 1 FROM public.location l
-                   WHERE l.id = v_location AND l.tenant = v_session.tenant) THEN
-        PERFORM error.bad_reference('location', v_location);
-    END IF;
-
-    PERFORM util.begin_action(v_session);
-    IF (SELECT l.deleted FROM public.location l WHERE l.id = v_location) IS NOT NULL THEN
-        IF p_options ? 'location' THEN
-            PERFORM error.deleted('location', v_location);
-        ELSIF NOT coalesce((p_options ->> 'with_parents')::boolean, false) THEN
-            PERFORM error.restore_into_deleted(error.row_label('stock', p_stock),
-                format('"%s"', util.path_text(location.path_json(v_location))), 'location');
-        ELSIF v_session.role < 'admin' THEN
-            PERFORM error.forbidden('Restoring the locations it is in needs the role admin');
-        END IF;
-        PERFORM location.restore_parents(v_location);
-    END IF;
-
-    UPDATE public.stock s SET deleted = NULL, location = v_location
-    WHERE s.id = p_stock
-    RETURNING * INTO v_stock;
-    RETURN stock.detail_json(v_session.tenant, v_stock, NULL);
-END;
-$$;
-
--- Sets one value of one of the tenant's live stock rows: inserts it, or
--- replaces the one there. Numbers of an attribute with a unit are in the
--- base unit; a JSON null is refused (remove a value with value delete). The
--- rules refuse a value that doesn't fit, or whose attribute doesn't apply to
--- the class of the row's item with its values on each stock row. Returns
--- the row as stock.get does.
+-- Sets one value of one of the tenant's stock rows: inserts it, or replaces
+-- the one there. Numbers of an attribute with a unit are in the base unit;
+-- a JSON null is refused (remove a value with value delete). The rules
+-- refuse a value that doesn't fit, or whose attribute doesn't apply to the
+-- class of the row's item with its values on each stock row. Returns the
+-- row as stock.get does.
 CREATE FUNCTION stock.value_set(p_request public.request, p_stock uuid, p_attribute uuid, p_value jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -897,7 +751,7 @@ BEGIN
     SELECT s.* INTO v_stock
     FROM public.stock s
     JOIN public.location l ON l.id = s.location
-    WHERE s.id = p_stock AND l.tenant = v_session.tenant AND s.deleted IS NULL;
+    WHERE s.id = p_stock AND l.tenant = v_session.tenant;
     IF NOT FOUND THEN
         PERFORM error.not_found('stock row', p_stock::text);
     END IF;
@@ -905,14 +759,13 @@ BEGIN
         PERFORM error.invalid('Remove a value with value delete');
     END IF;
 
-    PERFORM util.begin_action(v_session);
     PERFORM stock.values_set(v_session.tenant, p_stock, jsonb_build_object(p_attribute::text, p_value));
-    RETURN stock.detail_json(v_session.tenant, v_stock, NULL);
+    RETURN stock.detail_json(v_session.tenant, v_stock);
 END;
 $$;
 
--- Removes one value of one of the tenant's live stock rows. A required
--- value without a default can't be removed (checked at the end of the
+-- Removes one value of one of the tenant's stock rows. A required value
+-- without a default can't be removed (checked at the end of the
 -- transaction). Returns the row as stock.get does, which then shows the
 -- class default, if there is one.
 CREATE FUNCTION stock.value_delete(p_request public.request, p_stock uuid, p_attribute uuid)
@@ -927,17 +780,16 @@ BEGIN
     SELECT s.* INTO v_stock
     FROM public.stock s
     JOIN public.location l ON l.id = s.location
-    WHERE s.id = p_stock AND l.tenant = v_session.tenant AND s.deleted IS NULL;
+    WHERE s.id = p_stock AND l.tenant = v_session.tenant;
     IF NOT FOUND THEN
         PERFORM error.not_found('stock row', p_stock::text);
     END IF;
 
-    PERFORM util.begin_action(v_session);
     DELETE FROM public.stock_value v WHERE v.stock = p_stock AND v.attribute = p_attribute;
     IF NOT FOUND THEN
         PERFORM error.not_found('value', format('of attribute %s on %s',
                                                 p_attribute, error.row_label('stock', p_stock)));
     END IF;
-    RETURN stock.detail_json(v_session.tenant, v_stock, NULL);
+    RETURN stock.detail_json(v_session.tenant, v_stock);
 END;
 $$;

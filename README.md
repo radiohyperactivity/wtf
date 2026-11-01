@@ -268,9 +268,7 @@ Take the database dump first and copy the files afterwards. Then every file the 
 
 Run `wtfd gc` regularly (e.g. nightly) to remove files that no attachment refers to any more (see [WTFD.md](WTFD.md)).
 
-History grows with every change. If it should not be kept forever, purge old entries regularly as well, e.g. `wtfd history purge --older-than 730d` (see [WTFD.md](WTFD.md)).
-
-Deleted things stay in the database, so they can be restored, until they are purged: e.g. `wtfd deleted purge --older-than 365d`, followed by `wtfd gc` for their files. When and whether to purge is your choice.
+**A delete is final.** WtF keeps no deleted things and no history, so a backup is the way back from a mistake. That is also why the copy of the files directory above has no `--delete`: the files of deleted attachments stay in the backup after `wtfd gc` removes them from the server. Keep it that way.
 
 ### Restoring
 
@@ -290,6 +288,10 @@ Restore into a new, empty database prepared exactly like the original, so that o
 4. **Check it:** `wtfd schema --database-name wtf_restored --dry-run` must report "up to date". After that, `wtfd serve` can use it.
 
 Test a restore now and then. A backup that has never been restored is only a hope.
+
+### Getting one thing back
+
+To get back something deleted by mistake, without losing what changed since, restore the backup *beside* the live database, as `wtf_restored` (steps 1 and 2 above), and look the thing up there, e.g. with `psql` as `wtf_dba`. Then enter it again through the app or the CLI, or copy its rows across by hand. Its attachments' files are in the backup of the files directory, under their hash. Drop `wtf_restored` afterwards.
 
 ## Tests
 

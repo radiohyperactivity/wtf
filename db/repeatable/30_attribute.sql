@@ -39,9 +39,8 @@ CREATE TRIGGER check_unit_datatype
 
 -- An attribute's datatype is chosen when the attribute is created and
 -- never changes. Its values, its options and the default values of its
--- assignments are all stored by datatype, including those on deleted rows
--- that can be restored, so a change would leave some of them in the wrong
--- form. To change it, make a new attribute.
+-- assignments are all stored by datatype, so a change would leave some of
+-- them in the wrong form. To change it, make a new attribute.
 CREATE FUNCTION attribute.refuse_datatype_change()
 RETURNS trigger
 LANGUAGE plpgsql AS $$
@@ -142,93 +141,13 @@ CREATE TRIGGER check_value_datatype_change
           OR OLD.option  IS DISTINCT FROM NEW.option)
     EXECUTE FUNCTION attribute.check_value_datatype();
 
--- A live option's attribute must be live: an option can't be added to, or
--- restored onto, a deleted attribute.
-CREATE FUNCTION attribute.check_option_live()
-RETURNS trigger
-LANGUAGE plpgsql AS $$
-BEGIN
-    PERFORM util.check_live('attribute', NEW.attribute);
-    RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER check_option_live
-    BEFORE INSERT ON public.attribute_option
-    FOR EACH ROW EXECUTE FUNCTION attribute.check_option_live();
-
-CREATE TRIGGER check_option_live_change
-    BEFORE UPDATE OF attribute, deleted ON public.attribute_option
-    FOR EACH ROW
-    WHEN (OLD.attribute <> NEW.attribute
-          OR (OLD.deleted IS NOT NULL AND NEW.deleted IS NULL))
-    EXECUTE FUNCTION attribute.check_option_live();
-
--- An attribute can only be deleted while nothing live uses it: no item
--- values on live items, no stock values on live stock rows, and no
--- assignments to live classes. Its own options stay as they are, and come
--- back with it.
-CREATE FUNCTION attribute.check_deletable()
-RETURNS trigger
-LANGUAGE plpgsql AS $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM public.item_value v JOIN public.item i ON i.id = v.item
-               WHERE v.attribute = NEW.id AND i.deleted IS NULL)
-       OR EXISTS (SELECT 1 FROM public.stock_value sv JOIN public.stock s ON s.id = sv.stock
-                  WHERE sv.attribute = NEW.id AND s.deleted IS NULL)
-       OR EXISTS (SELECT 1 FROM public.class_attribute ca JOIN public.class c ON c.id = ca.class
-                  WHERE ca.attribute = NEW.id AND c.deleted IS NULL)
-    THEN
-        RAISE EXCEPTION 'Attribute "%" is still in use', NEW.name
-            USING ERRCODE = 'restrict_violation',
-                  HINT = 'Remove it from its classes, and its values from items and stock rows, first.';
-    END IF;
-    RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER check_deletable
-    BEFORE UPDATE OF deleted ON public.attribute
-    FOR EACH ROW
-    WHEN (OLD.deleted IS NULL AND NEW.deleted IS NOT NULL)
-    EXECUTE FUNCTION attribute.check_deletable();
-
--- An option can only be deleted while nothing live uses it: no item or
--- stock values on live items or stock rows, and no assignments to live
--- classes with it as their default.
-CREATE FUNCTION attribute.check_option_deletable()
-RETURNS trigger
-LANGUAGE plpgsql AS $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM public.item_value v JOIN public.item i ON i.id = v.item
-               WHERE v.option = NEW.id AND i.deleted IS NULL)
-       OR EXISTS (SELECT 1 FROM public.stock_value sv JOIN public.stock s ON s.id = sv.stock
-                  WHERE sv.option = NEW.id AND s.deleted IS NULL)
-       OR EXISTS (SELECT 1 FROM public.class_attribute ca JOIN public.class c ON c.id = ca.class
-                  WHERE ca.default_option = NEW.id AND c.deleted IS NULL)
-    THEN
-        RAISE EXCEPTION 'Option "%" is still in use', NEW.name
-            USING ERRCODE = 'restrict_violation',
-                  HINT = 'Change the values and defaults that use it first.';
-    END IF;
-    RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER check_option_deletable
-    BEFORE UPDATE OF deleted ON public.attribute_option
-    FOR EACH ROW
-    WHEN (OLD.deleted IS NULL AND NEW.deleted IS NOT NULL)
-    EXECUTE FUNCTION attribute.check_option_deletable();
-
 -- ---------------------------------------------------------------------------
 -- Helpers
 -- ---------------------------------------------------------------------------
 
--- An attribute as the API shows it, from its row and what its deleted says
--- (util.deleted_json; NULL for a live one). Its unit is the unit's id,
--- which clients look up in the unit families they keep.
-CREATE FUNCTION attribute.json(p_attribute public.attribute, p_deleted jsonb)
+-- An attribute as the API shows it, from its row. Its unit is the unit's
+-- id, which clients look up in the unit families they keep.
+CREATE FUNCTION attribute.json(p_attribute public.attribute)
 RETURNS jsonb
 LANGUAGE sql IMMUTABLE AS $$
     SELECT jsonb_build_object(
@@ -236,35 +155,33 @@ LANGUAGE sql IMMUTABLE AS $$
         'name',      p_attribute.name,
         'datatype',  p_attribute.datatype,
         'unit',      p_attribute.unit,
-        'unit_lock', p_attribute.unit_lock,
-        'deleted',   p_deleted
+        'unit_lock', p_attribute.unit_lock
     );
 $$;
 
--- An option as the API shows it, from its row and what its deleted says.
-CREATE FUNCTION attribute.option_json(p_option public.attribute_option, p_deleted jsonb)
+-- An option as the API shows it, from its row.
+CREATE FUNCTION attribute.option_json(p_option public.attribute_option)
 RETURNS jsonb
 LANGUAGE sql IMMUTABLE AS $$
     SELECT jsonb_build_object(
         'id',        p_option.id,
         'attribute', p_option.attribute,
-        'name',      p_option.name,
-        'deleted',   p_deleted
+        'name',      p_option.name
     );
 $$;
 
 -- An attribute as attribute.get shows it: attribute.json, and for a choice
--- attribute its live options, by name. Shared with the functions that
--- return the attribute after changing it.
-CREATE FUNCTION attribute.detail_json(p_attribute public.attribute, p_deleted jsonb)
+-- attribute its options, by name. Shared with the functions that return the
+-- attribute after changing it.
+CREATE FUNCTION attribute.detail_json(p_attribute public.attribute)
 RETURNS jsonb
 LANGUAGE sql STABLE AS $$
-    SELECT attribute.json(p_attribute, p_deleted)
+    SELECT attribute.json(p_attribute)
            || CASE WHEN p_attribute.datatype = 'choice' THEN jsonb_build_object(
-                  'options', (SELECT coalesce(jsonb_agg(attribute.option_json(o, NULL)
+                  'options', (SELECT coalesce(jsonb_agg(attribute.option_json(o)
                                                         ORDER BY o.name COLLATE public.natural, o.id), '[]')
                               FROM public.attribute_option o
-                              WHERE o.attribute = p_attribute.id AND o.deleted IS NULL))
+                              WHERE o.attribute = p_attribute.id))
               ELSE '{}' END;
 $$;
 
@@ -272,7 +189,7 @@ $$;
 -- Functions the API calls
 -- ---------------------------------------------------------------------------
 
--- The tenant's live attributes, by name.
+-- The tenant's attributes, by name.
 CREATE FUNCTION attribute.list(p_request public.request)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -282,17 +199,15 @@ DECLARE
     v_session record := util.session(p_request, 'viewer');
 BEGIN
     RETURN (
-        SELECT coalesce(jsonb_agg(attribute.json(a, NULL) ORDER BY a.name COLLATE public.natural, a.id), '[]')
+        SELECT coalesce(jsonb_agg(attribute.json(a) ORDER BY a.name COLLATE public.natural, a.id), '[]')
         FROM public.attribute a
         WHERE a.tenant = v_session.tenant
-          AND a.deleted IS NULL
     );
 END;
 $$;
 
--- One of the tenant's attributes; a choice attribute with its live options,
--- by name. A deleted attribute is returned too, saying when and by whom it
--- was deleted.
+-- One of the tenant's attributes; a choice attribute with its options, by
+-- name.
 CREATE FUNCTION attribute.get(p_request public.request, p_attribute uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -302,10 +217,8 @@ DECLARE
     v_session record := util.session(p_request, 'viewer');
     v_result  jsonb;
 BEGIN
-    SELECT attribute.detail_json(a, util.deleted_json(d, db)) INTO v_result
+    SELECT attribute.detail_json(a) INTO v_result
     FROM public.attribute a
-    LEFT JOIN public.action d   ON d.id = a.deleted
-    LEFT JOIN public.account db ON db.id = d.account
     WHERE a.id = p_attribute AND a.tenant = v_session.tenant;
     IF NOT FOUND THEN
         PERFORM error.not_found('attribute', p_attribute::text);
@@ -341,16 +254,14 @@ BEGIN
     PERFORM unit.check_choosable(v_session.tenant, p_unit);
     IF EXISTS (SELECT 1 FROM public.attribute a
                WHERE a.tenant = v_session.tenant
-                 AND lower(a.name) = lower(v_name)
-                 AND a.deleted IS NULL) THEN
+                 AND lower(a.name) = lower(v_name)) THEN
         PERFORM error.duplicate(format('There is an attribute "%s" already', v_name));
     END IF;
 
-    PERFORM util.begin_action(v_session);
     INSERT INTO public.attribute (tenant, name, datatype, unit, unit_lock)
     VALUES (v_session.tenant, v_name, p_datatype, p_unit, p_unit_lock)
     RETURNING * INTO v_attribute;
-    RETURN attribute.detail_json(v_attribute, NULL);
+    RETURN attribute.detail_json(v_attribute);
 END;
 $$;
 
@@ -359,8 +270,8 @@ $$;
 -- in any of its families (numbers are stored in the base unit, so nothing
 -- is converted), and must be available; a unit can't be added or removed
 -- (the rule unit.check_same_quantity says so). The datatype can't be
--- changed: make a new attribute. Deleted attributes can't be changed.
--- Returns the attribute as attribute.get does. For admins.
+-- changed: make a new attribute. Returns the attribute as attribute.get
+-- does. For admins.
 CREATE FUNCTION attribute.patch(p_request public.request, p_attribute uuid, p_patch jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -384,17 +295,13 @@ BEGIN
     IF NOT FOUND THEN
         PERFORM error.not_found('attribute', p_attribute::text);
     END IF;
-    IF v_attribute.deleted IS NOT NULL THEN
-        PERFORM error.deleted('attribute', p_attribute);
-    END IF;
 
     IF p_patch ? 'name' THEN
         v_name := util.trim_and_check(p_patch ->> 'name');
         IF EXISTS (SELECT 1 FROM public.attribute a
                    WHERE a.tenant = v_session.tenant
                      AND lower(a.name) = lower(v_name)
-                     AND a.id <> p_attribute
-                     AND a.deleted IS NULL) THEN
+                     AND a.id <> p_attribute) THEN
             PERFORM error.duplicate(format('There is an attribute "%s" already', v_name));
         END IF;
     END IF;
@@ -405,57 +312,30 @@ BEGIN
         END IF;
     END IF;
 
-    PERFORM util.begin_action(v_session);
     UPDATE public.attribute a
     SET name      = coalesce(v_name, a.name),
         unit      = CASE WHEN p_patch ? 'unit' THEN v_unit ELSE a.unit END,
         unit_lock = coalesce((p_patch ->> 'unit_lock')::boolean, a.unit_lock)
     WHERE a.id = p_attribute
     RETURNING * INTO v_attribute;
-    RETURN attribute.detail_json(v_attribute, NULL);
+    RETURN attribute.detail_json(v_attribute);
 END;
 $$;
 
--- Deletes an attribute of the tenant: it is marked deleted, by this call's
--- action, with its options as they are, so that restoring it brings them
--- back. An attribute still in use can't be deleted (409): live items or
--- stock rows with values for it, or live classes it is assigned to (the
--- rule attribute.check_deletable says so). For admins.
+-- Deletes an attribute of the tenant, with its options. An attribute still
+-- in use can't be deleted (409, naming the first use): values on items or
+-- stock rows, or classes it is assigned to. The foreign keys refuse the
+-- same; this says what is in the way. For admins.
 CREATE FUNCTION attribute.delete(p_request public.request, p_attribute uuid)
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = pg_catalog, pg_temp
 AS $$
 DECLARE
-    v_session record := util.session(p_request, 'admin');
-    v_action  uuid := util.begin_action(v_session);
-BEGIN
-    UPDATE public.attribute a
-    SET deleted = v_action
-    WHERE a.id = p_attribute AND a.tenant = v_session.tenant AND a.deleted IS NULL;
-    IF NOT FOUND THEN
-        IF EXISTS (SELECT 1 FROM public.attribute a WHERE a.id = p_attribute AND a.tenant = v_session.tenant) THEN
-            PERFORM error.deleted('attribute', p_attribute);
-        END IF;
-        PERFORM error.not_found('attribute', p_attribute::text);
-    END IF;
-END;
-$$;
-
--- Restores a deleted attribute of the tenant, with its options as they
--- were. p_options may give it a new name, {"name": ...}, for when another
--- attribute has taken its name since. For admins.
-CREATE FUNCTION attribute.restore(p_request public.request, p_attribute uuid, p_options jsonb)
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
-AS $$
-DECLARE
     v_session   record := util.session(p_request, 'admin');
     v_attribute public.attribute;
-    v_name      text;
+    v_use       text;
 BEGIN
-    PERFORM util.check_patch(p_options, ARRAY['name'], ARRAY['name']);
     SELECT a.* INTO v_attribute
     FROM public.attribute a
     WHERE a.id = p_attribute AND a.tenant = v_session.tenant
@@ -463,32 +343,32 @@ BEGIN
     IF NOT FOUND THEN
         PERFORM error.not_found('attribute', p_attribute::text);
     END IF;
-    IF v_attribute.deleted IS NULL THEN
-        PERFORM error.not_deleted('attribute', p_attribute);
+
+    v_use := coalesce(
+        (SELECT format('class "%s" has it', c.name)
+         FROM public.class_attribute ca JOIN public.class c ON c.id = ca.class
+         WHERE ca.attribute = p_attribute
+         ORDER BY c.name COLLATE public.natural LIMIT 1),
+        (SELECT format('item "%s" has a value for it', i.name)
+         FROM public.item_value v JOIN public.item i ON i.id = v.item
+         WHERE v.attribute = p_attribute
+         ORDER BY i.name COLLATE public.natural LIMIT 1),
+        (SELECT format('a stock row of "%s" has a value for it', i.name)
+         FROM public.stock_value sv
+         JOIN public.stock s ON s.id = sv.stock
+         JOIN public.item i  ON i.id = s.item
+         WHERE sv.attribute = p_attribute
+         ORDER BY i.name COLLATE public.natural LIMIT 1));
+    IF v_use IS NOT NULL THEN
+        PERFORM error.in_use(format('Attribute "%s" is still in use: %s', v_attribute.name, v_use),
+                             'Remove it from its classes, and its values from items and stock rows, first.');
     END IF;
 
-    v_name := CASE WHEN p_options ? 'name' THEN util.trim_and_check(p_options ->> 'name')
-                   ELSE v_attribute.name END;
-    IF EXISTS (SELECT 1 FROM public.attribute a
-               WHERE a.tenant = v_session.tenant
-                 AND lower(a.name) = lower(v_name)
-                 AND a.deleted IS NULL) THEN
-        PERFORM error.duplicate(format(
-            'There is an attribute "%s" already; restore this one with another name ("name": ...)', v_name));
-    END IF;
-
-    PERFORM util.begin_action(v_session);
-    UPDATE public.attribute a
-    SET deleted = NULL, name = v_name
-    WHERE a.id = p_attribute
-    RETURNING * INTO v_attribute;
-    RETURN attribute.detail_json(v_attribute, NULL);
+    DELETE FROM public.attribute a WHERE a.id = p_attribute;
 END;
 $$;
 
--- One option of one of the tenant's attributes. A deleted option is
--- returned too, saying when and by whom it was deleted, as values may
--- still refer to it.
+-- One option of one of the tenant's attributes.
 CREATE FUNCTION attribute.option_get(p_request public.request, p_option uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -498,11 +378,9 @@ DECLARE
     v_session record := util.session(p_request, 'viewer');
     v_result  jsonb;
 BEGIN
-    SELECT attribute.option_json(o, util.deleted_json(d, db)) INTO v_result
+    SELECT attribute.option_json(o) INTO v_result
     FROM public.attribute_option o
-    JOIN public.attribute a     ON a.id = o.attribute
-    LEFT JOIN public.action d   ON d.id = o.deleted
-    LEFT JOIN public.account db ON db.id = d.account
+    JOIN public.attribute a ON a.id = o.attribute
     WHERE o.id = p_option AND a.tenant = v_session.tenant;
     IF NOT FOUND THEN
         PERFORM error.not_found('attribute option', p_option::text);
@@ -511,10 +389,10 @@ BEGIN
 END;
 $$;
 
--- Adds an option to one of the tenant's live choice attributes. Its name
--- must not be one of the attribute's live options' already (letter case
--- ignored). That the attribute is a live choice attribute is the rules'
--- to say. For admins.
+-- Adds an option to one of the tenant's choice attributes. Its name must
+-- not be one of the attribute's options' already (letter case ignored).
+-- That the attribute is a choice attribute is the rules' to say. For
+-- admins.
 CREATE FUNCTION attribute.option_create(p_request public.request, p_attribute uuid, p_name text)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -531,23 +409,20 @@ BEGIN
     END IF;
     IF EXISTS (SELECT 1 FROM public.attribute_option o
                WHERE o.attribute = p_attribute
-                 AND lower(o.name) = lower(v_name)
-                 AND o.deleted IS NULL) THEN
+                 AND lower(o.name) = lower(v_name)) THEN
         PERFORM error.duplicate(format('The attribute has an option "%s" already', v_name));
     END IF;
 
-    PERFORM util.begin_action(v_session);
     INSERT INTO public.attribute_option (attribute, name)
     VALUES (p_attribute, v_name)
     RETURNING * INTO v_option;
-    RETURN attribute.option_json(v_option, NULL);
+    RETURN attribute.option_json(v_option);
 END;
 $$;
 
 -- Changes the fields of an option that p_patch has: its name, which must
--- not be another of the attribute's live options' (letter case ignored).
--- An option can't move to another attribute. Deleted options, and options
--- of a deleted attribute, can't be changed. For admins.
+-- not be another of the attribute's options' (letter case ignored). An
+-- option can't move to another attribute. For admins.
 CREATE FUNCTION attribute.option_patch(p_request public.request, p_option uuid, p_patch jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -567,36 +442,29 @@ BEGIN
     IF NOT FOUND THEN
         PERFORM error.not_found('attribute option', p_option::text);
     END IF;
-    IF v_option.deleted IS NOT NULL THEN
-        PERFORM error.deleted('attribute_option', p_option);
-    END IF;
-    PERFORM util.check_live('attribute', v_option.attribute);
 
     IF p_patch ? 'name' THEN
         v_name := util.trim_and_check(p_patch ->> 'name');
         IF EXISTS (SELECT 1 FROM public.attribute_option o
                    WHERE o.attribute = v_option.attribute
                      AND lower(o.name) = lower(v_name)
-                     AND o.id <> p_option
-                     AND o.deleted IS NULL) THEN
+                     AND o.id <> p_option) THEN
             PERFORM error.duplicate(format('The attribute has an option "%s" already', v_name));
         END IF;
     END IF;
 
-    PERFORM util.begin_action(v_session);
     UPDATE public.attribute_option o
     SET name = coalesce(v_name, o.name)
     WHERE o.id = p_option
     RETURNING * INTO v_option;
-    RETURN attribute.option_json(v_option, NULL);
+    RETURN attribute.option_json(v_option);
 END;
 $$;
 
--- Deletes an option of one of the tenant's live attributes: it is marked
--- deleted, by this call's action. An option still in use can't be deleted
--- (409): by values on live items or stock rows, or as the default of an
--- assignment to a live class (the rule attribute.check_option_deletable
--- says so). For admins.
+-- Deletes an option of one of the tenant's attributes. An option still in
+-- use can't be deleted (409, naming the first use): by values on items or
+-- stock rows, or as the default of an assignment. The foreign keys refuse
+-- the same; this says what is in the way. For admins.
 CREATE FUNCTION attribute.option_delete(p_request public.request, p_option uuid)
 RETURNS void
 LANGUAGE plpgsql
@@ -604,40 +472,9 @@ SECURITY DEFINER SET search_path = pg_catalog, pg_temp
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'admin');
-    v_action  uuid := util.begin_action(v_session);
-BEGIN
-    UPDATE public.attribute_option o
-    SET deleted = v_action
-    FROM public.attribute a
-    WHERE o.id = p_option
-      AND a.id = o.attribute AND a.tenant = v_session.tenant AND a.deleted IS NULL
-      AND o.deleted IS NULL;
-    IF NOT FOUND THEN
-        IF EXISTS (SELECT 1 FROM public.attribute_option o JOIN public.attribute a ON a.id = o.attribute
-                   WHERE o.id = p_option AND a.tenant = v_session.tenant) THEN
-            PERFORM error.deleted('attribute_option', p_option);
-        END IF;
-        PERFORM error.not_found('attribute option', p_option::text);
-    END IF;
-END;
-$$;
-
--- Restores a deleted option of one of the tenant's live attributes.
--- p_options may give it a new name, {"name": ...}, for when another option
--- of the attribute has taken its name since. An option of a deleted
--- attribute is refused, naming the attribute to restore first. For admins.
-CREATE FUNCTION attribute.option_restore(p_request public.request, p_option uuid, p_options jsonb)
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
-AS $$
-DECLARE
-    v_session record := util.session(p_request, 'admin');
     v_option  public.attribute_option;
-    v_live    boolean;
-    v_name    text;
+    v_use     text;
 BEGIN
-    PERFORM util.check_patch(p_options, ARRAY['name'], ARRAY['name']);
     SELECT o.* INTO v_option
     FROM public.attribute_option o
     JOIN public.attribute a ON a.id = o.attribute
@@ -646,30 +483,28 @@ BEGIN
     IF NOT FOUND THEN
         PERFORM error.not_found('attribute option', p_option::text);
     END IF;
-    v_live := (SELECT a.deleted IS NULL FROM public.attribute a WHERE a.id = v_option.attribute);
-    IF v_option.deleted IS NULL THEN
-        PERFORM error.not_deleted('attribute_option', p_option);
-    END IF;
-    IF NOT v_live THEN
-        PERFORM error.deleted('attribute', v_option.attribute);
+
+    v_use := coalesce(
+        (SELECT format('it is the default of class "%s"', c.name)
+         FROM public.class_attribute ca JOIN public.class c ON c.id = ca.class
+         WHERE ca.default_option = p_option
+         ORDER BY c.name COLLATE public.natural LIMIT 1),
+        (SELECT format('item "%s" has it', i.name)
+         FROM public.item_value v JOIN public.item i ON i.id = v.item
+         WHERE v.option = p_option
+         ORDER BY i.name COLLATE public.natural LIMIT 1),
+        (SELECT format('a stock row of "%s" has it', i.name)
+         FROM public.stock_value sv
+         JOIN public.stock s ON s.id = sv.stock
+         JOIN public.item i  ON i.id = s.item
+         WHERE sv.option = p_option
+         ORDER BY i.name COLLATE public.natural LIMIT 1));
+    IF v_use IS NOT NULL THEN
+        PERFORM error.in_use(format('Option "%s" is still in use: %s', v_option.name, v_use),
+                             'Change the values and defaults that use it first.');
     END IF;
 
-    v_name := CASE WHEN p_options ? 'name' THEN util.trim_and_check(p_options ->> 'name')
-                   ELSE v_option.name END;
-    IF EXISTS (SELECT 1 FROM public.attribute_option o
-               WHERE o.attribute = v_option.attribute
-                 AND lower(o.name) = lower(v_name)
-                 AND o.deleted IS NULL) THEN
-        PERFORM error.duplicate(format(
-            'The attribute has an option "%s" already; restore this one with another name ("name": ...)', v_name));
-    END IF;
-
-    PERFORM util.begin_action(v_session);
-    UPDATE public.attribute_option o
-    SET deleted = NULL, name = v_name
-    WHERE o.id = p_option
-    RETURNING * INTO v_option;
-    RETURN attribute.option_json(v_option, NULL);
+    DELETE FROM public.attribute_option o WHERE o.id = p_option;
 END;
 $$;
 
@@ -683,7 +518,7 @@ $$;
 -- attribute with a unit are in the base unit. Accepted: text and url a
 -- string; integer a whole number; decimal a number; date a string
 -- YYYY-MM-DD; boolean true or false; choice a string, the id or the name
--- (letter case ignored) of one of its live options, an id winning over a
+-- (letter case ignored) of one of its options, an id winning over a
 -- name. (That a url looks like one, and that a value fits, the rules check
 -- as well.) Reports rather than raises, so that a model import can list a
 -- default that doesn't fit as a conflict.
@@ -747,7 +582,7 @@ BEGIN
         END IF;
         SELECT o.id INTO option
         FROM public.attribute_option o
-        WHERE o.attribute = p_attribute.id AND o.deleted IS NULL
+        WHERE o.attribute = p_attribute.id
           AND (o.id::text = lower(v_string) OR lower(o.name) = lower(v_string))
         ORDER BY o.id::text = lower(v_string) DESC
         LIMIT 1;

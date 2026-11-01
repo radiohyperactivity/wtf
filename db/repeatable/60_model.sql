@@ -444,7 +444,7 @@ BEGIN
         END IF;
 
         SELECT a.* INTO v_existing FROM public.attribute a
-        WHERE a.tenant = p_tenant AND lower(a.name) = lower(v_name) AND a.deleted IS NULL;
+        WHERE a.tenant = p_tenant AND lower(a.name) = lower(v_name);
         IF FOUND THEN
             IF v_existing.datatype::text <> v_datatype THEN
                 p_report := model.report_conflict(p_report, v_where, format(
@@ -476,7 +476,7 @@ BEGIN
             v_unit := v_existing.unit;
             p_report := model.report_add(p_report, ARRAY['attributes', 'existing'], to_jsonb(v_existing.name));
         ELSE
-            -- Matched by name, so no live attribute has it, and its datatype
+            -- Matched by name, so no attribute has it, and its datatype
             -- was checked against its unit just above: nothing is left for a
             -- rule to refuse.
             INSERT INTO public.attribute (tenant, name, datatype, unit, unit_lock)
@@ -492,8 +492,7 @@ BEGIN
             SELECT DISTINCT ON (lower(btrim(o #>> '{}'))) v_id, btrim(o #>> '{}')
             FROM jsonb_array_elements(v_options) o
             WHERE NOT EXISTS (SELECT 1 FROM public.attribute_option x
-                              WHERE x.attribute = v_id AND lower(x.name) = lower(btrim(o #>> '{}'))
-                                AND x.deleted IS NULL)
+                              WHERE x.attribute = v_id AND lower(x.name) = lower(btrim(o #>> '{}')))
             RETURNING name
         )
         SELECT array_agg(a.name ORDER BY a.name) INTO v_added FROM added a;
@@ -557,7 +556,7 @@ BEGIN
 
         SELECT c.* INTO v_class FROM public.class c
         WHERE c.tenant = p_tenant AND c.parent IS NOT DISTINCT FROM p_parent
-          AND lower(c.name) = lower(v_name) AND c.deleted IS NULL;
+          AND lower(c.name) = lower(v_name);
         IF FOUND THEN
             IF v_container IS NOT NULL AND v_container <> v_class.container THEN
                 p_report := model.report_conflict(p_report, v_where, format(
@@ -568,7 +567,7 @@ BEGIN
             END IF;
             p_report := model.report_add(p_report, ARRAY['classes', 'existing'], to_jsonb(v_path));
         ELSE
-            -- Matched by name among its live siblings, so the sibling rule
+            -- Matched by name among its siblings, so the sibling rule
             -- has nothing to refuse.
             INSERT INTO public.class (tenant, name, parent, container)
             VALUES (p_tenant, v_name, p_parent, coalesce(v_container, false))
@@ -605,7 +604,7 @@ BEGIN
             IF v_attr IS NULL THEN
                 SELECT jsonb_build_object('id', a.id, 'unit', a.unit) INTO v_attr
                 FROM public.attribute a
-                WHERE a.tenant = p_tenant AND lower(a.name) = lower(v_ref) AND a.deleted IS NULL;
+                WHERE a.tenant = p_tenant AND lower(a.name) = lower(v_ref);
                 IF v_attr IS NULL THEN
                     p_report := model.report_conflict(p_report, v_at,
                         format('There is no attribute %s, in the file or in the inventory', v_ref));
@@ -676,9 +675,7 @@ $$;
 -- quantities and units, its attributes, and its classes at the top of the
 -- class tree or below class p_parent, whose path is p_path. With p_tenant
 -- NULL (the operator's "wtfd unit import --global") the units are imported
--- as global ones, and the file may hold only units; that makes no action,
--- as units aren't in history. Otherwise the import is one action, of
--- account p_account (NULL: wtfd itself).
+-- as global ones, and the file may hold only units.
 --
 -- All or nothing: with any conflict, or with p_dry_run, nothing is kept.
 -- Returns what was (or would be) added, what was there already, and the
@@ -695,7 +692,6 @@ $$;
 -- A file that isn't a valid model file raises "invalid", naming where.
 CREATE FUNCTION model.import_file(
     p_tenant  uuid,
-    p_account uuid,
     p_data    jsonb,
     p_parent  uuid,
     p_path    text,
@@ -703,7 +699,6 @@ CREATE FUNCTION model.import_file(
 ) RETURNS jsonb
 LANGUAGE plpgsql AS $$
 DECLARE
-    v_who        record;
     v_attributes jsonb;
     v_report     jsonb := '{"quantities": {"added": [], "existing": []},
                             "families": {"added": [], "existing": []},
@@ -738,10 +733,6 @@ BEGIN
     END IF;
 
     BEGIN -- a subtransaction, rolled back for a dry run or a conflict
-        IF p_tenant IS NOT NULL THEN
-            SELECT p_tenant AS tenant, p_account AS account INTO v_who;
-            PERFORM util.begin_action(v_who);
-        END IF;
         v_report := model.import_units(p_tenant, model.file_list(p_data, 'quantities', 'The file'), v_report);
         IF p_tenant IS NOT NULL THEN
             SELECT a.p_report, a.p_attributes INTO v_report, v_attributes
@@ -827,7 +818,7 @@ LANGUAGE sql IMMUTABLE AS $$
         END));
 $$;
 
--- Class p_class as a model file has it, with the live classes below it, one
+-- Class p_class as a model file has it, with the classes below it, one
 -- class at a time: its own assignments, from class_attribute by its class;
 -- with p_inherited (for the top class of an export, so that the file stands
 -- on its own) also those it inherits, from class.effective_attributes.
@@ -845,7 +836,7 @@ BEGIN
                                                       e.default_date, e.default_boolean)
                                 ORDER BY a.name COLLATE public.natural, a.id)
                 FROM class.effective_attributes(ARRAY[c.id]) e
-                JOIN public.attribute a             ON a.id = e.attribute AND a.deleted IS NULL
+                JOIN public.attribute a             ON a.id = e.attribute
                 LEFT JOIN public.unit u             ON u.id = a.unit
                 LEFT JOIN public.attribute_option o ON o.id = e.default_option)
             ELSE (
@@ -854,14 +845,14 @@ BEGIN
                                                       ca.default_date, ca.default_boolean)
                                 ORDER BY a.name COLLATE public.natural, a.id)
                 FROM public.class_attribute ca
-                JOIN public.attribute a             ON a.id = ca.attribute AND a.deleted IS NULL
+                JOIN public.attribute a             ON a.id = ca.attribute
                 LEFT JOIN public.unit u             ON u.id = a.unit
                 LEFT JOIN public.attribute_option o ON o.id = ca.default_option
                 WHERE ca.class = c.id) END,
             'classes',    (
                 SELECT json_agg(model.export_class(k.id, false) ORDER BY k.name COLLATE public.natural, k.id)
                 FROM public.class k
-                WHERE k.parent = c.id AND k.deleted IS NULL)
+                WHERE k.parent = c.id)
         ))
         FROM public.class c
         WHERE c.id = p_class
@@ -884,25 +875,20 @@ SECURITY DEFINER SET search_path = pg_catalog, pg_temp
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'admin');
-    v_deleted uuid;
     v_path    text;
 BEGIN
     IF p_parent IS NOT NULL THEN
-        SELECT c.deleted INTO v_deleted FROM public.class c
-        WHERE c.id = p_parent AND c.tenant = v_session.tenant;
-        IF NOT FOUND THEN
+        IF NOT EXISTS (SELECT 1 FROM public.class c
+                       WHERE c.id = p_parent AND c.tenant = v_session.tenant) THEN
             PERFORM error.bad_reference('class', p_parent);
-        END IF;
-        IF v_deleted IS NOT NULL THEN
-            PERFORM error.deleted('class', p_parent);
         END IF;
         v_path := util.path_text(class.path_json(p_parent));
     END IF;
-    RETURN model.import_file(v_session.tenant, v_session.account, p_data, p_parent, v_path, p_dry_run);
+    RETURN model.import_file(v_session.tenant, p_data, p_parent, v_path, p_dry_run);
 END;
 $$;
 
--- Exports one of the tenant's live classes with everything below it as a
+-- Exports one of the tenant's classes with everything below it as a
 -- model file (seed/model-format.md): the classes, their assignments (the
 -- top class's inherited ones as its own), every attribute they use, and
 -- the tenant's own units those attributes need, with the families they are
@@ -916,17 +902,12 @@ SECURITY DEFINER SET search_path = pg_catalog, pg_temp
 AS $$
 DECLARE
     v_session    record := util.session(p_request, 'admin');
-    v_deleted    uuid;
     v_attributes uuid[];
     v_families   uuid[];
 BEGIN
-    SELECT c.deleted INTO v_deleted FROM public.class c
-    WHERE c.id = p_class AND c.tenant = v_session.tenant;
-    IF NOT FOUND THEN
+    IF NOT EXISTS (SELECT 1 FROM public.class c
+                   WHERE c.id = p_class AND c.tenant = v_session.tenant) THEN
         PERFORM error.not_found('class', p_class::text);
-    END IF;
-    IF v_deleted IS NOT NULL THEN
-        PERFORM error.deleted('class', p_class);
     END IF;
 
     -- The attributes the classes use: the top class's own and inherited,
@@ -936,7 +917,6 @@ BEGIN
             SELECT p_class
             UNION
             SELECT c.id FROM public.class c JOIN subtree s ON c.parent = s.id
-            WHERE c.deleted IS NULL
         )
         SELECT ca.attribute FROM public.class_attribute ca WHERE ca.class IN (SELECT id FROM subtree)
         UNION
@@ -948,7 +928,7 @@ BEGIN
         FROM public.attribute a
         JOIN public.unit u        ON u.id = a.unit
         JOIN public.unit_family f ON f.id = u.family
-        WHERE a.id = ANY (v_attributes) AND a.deleted IS NULL
+        WHERE a.id = ANY (v_attributes)
           AND (f.tenant = v_session.tenant
                OR EXISTS (SELECT 1 FROM public.unit x WHERE x.family = f.id AND x.tenant = v_session.tenant)));
     -- And for a quantity of the tenant's own among them, the family of its
@@ -1002,10 +982,10 @@ BEGIN
                        'unit_lock', CASE WHEN a.unit_lock THEN true END,
                        'options',   (SELECT json_agg(o.name ORDER BY o.name COLLATE public.natural)
                                      FROM public.attribute_option o
-                                     WHERE o.attribute = a.id AND o.deleted IS NULL)))
+                                     WHERE o.attribute = a.id)))
                    ORDER BY a.name COLLATE public.natural, a.id)
             FROM public.attribute a
-            WHERE a.id = ANY (v_attributes) AND a.deleted IS NULL),
+            WHERE a.id = ANY (v_attributes)),
         'classes', json_build_array(model.export_class(p_class, true))
     ));
 END;

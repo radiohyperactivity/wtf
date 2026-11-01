@@ -528,7 +528,7 @@ LANGUAGE sql STABLE AS $$
       AND (q.tenant IS NULL OR q.tenant = p_tenant);
 $$;
 
--- The live attributes and items of tenant p_tenant whose unit is of
+-- The attributes and items of tenant p_tenant whose unit is of
 -- quantity p_quantity, or of family p_family (the other one NULL), as text
 -- for a message: at most five names, and how many more. NULL when nothing
 -- uses them.
@@ -540,7 +540,7 @@ LANGUAGE sql STABLE AS $$
         FROM public.attribute a
         JOIN public.unit u        ON u.id = a.unit
         JOIN public.unit_family f ON f.id = u.family
-        WHERE a.tenant = p_tenant AND a.deleted IS NULL
+        WHERE a.tenant = p_tenant
           AND (f.quantity = p_quantity OR f.id = p_family)
         UNION ALL
         SELECT format('item "%s"', i.name)
@@ -548,7 +548,7 @@ LANGUAGE sql STABLE AS $$
         JOIN public.class c       ON c.id = i.class
         JOIN public.unit u        ON u.id = i.unit
         JOIN public.unit_family f ON f.id = u.family
-        WHERE c.tenant = p_tenant AND i.deleted IS NULL
+        WHERE c.tenant = p_tenant
           AND (f.quantity = p_quantity OR f.id = p_family)
     ),
     first AS (SELECT what FROM used ORDER BY what COLLATE public.natural LIMIT 5)
@@ -657,10 +657,9 @@ $$;
 -- Turns a quantity on or off for the tenant: p_patch is {"available":
 -- true, false or null}, null meaning "follow the default again". A choice
 -- that is the default anyway isn't kept, so the tenant has a choice only
--- where it differs. A quantity whose units something live uses can't be
+-- where it differs. A quantity whose units something uses can't be
 -- turned off (409), and turning one off turns its families off too.
--- Returns the quantity as unit.quantity_get does. Not in history, as the
--- tenant's choices of units aren't. For admins.
+-- Returns the quantity as unit.quantity_get does. For admins.
 CREATE FUNCTION unit.quantity_patch(p_request public.request, p_quantity uuid, p_patch jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql

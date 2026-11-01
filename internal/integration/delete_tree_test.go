@@ -74,22 +74,19 @@ func TestDeleteTree(t *testing.T) {
 	if n := len(get(t, r.body, "locations").([]any)); n != 2 || str(t, r.body, "stock", 0, "item", "name") != "Widget" {
 		t.Errorf("location delete: %v", r.body)
 	}
-	isDeleted(t, e, "/locations/"+box)
-	isDeleted(t, e, "/stock/"+stock)
+	e.expect(t, 404, "GET", "/locations/"+box, nil)
+	e.expect(t, 404, "GET", "/stock/"+stock, nil)
 	e.expect(t, 200, "GET", "/items/"+item, nil)
 
 	// Forced, the classes go with their items.
 	e.expect(t, 200, "DELETE", "/classes/"+a+"?recursive=true&force=true", nil)
 	for _, path := range []string{"/classes/" + a, "/classes/" + b, "/classes/" + c, "/items/" + item} {
-		isDeleted(t, e, path)
+		e.expect(t, 404, "GET", path, nil)
 	}
 
-	// An unused tree needs no force, and the deletes are in the history.
+	// An unused tree needs no force.
 	x := class("X", nil)
-	class("Y", x)
+	y := class("Y", x)
 	e.expect(t, 200, "DELETE", "/classes/"+x+"?recursive=true", nil)
-	h := e.expect(t, 200, "GET", "/classes/"+x+"/history", nil)
-	if str(t, h.body, "rows", 0, "operation") != "update" || get(t, h.body, "rows", 0, "changes", "deleted", "new") == nil {
-		t.Errorf("history: %v", get(t, h.body, "rows", 0))
-	}
+	e.expect(t, 404, "GET", "/classes/"+y, nil)
 }

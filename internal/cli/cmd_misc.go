@@ -114,11 +114,6 @@ func attachmentGroup() group {
 						if err := printAttachment(e, data); err != nil {
 							return err
 						}
-						var a attachment
-						if e.decode(data, &a) == nil && a.Deleted != nil {
-							fmt.Fprintf(e.stdout, "Deleted:  yes; restore it with 'wtf attachment restore %s %q %s'\n",
-								args[0], args[1], args[2])
-						}
 						return nil
 					})
 				}),
@@ -237,39 +232,28 @@ func attachmentGroup() group {
 			},
 			{
 				name:    "delete",
-				args:    "<item|stock|location|class> <ref> <attachment-id>",
-				summary: "Delete an attachment (it can be restored, until it is purged).",
+				args:    "<item|stock|location|class> <ref> <attachment-id> [--yes]",
+				summary: "Delete an attachment, for good; on a terminal it asks first.",
 				params:  withID,
-				setup: simple(func(e *env, args []string) error {
-					path, err := e.attachmentPath(args)
-					if err != nil {
-						return err
+				setup: func(fs *flag.FlagSet) func(*env, []string) error {
+					yes := fs.Bool("yes", false, "don't ask first")
+					return func(e *env, args []string) error {
+						path, err := e.attachmentPath(args)
+						if err != nil {
+							return err
+						}
+						if err := e.confirmDelete("attachment "+args[2], *yes); err != nil {
+							return err
+						}
+						if _, err := e.do(http.MethodDelete, path, nil); err != nil {
+							return err
+						}
+						if !e.json {
+							fmt.Fprintf(e.stdout, "Deleted attachment %s.\n", args[2])
+						}
+						return nil
 					}
-					if _, err := e.do(http.MethodDelete, path, nil); err != nil {
-						return err
-					}
-					if !e.json {
-						fmt.Fprintf(e.stdout, "Deleted attachment %s.\n", args[2])
-					}
-					return nil
-				}),
-			},
-			{
-				name:    "restore",
-				args:    "<item|stock|location|class> <ref> <attachment-id>",
-				summary: "Restore a deleted attachment (as an ordinary one, not the photo it may have been).",
-				params:  withID,
-				setup: simple(func(e *env, args []string) error {
-					path, err := e.attachmentPath(args)
-					if err != nil {
-						return err
-					}
-					data, err := e.do(http.MethodPost, path+"/restore", nil)
-					if err != nil {
-						return err
-					}
-					return e.emit(data, func() error { return printAttachment(e, data) })
-				}),
+				},
 			},
 		},
 	}
@@ -744,7 +728,6 @@ func accountGroup() group {
 			},
 			editCommand("account", objectParam("account"), resolveAccountFn, (*env).editAccount),
 			deleteCommand("account", "/accounts/", resolveAccountFn),
-			historyCommand("account", "/accounts/", "", resolveAccountFn),
 		},
 	}
 }
@@ -770,15 +753,10 @@ func printAccountJSON(e *env, data json.RawMessage) error {
 	if err := e.decode(data, &a); err != nil {
 		return err
 	}
-	state := ""
-	if a.Deleted != nil {
-		state = "deleted"
-	}
 	fields(e.stdout,
 		"Email", a.Email,
 		"Password", map[bool]string{true: "set", false: "none (can't log in)"}[a.HasPassword],
 		"Role", a.Role,
-		"State", state,
 		"Id", a.ID)
 	return nil
 }

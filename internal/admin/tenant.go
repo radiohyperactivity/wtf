@@ -62,18 +62,18 @@ func hostError(host string, err error) error {
 // Tenant is one row of ListTenants.
 type Tenant struct {
 	Host     string
-	Accounts int64 // live accounts
-	Items    int64 // live items
-	Files    int64 // attachments, live and deleted
+	Accounts int64
+	Items    int64
+	Files    int64 // attachments
 }
 
 // ListTenants lists the tenants by host.
 func ListTenants(ctx context.Context, conn *pgx.Conn) ([]Tenant, error) {
 	rows, err := conn.Query(ctx, `
 		SELECT t.host,
-		       (SELECT count(*) FROM public.account a WHERE a.tenant = t.id AND a.deleted IS NULL),
+		       (SELECT count(*) FROM public.account a WHERE a.tenant = t.id),
 		       (SELECT count(*) FROM public.item i JOIN public.class c ON c.id = i.class
-		        WHERE c.tenant = t.id AND i.deleted IS NULL),
+		        WHERE c.tenant = t.id),
 		       (SELECT count(*) FROM public.attachment a
 		        LEFT JOIN public.item i     ON i.id = a.item
 		        LEFT JOIN public.class ic   ON ic.id = i.class
@@ -140,7 +140,7 @@ func RenameTenant(ctx context.Context, conn *pgx.Conn, store *files.Store, host,
 // /model/import does.
 func ImportGlobalUnits(ctx context.Context, conn *pgx.Conn, data []byte, dryRun bool) ([]byte, error) {
 	var report string
-	err := conn.QueryRow(ctx, "SELECT model.import_file(NULL, NULL, $1::jsonb, NULL, NULL, $2)::text",
+	err := conn.QueryRow(ctx, "SELECT model.import_file(NULL, $1::jsonb, NULL, NULL, $2)::text",
 		string(data), dryRun).Scan(&report)
 	return []byte(report), err
 }

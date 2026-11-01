@@ -193,9 +193,9 @@ Any key that isn't in these tables (or `meta`) is refused.
 
 An export is of one class, with everything below it:
 
-- **Classes:** the class and the live classes below it. The class is the file's only top class; where it was is in `meta`.
+- **Classes:** the class and the classes below it. The class is the file's only top class; where it was is in `meta`.
 - **Assignments:** each class's own. The top class also has the ones it inherits, as its own, so that the file stands on its own.
-- **Attributes:** every attribute the assignments use, with its datatype, unit, unit lock and live options.
+- **Attributes:** every attribute the assignments use, with its datatype, unit, unit lock and options.
 - **Units:** the tenant's own units that the attributes need, with the family they are in and its quantity. All of the tenant's units in such a family go in, not only the one used: the family decides how values are shown. A family that is global is named, with only the tenant's units in it. For a quantity of the tenant's own, the family of its base unit goes in too, which importing the file needs. Units every WtF has are left out.
 - **Defaults** are in the attribute's unit, as an import reads them.
 - **Who:** an admin, as only admins can import the file again (ACCOUNTS.md).
@@ -244,7 +244,7 @@ These were made for unit files, which are now the `quantities` of a model file.
 17. **Nothing that exists changes,** apart from added options and added assignments. Names keep their case as they are; a class isn't moved; nothing is deleted.
 18. **Conflicts are found by trying,** in a subtransaction that is rolled back when there are any (or for a dry run). The database's own rules then decide, exactly as for the API, and nothing is kept. To you this is the same as checking first: nothing starts unless everything fits.
 19. **Where to import:** at the top of the class tree, or below a class (`parent`): the app's preview has Change… for it (APP.md decision 67), and the CLI has `--parent CLASS`.
-20. **Everything is in history,** as if it had been made by hand by the account that imported the file.
+20. **Everything was in history,** as if it had been made by hand by the account that imported the file. (History is gone since 1 November 2026.)
 
 ### Units in model files, and exporting (2026-10-29)
 

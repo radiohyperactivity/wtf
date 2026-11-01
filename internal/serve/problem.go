@@ -22,11 +22,6 @@ type problem struct {
 	// Supported lists the API versions this server serves, in an
 	// unsupported-api-version problem.
 	Supported []int `json:"supported,omitempty"`
-	// PlaceKey and WithParents, in a restore-into-deleted problem, name the
-	// two ways out: the request field that restores it somewhere else
-	// ("class", "parent" or "location"), or "with_parents": true.
-	PlaceKey    string `json:"place_key,omitempty"`
-	WithParents bool   `json:"with_parents,omitempty"`
 }
 
 func (p *problem) Error() string {
@@ -80,13 +75,6 @@ func problemFor(err error, method string) (*problem, bool) {
 	}
 
 	p = &problem{Detail: pgErr.Message, Hint: pgErr.Hint, SQLState: pgErr.Code}
-	if pgErr.Code == "WT001" {
-		// Restoring into something deleted: the database's DETAIL is the
-		// request field that restores it elsewhere.
-		p.Type, p.Title, p.Status = "/problems/restore-into-deleted", "Restore into something deleted", http.StatusConflict
-		p.PlaceKey, p.WithParents = pgErr.Detail, true
-		return p, true
-	}
 	if pgErr.Detail != "" {
 		p.Detail += ": " + pgErr.Detail
 	}
@@ -109,8 +97,10 @@ func problemFor(err error, method string) (*problem, bool) {
 		} else {
 			p.Type, p.Title, p.Status = "/problems/invalid-reference", "Invalid reference", http.StatusUnprocessableEntity
 		}
-	case "55000": // object_not_in_prerequisite_state: deleted, not deleted when restoring, merged, …
+	case "55000": // object_not_in_prerequisite_state: a unit that is turned off
 		p.Type, p.Title, p.Status = "/problems/wrong-state", "Not possible in this state", http.StatusConflict
+	case "WT001": // our own: a label code whose thing has been deleted
+		p.Type, p.Title, p.Status = "/problems/gone", "Gone", http.StatusGone
 	case "57014": // query_canceled, e.g. statement_timeout
 		p.Type, p.Title, p.Status = "/problems/timeout", "Timeout", http.StatusServiceUnavailable
 	default:

@@ -6,17 +6,20 @@ The SQL is in [`db/repeatable/40_location.sql`](../db/repeatable/40_location.sql
 
 A stock row is an item at a location, with an `amount` (in the base unit of the item's unit; null: not counted) and the values of its class's attributes with scope `stock`. `stock.create(p_item, p_location, p_amount, p_values)` makes one; `stock.patch` corrects its item, location, amount or photo.
 
-`stock.move(p_stock, p_location, p_amount)` moves a row, or part of it, to another location; `p_amount` null moves the whole row, otherwise the row must be counted.
+`stock.move(p_stock, p_location, p_amount)` moves a row, or part of it, to another location; `p_amount` null moves the whole row, otherwise the row must be counted. A whole row changes location and keeps its code; a part is split off into a new row at the destination, with a code of its own, copies of the values and of the attachments, and the copy of the photo as its photo. A move never merges into another row. It returns the row at the destination.
 
-- **Merging:** if the destination holds exactly one live counted row of the same item, with exactly the same values, and the moved row has no attachments, the moved amount is added to that row. A whole row is then marked deleted, with `merged_into` that row.
-- **Otherwise** a whole row changes location, and a part is split off into a new row at the destination, with a code of its own, copies of the values and of the attachments, and the copy of the photo as its photo.
-- It returns the row at the destination.
+`stock.merge(p_stock, p_into, p_amount)` adds `p_amount` of a row (null: all of it) to another row, `p_into`, which may be at another location; it is the user's own action, not a side effect of moving.
+
+- **Both rows** must be of the same item and counted, and not the same row, and have exactly the same values; otherwise it is refused (422, naming the attributes that differ), as nothing about a row may be lost by merging.
+- **All of it:** the row is deleted, and its label then answers 410 ([code.md](code.md)); its attachments move to `p_into`, which keeps its own photo.
+- **Part of it:** the row keeps the rest, and its attachments.
+- It returns `p_into`.
 
 ## Deleting a subtree
 
-Deleting marks locations deleted; they can be restored (`location.restore`). See [deleting.md](deleting.md). `location.delete` deletes one location, which must have no live sublocations or stock (409 otherwise). `location.delete_tree(p_location, p_force, p_dry_run)` (`DELETE /locations/{id}?recursive=true`) deletes a location and every live location below it in one action, deepest first:
+Deleting removes a location for good; see [deleting.md](deleting.md). `location.delete` deletes one location, which must have no sublocations or stock (409 otherwise, saying which). `location.delete_tree(p_location, p_force, p_dry_run)` (`DELETE /locations/{id}?recursive=true`) deletes a location and every live location below it in one action, deepest first:
 
-- **Stock blocks it:** if there is live stock in any of them, nothing is deleted (23001, 409), and the message names the locations and their stock row counts (`Garage/Box (2 stock rows)`).
+- **Stock blocks it:** if there is stock in any of them, nothing is deleted (23001, 409), and the message names the locations and their stock row counts (`Garage/Box (2 stock rows)`).
 - **`p_force`** (`force=true`) deletes those stock rows too. The items themselves stay.
 - **`p_dry_run`** deletes nothing; it only reports. Its route is a `GET`, `GET /locations/{id}/deletion?force=…`, so a server that doesn't know recursive deletes answers 404 rather than mistaking a preview for a delete. Unlike the delete, the preview reports stock without `force` instead of failing.
 - **The result** is what was (or would be) deleted: `{locations: [{id, code, path}], stock: [{id, code, item: {id, code, name}, location, amount}]}`, locations deepest first.

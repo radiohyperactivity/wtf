@@ -132,12 +132,10 @@ func wantState(t *testing.T, err error, state, text string) {
 	}
 }
 
-// inAction runs f in a transaction of the DBA role that has begun an action
-// for tenant, as every change to a tenant's data must (history refuses one
-// without). The transaction commits when f returns nil, so that the rules
-// that run at commit run too, and rolls back otherwise. It returns f's
-// error, or the commit's.
-func (d *testDatabase) inAction(t *testing.T, tenant string, f func(tx pgx.Tx, action string) error) error {
+// inTx runs f in a transaction of the DBA role. The transaction commits
+// when f returns nil, so that the rules that run at commit run too, and
+// rolls back otherwise. It returns f's error, or the commit's.
+func (d *testDatabase) inTx(t *testing.T, f func(tx pgx.Tx) error) error {
 	t.Helper()
 	ctx := context.Background()
 	tx, err := d.dba.Begin(ctx)
@@ -145,41 +143,37 @@ func (d *testDatabase) inAction(t *testing.T, tenant string, f func(tx pgx.Tx, a
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	var action string
-	if err := tx.QueryRow(ctx, "SELECT util.begin_action($1::uuid)", tenant).Scan(&action); err != nil {
-		t.Fatal(err)
-	}
-	if err := f(tx, action); err != nil {
+	if err := f(tx); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
-// exec runs one statement in its own action of tenant, and returns its
+// exec runs one statement in a transaction of its own, and returns its
 // error.
-func (d *testDatabase) exec(t *testing.T, tenant, sql string, args ...any) error {
+func (d *testDatabase) exec(t *testing.T, sql string, args ...any) error {
 	t.Helper()
-	return d.inAction(t, tenant, func(tx pgx.Tx, _ string) error {
+	return d.inTx(t, func(tx pgx.Tx) error {
 		_, err := tx.Exec(context.Background(), sql, args...)
 		return err
 	})
 }
 
-// mustExec runs one statement in its own action of tenant, and fails the
+// mustExec runs one statement in a transaction of its own, and fails the
 // test if it fails.
-func (d *testDatabase) mustExec(t *testing.T, tenant, sql string, args ...any) {
+func (d *testDatabase) mustExec(t *testing.T, sql string, args ...any) {
 	t.Helper()
-	if err := d.exec(t, tenant, sql, args...); err != nil {
+	if err := d.exec(t, sql, args...); err != nil {
 		t.Fatalf("%s: %v", sql, err)
 	}
 }
 
-// id runs a query in its own action of tenant that returns one id (an
+// id runs a query in a transaction of its own that returns one id (an
 // INSERT … RETURNING id), and returns it.
-func (d *testDatabase) id(t *testing.T, tenant, sql string, args ...any) string {
+func (d *testDatabase) id(t *testing.T, sql string, args ...any) string {
 	t.Helper()
 	var id string
-	if err := d.inAction(t, tenant, func(tx pgx.Tx, _ string) error {
+	if err := d.inTx(t, func(tx pgx.Tx) error {
 		return tx.QueryRow(context.Background(), sql, args...).Scan(&id)
 	}); err != nil {
 		t.Fatalf("%s: %v", sql, err)
@@ -187,7 +181,7 @@ func (d *testDatabase) id(t *testing.T, tenant, sql string, args ...any) string 
 	return id
 }
 
-// value reads one value as the DBA role, outside any action.
+// value reads one value as the DBA role.
 func (d *testDatabase) value(t *testing.T, sql string, args ...any) any {
 	t.Helper()
 	var v any

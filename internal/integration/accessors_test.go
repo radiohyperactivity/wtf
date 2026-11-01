@@ -82,7 +82,7 @@ func newAccessorTenant(t *testing.T, host string) accessorTenant {
 	at := accessorTenant{id: tenant}
 	for _, role := range []string{"admin", "user", "viewer"} {
 		email := role + "@" + host + ".example"
-		account := d.id(t, tenant, `
+		account := d.id(t, `
 			INSERT INTO public.account (tenant, email, password_hash, role)
 			VALUES ($1, $2, extensions.crypt('password', extensions.gen_salt('bf', 4)), $3)
 			RETURNING id`, tenant, email, role)
@@ -142,8 +142,8 @@ func TestFunctionCatalogue(t *testing.T) {
 			t.Errorf("helpers with settings of their own: %v", bad)
 		}
 		n := d.value(t, `SELECT count(*)`+ours+` AND p.prosecdef`)
-		if n != int64(83) {
-			t.Errorf("%v functions for the API, want 83", n)
+		if n != int64(68) {
+			t.Errorf("%v functions for the API, want 68", n)
 		}
 	})
 
@@ -216,7 +216,7 @@ func TestAccessorSessions(t *testing.T) {
 		answer := c.must(t, "account.login", "user@sessions.example", "password", "short", "1 hour")
 		c.token = str(t, answer, "token")
 		c.must(t, "account.me")
-		d.mustExec(t, at.id, "UPDATE public.session SET last_used = now() - interval '2 hours' WHERE client = 'short'")
+		d.mustExec(t, "UPDATE public.session SET last_used = now() - interval '2 hours' WHERE client = 'short'")
 		_, err := c.call(t, "account.me")
 		wantState(t, err, "28000", "expired")
 	})
@@ -326,7 +326,6 @@ func TestAccessorTenantIsolation(t *testing.T) {
 		{"class.patch", []any{class, `{"name": "x"}`}},
 		{"class.delete", []any{class}},
 		{"class.delete_tree", []any{class, false, true}},
-		{"class.restore", []any{class, "{}"}},
 		{"class.unassign", []any{class, attribute}},
 		{"location.get", []any{location}},
 		{"location.patch", []any{location, `{"name": "x"}`}},
@@ -338,6 +337,7 @@ func TestAccessorTenantIsolation(t *testing.T) {
 		{"stock.get", []any{stock}},
 		{"stock.patch", []any{stock, `{"amount": 2}`}},
 		{"stock.move", []any{stock, location, nil}},
+		{"stock.merge", []any{stock, stock, nil}},
 		{"stock.delete", []any{stock}},
 		{"account.get", []any{account}},
 		{"account.patch", []any{account, `{"role": "viewer"}`}},
@@ -379,11 +379,11 @@ func TestAccessorTenantIsolation(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Deleting and restoring by action
+// Deleting, merging and the labels of deleted things
 // ---------------------------------------------------------------------------
 
-func TestAccessorDeleteRestore(t *testing.T) {
-	at := newAccessorTenant(t, "restore")
+func TestAccessorDeleting(t *testing.T) {
+	at := newAccessorTenant(t, "deleting")
 	admin, user := at.admin, at.user
 
 	tools := admin.id(t, "class.create", "Tools", nil, false)
@@ -391,63 +391,140 @@ func TestAccessorDeleteRestore(t *testing.T) {
 	shed := admin.id(t, "location.create", "Shed", nil, false, nil, nil, nil)
 	drill := user.id(t, "item.create", drills, "Drill", nil, false, "{}")
 	stock := user.id(t, "stock.create", drill, shed, 1, "{}")
-	other := user.id(t, "item.create", tools, "Saw", nil, false, "{}")
-	user.must(t, "item.delete", other) // deleted before, on its own
 
-	t.Run("a tree comes back with what went with it", func(t *testing.T) {
+	t.Run("what is in the way is named", func(t *testing.T) {
+		_, err := admin.call(t, "class.delete", tools)
+		wantState(t, err, "23001", `Class "Tools" still has subclasses`)
+		_, err = admin.call(t, "class.delete", drills)
+		wantState(t, err, "23001", `Class "Drills" still has items`)
+		_, err = user.call(t, "item.delete", drill)
+		wantState(t, err, "23001", `Item "Drill" still has stock`)
+		_, err = admin.call(t, "location.delete", shed)
+		wantState(t, err, "23001", `Location "Shed" still has stock`)
+	})
+
+	t.Run("a tree goes with everything below it, when forced", func(t *testing.T) {
 		_, err := admin.call(t, "class.delete_tree", tools, false, false)
 		wantState(t, err, "23001", "Tools/Drills (1 item)")
 		dry := admin.must(t, "class.delete_tree", tools, true, true)
-		if n := len(get(t, dry, "classes").([]any)); n != 2 {
-			t.Errorf("dry run: %d classes", n)
+		if n := len(get(t, dry, "classes").([]any)); n != 2 || num(t, dry, "stock") != 1 {
+			t.Errorf("dry run: %v", dry)
 		}
 		admin.must(t, "class.delete_tree", tools, true, false)
-		if deleted := get(t, admin.must(t, "item.get", drill), "deleted"); deleted == nil {
-			t.Fatal("the item isn't deleted with its class")
-		}
-		admin.must(t, "class.restore", tools, "{}")
-		for _, fn := range []struct{ name, id string }{{"class.get", drills}, {"item.get", drill}, {"stock.get", stock}} {
-			if deleted := get(t, admin.must(t, fn.name, fn.id), "deleted"); deleted != nil {
-				t.Errorf("%s %s is still deleted: %v", fn.name, fn.id, deleted)
+		for _, fn := range []struct{ name, id string }{
+			{"class.get", tools}, {"class.get", drills}, {"item.get", drill}, {"stock.get", stock},
+		} {
+			if _, err := admin.call(t, fn.name, fn.id); sqlState(err) != "P0002" {
+				t.Errorf("%s %s after the delete: %v, want not found", fn.name, fn.id, err)
 			}
 		}
-		// What was deleted on its own before stays deleted.
-		if get(t, admin.must(t, "item.get", other), "deleted") == nil {
-			t.Error("the item deleted before came back too")
-		}
 	})
 
-	t.Run("deleted says when and by whom", func(t *testing.T) {
-		deleted := get(t, admin.must(t, "item.get", other), "deleted")
-		if str(t, deleted, "account", "email") != "user@restore.example" {
-			t.Errorf("deleted %v", deleted)
-		}
+	t.Run("a deleted thing's label is gone, one never handed out not found", func(t *testing.T) {
+		things := admin.id(t, "class.create", "Things", nil, false)
+		box := user.must(t, "item.create", things, "Box", nil, false, "{}")
+		code := str(t, box, "code")
+		user.must(t, "item.delete", str(t, box, "id"))
+		_, err := user.call(t, "code.resolve", code)
+		wantState(t, err, "WT001", "has been deleted")
+		_, err = user.call(t, "code.resolve", "ZZZZ")
+		wantState(t, err, "P0002", "")
+		_, err = user.call(t, "code.resolve", "0FFF")
+		wantState(t, err, "P0002", "")
 	})
 
-	t.Run("restoring into a deleted class needs the class or with_parents", func(t *testing.T) {
-		saws := admin.id(t, "class.create", "Saws", nil, false)
-		jig := user.id(t, "item.create", saws, "Jigsaw", nil, false, "{}")
-		user.must(t, "item.delete", jig)
-		admin.must(t, "class.delete", saws)
-		_, err := user.call(t, "item.restore", jig, "{}")
-		wantState(t, err, "WT001", `is in class "Saws", which is deleted`)
-		_, err = user.call(t, "item.restore", jig, `{"with_parents": true}`)
-		wantState(t, err, "42501", "needs the role admin")
-		admin.must(t, "item.restore", jig, `{"with_parents": true}`)
-		if get(t, admin.must(t, "class.get", saws), "deleted") != nil {
-			t.Error("with_parents didn't restore the class")
+	t.Run("an attribute or option in use is named, and goes when it isn't", func(t *testing.T) {
+		size := admin.id(t, "attribute.create", "Size", "choice", nil, false)
+		small := admin.id(t, "attribute.option_create", size, "Small")
+		bins := admin.id(t, "class.create", "Bins", nil, false)
+		admin.must(t, "class.assign", bins, size, `"Small"`, "item", false)
+		_, err := admin.call(t, "attribute.option_delete", small)
+		wantState(t, err, "23001", `Option "Small" is still in use: it is the default of class "Bins"`)
+		_, err = admin.call(t, "attribute.delete", size)
+		wantState(t, err, "23001", `Attribute "Size" is still in use: class "Bins" has it`)
+		admin.must(t, "class.unassign", bins, size)
+		admin.must(t, "attribute.delete", size)
+		if _, err := admin.call(t, "attribute.option_get", small); sqlState(err) != "P0002" {
+			t.Errorf("the option outlived its attribute: %v", err)
 		}
 	})
+}
 
-	t.Run("an item whose values no longer apply can't be restored", func(t *testing.T) {
-		colour := admin.id(t, "attribute.create", "Colour", "text", nil, false)
-		paint := admin.id(t, "class.create", "Paint", nil, false)
-		admin.must(t, "class.assign", paint, colour, nil, "item", false)
-		tin := user.id(t, "item.create", paint, "Tin", nil, false, fmt.Sprintf(`{"%s": "Blue"}`, colour))
-		user.must(t, "item.delete", tin)
-		admin.must(t, "class.unassign", paint, colour)
-		_, err := user.call(t, "item.restore", tin, "{}")
-		wantState(t, err, "23514", `Item "Tin" has values that don't apply`)
+func TestAccessorMerge(t *testing.T) {
+	at := newAccessorTenant(t, "merge")
+	admin, user := at.admin, at.user
+
+	parts := admin.id(t, "class.create", "Parts", nil, false)
+	serial := admin.id(t, "attribute.create", "Batch", "text", nil, false)
+	admin.must(t, "class.assign", parts, serial, nil, "stock", false)
+	shelf := admin.id(t, "location.create", "Shelf", nil, false, nil, nil, nil)
+	bin := admin.id(t, "location.create", "Bin", nil, false, nil, nil, nil)
+	screw := user.id(t, "item.create", parts, "Screw", nil, false, "{}")
+	nut := user.id(t, "item.create", parts, "Nut", nil, false, "{}")
+	batch := func(b string) string { return fmt.Sprintf(`{"%s": "%s"}`, serial, b) }
+
+	t.Run("a move never merges", func(t *testing.T) {
+		a := user.id(t, "stock.create", screw, shelf, 5, "{}")
+		b := user.id(t, "stock.create", screw, bin, 5, "{}")
+		moved := user.must(t, "stock.move", a, bin, nil)
+		if str(t, moved, "id") != a || num(t, moved, "amount") != 5 {
+			t.Errorf("moved: %v", moved)
+		}
+		user.must(t, "stock.delete", a)
+		user.must(t, "stock.delete", b)
+	})
+
+	t.Run("part of a row, then all of it", func(t *testing.T) {
+		from := user.must(t, "stock.create", screw, shelf, 10, batch("B1"))
+		into := user.id(t, "stock.create", screw, bin, 1, batch("B1"))
+		merged := user.must(t, "stock.merge", str(t, from, "id"), into, 4)
+		if str(t, merged, "id") != into || num(t, merged, "amount") != 5 {
+			t.Errorf("after merging 4: %v", merged)
+		}
+		if n := num(t, user.must(t, "stock.get", str(t, from, "id")), "amount"); n != 6 {
+			t.Errorf("the source has %v left, want 6", n)
+		}
+		merged = user.must(t, "stock.merge", str(t, from, "id"), into, nil)
+		if num(t, merged, "amount") != 11 {
+			t.Errorf("after merging the rest: %v", merged)
+		}
+		_, err := user.call(t, "code.resolve", str(t, from, "code"))
+		wantState(t, err, "WT001", "has been deleted")
+	})
+
+	t.Run("refused unless the same item, counted, with the same values", func(t *testing.T) {
+		a := user.id(t, "stock.create", screw, shelf, 2, batch("B2"))
+		b := user.id(t, "stock.create", screw, bin, 2, batch("B3"))
+		other := user.id(t, "stock.create", nut, bin, 2, batch("B2"))
+		uncounted := user.id(t, "stock.create", screw, bin, nil, batch("B2"))
+		_, err := user.call(t, "stock.merge", a, b, nil)
+		wantState(t, err, "23514", "have different values for Batch")
+		_, err = user.call(t, "stock.merge", a, other, nil)
+		wantState(t, err, "23514", "are of different items")
+		_, err = user.call(t, "stock.merge", a, uncounted, nil)
+		wantState(t, err, "23514", "Only counted stock rows can be merged")
+		_, err = user.call(t, "stock.merge", a, a, nil)
+		wantState(t, err, "23514", "can't be merged into itself")
+		_, err = user.call(t, "stock.merge", a, b, 3)
+		wantState(t, err, "23514", "have different values")
+	})
+
+	t.Run("the attachments go along with a whole row", func(t *testing.T) {
+		from := user.id(t, "stock.create", screw, shelf, 1, batch("B4"))
+		into := user.id(t, "stock.create", screw, bin, 1, batch("B4"))
+		ctx := context.Background()
+		d := database(t)
+		var photo string
+		if err := d.dba.QueryRow(ctx, `
+			INSERT INTO public.attachment (stock, media_type, hash, size, title)
+			VALUES ($1, 'image/png', repeat('ab', 32), 10, 'Receipt') RETURNING id`, from).Scan(&photo); err != nil {
+			t.Fatal(err)
+		}
+		d.mustExec(t, "UPDATE public.stock SET photo = $2 WHERE id = $1", from, photo)
+		merged := user.must(t, "stock.merge", from, into, nil)
+		if n := len(get(t, merged, "attachments").([]any)); n != 1 || get(t, merged, "photo") != nil {
+			t.Errorf("the merged row's attachments and photo: %v %v", get(t, merged, "attachments"), get(t, merged, "photo"))
+		}
 	})
 }
 
@@ -563,25 +640,6 @@ func TestAccessorItems(t *testing.T) {
 		page = user.must(t, "item.list", nil, "Screw 1", nil, 10, 0)
 		if num(t, page, "rows", 0, "stock", "total") != 5 || get(t, page, "rows", 0, "incomplete") != false {
 			t.Errorf("after the move: %v", get(t, page, "rows", 0))
-		}
-	})
-
-	t.Run("history by action, newest first, by before", func(t *testing.T) {
-		page := user.must(t, "item.list", nil, "Screw 1", nil, 10, 0)
-		screw := str(t, page, "rows", 0, "id")
-		first := user.must(t, "item.history", screw, nil, 2)
-		rows := get(t, first, "rows").([]any)
-		if len(rows) != 2 || get(t, first, "more") != true {
-			t.Fatalf("first page: %v", first)
-		}
-		if get(t, rows[0], "action", "account", "email") != "user@items.example" {
-			t.Errorf("entry's action: %v", get(t, rows[0], "action"))
-		}
-		next := user.must(t, "item.history", screw, num(t, rows[1], "id"), 100)
-		for _, r := range get(t, next, "rows").([]any) {
-			if num(t, r, "id") >= num(t, rows[1], "id") {
-				t.Errorf("the next page has entry %v", get(t, r, "id"))
-			}
 		}
 	})
 }

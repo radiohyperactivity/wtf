@@ -10,6 +10,11 @@ CREATE SCHEMA tenant;
 -- so the tenant's other creating transactions wait their turn, and the
 -- codes have no gaps (a rollback undoes the count). Other tenants never
 -- wait.
+--
+-- The caller must give every code it takes to a new item, location or
+-- stock row, in the same transaction: then every code up to tenant.code
+-- belonged to something, and code.resolve can tell a deleted thing's code
+-- (410) from one never handed out (404).
 CREATE FUNCTION tenant.take_codes(p_tenant uuid, p_count integer)
 RETURNS bigint
 LANGUAGE sql AS $$

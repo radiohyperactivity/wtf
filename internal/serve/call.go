@@ -137,16 +137,6 @@ func query(name, key, typ string) param {
 	}
 }
 
-// refused refuses a request that has query parameter key, with message.
-func refused(key, message string) param {
-	return func(r *http.Request) ([]arg, error) {
-		if r.URL.Query().Has(key) {
-			return nil, invalidInput("%s", message)
-		}
-		return nil, nil
-	}
-}
-
 // constant passes a fixed argument.
 func constant(name, typ string, value any) param {
 	return func(*http.Request) ([]arg, error) {

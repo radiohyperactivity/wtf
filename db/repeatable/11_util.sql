@@ -81,124 +81,6 @@ END;
 $$;
 
 -- ---------------------------------------------------------------------------
--- Actions
--- ---------------------------------------------------------------------------
-
--- Starts the action of a call that changes something: one row of
--- public.action, with the tenant and the account of the session the call is
--- made with (util.session), whose id is kept for the rest of this
--- transaction in the setting wtf.action, where history finds it. Returns
--- the id, which a deleting call sets as deleted on what it deletes.
-CREATE FUNCTION util.begin_action(p_session record)
-RETURNS uuid
-LANGUAGE plpgsql AS $$
-DECLARE
-    v_action uuid;
-BEGIN
-    INSERT INTO public.action (tenant, account)
-    VALUES (p_session.tenant, p_session.account)
-    RETURNING id INTO v_action;
-    PERFORM set_config('wtf.action', v_action::text, true);
-    RETURN v_action;
-END;
-$$;
-
--- The same for wtfd's own maintenance of tenant p_tenant (purging deleted
--- objects, a tenant's first account): an action with no account.
-CREATE FUNCTION util.begin_action(p_tenant uuid)
-RETURNS uuid
-LANGUAGE plpgsql AS $$
-DECLARE
-    v_action uuid;
-BEGIN
-    INSERT INTO public.action (tenant, account)
-    VALUES (p_tenant, NULL)
-    RETURNING id INTO v_action;
-    PERFORM set_config('wtf.action', v_action::text, true);
-    RETURN v_action;
-END;
-$$;
-
--- ---------------------------------------------------------------------------
--- Deleted rows (see api/deleting.md)
--- ---------------------------------------------------------------------------
--- Items, stock rows, locations, classes, attributes, options, attachments
--- and accounts are deleted by setting deleted to the action that deleted
--- them. Rules apply between rows that are not deleted ("live" rows); a
--- deleted row is frozen until it is restored or purged.
-
--- Raises error.deleted when row p_id of p_table is deleted, and locks it
--- for sharing until commit, so that it can't be deleted until this
--- transaction ends. NULL is fine: no reference. For the rules of writes
--- only, as the lock writes to the row; reads that care whether something
--- is deleted read its deleted column themselves.
-CREATE FUNCTION util.check_live(p_table text, p_id uuid)
-RETURNS void
-LANGUAGE plpgsql AS $$
-DECLARE
-    v_deleted uuid;
-BEGIN
-    IF p_id IS NULL THEN
-        RETURN;
-    END IF;
-    CASE p_table
-        WHEN 'class'            THEN SELECT deleted INTO v_deleted FROM public.class            WHERE id = p_id FOR SHARE;
-        WHEN 'location'         THEN SELECT deleted INTO v_deleted FROM public.location         WHERE id = p_id FOR SHARE;
-        WHEN 'item'             THEN SELECT deleted INTO v_deleted FROM public.item             WHERE id = p_id FOR SHARE;
-        WHEN 'stock'            THEN SELECT deleted INTO v_deleted FROM public.stock            WHERE id = p_id FOR SHARE;
-        WHEN 'attribute'        THEN SELECT deleted INTO v_deleted FROM public.attribute        WHERE id = p_id FOR SHARE;
-        WHEN 'attribute_option' THEN SELECT deleted INTO v_deleted FROM public.attribute_option WHERE id = p_id FOR SHARE;
-    END CASE;
-    IF v_deleted IS NOT NULL THEN
-        PERFORM error.deleted(p_table, p_id);
-    END IF;
-END;
-$$;
-
--- A deleted row can only be restored (deleted back to NULL, possibly with a
--- new name or place) or purged. One exception: merged_into is cleared when
--- the stock row it points to is purged.
-CREATE FUNCTION util.block_change_when_deleted()
-RETURNS trigger
-LANGUAGE plpgsql AS $$
-BEGIN
-    IF NEW.deleted IS NOT NULL
-       AND (to_jsonb(NEW) - 'merged_into') IS DISTINCT FROM (to_jsonb(OLD) - 'merged_into')
-    THEN
-        PERFORM error.deleted(TG_TABLE_NAME, OLD.id);
-    END IF;
-    RETURN NEW;
-END;
-$$;
-
--- Only for rows that are deleted, so updates of live rows cost nothing. The
--- name sorts before the other rules' (check_…), so it runs first.
-CREATE TRIGGER block_change_when_deleted BEFORE UPDATE ON public.class
-    FOR EACH ROW WHEN (OLD.deleted IS NOT NULL)
-    EXECUTE FUNCTION util.block_change_when_deleted();
-CREATE TRIGGER block_change_when_deleted BEFORE UPDATE ON public.location
-    FOR EACH ROW WHEN (OLD.deleted IS NOT NULL)
-    EXECUTE FUNCTION util.block_change_when_deleted();
-CREATE TRIGGER block_change_when_deleted BEFORE UPDATE ON public.item
-    FOR EACH ROW WHEN (OLD.deleted IS NOT NULL)
-    EXECUTE FUNCTION util.block_change_when_deleted();
-CREATE TRIGGER block_change_when_deleted BEFORE UPDATE ON public.stock
-    FOR EACH ROW WHEN (OLD.deleted IS NOT NULL)
-    EXECUTE FUNCTION util.block_change_when_deleted();
-CREATE TRIGGER block_change_when_deleted BEFORE UPDATE ON public.attribute
-    FOR EACH ROW WHEN (OLD.deleted IS NOT NULL)
-    EXECUTE FUNCTION util.block_change_when_deleted();
-CREATE TRIGGER block_change_when_deleted BEFORE UPDATE ON public.attribute_option
-    FOR EACH ROW WHEN (OLD.deleted IS NOT NULL)
-    EXECUTE FUNCTION util.block_change_when_deleted();
-CREATE TRIGGER block_change_when_deleted BEFORE UPDATE ON public.attachment
-    FOR EACH ROW WHEN (OLD.deleted IS NOT NULL)
-    EXECUTE FUNCTION util.block_change_when_deleted();
-CREATE TRIGGER block_change_when_deleted BEFORE UPDATE ON public.account
-    FOR EACH ROW WHEN (OLD.deleted IS NOT NULL)
-    EXECUTE FUNCTION util.block_change_when_deleted();
-
--- ---------------------------------------------------------------------------
 -- The class and location trees
 -- ---------------------------------------------------------------------------
 
@@ -312,8 +194,8 @@ $$;
 -- is not found (404); no valid session is not logged in (401); a role
 -- below p_role ('viewer' < 'user' < 'admin') is not allowed (403).
 --
--- A session is valid while its account is live and of the host's tenant,
--- and it hasn't sat unused for longer than its max_idle (never, when
+-- A session is valid while its account is of the host's tenant, and it
+-- hasn't sat unused for longer than its max_idle (never, when
 -- NULL). It is written to at most once a minute, or at once when it is
 -- used from an address new to it: last_used becomes now, and its trail
 -- keeps the 8 addresses seen most recently. A NULL address adds nothing to
@@ -336,7 +218,7 @@ BEGIN
     INTO v_found
     FROM public.tenant t
     LEFT JOIN (public.session s
-               JOIN public.account a ON a.id = s.account AND a.deleted IS NULL)
+               JOIN public.account a ON a.id = s.account)
            ON a.tenant = t.id
           AND s.token_hash = util.token_hash((p_request).token)
           AND (s.max_idle IS NULL OR s.last_used > now() - s.max_idle)
@@ -445,18 +327,6 @@ BEGIN
 END;
 $$;
 
--- Refuses a page size outside 1 to 1000, for the history pages, which go
--- by position (before) rather than by offset.
-CREATE FUNCTION util.check_limit(p_limit integer)
-RETURNS void
-LANGUAGE plpgsql IMMUTABLE AS $$
-BEGIN
-    IF p_limit IS NULL OR p_limit < 1 OR p_limit > 1000 THEN
-        PERFORM error.invalid('limit must be between 1 and 1000');
-    END IF;
-END;
-$$;
-
 -- Refuses p_values unless it is a JSON object whose keys are the ids of
 -- tenant p_tenant's attributes: "invalid" (400) for a key that isn't an
 -- id, a bad reference (422) for an id that isn't one of its attributes.
@@ -511,21 +381,6 @@ LANGUAGE sql IMMUTABLE AS $$
         WHEN 'choice'  THEN CASE WHEN p_option.id IS NOT NULL
                                  THEN jsonb_build_object('id', p_option.id, 'name', p_option.name) END
     END;
-$$;
-
--- What an object's deleted says: null while it is not deleted, and for a
--- deleted one the action that deleted it, when, and by whom ({id, email},
--- or null when wtfd itself did it). Built from the action's row and its
--- account's (NULL rows for a live object), so it queries nothing.
-CREATE FUNCTION util.deleted_json(p_action public.action, p_by public.account)
-RETURNS jsonb
-LANGUAGE sql IMMUTABLE AS $$
-    SELECT CASE WHEN p_action.id IS NOT NULL THEN jsonb_build_object(
-        'action',  p_action.id,
-        'at',      p_action.at,
-        'account', CASE WHEN p_by.id IS NOT NULL
-                        THEN jsonb_build_object('id', p_by.id, 'email', p_by.email) END
-    ) END;
 $$;
 
 -- A path, [{id, name}, …] from the top down, as text: "Garage/Shelf 2".

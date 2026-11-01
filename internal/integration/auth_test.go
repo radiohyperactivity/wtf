@@ -204,8 +204,6 @@ func TestRoles(t *testing.T) {
 		e.expect(t, 200, "GET", "/quantities", nil, who...)
 		e.expect(t, 403, "GET", "/accounts", nil, who...)
 		e.expect(t, 403, "GET", "/classes/"+tools+"/model", nil, who...)
-		e.expect(t, 403, "GET", "/locations/"+shelf+"/history", nil, who...)
-		e.expect(t, 403, "GET", "/classes/history", nil, who...)
 	}
 
 	// Items and stock: users.
@@ -215,10 +213,6 @@ func TestRoles(t *testing.T) {
 	stock := str(t, e.expect(t, 201, "POST", "/stock", obj("item", item, "location", shelf, "amount", 1), user...).body, "id")
 	e.expect(t, 200, "PATCH", "/stock/"+stock, obj("amount", 2), user...)
 	e.expect(t, 403, "PATCH", "/stock/"+stock, obj("amount", 3), viewer...)
-	for _, who := range [][]string{viewer, user} {
-		e.expect(t, 200, "GET", "/items/"+item+"/history", nil, who...)
-		e.expect(t, 200, "GET", "/stock/"+stock+"/history", nil, who...)
-	}
 
 	// Setting up: admins.
 	e.expect(t, 403, "POST", "/locations", obj("name", "Shed"), user...)
@@ -228,7 +222,6 @@ func TestRoles(t *testing.T) {
 	e.expect(t, 403, "POST", "/model/import?dry_run=true", obj("format", "wtf-model", "version", 1), user...)
 	e.expect(t, 403, "POST", "/accounts", obj("email", "x@test.local"), user...)
 	e.expect(t, 200, "GET", "/classes/"+tools+"/model", nil)
-	e.expect(t, 200, "GET", "/locations/"+shelf+"/history", nil)
 }
 
 // The user's own sessions: listed, ended one at a time or all but the

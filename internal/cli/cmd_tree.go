@@ -53,12 +53,12 @@ func treeDeleteCommand(kind, prefix string, resolve func(*env, string) (string, 
 	return command{
 		name:    "delete",
 		args:    "<" + kind + "> [--recursive [--force]] [--yes] [--verbose]",
-		summary: "Delete " + article(kind) + "; with --recursive also everything below it, and with --force also its " + users + ".",
+		summary: "Delete " + article(kind) + ", for good; with --recursive also everything below it, and with --force also its " + users + ".",
 		params:  []param{objectParam(kind)},
 		setup: func(fs *flag.FlagSet) func(*env, []string) error {
 			recursive := fs.Bool("recursive", false, "also delete the "+plural+" below it (all or nothing)")
 			force := fs.Bool("force", false, "with --recursive: also delete the "+users+" of the deleted "+plural)
-			yes := fs.Bool("yes", false, "don't ask before a recursive delete (needed in scripts)")
+			yes := fs.Bool("yes", false, "don't ask first (needed in scripts for a recursive delete)")
 			verbose := fs.Bool("verbose", false, "list everything a recursive delete deletes")
 			return func(e *env, args []string) error {
 				if err := wantArgs(args, 1, 1); err != nil {
@@ -72,6 +72,9 @@ func treeDeleteCommand(kind, prefix string, resolve func(*env, string) (string, 
 					return err
 				}
 				if !*recursive {
+					if err := e.confirmDelete(kind+" "+args[0], *yes); err != nil {
+						return err
+					}
 					_, err := e.do(http.MethodDelete, prefix+id, nil)
 					var p *client.Problem
 					if errors.As(err, &p) && p.Status == http.StatusConflict {

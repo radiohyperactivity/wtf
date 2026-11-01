@@ -12,8 +12,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// hashUsed tells whether any attachment of tenant $1, live or deleted, has
-// the file with hash $2. An attachment's tenant is its owner's: an item's
+// hashUsed tells whether any attachment of tenant $1 has the file with
+// hash $2. An attachment's tenant is its owner's: an item's
 // through its class, a stock row's through its location.
 const hashUsed = `SELECT EXISTS (
 	SELECT 1
@@ -28,8 +28,7 @@ const hashUsed = `SELECT EXISTS (
 	  AND coalesce(ic.tenant, sl.tenant, l.tenant, c.tenant) = $1)`
 
 // expiredSessions removes every tenant's expired sessions: those that sat
-// unused for longer than their max_idle. Sessions aren't in history, so no
-// action is needed.
+// unused for longer than their max_idle.
 const expiredSessions = `DELETE FROM public.session
 	WHERE max_idle IS NOT NULL AND last_used <= now() - max_idle`
 

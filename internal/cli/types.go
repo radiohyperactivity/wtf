@@ -77,17 +77,6 @@ func (u *unit) UnmarshalJSON(data []byte) error {
 	return d.Decode((*plain)(u))
 }
 
-// deleted is what a deleted object's "deleted" says: the action that
-// deleted it, when, and by whom (nil: wtfd itself). A live object has none.
-type deleted struct {
-	Action  string `json:"action"`
-	At      string `json:"at"`
-	Account *struct {
-		ID    string `json:"id"`
-		Email string `json:"email"`
-	} `json:"account"`
-}
-
 type display struct {
 	Value json.Number `json:"value"`
 	Unit  unit        `json:"unit"`
@@ -100,14 +89,12 @@ type attribute struct {
 	Unit     *unit    `json:"unit"`
 	UnitLock bool     `json:"unit_lock"`
 	Options  []option `json:"options"`
-	Deleted  *deleted `json:"deleted"`
 }
 
 type option struct {
-	ID        string   `json:"id"`
-	Attribute string   `json:"attribute"`
-	Name      string   `json:"name"`
-	Deleted   *deleted `json:"deleted"`
+	ID        string `json:"id"`
+	Attribute string `json:"attribute"`
+	Name      string `json:"name"`
 }
 
 type node struct {
@@ -133,7 +120,6 @@ type class struct {
 	Attributes  []classAttribute `json:"attributes"`
 	Photo       *attachment      `json:"photo"`
 	Attachments []attachment     `json:"attachments"`
-	Deleted     *deleted         `json:"deleted"`
 }
 
 type classAttribute struct {
@@ -155,16 +141,14 @@ type location struct {
 	Path        []ref        `json:"path"`
 	Photo       *attachment  `json:"photo"`
 	Attachments []attachment `json:"attachments"`
-	Deleted     *deleted     `json:"deleted"`
 }
 
 type attachment struct {
-	ID        string   `json:"id"`
-	Title     string   `json:"title"`
-	MediaType string   `json:"media_type"`
-	Size      int64    `json:"size"`
-	Hash      string   `json:"hash"`
-	Deleted   *deleted `json:"deleted"`
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	MediaType string `json:"media_type"`
+	Size      int64  `json:"size"`
+	Hash      string `json:"hash"`
 }
 
 type value struct {
@@ -185,7 +169,6 @@ type itemRow struct {
 	Stock      *stockTotal `json:"stock"`
 	Incomplete bool        `json:"incomplete"`
 	Photo      *attachment `json:"photo"`
-	Deleted    *deleted    `json:"deleted"`
 }
 
 type stockTotal struct {
@@ -206,7 +189,6 @@ type item struct {
 	Photo       *attachment  `json:"photo"`
 	Attachments []attachment `json:"attachments"`
 	Stock       []itemStock  `json:"stock"`
-	Deleted     *deleted     `json:"deleted"`
 }
 
 type itemStock struct {
@@ -232,11 +214,6 @@ type stock struct {
 	Missing     []ref        `json:"missing"`
 	Photo       *attachment  `json:"photo"`
 	Attachments []attachment `json:"attachments"`
-	Deleted     *deleted     `json:"deleted"`
-	MergedInto  *struct {
-		ID   string `json:"id"`
-		Code string `json:"code"`
-	} `json:"merged_into"`
 }
 
 type page[T any] struct {
@@ -247,38 +224,10 @@ type page[T any] struct {
 }
 
 type account struct {
-	ID          string   `json:"id"`
-	Email       string   `json:"email"`
-	HasPassword bool     `json:"has_password"`
-	Role        string   `json:"role"`
-	Deleted     *deleted `json:"deleted"`
-}
-
-// historyEntry is one entry of a history page; the entries of one call
-// share their action.
-type historyEntry struct {
-	ID     json.Number `json:"id"`
-	Action struct {
-		ID      string `json:"id"`
-		At      string `json:"at"`
-		Account *struct {
-			ID      string `json:"id"`
-			Email   string `json:"email"`
-			Deleted bool   `json:"deleted"`
-		} `json:"account"`
-	} `json:"action"`
-	Table     string                     `json:"table"`
-	Operation string                     `json:"operation"`
-	Data      map[string]json.RawMessage `json:"data"`
-	Changes   map[string]json.RawMessage `json:"changes"`
-}
-
-// historyPage is a page of history, which goes by position: more says
-// whether there are older entries, the next page being before the oldest
-// entry of this one.
-type historyPage struct {
-	More bool           `json:"more"`
-	Rows []historyEntry `json:"rows"`
+	ID          string `json:"id"`
+	Email       string `json:"email"`
+	HasPassword bool   `json:"has_password"`
+	Role        string `json:"role"`
 }
 
 // session is one of the account's own sessions (GET /me/sessions).

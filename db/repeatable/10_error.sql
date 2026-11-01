@@ -77,6 +77,16 @@ BEGIN
 END;
 $$;
 
+-- Raises "not allowed by the rules" (23514, 422), as the rules themselves
+-- do, for a request the rules would refuse, said before anything changes.
+CREATE FUNCTION error.not_allowed(p_message text)
+RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION '%', p_message USING ERRCODE = 'check_violation';
+END;
+$$;
+
 -- Raises "already exists" (23505, 409), for a name or address that must be
 -- unique and is taken, with a message that says which.
 CREATE FUNCTION error.duplicate(p_message text)
@@ -98,7 +108,7 @@ END;
 $$;
 
 -- Raises "not possible in this state" (55000, 409), with a message that
--- says why and, where there is one, the way out.
+-- says why and, where there is one, the way out: a unit that is turned off.
 CREATE FUNCTION error.wrong_state(p_message text)
 RETURNS void
 LANGUAGE plpgsql AS $$
@@ -107,43 +117,14 @@ BEGIN
 END;
 $$;
 
--- Raises "… is deleted" (55000, 409): the row exists, but nothing may be
--- done with it except restoring it.
-CREATE FUNCTION error.deleted(p_table text, p_id uuid)
+-- Raises "gone" (WT001, 410), for a label code that was handed out but that
+-- nothing has any more: what had it was deleted. It has a code of its own,
+-- outside PostgreSQL's, as no standard one means "deleted".
+CREATE FUNCTION error.gone(p_message text)
 RETURNS void
 LANGUAGE plpgsql AS $$
 BEGIN
-    RAISE EXCEPTION '% is deleted', error.row_label(p_table, p_id)
-        USING ERRCODE = 'object_not_in_prerequisite_state';
-END;
-$$;
-
--- Raises "… is not deleted" (55000, 409), for restoring what is not
--- deleted.
-CREATE FUNCTION error.not_deleted(p_table text, p_id uuid)
-RETURNS void
-LANGUAGE plpgsql AS $$
-BEGIN
-    RAISE EXCEPTION '% is not deleted', error.row_label(p_table, p_id)
-        USING ERRCODE = 'object_not_in_prerequisite_state';
-END;
-$$;
-
--- Raises "… is in …, which is deleted" (WT001, 409), for restoring
--- something into a class, location or item that is deleted. It has a code
--- of its own, outside PostgreSQL's, because clients act on it: they offer
--- to restore what it is in too ("with_parents": true), or to restore it
--- somewhere else, by the request field named in DETAIL (p_place_key:
--- 'class', 'parent' or 'location').
-CREATE FUNCTION error.restore_into_deleted(p_what text, p_into text, p_place_key text)
-RETURNS void
-LANGUAGE plpgsql AS $$
-BEGIN
-    RAISE EXCEPTION '% is in %, which is deleted', p_what, p_into
-        USING ERRCODE = 'WT001',
-              DETAIL = p_place_key,
-              HINT = format('Restore it together with what it is in ("with_parents": true), or somewhere else ("%s": …).',
-                            p_place_key);
+    RAISE EXCEPTION '%', p_message USING ERRCODE = 'WT001';
 END;
 $$;
 

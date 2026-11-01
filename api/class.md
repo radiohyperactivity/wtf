@@ -4,14 +4,14 @@ The SQL is in [`db/repeatable/31_class.sql`](../db/repeatable/31_class.sql).
 
 ## Assignments
 
-`class.assign(p_class, p_attribute, p_default, p_scope, p_required)` gives a class, and the classes below it, an attribute, or changes the assignment; `class.unassign(p_class, p_attribute)` takes it away (refused while live items or stock rows have values that depend on it). `class.get` lists the class's attributes, its own and inherited, each with `assigned_to` (the class the assignment is on), `inherited`, `default` and `default_display`, `scope` (`"item"` or `"stock"`: where the values live) and `required`.
+`class.assign(p_class, p_attribute, p_default, p_scope, p_required)` gives a class, and the classes below it, an attribute, or changes the assignment; `class.unassign(p_class, p_attribute)` takes it away (refused while items or stock rows have values that depend on it). `class.get` lists the class's attributes, its own and inherited, each with `assigned_to` (the class the assignment is on), `inherited`, `default` and `default_display`, `scope` (`"item"` or `"stock"`: where the values live) and `required`.
 
 ## Deleting a subtree
 
-Deleting marks classes deleted; they can be restored (`class.restore`). See [deleting.md](deleting.md). `class.delete` deletes one class, which must have no live subclasses or items (409 otherwise). `class.delete_tree(p_class, p_force, p_dry_run)` (`DELETE /classes/{id}?recursive=true`) deletes a class and every live class below it in one action, deepest first:
+Deleting removes a class for good; see [deleting.md](deleting.md). `class.delete` deletes one class, which must have no subclasses or items (409 otherwise, saying which). `class.delete_tree(p_class, p_force, p_dry_run)` (`DELETE /classes/{id}?recursive=true`) deletes a class and every class below it, all or nothing:
 
-- **Items block it:** if any of the classes has live items, nothing is deleted (23001, 409), and the message names the classes and their item counts (`MCU/Intel/No (3 items)`).
-- **`p_force`** (`force=true`) deletes those items too, with their live stock rows.
+- **Items block it:** if any of the classes has items, nothing is deleted (23001, 409), and the message names the classes and their item counts (`MCU/Intel/No (3 items)`).
+- **`p_force`** (`force=true`) deletes those items too, with their stock rows.
 - **`p_dry_run`** deletes nothing; it only reports. Its route is a `GET`, `GET /classes/{id}/deletion?force=…`, so a server that doesn't know recursive deletes answers 404 rather than mistaking a preview for a delete. Unlike the delete, the preview reports items without `force` instead of failing.
 - **The result** is what was (or would be) deleted: `{classes: [{id, path}], items: [{id, code, name, class}], stock: <number of stock rows>}`, classes deepest first.
 

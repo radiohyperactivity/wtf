@@ -264,17 +264,12 @@ func getenv(name, fallback string) string {
 }
 
 // reset deletes all user data, of every tenant, and the tenants' choices
-// of units, with the history and the actions that only they refer to.
-// Tenants, units and accounts stay.
+// of units. Tenants, units and accounts stay.
 func (e *environment) reset(t *testing.T) {
 	t.Helper()
-	for _, sql := range []string{
-		"TRUNCATE public.history, public.attachment, public.stock_value, public.stock, public.item_value, public.item, public.class_attribute, public.attribute_option, public.attribute, public.class, public.location, public.tenant_quantity, public.tenant_unit_family",
-		"DELETE FROM public.action a WHERE NOT EXISTS (SELECT 1 FROM public.account x WHERE x.deleted = a.id)",
-	} {
-		if _, err := e.dba.Exec(context.Background(), sql); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := e.dba.Exec(context.Background(),
+		"TRUNCATE public.attachment, public.stock_value, public.stock, public.item_value, public.item, public.class_attribute, public.attribute_option, public.attribute, public.class, public.location, public.tenant_quantity, public.tenant_unit_family"); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -300,6 +295,7 @@ var requiredFields = []struct {
 	{"POST", regexp.MustCompile(`^/items$`), map[string]any{"unit": nil, "unit_lock": false, "values": map[string]any{}}},
 	{"POST", regexp.MustCompile(`^/stock$`), map[string]any{"amount": nil, "values": map[string]any{}}},
 	{"POST", regexp.MustCompile(`^/stock/[^/]+/move$`), map[string]any{"amount": nil}},
+	{"POST", regexp.MustCompile(`^/stock/[^/]+/merge$`), map[string]any{"amount": nil}},
 	{"POST", regexp.MustCompile(`^/accounts$`), map[string]any{"password": nil, "role": "viewer"}},
 	{"PUT", regexp.MustCompile(`^/classes/[^/]+/attributes/[^/]+$`), map[string]any{"default": nil, "scope": "item", "required": false}},
 	{"POST", regexp.MustCompile(`^/login$`), map[string]any{"client": nil, "max_idle": nil}},
@@ -457,9 +453,9 @@ func (e *environment) tenantStore(t *testing.T) *files.Store {
 
 // dropTenantUnits removes the units, families and quantities tenants have
 // imported, and the attributes, items and stock that use them, so other
-// tests see only the global ones. One transaction per tenant, with an action
-// of the tenant's (history records the removals); a quantity and its base
-// unit go together, as the key from one to the other is checked at commit.
+// tests see only the global ones. One transaction per tenant: a quantity
+// and its base unit go together, as the key from one to the other is
+// checked at commit.
 func (e *environment) dropTenantUnits(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
@@ -471,7 +467,6 @@ func (e *environment) dropTenantUnits(t *testing.T) {
 	for _, tenant := range tenants {
 		err := pgx.BeginFunc(ctx, e.dba, func(tx pgx.Tx) error {
 			for _, sql := range []string{
-				"SELECT util.begin_action($1::uuid)",
 				"DELETE FROM public.item_value v USING public.attribute a, public.unit u WHERE v.attribute = a.id AND a.unit = u.id AND u.tenant = $1",
 				"DELETE FROM public.stock_value v USING public.attribute a, public.unit u WHERE v.attribute = a.id AND a.unit = u.id AND u.tenant = $1",
 				"DELETE FROM public.class_attribute ca USING public.attribute a, public.unit u WHERE ca.attribute = a.id AND a.unit = u.id AND u.tenant = $1",

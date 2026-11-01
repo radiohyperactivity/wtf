@@ -7,7 +7,6 @@ What the refactor ([database](2026-10-31-database-refactor.md), [accessors](2026
 - **The model:** `ClassAttribute.perUnit` (`lib/api/models.dart`) becomes a `scope` of `item` or `stock`, read from `"scope"` in place of `"per_unit"`. Everything that asks `perUnit` asks the scope instead: `lib/widgets/value_fields.dart`, `lib/screens/item_form.dart`, `stock_form.dart`, `search_screen.dart`, `class_screen.dart`.
 - **Assigning an attribute** (`class_screen.dart`): the "Per unit" switch becomes a choice of **Item** or **Stock row** under "Values on", and `lib/api/client.dart` sends `scope`.
 - **Words:** "per-unit values" and "(per unit)" become stock values and attributes: the stock form's section "Per-unit values", the search screen's "(per unit)" label and its hint "Per-unit attributes match when any stock row does", and the comments that say per unit.
-- **History** (`lib/api/history_text.dart`): the table `value` is `item_value`, and an assignment's `per_unit` is `scope`.
 - **Tests:** `test/fake_server.dart` and `test/app_test.dart` follow the new names.
 
 ## From database decision 3: a stock row's `amount`
@@ -15,21 +14,7 @@ What the refactor ([database](2026-10-31-database-refactor.md), [accessors](2026
 - **The model:** the stock row's `quantity` (and the stock quantity class in `lib/api/models.dart`, with `quantityText`) becomes `amount`, read from `"amount"`; the item's stock total likewise.
 - **Words:** the stock screen's field "Quantity" (`stock_screen.dart`) and the stock input's label "Quantity" (`lib/widgets/value_fields.dart`) become **Amount**; so do the move dialog's texts and the comments that speak of a stock quantity.
 - **Not this:** "quantity" in the units sense (Length, Weight) stays: Admin → Units, the unit pickers, `Quantity` in the units model.
-- **History:** a stock row's change shows `amount`.
 - **Tests:** `test/fake_server.dart` and `test/app_test.dart` follow.
-
-## From database decision 4: typed columns `text`, `number`, `date`, `boolean`, `option`
-
-- **History** (`lib/api/history_text.dart`, `typed()` and the option look-ups near the top): a value row's columns are `text`, `number`, `date`, `boolean` and `option`, in place of `text_value`, `integer_value`, `float_value` and so on. An assignment's defaults are `default_text`, `default_number` and so on, in place of `text_default` …; `typed()` takes the prefix in place of its `suffix`.
-
-## From database decision 8: one `attachment` table
-
-- **History** (`lib/api/history_text.dart`, where it collects attachment titles and where it describes entries): the tables `item_attachment`, `stock_attachment`, `location_attachment` and `class_attachment` are one, `attachment`; which object it belongs to is in the row (`item`, `stock`, `location` or `class`).
-
-## From database decision 15: the `deletion` table
-
-- **History** (`lib/api/history_text.dart`, everywhere it reads `deleted`): a row's `deleted` is null when live and the id of the action that deleted it when deleted, in place of false and true; a delete or restore shows as a change of `deleted` from null to an id, or back.
-- **The objects' own `deleted`** in the API's JSON is for part 3 to decide; the apps follow it.
 
 ## From database decision 24: the datatype `decimal`
 
@@ -43,18 +28,6 @@ What the refactor ([database](2026-10-31-database-refactor.md), [accessors](2026
 ## From database decision 35: an attribute's datatype never changes
 
 - **The attribute form** (`lib/screens/attribute_screens.dart`): when editing, the datatype is shown, not offered as a choice, and is no longer sent (`if (datatype != current.datatype) 'datatype': …`). Picking a unit still sets the datatype, but only when creating.
-
-## From accessor decision 8: history pages
-
-- **The history screen** (`lib/screens/history_screen.dart`) asks for the entries older than the oldest it has (`before`), not by `offset`, and shows "Show older" while the page says `more`, without the count of changes left; the page model in `lib/api/models.dart` follows.
-
-## From database decision 37 and accessor decision 18: actions
-
-- **History entries** (`lib/api/history_text.dart`, `lib/api/models.dart`): each carries `action: {id, at, account}` in place of `transaction`, `happened_at` and `account`; entries are grouped into one sentence by the action's `id` (today by `transaction`, line 347), and the time and who are read from the action.
-
-## From accessor decision 20: the problem type for 55000
-
-- **`lib/api/client.dart`:** the constant `deleted = '/problems/deleted'` becomes `/problems/wrong-state`, and `intoDeleted` checks the type `/problems/restore-into-deleted` (API decision 14) and reads `place_key` and `with_parents` from its fields, in place of searching the hint.
 
 ## From accessor decision 24: a new password
 
@@ -74,6 +47,12 @@ What the refactor ([database](2026-10-31-database-refactor.md), [accessors](2026
 - **The names** of API decision 4 everywhere the models read them (most already listed above, per database decision).
 - **The unit families** (`lib/api/models.dart`, `lib/api/units.dart`): a unit in a family has no `family` or `quantity` of its own (found by where it sits); a quantity's `base_unit` is an id, looked up among its families' units.
 
-## From API decision 7: `deleted`
+## From the plan of 1 November 2026: no "mark as deleted", restore or history
 
-- **Every model with `deleted`** (`lib/api/models.dart`): null, or `{action, at, account}`, in place of `true` or `false`; **the "Deleted" banner** (`DeletedBanner`, used by the class, item, stock and location screens) says by whom and when.
+[2026-11-01-dropping-deleted-and-history.md](2026-11-01-dropping-deleted-and-history.md). The API has no `deleted`, no restore routes and no history pages any more, so the apps lose what used them; the reminders above about history entries and `deleted` went with it.
+
+- **What goes:** the history screen (`lib/screens/history_screen.dart`) and `lib/api/history_text.dart`, with the menu entries and buttons that open them; the restore widget (`lib/widgets/restore.dart`) and its uses; the "Deleted" banner (`DeletedBanner`) on the class, item, stock and location screens; `deleted` and `merged_into` in `lib/api/models.dart`; `intoDeleted` and the constant `deleted` in `lib/api/client.dart`.
+- **Deleting asks first,** as it can't be undone: "Delete Drill? This can't be undone." on every delete, not only the recursive ones (CLI decision 67 does the same on a terminal).
+- **A deleted thing's label:** scanning a code that answers 410 (`/problems/gone`) says "This label's item, stock row or location has been deleted", where a code never handed out (404) says that nothing has this label.
+- **Moving and merging stock are two actions** (that plan's decision 6): a move never merges, so the stock screen gets a "Merge into…" action of its own, offering the item's other counted rows with the same values (`POST /stock/{id}/merge`, `{into, amount}`), and showing the refusal (422) when values differ.
+- **Tests:** `test/fake_server.dart` and `test/app_test.dart` lose the history, restore and deleted cases, and gain the merge and the 410.

@@ -124,8 +124,9 @@ func TestCLIInteractive(t *testing.T) {
 	contains(t, stderr, `class "AVR" is ambiguous`, "for MCU/AVR", "for AVR")
 	// On a terminal it asks instead: the matches are sorted by path, so
 	// Enter picks the top-level AVR (before MCU/AVR), and AVR under MCU stays.
-	_, prompts = c.interact([]string{"\r"}, false, "class", "delete", "AVR")
-	contains(t, prompts, `Which class "AVR"? AVR`)
+	// Then it asks whether to delete it, as a delete can't be undone.
+	_, prompts = c.interact([]string{"\r", "y\r"}, false, "class", "delete", "AVR")
+	contains(t, prompts, `Which class "AVR"? AVR`, "Delete class AVR? This can't be undone. [y/N]")
 	tree := c.ok("class", "tree")
 	contains(t, tree, "MCU\n  AVR")
 	if strings.Count(tree, "AVR") != 1 {

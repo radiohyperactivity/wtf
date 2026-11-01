@@ -266,33 +266,6 @@ func localTime(at string) string {
 	return at
 }
 
-// historyLines formats history entries, newest first, one block per entry.
-func historyLines(rows []historyEntry) []string {
-	var lines []string
-	for _, h := range rows {
-		who := "(wtfd)"
-		if a := h.Action.Account; a != nil {
-			who = a.Email
-			if a.Deleted {
-				who += " (deleted)"
-			}
-		}
-		when := localTime(h.Action.At)
-		lines = append(lines, fmt.Sprintf("%s  %s  %s %s%s", when, who, h.Operation, h.Table, historySubject(h)))
-		if h.Operation == "update" {
-			for _, k := range sortedKeys(h.Changes) {
-				var c struct{ Old, New json.RawMessage }
-				if err := json.Unmarshal(h.Changes[k], &c); err == nil && (c.Old != nil || c.New != nil) {
-					lines = append(lines, fmt.Sprintf("    %s: %s → %s", k, compactJSON(c.Old), compactJSON(c.New)))
-				} else {
-					lines = append(lines, fmt.Sprintf("    %s: %s", k, formatJSONValue(h.Changes[k])))
-				}
-			}
-		}
-	}
-	return lines
-}
-
 // tableLines renders rows with aligned columns and returns the lines.
 func tableLines(header []string, rows [][]string, withHeader bool) []string {
 	var buf bytes.Buffer
@@ -309,30 +282,6 @@ func tableLines(header []string, rows [][]string, withHeader bool) []string {
 		return nil
 	}
 	return out
-}
-
-// historySubject names the changed row briefly, e.g. ` "Drill"`.
-func historySubject(h historyEntry) string {
-	for _, k := range []string{"name", "email", "file_name"} {
-		if raw, ok := h.Data[k]; ok {
-			var s string
-			if json.Unmarshal(raw, &s) == nil && s != "" {
-				return fmt.Sprintf(" %q", s)
-			}
-		}
-	}
-	return ""
-}
-
-func compactJSON(raw json.RawMessage) string {
-	if raw == nil {
-		return "null"
-	}
-	var buf bytes.Buffer
-	if json.Compact(&buf, raw) != nil {
-		return string(raw)
-	}
-	return buf.String()
 }
 
 func sortedKeys[V any](m map[string]V) []string {

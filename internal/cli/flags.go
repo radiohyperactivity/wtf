@@ -2,12 +2,12 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -162,6 +162,24 @@ func (e *env) do(method, path string, body any) (json.RawMessage, error) {
 	return data, err
 }
 
+// confirmDelete asks on a terminal whether to delete what, as a delete
+// can't be undone; yes (--yes) answers for the user. Without a terminal it
+// doesn't ask: scripts delete as they always did, and a single delete is
+// refused while anything is in or uses what it deletes.
+func (e *env) confirmDelete(what string, yes bool) error {
+	if yes || e.term == nil {
+		return nil
+	}
+	answer, err := e.term.ReadLine("Delete "+what+"? This can't be undone. [y/N] ", "", nil)
+	if err != nil {
+		return err
+	}
+	if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
+		return errors.New("nothing was deleted")
+	}
+	return nil
+}
+
 // deleted reports a deletion.
 func (e *env) deleted(what string) {
 	if !e.json {
@@ -178,82 +196,27 @@ func simple(run func(e *env, args []string) error) func(*flag.FlagSet) func(*env
 func deleteCommand(kind, prefix string, resolve func(*env, string) (string, error)) command {
 	return command{
 		name:    "delete",
-		args:    "<" + kind + ">",
-		summary: "Delete " + article(kind) + ".",
+		args:    "<" + kind + "> [--yes]",
+		summary: "Delete " + article(kind) + ", for good; on a terminal it asks first.",
 		params:  []param{objectParam(kind)},
-		setup: simple(func(e *env, args []string) error {
-			if err := wantArgs(args, 1, 1); err != nil {
-				return err
-			}
-			id, err := resolve(e, args[0])
-			if err != nil {
-				return err
-			}
-			if _, err := e.do(http.MethodDelete, prefix+id, nil); err != nil {
-				return err
-			}
-			e.deleted(kind + " " + args[0])
-			return nil
-		}),
-	}
-}
-
-// historyCommand shows the history of the object named by the argument.
-// With list set (e.g. "the top-level locations"), the argument may be left
-// out to show the history of that list: what was added to it, deleted or
-// restored, so that deleted things can be found.
-func historyCommand(kind, prefix, list string, resolve func(*env, string) (string, error)) command {
-	usage, summary, params := "<"+kind+">", "Show the changes to "+article(kind), []param{objectParam(kind)}
-	minArgs := 1
-	if list != "" {
-		usage, summary, minArgs = "["+kind+"]", summary+" (or to "+list+")", 0
-		params[0].optional = true
-	}
-	return command{
-		name:    "history",
-		args:    usage + " [--limit N] [--before ID]",
-		summary: summary + ", newest first, a page at a time" + map[bool]string{true: ".", false: " (admins)."}[kind == "item" || kind == "stock"],
-		params:  params,
 		setup: func(fs *flag.FlagSet) func(*env, []string) error {
-			limit := fs.Int("limit", 100, "show this many entries (1–1000)")
-			before := fs.String("before", "", "show the entries older than this one (by its id)")
+			yes := fs.Bool("yes", false, "don't ask first")
 			return func(e *env, args []string) error {
-				if err := wantArgs(args, minArgs, 1); err != nil {
+				if err := wantArgs(args, 1, 1); err != nil {
 					return err
 				}
-				path := prefix + "history"
-				if len(args) == 1 {
-					id, err := resolve(e, args[0])
-					if err != nil {
-						return err
-					}
-					path = prefix + id + "/history"
-				}
-				query := url.Values{"limit": {strconv.Itoa(*limit)}}
-				if *before != "" {
-					query.Set("before", *before)
-				}
-				data, err := e.api.Get(e.ctx, path, query)
+				id, err := resolve(e, args[0])
 				if err != nil {
 					return err
 				}
-				return e.emit(data, func() error {
-					var pg historyPage
-					if err := e.decode(data, &pg); err != nil {
-						return err
-					}
-					if len(pg.Rows) == 0 {
-						fmt.Fprintln(e.stderr, "No history.")
-						return nil
-					}
-					for _, line := range historyLines(pg.Rows) {
-						fmt.Fprintln(e.stdout, line)
-					}
-					if pg.More {
-						fmt.Fprintf(e.stderr, "There is more; see it with --before %s.\n", pg.Rows[len(pg.Rows)-1].ID)
-					}
-					return nil
-				})
+				if err := e.confirmDelete(kind+" "+args[0], *yes); err != nil {
+					return err
+				}
+				if _, err := e.do(http.MethodDelete, prefix+id, nil); err != nil {
+					return err
+				}
+				e.deleted(kind + " " + args[0])
+				return nil
 			}
 		},
 	}

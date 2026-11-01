@@ -24,13 +24,6 @@ type handlerFunc func(w http.ResponseWriter, r *http.Request) error
 
 func (s *server) routes() []route {
 	limit, offset := query("p_limit", "limit", "integer"), query("p_offset", "offset", "integer")
-	// History pages go by position: before is the id of the oldest entry
-	// the client has.
-	history := []param{
-		query("p_before", "before", "bigint"), limit,
-		refused("offset", "History pages go by before, not offset"),
-	}
-	restoreOptions := patch("p_options")
 	routes := []route{
 		{"GET /health", s.health},
 		{"GET /openapi", s.openAPI},
@@ -57,13 +50,11 @@ func (s *server) routes() []route {
 		{"GET /attributes/{id}", s.read("attribute.get", path("p_attribute", "id"))},
 		{"PATCH /attributes/{id}", s.update("attribute.patch", path("p_attribute", "id"), patch("p_patch"))},
 		{"DELETE /attributes/{id}", s.remove("attribute.delete", path("p_attribute", "id"))},
-		{"POST /attributes/{id}/restore", s.update("attribute.restore", path("p_attribute", "id"), restoreOptions)},
 		{"POST /attributes/{id}/options", s.create("attribute.option_create", "/options/",
 			path("p_attribute", "id"), body(field{key: "name", name: "p_name", typ: "text"}))},
 		{"GET /options/{id}", s.read("attribute.option_get", path("p_option", "id"))},
 		{"PATCH /options/{id}", s.update("attribute.option_patch", path("p_option", "id"), patch("p_patch"))},
 		{"DELETE /options/{id}", s.remove("attribute.option_delete", path("p_option", "id"))},
-		{"POST /options/{id}/restore", s.update("attribute.option_restore", path("p_option", "id"), restoreOptions)},
 
 		{"GET /classes", s.versioned("class.list", "tree", true)},
 		{"POST /classes", s.create("class.create", "/classes/", body(
@@ -74,7 +65,6 @@ func (s *server) routes() []route {
 		{"GET /classes/{id}", s.read("class.get", path("p_class", "id"))},
 		{"PATCH /classes/{id}", s.update("class.patch", path("p_class", "id"), patch("p_patch"))},
 		{"DELETE /classes/{id}", s.removeTree("class.delete", "class.delete_tree", path("p_class", "id"))},
-		{"POST /classes/{id}/restore", s.update("class.restore", path("p_class", "id"), restoreOptions)},
 		{"GET /classes/{id}/model", s.read("model.export", path("p_class", "id"))},
 		{"GET /classes/{id}/deletion", s.read("class.delete_tree", path("p_class", "id"),
 			flag("p_force", "force"), constant("p_dry_run", "boolean", true))},
@@ -103,7 +93,6 @@ func (s *server) routes() []route {
 		{"GET /items/{id}", s.read("item.get", path("p_item", "id"))},
 		{"PATCH /items/{id}", s.update("item.patch", path("p_item", "id"), patch("p_patch"))},
 		{"DELETE /items/{id}", s.remove("item.delete", path("p_item", "id"))},
-		{"POST /items/{id}/restore", s.update("item.restore", path("p_item", "id"), restoreOptions)},
 		{"PUT /items/{id}/values/{attribute}", s.update("item.value_set",
 			path("p_item", "id"), path("p_attribute", "attribute"),
 			body(field{key: "value", name: "p_value", typ: "jsonb"}))},
@@ -115,7 +104,6 @@ func (s *server) routes() []route {
 		{"GET /locations/{id}", s.read("location.get", path("p_location", "id"))},
 		{"PATCH /locations/{id}", s.update("location.patch", path("p_location", "id"), patch("p_patch"))},
 		{"DELETE /locations/{id}", s.removeTree("location.delete", "location.delete_tree", path("p_location", "id"))},
-		{"POST /locations/{id}/restore", s.update("location.restore", path("p_location", "id"), restoreOptions)},
 		{"GET /locations/{id}/deletion", s.read("location.delete_tree", path("p_location", "id"),
 			flag("p_force", "force"), constant("p_dry_run", "boolean", true))},
 
@@ -132,9 +120,12 @@ func (s *server) routes() []route {
 		{"GET /stock/{id}", s.read("stock.get", path("p_stock", "id"))},
 		{"PATCH /stock/{id}", s.update("stock.patch", path("p_stock", "id"), patch("p_patch"))},
 		{"DELETE /stock/{id}", s.remove("stock.delete", path("p_stock", "id"))},
-		{"POST /stock/{id}/restore", s.update("stock.restore", path("p_stock", "id"), restoreOptions)},
 		{"POST /stock/{id}/move", s.update("stock.move", path("p_stock", "id"), body(
 			field{key: "location", name: "p_location", typ: "uuid"},
+			field{key: "amount", name: "p_amount", typ: "numeric"},
+		))},
+		{"POST /stock/{id}/merge", s.update("stock.merge", path("p_stock", "id"), body(
+			field{key: "into", name: "p_into", typ: "uuid"},
 			field{key: "amount", name: "p_amount", typ: "numeric"},
 		))},
 		{"PUT /stock/{id}/values/{attribute}", s.update("stock.value_set",
@@ -164,16 +155,6 @@ func (s *server) routes() []route {
 		{"PATCH /accounts/{id}", s.update("account.patch", path("p_account", "id"), patch("p_patch"))},
 		{"DELETE /accounts/{id}", s.remove("account.delete", path("p_account", "id"))},
 
-		{"GET /items/{id}/history", s.read("item.history", append([]param{path("p_item", "id")}, history...)...)},
-		{"GET /stock/{id}/history", s.read("stock.history", append([]param{path("p_stock", "id")}, history...)...)},
-		{"GET /locations/{id}/history", s.read("location.history", append([]param{path("p_location", "id")}, history...)...)},
-		{"GET /classes/{id}/history", s.read("class.history", append([]param{path("p_class", "id")}, history...)...)},
-		{"GET /attributes/{id}/history", s.read("attribute.history", append([]param{path("p_attribute", "id")}, history...)...)},
-		{"GET /accounts/{id}/history", s.read("account.history", append([]param{path("p_account", "id")}, history...)...)},
-		{"GET /locations/history", s.read("location.list_history", history...)},
-		{"GET /classes/history", s.read("class.list_history", history...)},
-		{"GET /attributes/history", s.read("attribute.list_history", history...)},
-
 		{"GET /codes/{code}", s.read("code.resolve", pathText("p_code", "code"))},
 	}
 	// Attachments, only ever reached through their object.
@@ -186,7 +167,6 @@ func (s *server) routes() []route {
 			route{"PATCH " + base, s.update("attachment.patch", kind, owner, attachment, patch("p_patch"))},
 			route{"DELETE " + base, s.remove("attachment.delete", kind, owner, attachment)},
 			route{"GET " + base + "/content", s.download(k.kind)},
-			route{"POST " + base + "/restore", s.update("attachment.restore", kind, owner, attachment, restoreOptions)},
 		)
 	}
 	return routes

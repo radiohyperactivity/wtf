@@ -182,20 +182,13 @@ func TestStock(t *testing.T) {
 		t.Fatalf("split: %v", moved)
 	}
 
-	// Partial move to a location with exactly one counted row: merge.
+	// A move never merges, also where there is a row of the item already;
+	// merging is its own action (TestMerge).
 	moved = e.expect(t, 200, "POST", "/stock/"+source+"/move", obj("location", attic, "amount", 2)).body
-	if str(t, moved, "id") != atticRow || num(t, moved, "amount") != 6 {
-		t.Fatalf("merge: %v", moved)
+	if str(t, moved, "id") == atticRow || num(t, moved, "amount") != 2 {
+		t.Fatalf("second split: %v", moved)
 	}
-
-	// Whole move into it: merged, and the source row is marked deleted, merged into the other.
-	moved = e.expect(t, 200, "POST", "/stock/"+source+"/move", obj("location", attic)).body
-	if str(t, moved, "id") != atticRow || num(t, moved, "amount") != 10 {
-		t.Fatalf("whole merge: %v", moved)
-	}
-	if gone := e.expect(t, 200, "GET", "/stock/"+source, nil).body; get(t, gone, "deleted") == nil || str(t, gone, "merged_into", "id") != atticRow {
-		t.Errorf("merged row: %v", gone)
-	}
+	e.expect(t, 200, "POST", "/stock/"+str(t, moved, "id")+"/merge", obj("into", atticRow, "amount", nil))
 
 	// Moving more than there is.
 	e.expect(t, 400, "POST", "/stock/"+atticRow+"/move", obj("location", garage, "amount", 11))
@@ -207,12 +200,13 @@ func TestStock(t *testing.T) {
 	if num(t, list, "total") != 1 || num(t, list, "rows", 0, "stock", "total") != 10 || get(t, list, "rows", 0, "stock", "uncounted") != true {
 		t.Errorf("item_list stock total: %v", get(t, list, "rows", 0, "stock"))
 	}
-	if n := num(t, e.expect(t, 200, "GET", "/stock?location="+garage, nil).body, "total"); n != 1 {
-		t.Errorf("stock in the garage (and below): %v rows, want 1", n)
+	// The shelf's row (in the garage) and the garage's own; the attic's.
+	if n := num(t, e.expect(t, 200, "GET", "/stock?location="+garage, nil).body, "total"); n != 2 {
+		t.Errorf("stock in the garage (and below): %v rows, want 2", n)
 	}
 	item := e.expect(t, 200, "GET", "/items/"+itemID, nil).body
-	if n := len(get(t, item, "stock").([]any)); n != 2 {
-		t.Errorf("item_get has %d stock rows, want 2", n)
+	if n := len(get(t, item, "stock").([]any)); n != 3 {
+		t.Errorf("item_get has %d stock rows, want 3", n)
 	}
 }
 
@@ -775,15 +769,15 @@ func TestUnitValuesAndRequired(t *testing.T) {
 	if str(t, split, "id") == rowID || len(get(t, split, "values").([]any)) != 3 {
 		t.Fatalf("split: %v", split)
 	}
-	merged := e.expect(t, 200, "POST", "/stock/"+rowID+"/move", obj("location", van, "amount", 1)).body
+	merged := e.expect(t, 200, "POST", "/stock/"+rowID+"/merge", obj("into", str(t, split, "id"), "amount", 1)).body
 	if str(t, merged, "id") != str(t, split, "id") || num(t, merged, "amount") != 2 {
 		t.Errorf("merge into the identical row: %v", merged)
 	}
-	e.expect(t, 201, "POST", "/stock", obj("item", drillID, "location", site, "amount", 1,
-		"values", obj(serial, "OTHER")))
-	moved := e.expect(t, 200, "POST", "/stock/"+rowID+"/move", obj("location", site, "amount", 1)).body
-	if num(t, moved, "amount") != 1 || str(t, get(t, moved, "values").([]any)[2], "value") != "BATCH-7" {
-		t.Errorf("rows with different values must not merge: %v", moved)
+	differing := str(t, e.expect(t, 201, "POST", "/stock", obj("item", drillID, "location", site, "amount", 1,
+		"values", obj(serial, "OTHER"))).body, "id")
+	refusal := e.expect(t, 422, "POST", "/stock/"+rowID+"/merge", obj("into", differing, "amount", 1))
+	if d := str(t, refusal.body, "detail"); !strings.Contains(d, "have different values for") || !strings.Contains(d, "Serial number") {
+		t.Errorf("rows with different values must not merge: %v", refusal.body)
 	}
 
 	// Search finds per-unit values; item_get shows them on its stock rows.

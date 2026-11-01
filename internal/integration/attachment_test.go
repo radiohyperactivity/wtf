@@ -192,8 +192,7 @@ func TestAttachments(t *testing.T) {
 		t.Errorf("HTML must be a download, got %q", rec.Header().Get("Content-Disposition"))
 	}
 
-	// Stock rows: a split copies the attachments and the photo; a row with
-	// attachments isn't merged away.
+	// Stock rows: a split copies the attachments and the photo.
 	receipt := e.upload(t, 201, "/stock/"+stockID+"/attachments", "receipt.png", "image/png",
 		append([]byte(nil), append(pngBytes, 'r')...), "photo", "true").body
 	// The stock list has each row's photo and its item's.
@@ -209,32 +208,17 @@ func TestAttachments(t *testing.T) {
 		str(t, split, "photo", "id") != copied {
 		t.Errorf("split-off row: %v", split)
 	}
-	moved := e.expect(t, 200, "POST", "/stock/"+stockID+"/move", obj("location", van)).body
-	if str(t, moved, "id") != stockID {
-		t.Error("a row with attachments was merged away")
-	}
-	// Deleted from one row, the copy stays on the other. A deleted
-	// attachment is no photo, and isn't listed, but can still be fetched,
-	// and restored: as an ordinary attachment, not the photo it was.
+	// Deleted from one row, the copy stays on the other. Deleting the photo
+	// leaves the row without one.
 	receiptPath := "/stock/" + stockID + "/attachments/" + str(t, receipt, "id")
 	e.expect(t, 204, "DELETE", receiptPath, nil)
 	if s := e.expect(t, 200, "GET", "/stock/"+stockID, nil).body; get(t, s, "photo") != nil || len(get(t, s, "attachments").([]any)) != 0 {
 		t.Errorf("after deleting: %v", s)
 	}
-	if a := e.expect(t, 200, "GET", receiptPath, nil).body; get(t, a, "deleted") == nil {
-		t.Errorf("a deleted attachment: %v", a)
-	}
+	e.expect(t, 404, "GET", receiptPath, nil)
+	e.expect(t, 404, "DELETE", receiptPath, nil)
 	e.expect(t, 200, "GET", "/stock/"+str(t, split, "id")+"/attachments/"+copied, nil)
-	e.expect(t, 204, "DELETE", receiptPath, nil) // again: nothing changes
-	e.expect(t, 409, "PATCH", receiptPath, obj("title", "x"))
-	e.expect(t, 409, "PATCH", "/stock/"+stockID, obj("photo", str(t, receipt, "id")))
-	if a := e.expect(t, 200, "POST", receiptPath+"/restore", nil).body; get(t, a, "deleted") != nil {
-		t.Errorf("restored: %v", a)
-	}
-	if s := e.expect(t, 200, "GET", "/stock/"+stockID, nil).body; get(t, s, "photo") != nil || len(get(t, s, "attachments").([]any)) != 1 {
-		t.Errorf("after restoring: %v", s)
-	}
-	e.expect(t, 409, "POST", receiptPath+"/restore", nil)
+	e.expect(t, 422, "PATCH", "/stock/"+stockID, obj("photo", str(t, receipt, "id")))
 
 	// Limits and format.
 	e.upload(t, 413, item, "big.bin", "application/octet-stream", bytes.Repeat([]byte{1}, testMaxAttachment+1))
@@ -242,10 +226,11 @@ func TestAttachments(t *testing.T) {
 	e.upload(t, 404, "/items/"+missing+"/attachments", "x.png", "image/png", pngBytes)
 	e.upload(t, 400, item, "x.png", "image/png", pngBytes, "caption", "old")
 
-	// A deleted attachment keeps its file until it is purged; then gc
-	// removes it, once no attachment has its hash.
+	// gc removes a deleted attachment's file, once no attachment of the
+	// tenant has its hash.
 	htmlHash := str(t, page, "hash")
 	e.expect(t, 204, "DELETE", item+"/"+str(t, page, "id"), nil)
+	e.expect(t, 404, "GET", item+"/"+str(t, page, "id"), nil)
 	gc := func(dryRun bool) files.GCResult {
 		result, err := files.GC(context.Background(), files.GCOptions{
 			ConnConfig: e.dbaConfig,
@@ -258,12 +243,6 @@ func TestAttachments(t *testing.T) {
 		}
 		return result
 	}
-	gc(false)
-	if !e.fileExists(t, htmlHash) {
-		t.Fatal("gc removed the file of a deleted attachment")
-	}
-	purgeDeleted(t, e)
-	e.expect(t, 404, "GET", item+"/"+str(t, page, "id"), nil)
 	if r := gc(true); r.Files == 0 || !e.fileExists(t, htmlHash) {
 		t.Errorf("dry run: %+v, file exists: %v", r, e.fileExists(t, htmlHash))
 	}
@@ -284,16 +263,14 @@ func TestAttachments(t *testing.T) {
 		t.Errorf("download after gc: %d", rec.Code)
 	}
 
-	// A deleted object's attachments are frozen; purging it removes them.
+	// Deleting an object deletes its attachments with it.
 	old := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Old")).body, "id")
 	guide := e.upload(t, 201, "/classes/"+old+"/attachments", "guide.pdf", "application/pdf", pdfBytes).body
-	guidePath := "/classes/" + old + "/attachments/" + str(t, guide, "id")
 	e.expect(t, 204, "DELETE", "/classes/"+old, nil)
-	e.expect(t, 200, "GET", guidePath, nil)
-	e.expect(t, 409, "PATCH", guidePath, obj("title", "x"))
-	e.expect(t, 409, "DELETE", guidePath, nil)
-	e.expect(t, 409, "POST", guidePath+"/restore", nil)
-	e.upload(t, 409, "/classes/"+old+"/attachments", "more.pdf", "application/pdf", pdfBytes)
-	purgeDeleted(t, e)
-	e.expect(t, 404, "GET", guidePath, nil)
+	e.expect(t, 404, "GET", "/classes/"+old+"/attachments/"+str(t, guide, "id"), nil)
+	var left int
+	if err := e.dba.QueryRow(t.Context(), "SELECT count(*) FROM public.attachment WHERE id = $1",
+		str(t, guide, "id")).Scan(&left); err != nil || left != 0 {
+		t.Errorf("%d rows left of the deleted class's attachment (%v)", left, err)
+	}
 }

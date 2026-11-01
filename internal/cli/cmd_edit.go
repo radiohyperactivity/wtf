@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -662,9 +661,6 @@ func (e *env) editAccount(id string) error {
 	var a account
 	if err := e.get("/accounts/"+id, nil, &a); err != nil {
 		return err
-	}
-	if a.Deleted != nil {
-		return errors.New("a deleted account can't be changed")
 	}
 	e.editTitle("account " + a.Email)
 	p := newPlan("/accounts/" + id)

@@ -12,8 +12,6 @@ wtfd <action> [flags]
 | `serve`  | Run the REST API                                                     | implemented |
 | `gc`     | Remove attachment files that nothing references any more             | implemented |
 | `account`| Create an account, or set a lost password (`create`, `password`)     | implemented |
-| `history`| Delete old history entries (`purge`)                                 | implemented |
-| `deleted`| Remove what was deleted long ago (`purge`)                           | implemented |
 
 ## Configuration
 
@@ -59,7 +57,7 @@ internal/config/               flags + environment variables
 internal/schema/               the schema action (migration runner)
 internal/serve/                the serve action (REST API)
 internal/files/                attachment file store and the gc action
-internal/admin/                the account, history and deleted actions
+internal/admin/                the tenant, account and unit actions
 openapi/openapi.json           OpenAPI description, embedded and served at /api/v1/openapi
 db/embed.go                    //go:embed migrations/*.sql repeatable/*.sql
 db/migrations/0001_schema.sql  versioned migrations
@@ -67,7 +65,7 @@ db/migrations/0002_units.sql
 db/repeatable/10_error.sql     repeatable scripts, one per function schema:
 db/repeatable/11_util.sql        error, util, tenant, account, unit, class,
 db/repeatable/…                  attribute, item, location, stock, attachment,
-                                 model, history, meta, code
+                                 model, meta, code
 .gitattributes                 *.sql text eol=lf
 README.md, SCHEMA.md, API.md, … documentation
 ```
@@ -226,13 +224,12 @@ The password comes from `WTFD_API_DATABASE_PASSWORD`.
   |--------|--------|
   | `GET`, `PATCH`, `PUT` | 200 |
   | `POST` (create) | 201 Created, with a `Location` header pointing at the new object |
-  | `POST /stock/{id}/move` | 200 |
-  | `POST /{…}/{id}/restore` | 200 with the restored object |
+  | `POST /stock/{id}/move`, `POST /stock/{id}/merge` | 200 |
   | `DELETE` of an object | 204 No Content |
   | `DELETE` of a class attribute or value | 200 with the updated class or item |
 
 - **Versions:** `GET /classes`, `GET /locations` and `GET /unit-families` send their version as a strong `ETag` (`"17"`). A request with `If-None-Match: "17"` gets `304 Not Modified` when nothing has changed. Responses carry `Cache-Control: no-cache`, so clients always revalidate. They answer `{version, tree}` (the trees, which the database gives as flat lists and `wtfd` nests, each node with its `children`) and `{version, families}`.
-- **Paged lists:** `GET /items` and `GET /stock` take `limit` and `offset` as query parameters and return the paging envelope from [API.md](API.md). History pages take `before` and `limit` and answer `{rows, more}`; an `offset` is refused.
+- **Paged lists:** `GET /items` and `GET /stock` take `limit` and `offset` as query parameters and return the paging envelope from [API.md](API.md).
 - **Query flags** (`force`, `dry_run`, `recursive`) are `true` or `false`; absent is false.
 
 ### Errors (RFC 9457)
@@ -249,7 +246,7 @@ Errors are `application/problem+json`:
 }
 ```
 
-When the database knows what to do about an error, a `hint` says so, e.g. how to restore something that is in a deleted location.
+When the database knows what to do about an error, a `hint` says so, e.g. what to delete first.
 
 | Condition | `type` | Status |
 |-----------|--------|--------|
@@ -266,8 +263,8 @@ When the database knows what to do about an error, a `hint` says so, e.g. how to
 | `23505` duplicate | `/problems/unique-violation` | 409 |
 | `23001` / `23503` on `DELETE`: still in use | `/problems/in-use` | 409 |
 | `23001` / `23503` otherwise: a referenced object doesn't exist | `/problems/invalid-reference` | 422 |
-| `55000` the object, or one it needs, is deleted; restoring something that isn't; a merged stock row | `/problems/wrong-state` ("Not possible in this state") | 409 |
-| `WT001` restoring into something deleted | `/problems/restore-into-deleted` | 409, with `place_key` (`class`, `parent` or `location`: the field that restores it somewhere else) and `with_parents: true` (the other way out) |
+| `55000` not possible in this state (a unit that is turned off) | `/problems/wrong-state` ("Not possible in this state") | 409 |
+| `WT001` a label code whose item, stock row or location has been deleted | `/problems/gone` | 410 |
 | `57014` statement timeout | `/problems/timeout` | 503 |
 | method not allowed on a route | `/problems/method-not-allowed` | 405 |
 | request body too large | `/problems/body-too-large` | 413 |
@@ -277,7 +274,7 @@ When the database knows what to do about an error, a `hint` says so, e.g. how to
 
 - **Paths:** the API is served under `/api/v1/`. The routes below are relative to it (`GET /items` is `GET /api/v1/items`), except `GET /api/health`.
 - **Within a version the API only grows:** new routes, new optional fields, and new fields in answers. Nothing is renamed, removed or changes meaning, and clients ignore fields they don't know. Every addition increases the **revision**, which every answer of `/api/v1` carries as `API-Revision`, now 1. A client knows the revision it was built for, and warns when a server's is older.
-- **One exception, the refactor of November 2026:** `/api/v1` changed in place, with the database's names (`amount`, `scope`, `media_type`, `decimal`), `deleted` as when and by whom, units by id, history by `before`, and required fields required; its revision started again at 1. Every client was rebuilt with it, while all of them were still in development, so a second version served beside the first would have had no one to serve. A client built before it misreads the answers rather than saying it is too old, which only happens to a copy not updated. (An earlier exception, revision 2 of the old numbering, made deleted objects fetchable where they had answered 404.)
+- **One exception, the refactor of November 2026:** `/api/v1` changed in place, with the database's names (`amount`, `scope`, `media_type`, `decimal`), units by id, and required fields required, and then without "mark as deleted", restore and history, and with merging stock as its own route ([2026-11-01-dropping-deleted-and-history.md](2026-11-01-dropping-deleted-and-history.md)); its revision started again at 1. Every client was rebuilt with it, while all of them were still in development, so a second version served beside the first would have had no one to serve. A client built before it misreads the answers rather than saying it is too old, which only happens to a copy not updated.
 - **A breaking change becomes a new version,** `/api/v2/`, served next to `/api/v1/` for a while. Its revisions start again at 1. A version on its way out gets the standard `Deprecation` and `Sunset` headers on its answers (`apiSunset` in `internal/serve/api.go`).
 - **Versions this server doesn't serve:** any request to them gets `/problems/unsupported-api-version`, with the list of versions it does serve (`supported`). The client can then say which side to update. A 404 without `API-Revision` at all comes from a server older than the versioned API.
 
@@ -331,12 +328,10 @@ Every route calls one function ([API.md](API.md) has them all); a body's fields 
 | `GET /attributes/{id}` | `attribute.get` | (with its options) |
 | `PATCH /attributes/{id}` | `attribute.patch` | patch object |
 | `DELETE /attributes/{id}` | `attribute.delete` | |
-| `POST /attributes/{id}/restore` | `attribute.restore` | options, each optional: `{name}` |
 | `POST /attributes/{id}/options` | `attribute.option_create` | `{name}` |
 | `GET /options/{id}` | `attribute.option_get` | |
 | `PATCH /options/{id}` | `attribute.option_patch` | patch object |
 | `DELETE /options/{id}` | `attribute.option_delete` | |
-| `POST /options/{id}/restore` | `attribute.option_restore` | options: `{name}` |
 | `GET /classes` | `class.list` | `If-None-Match` |
 | `POST /classes` | `class.create` | `{name, parent, container}` |
 | `GET /classes/{id}` | `class.get` | |
@@ -344,7 +339,6 @@ Every route calls one function ([API.md](API.md) has them all); a body's fields 
 | `DELETE /classes/{id}` | `class.delete`, or with `?recursive=true` `class.delete_tree` | `force`; recursive answers 200 with what was deleted |
 | `GET /classes/{id}/model` | `model.export` | the class with everything below it, as a model file |
 | `GET /classes/{id}/deletion` | `class.delete_tree` with `p_dry_run` | `force`; what a recursive delete would delete |
-| `POST /classes/{id}/restore` | `class.restore` | options: `{name, parent, with_parents}` |
 | `PUT /classes/{id}/attributes/{attribute}` | `class.assign` | `{default, scope, required}` |
 | `DELETE /classes/{id}/attributes/{attribute}` | `class.unassign` | |
 | `GET /items` | `item.list` | `?class=&search=&where=&limit=&offset=` (`where`: JSON, see [api/item.md](api/item.md)) |
@@ -352,7 +346,6 @@ Every route calls one function ([API.md](API.md) has them all); a body's fields 
 | `GET /items/{id}` | `item.get` | |
 | `PATCH /items/{id}` | `item.patch` | patch object |
 | `DELETE /items/{id}` | `item.delete` | |
-| `POST /items/{id}/restore` | `item.restore` | options: `{name, class, with_parents}` |
 | `PUT /items/{id}/values/{attribute}` | `item.value_set` | `{value}` |
 | `DELETE /items/{id}/values/{attribute}` | `item.value_delete` | |
 | `GET /locations` | `location.list` | `If-None-Match` |
@@ -361,22 +354,20 @@ Every route calls one function ([API.md](API.md) has them all); a body's fields 
 | `PATCH /locations/{id}` | `location.patch` | patch object |
 | `DELETE /locations/{id}` | `location.delete`, or with `?recursive=true` `location.delete_tree` | `force`; recursive answers 200 with what was deleted |
 | `GET /locations/{id}/deletion` | `location.delete_tree` with `p_dry_run` | `force`; what a recursive delete would delete |
-| `POST /locations/{id}/restore` | `location.restore` | options: `{name, parent, with_parents}` |
 | `GET /stock` | `stock.list` | `?item=&location=&limit=&offset=` |
 | `POST /stock` | `stock.create` | `{item, location, amount, values}` |
 | `GET /stock/{id}` | `stock.get` | |
 | `PATCH /stock/{id}` | `stock.patch` | patch object |
 | `DELETE /stock/{id}` | `stock.delete` | |
-| `POST /stock/{id}/restore` | `stock.restore` | options: `{location, with_parents}` |
 | `PUT /stock/{id}/values/{attribute}` | `stock.value_set` | `{value}` |
 | `DELETE /stock/{id}/values/{attribute}` | `stock.value_delete` | |
-| `POST /stock/{id}/move` | `stock.move` | `{location, amount}` (`amount` null: all of it) |
-| `GET /codes/{code}` | `code.resolve` | – (code: Crockford Base32; case and hyphens ignored) |
+| `POST /stock/{id}/move` | `stock.move` | `{location, amount}` (`amount` null: all of it); never merges |
+| `POST /stock/{id}/merge` | `stock.merge` | `{into, amount}` (`amount` null: all of it, and the row is deleted) |
+| `GET /codes/{code}` | `code.resolve` | – (code: Crockford Base32; case and hyphens ignored); 410 for a deleted thing's code |
 | `POST /items/{id}/attachments` (also `/stock/…`, `/locations/…`, `/classes/…`) | `attachment.lock`, `attachment.create` | multipart: `file`, `title?`, `photo?` |
 | `GET /items/{id}/attachments/{attachment}` (also `/stock/…`, `/locations/…`, `/classes/…`) | `attachment.get` | |
 | `PATCH …/attachments/{attachment}` | `attachment.patch` | `{title}` |
 | `DELETE …/attachments/{attachment}` | `attachment.delete` | |
-| `POST …/attachments/{attachment}/restore` | `attachment.restore` | `{}` |
 | `GET …/attachments/{attachment}/content` | `attachment.get` + files directory | `If-None-Match`, `Range` |
 | `POST /login` | `account.login` | `{email, password, client, max_idle}`; no session needed; sets the session cookie |
 | `POST /logout` | `account.logout` | |
@@ -389,9 +380,7 @@ Every route calls one function ([API.md](API.md) has them all); a body's fields 
 | `POST /accounts` | `account.create` | `{email, password, role}` |
 | `GET /accounts/{id}` | `account.get` | |
 | `PATCH /accounts/{id}` | `account.patch` | patch object; `end_sessions` with `password` |
-| `DELETE /accounts/{id}` | `account.delete` (marks the account deleted) | |
-| `GET /{items\|stock\|locations\|classes\|attributes\|accounts}/{id}/history` | `….history` | `?before=&limit=` |
-| `GET /{locations\|classes\|attributes}/history` | `….list_history` | `?before=&limit=` |
+| `DELETE /accounts/{id}` | `account.delete` (with its sessions) | |
 
 ### OpenAPI
 
@@ -446,31 +435,9 @@ wtfd unit standard --quantity Temperature --available true
 
 `import` adds the units of a model file of only quantities ([seed/model-format.md](seed/model-format.md)) that aren't there yet, as `POST /model/import` does, and prints the same report; a name some tenant already has for its own is a conflict. `standard` sets whether a global quantity or family is available to tenants that haven't chosen themselves.
 
-## The `history` action
-
-History is kept until the operator deletes old entries (see [api/history.md](api/history.md)):
-
-```sh
-wtfd history purge --older-than 730d
-wtfd history purge --older-than 365d --host bob --dry-run
-```
-
-`--older-than` takes days (`730d`) or a Go duration (`36h`). Every tenant's history, or with `--host` one tenant's. `--dry-run` only counts the entries. It connects as the DBA role.
-
-## The `deleted` action
-
-Deleted objects stay in the database until the operator purges them (see [api/deleting.md](api/deleting.md)):
-
-```sh
-wtfd deleted purge --older-than 730d
-wtfd deleted purge --older-than 365d --host bob --dry-run
-```
-
-It removes what was deleted longer ago than `--older-than` (days or a Go duration), by the time of the action that deleted it, with what belongs to it, in every tenant or with `--host` in one, and reports how many of each kind. Each tenant is purged in a transaction of its own, with an action of `wtfd`'s (no account) that history records the removals under; then the tenant's actions older than that age that nothing refers to any more go too. An object something else still refers to stays until that is purged too. `--dry-run` runs the purge in a transaction and rolls it back. It connects as the DBA role. Run `wtfd gc` afterwards to remove the files of purged attachments.
-
 ## The `gc` action
 
-`wtfd gc` removes attachment files that nothing references any more: their attachments were deleted, or their objects purged (`wtfd deleted purge`). An upload whose database insert failed leaves a file nothing knows about. It also removes the sessions that have expired (unused for longer than their `max_idle`), in one statement, and reports how many.
+`wtfd gc` removes attachment files that nothing references any more: their attachments, or the objects they were on, were deleted. An upload whose database insert failed leaves a file nothing knows about. It also removes the sessions that have expired (unused for longer than their `max_idle`), in one statement, and reports how many.
 
 ```sh
 wtfd gc --files-directory /var/lib/wtf/files --dry-run   # report only
@@ -479,7 +446,7 @@ wtfd gc --files-directory /var/lib/wtf/files
 
 It connects as the DBA role and goes through every tenant's directory (`<files directory>/<host>/`), removing two kinds of file:
 
-- files whose hash no attachment of that tenant (of any kind of object, live or deleted; found through the attachments' owners, by an index on `attachment (hash)`) has: their attachments were purged, or an upload's database insert failed;
+- files whose hash no attachment of that tenant (of any kind of object; found through the attachments' owners, by an index on `attachment (hash)`) has: their attachments were deleted, or an upload's database insert failed;
 - abandoned uploads in the tenant's `tmp` directory.
 
 A directory that belongs to no tenant is reported and left alone.

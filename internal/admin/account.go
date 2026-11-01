@@ -1,8 +1,7 @@
 // Package admin implements the operator's actions that bypass the REST API:
 // "wtfd tenant" (creating, listing and renaming tenants), "wtfd account"
-// (creating an account, setting a password), "wtfd
-// unit" (global units), "wtfd history purge" and "wtfd deleted purge". It
-// connects as the DBA role. See WTFD.md, ACCOUNTS.md and TENANTS.md.
+// (creating an account, setting a password) and "wtfd unit" (global
+// units). It connects as the DBA role. See WTFD.md, ACCOUNTS.md and TENANTS.md.
 package admin
 
 import (
@@ -38,8 +37,7 @@ func CreateAccount(ctx context.Context, conn *pgx.Conn, host, email, role string
 	return password, err
 }
 
-// createAccount is CreateAccount in a transaction of the caller's. The
-// change is an action of wtfd's own (no account), as history needs one.
+// createAccount is CreateAccount in a transaction of the caller's.
 func createAccount(ctx context.Context, tx pgx.Tx, host, email, role string) (string, error) {
 	tenant, err := tenantID(ctx, tx, host)
 	if err != nil {
@@ -47,9 +45,6 @@ func createAccount(ctx context.Context, tx pgx.Tx, host, email, role string) (st
 	}
 	password, err := generatePassword(16)
 	if err != nil {
-		return "", err
-	}
-	if _, err := tx.Exec(ctx, "SELECT util.begin_action($1::uuid)", tenant); err != nil {
 		return "", err
 	}
 	_, err = tx.Exec(ctx, `
@@ -75,15 +70,12 @@ func SetPassword(ctx context.Context, conn *pgx.Conn, host, email string) (strin
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, "SELECT util.begin_action($1::uuid)", tenant); err != nil {
-			return err
-		}
 		var id string
 		err = tx.QueryRow(ctx, `
 			UPDATE public.account
 			SET password_hash = account.password_hash($3),
 			    failed_logins = 0, last_failed_login = NULL
-			WHERE tenant = $1 AND lower(email) = lower(btrim($2)) AND deleted IS NULL
+			WHERE tenant = $1 AND lower(email) = lower(btrim($2))
 			RETURNING id`,
 			tenant, email, password).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {

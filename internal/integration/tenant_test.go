@@ -90,9 +90,6 @@ func TestTenants(t *testing.T) {
 	if tree := get(t, e.expect(t, 200, "GET", "/classes", nil, b...).body, "tree").([]any); len(tree) != 0 {
 		t.Errorf("the other tenant's class tree: %v", tree)
 	}
-	if n := len(get(t, e.expect(t, 200, "GET", "/items/"+itemID+"/history", nil, b...).body, "rows").([]any)); n != 0 {
-		t.Errorf("the other tenant sees %v history entries", n)
-	}
 	if list := e.expect(t, 200, "GET", "/accounts", nil, b...).body.([]any); len(list) != 1 {
 		t.Errorf("the other tenant's accounts: %v", list)
 	}

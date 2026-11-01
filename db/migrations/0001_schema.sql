@@ -40,8 +40,6 @@ CREATE TYPE public.scope AS ENUM ('item', 'stock');
 -- the order of the values matters: a new role is added in its place.
 CREATE TYPE public.role AS ENUM ('viewer', 'user', 'admin');
 
-CREATE TYPE public.history_operation AS ENUM ('insert', 'update', 'delete');
-
 -- Where a session has been used from, and when last.
 CREATE TYPE public.session_usage AS (address inet, seen timestamptz);
 
@@ -69,7 +67,9 @@ CREATE TABLE public.tenant (
     id   uuid   NOT NULL PRIMARY KEY DEFAULT uuidv7(),
     host text   NOT NULL CHECK (host ~ '^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$'),
     -- The last label code handed out to the tenant's items, locations and
-    -- stock rows (tenant.take_codes). The first is 32768 = 32^3, the
+    -- stock rows (tenant.take_codes). Every code from the first up to it
+    -- was given to one of them, so a code up to it that nothing has belonged
+    -- to something deleted (code.resolve). The first is 32768 = 32^3, the
     -- smallest number whose Crockford Base32 rendering has four characters
     -- ("1000"); codes grow to five characters after "ZZZZ" (1048575).
     code bigint NOT NULL DEFAULT 32767 CHECK (code >= 32767)
@@ -78,7 +78,7 @@ CREATE TABLE public.tenant (
 CREATE UNIQUE INDEX tenant_host_unique ON public.tenant (host);
 
 -- ---------------------------------------------------------------------------
--- Accounts, sessions and actions (see ACCOUNTS.md)
+-- Accounts and sessions (see ACCOUNTS.md)
 -- ---------------------------------------------------------------------------
 
 -- A user of one tenant. The email address is the user name.
@@ -91,20 +91,12 @@ CREATE TABLE public.account (
     role              public.role      NOT NULL DEFAULT 'viewer',
     -- Lockout after repeated failed logins (see ACCOUNTS.md).
     failed_logins     integer          NOT NULL DEFAULT 0 CHECK (failed_logins >= 0),
-    last_failed_login timestamptz      NULL,
-    -- The action that deleted the account; NULL while it is not deleted. A
-    -- deleted account keeps its row, so history can still say who did what.
-    -- It can't log in, and its email address can be used again. (The
-    -- foreign key is added after the action table, which refers back to
-    -- account.)
-    deleted           uuid             NULL
+    last_failed_login timestamptz      NULL
 );
 
--- Email addresses are unique, letter case ignored, among a tenant's
--- accounts that are not deleted.
+-- Email addresses are unique within a tenant, letter case ignored.
 CREATE UNIQUE INDEX account_tenant_email_unique
-    ON public.account (tenant, lower(email)) WHERE deleted IS NULL;
-CREATE INDEX account_deleted_idx ON public.account (deleted) WHERE deleted IS NOT NULL;
+    ON public.account (tenant, lower(email));
 
 -- A login. Only the SHA-256 hash of the token is stored, so a copy of the
 -- table gives no working tokens.
@@ -126,25 +118,6 @@ CREATE TABLE public.session (
 );
 
 CREATE INDEX session_account_idx ON public.session (account);
-
--- One call that changed something: who, for which tenant, and when. Every
--- function that writes makes one first; history entries refer to it, and
--- rows it deleted refer to it in their deleted column, which is how a
--- restore knows what was deleted together.
-CREATE TABLE public.action (
-    id          uuid        NOT NULL PRIMARY KEY DEFAULT uuidv7(),
-    tenant      uuid        NOT NULL REFERENCES public.tenant (id) ON DELETE RESTRICT,
-    -- Who; NULL when wtfd itself did it (its maintenance commands).
-    account     uuid        NULL     REFERENCES public.account (id) ON DELETE RESTRICT,
-    at          timestamptz NOT NULL DEFAULT now(),
-    -- Only to check that the action named in the setting wtf.action was
-    -- made in the same transaction; never a key.
-    transaction xid8        NOT NULL DEFAULT pg_current_xact_id()
-);
-
--- account was created before action, which refers to it.
-ALTER TABLE public.account
-    ADD FOREIGN KEY (deleted) REFERENCES public.action (id) ON DELETE RESTRICT;
 
 -- ---------------------------------------------------------------------------
 -- Quantities, unit families and units (see seed/units.md and TENANTS.md)
@@ -239,9 +212,9 @@ CREATE TABLE public.tenant_unit_family (
 -- ---------------------------------------------------------------------------
 -- The model: classes and attributes
 -- ---------------------------------------------------------------------------
--- Rows refer to the action that deleted them in their deleted column (NULL
--- while they are not deleted); see api/deleting.md. Each such table has a
--- partial index on it, for restoring.
+-- Deleting removes a row (see api/deleting.md). What belongs to it alone goes
+-- with it (ON DELETE CASCADE); what others still use can't be deleted
+-- (RESTRICT), and the delete functions say what is in the way first.
 
 -- A category in a tree (Tools → Power tools → Drills). Attributes are
 -- inherited down the tree.
@@ -255,18 +228,15 @@ CREATE TABLE public.class (
     -- One of its own image attachments (the foreign key is added after the
     -- attachment table).
     photo     uuid             NULL,
-    deleted   uuid             NULL     REFERENCES public.action (id) ON DELETE RESTRICT,
     CHECK (parent <> id)
 );
 
--- Names are unique, letter case ignored, among siblings that are not
--- deleted; top-level classes (parent NULL) among the tenant's top-level
--- classes.
+-- Names are unique, letter case ignored, among siblings; top-level classes
+-- (parent NULL) among the tenant's top-level classes.
 CREATE UNIQUE INDEX class_tenant_parent_name_unique
-    ON public.class (tenant, parent, lower(name)) NULLS NOT DISTINCT WHERE deleted IS NULL;
-CREATE INDEX class_parent_idx  ON public.class (parent);
-CREATE INDEX class_photo_idx   ON public.class (photo);
-CREATE INDEX class_deleted_idx ON public.class (deleted) WHERE deleted IS NOT NULL;
+    ON public.class (tenant, parent, lower(name)) NULLS NOT DISTINCT;
+CREATE INDEX class_parent_idx ON public.class (parent);
+CREATE INDEX class_photo_idx  ON public.class (photo);
 
 -- A reusable property of the tenant's ("Weight", "Voltage"), assigned to
 -- classes in class_attribute. Its datatype never changes.
@@ -280,21 +250,18 @@ CREATE TABLE public.attribute (
     -- with unit_lock; otherwise scaled between the units of its family.
     unit      uuid             NULL     REFERENCES public.unit (id) ON DELETE RESTRICT,
     unit_lock boolean          NOT NULL DEFAULT false,
-    deleted   uuid             NULL     REFERENCES public.action (id) ON DELETE RESTRICT,
     CHECK (unit IS NOT NULL OR NOT unit_lock)
 );
 
 CREATE UNIQUE INDEX attribute_tenant_name_unique
-    ON public.attribute (tenant, lower(name)) WHERE deleted IS NULL;
-CREATE INDEX attribute_unit_idx    ON public.attribute (unit);
-CREATE INDEX attribute_deleted_idx ON public.attribute (deleted) WHERE deleted IS NOT NULL;
+    ON public.attribute (tenant, lower(name));
+CREATE INDEX attribute_unit_idx ON public.attribute (unit);
 
 -- An allowed value of a choice attribute ("0805", "0603", "THT").
 CREATE TABLE public.attribute_option (
     id        uuid             NOT NULL PRIMARY KEY DEFAULT uuidv7(),
     attribute uuid             NOT NULL REFERENCES public.attribute (id) ON DELETE CASCADE,
     name      public.name_text NOT NULL,
-    deleted   uuid             NULL     REFERENCES public.action (id) ON DELETE RESTRICT,
     -- Target of the (attribute, option) foreign keys from values and
     -- defaults, which keep an option within its own attribute. It also
     -- finds an attribute's options.
@@ -302,8 +269,7 @@ CREATE TABLE public.attribute_option (
 );
 
 CREATE UNIQUE INDEX attribute_option_attribute_name_unique
-    ON public.attribute_option (attribute, lower(name)) WHERE deleted IS NULL;
-CREATE INDEX attribute_option_deleted_idx ON public.attribute_option (deleted) WHERE deleted IS NOT NULL;
+    ON public.attribute_option (attribute, lower(name));
 
 -- Assigns an attribute to a class, and so to all the classes below it; the
 -- assignment nearest to a class in its path decides.
@@ -349,15 +315,13 @@ CREATE TABLE public.item (
     unit      uuid             NULL     REFERENCES public.unit (id) ON DELETE RESTRICT,
     unit_lock boolean          NOT NULL DEFAULT false,
     photo     uuid             NULL,
-    deleted   uuid             NULL     REFERENCES public.action (id) ON DELETE RESTRICT,
     CHECK (unit IS NOT NULL OR NOT unit_lock)
 );
 
-CREATE INDEX item_code_idx    ON public.item (code);
-CREATE INDEX item_class_idx   ON public.item (class);
-CREATE INDEX item_unit_idx    ON public.item (unit);
-CREATE INDEX item_photo_idx   ON public.item (photo);
-CREATE INDEX item_deleted_idx ON public.item (deleted) WHERE deleted IS NOT NULL;
+CREATE INDEX item_code_idx  ON public.item (code);
+CREATE INDEX item_class_idx ON public.item (class);
+CREATE INDEX item_unit_idx  ON public.item (unit);
+CREATE INDEX item_photo_idx ON public.item (photo);
 
 -- The value of one item attribute for one item. No row = no value.
 CREATE TABLE public.item_value (
@@ -391,16 +355,14 @@ CREATE TABLE public.location (
     -- A container holds only other locations, no stock.
     container boolean          NOT NULL DEFAULT false,
     photo     uuid             NULL,
-    deleted   uuid             NULL     REFERENCES public.action (id) ON DELETE RESTRICT,
     CHECK (parent <> id)
 );
 
 CREATE UNIQUE INDEX location_tenant_code_unique ON public.location (tenant, code);
 CREATE UNIQUE INDEX location_tenant_parent_name_unique
-    ON public.location (tenant, parent, lower(name)) NULLS NOT DISTINCT WHERE deleted IS NULL;
-CREATE INDEX location_parent_idx  ON public.location (parent);
-CREATE INDEX location_photo_idx   ON public.location (photo);
-CREATE INDEX location_deleted_idx ON public.location (deleted) WHERE deleted IS NOT NULL;
+    ON public.location (tenant, parent, lower(name)) NULLS NOT DISTINCT;
+CREATE INDEX location_parent_idx ON public.location (parent);
+CREATE INDEX location_photo_idx  ON public.location (photo);
 
 -- The physical things: one row per physical thing or batch of things. The
 -- same item may have several rows at one location (two identical drills).
@@ -415,20 +377,13 @@ CREATE TABLE public.stock (
     -- NULL = present, but not counted ("some cable ties");
     -- 0    = none left, but this is where they belong.
     amount      numeric NULL     CHECK (amount >= 0),
-    photo       uuid    NULL,
-    deleted     uuid    NULL     REFERENCES public.action (id) ON DELETE RESTRICT,
-    -- A row merged into another by a move: deleted, and pointing to the row
-    -- its amount went into, so its label still leads somewhere.
-    merged_into uuid    NULL     REFERENCES public.stock (id) ON DELETE SET NULL,
-    CHECK (merged_into IS NULL OR deleted IS NOT NULL)
+    photo       uuid    NULL
 );
 
-CREATE INDEX stock_code_idx        ON public.stock (code);
-CREATE INDEX stock_item_idx        ON public.stock (item);
-CREATE INDEX stock_location_idx    ON public.stock (location);
-CREATE INDEX stock_photo_idx       ON public.stock (photo);
-CREATE INDEX stock_merged_into_idx ON public.stock (merged_into) WHERE merged_into IS NOT NULL;
-CREATE INDEX stock_deleted_idx     ON public.stock (deleted) WHERE deleted IS NOT NULL;
+CREATE INDEX stock_code_idx     ON public.stock (code);
+CREATE INDEX stock_item_idx     ON public.stock (item);
+CREATE INDEX stock_location_idx ON public.stock (location);
+CREATE INDEX stock_photo_idx    ON public.stock (photo);
 
 -- The value of one stock attribute for one stock row (serial number,
 -- purchase date, …). The same rules as item_value.
@@ -469,7 +424,6 @@ CREATE TABLE public.attachment (
     hash       text             NOT NULL CHECK (hash ~ '^[0-9a-f]{64}$'),
     size       bigint           NOT NULL CHECK (size >= 0),
     title      public.name_text NOT NULL,
-    deleted    uuid             NULL     REFERENCES public.action (id) ON DELETE RESTRICT,
     CHECK (num_nonnulls(item, stock, location, class) = 1),
 
     -- Targets of the owners' photo keys; they also find an owner's
@@ -481,11 +435,10 @@ CREATE TABLE public.attachment (
 );
 
 -- "wtfd gc" looks files up by hash.
-CREATE INDEX attachment_hash_idx    ON public.attachment (hash);
-CREATE INDEX attachment_deleted_idx ON public.attachment (deleted) WHERE deleted IS NOT NULL;
+CREATE INDEX attachment_hash_idx ON public.attachment (hash);
 
 -- A photo is one of the owner's own attachments; removing that attachment
--- clears it. (That it's an image, and not deleted, is a rule.)
+-- clears it. (That it's an image is a rule.)
 ALTER TABLE public.item
     ADD FOREIGN KEY (id, photo) REFERENCES public.attachment (item, id) ON DELETE SET NULL (photo);
 ALTER TABLE public.stock
@@ -509,28 +462,3 @@ CREATE TABLE public.data_version (
     version bigint NOT NULL DEFAULT 2,
     PRIMARY KEY (tenant, name)
 );
-
--- One entry per changed row of data, in the tenant of the action that
--- changed it. History copies past states; the current data never depends
--- on it.
-CREATE TABLE public.history (
-    id         bigint                   NOT NULL GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    tenant     uuid                     NOT NULL REFERENCES public.tenant (id) ON DELETE RESTRICT,
-    -- The call the change was part of, with who and when.
-    action     uuid                     NOT NULL REFERENCES public.action (id) ON DELETE RESTRICT,
-    table_name text                     NOT NULL,
-    operation  public.history_operation NOT NULL,
-    -- The ids the entry is about: the changed row's own, and those of the
-    -- rows it belongs to (an item value's item, a stock row's item and
-    -- location, …), old and new where one changed. Not foreign keys:
-    -- history outlives purged rows.
-    about      uuid[]                   NOT NULL,
-    -- The row after the change (before it, for a delete).
-    data       jsonb                    NOT NULL,
-    -- Updates only: {column: {old, new}} for every changed column.
-    changes    jsonb                    NULL
-);
-
-CREATE INDEX history_tenant_table_name_id_idx ON public.history (tenant, table_name, id);
-CREATE INDEX history_about_idx                ON public.history USING gin (about);
-CREATE INDEX history_action_idx               ON public.history (action);

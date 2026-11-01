@@ -64,17 +64,17 @@ wtf item add            # asks for everything, with Tab completion
 | `wtf profile list` / `use <name>` / `delete <name>` | (local configuration) |
 | `wtf find <words…> [--class C] [--where CONDITION]…` | `GET /items?search=&where=`, plus each item's stock locations |
 | `wtf code <code>` | `/codes/{code}` |
-| `wtf item list [--class C] [--search S] [--where CONDITION]…` / `get` / `add <name> --class C [--unit U [--unit-lock]] [--value A=V]… [--edit]` / `set` / `edit` / `delete` / `restore` / `history` | `/items` |
+| `wtf item list [--class C] [--search S] [--where CONDITION]…` / `get` / `add <name> --class C [--unit U [--unit-lock]] [--value A=V]… [--edit]` / `set` / `edit` / `delete` | `/items` |
 | `wtf item value-set <item> <attribute> <value…>` / `value-delete <item> <attribute>` | `/items/{id}/values/{attribute}` |
-| `wtf stock list [--item I] [--location L]` / `get` / `add <item> <location> [amount] [--value A=V]…` / `move <stock> <location> [amount]` / `set [--amount A\|none] [--location L] [--item I]` / `edit` / `delete` / `restore` / `history` | `/stock` |
+| `wtf stock list [--item I] [--location L]` / `get` / `add <item> <location> [amount] [--value A=V]…` / `move <stock> <location> [amount]` / `merge <stock> <into> [amount]` / `set [--amount A\|none] [--location L] [--item I]` / `edit` / `delete` | `/stock` |
 | `wtf stock value-set` / `value-delete` | `/stock/{id}/values/{attribute}` |
-| `wtf location tree` / `get` / `add <name or path> [--parent P] [--create-parents] [--container \| --grid COLUMNSxROWS] [--edit]` / `set [--name N] [--parent P\|none] [--container yes\|no]` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` / `restore` / `history [location]` | `/locations` |
-| `wtf class tree` / `get` / `add` / `set` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` / `restore` / `history [class]` / `assign <class> <attribute> [--default V] [--per-unit] [--required]` / `unassign` | `/classes`, `/classes/{id}/attributes/{attribute}` |
-| `wtf attribute list` / `get` / `add <name> [--type T] [--unit U [--unit-lock]] [--edit]` (with a unit, the type follows from it) / `set` / `edit` / `delete` / `restore` / `history [attribute]` | `/attributes` |
-| `wtf option list <attribute>` / `get` / `add <attribute> <name>…` / `set --name N` / `delete` / `restore` | `/attributes/{id}` (its options), `/attributes/{id}/options`, `/options/{id}` |
-| `wtf attachment list <type> <ref>` / `add <type> <ref> <file> [--title T] [--photo]` / `get <type> <ref> <id>` / `download <type> <ref> <id> [-o FILE\|-]` / `set <type> <ref> <id> --title T` / `photo <type> <ref> <id\|none>` / `delete <type> <ref> <id>` / `restore <type> <ref> <id>` | attachments |
+| `wtf location tree` / `get` / `add <name or path> [--parent P] [--create-parents] [--container \| --grid COLUMNSxROWS] [--edit]` / `set [--name N] [--parent P\|none] [--container yes\|no]` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` | `/locations` |
+| `wtf class tree` / `get` / `add` / `set` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` / `assign <class> <attribute> [--default V] [--per-unit] [--required]` / `unassign` | `/classes`, `/classes/{id}/attributes/{attribute}` |
+| `wtf attribute list` / `get` / `add <name> [--type T] [--unit U [--unit-lock]] [--edit]` (with a unit, the type follows from it) / `set` / `edit` / `delete` | `/attributes` |
+| `wtf option list <attribute>` / `get` / `add <attribute> <name>…` / `set --name N` / `delete` | `/attributes/{id}` (its options), `/attributes/{id}/options`, `/options/{id}` |
+| `wtf attachment list <type> <ref>` / `add <type> <ref> <file> [--title T] [--photo]` / `get <type> <ref> <id>` / `download <type> <ref> <id> [-o FILE\|-]` / `set <type> <ref> <id> --title T` / `photo <type> <ref> <id\|none>` / `delete <type> <ref> <id>` | attachments |
 | `wtf quantity list` / `get` / `available <q> on\|off\|default`, `wtf unit-family list [--quantity Q]` / `get` / `available <f> on\|off\|default`, `wtf unit list [--quantity Q] [--family F]` / `get` / `import <file> [--dry-run]` | units: global and the tenant's own, and which are available |
-| `wtf account list` / `get` / `add <email> [--password] [--role R] [--edit]` / `set [--email E] [--password\|--no-password [--log-out\|--keep-sessions]] [--role R]` / `edit` / `delete` / `history` | `/accounts` |
+| `wtf account list` / `get` / `add <email> [--password] [--role R] [--edit]` / `set [--email E] [--password\|--no-password [--log-out\|--keep-sessions]] [--role R]` / `edit` / `delete` | `/accounts` |
 
 ## Interactive use
 
@@ -122,8 +122,6 @@ Tab then completes commands, verbs, flags, and objects from the server, such as 
 - **With `--limit` or `--offset`:** exactly one page, with a hint for the next `--offset`.
 
 `--json` prints all rows in one envelope, unless `--limit` or `--offset` asks for one page.
-
-`… history` shows one page, newest first (`--limit`, 100 by default), and when there are older entries says how to see them: `--before <id>`, the id of the oldest entry shown. `--json` prints the page as the API answers it, `{rows, more}`.
 
 ## Tests
 
@@ -176,7 +174,7 @@ These are decisions I made without you, recorded for review.
     - `find --json` prints the search page without the extra per-item requests;
     - `attachment list --json` prints the object's `attachments` array;
     - lists without `--limit`/`--offset` print one envelope with all rows, whose `limit` is the number of rows.
-17. **History is shown raw.** History holds table rows, so values appear in base units, e.g. a temperature in kelvin.
+17. **History was shown raw** (history went on 1 November 2026, decision 66).
 
 ### Configuration and sessions
 
@@ -193,7 +191,6 @@ These are decisions I made without you, recorded for review.
     - "Still in use" passes PostgreSQL's foreign-key message through, with UUIDs.
     - Some rule violations name attributes by id ("Attribute 8774… is not a per-kind attribute…"), and the word "per-kind" doesn't match `per_unit` anywhere else.
 25. **The dev tenant after testing.** I exercised the client against the Development Tenant and deleted everything again; `wtfd gc` removed the one test file. What remains:
-    - the history entries of those changes, which no API removes (`wtfd history purge` works by age);
     - label codes 1000–1009, which were used up (1007–1009 by the completion test).
 
     The tests used a config file and cache in my scratch directory, not your real ones.
@@ -298,13 +295,8 @@ These follow your answers: all attributes offered, a picker on Tab Tab, bash, zs
 
 ### Deleted things
 
-47. **Restoring** (agreed with the design in [api/deleting.md](api/deleting.md)). Deleting marks things deleted, and `wtf <noun> restore` brings them back, with what was deleted together with them: `item`, `stock`, `location`, `class`, `attribute`, `option`, `attachment`.
-    - **Naming a deleted thing:** deleted things are in no list or tree, so they are named by id or, for items, stock rows and locations, by label code. Their history shows the id.
-    - **Showing one:** `get`, `code` and the like mark it with a `Deleted:` line, which gives the restore command. A stock row a move merged into another shows `Merged into:` instead; it can't be restored.
-    - **In something deleted:** `--with-parents` also restores what it is in, `--to PLACE` restores it somewhere else (`--to none`: at the top, for locations and classes). Without either, on a terminal `wtf` asks which; in a script it fails and names both flags.
-    - **`--name N`** restores it under a new name, for when the old one has been taken since.
-    - **Errors** now show the server's `hint` on a second line, e.g. how to delete a location that still has stock.
-    - **Deleting doesn't ask** (decision 14) and doesn't mention restoring; showing the deleted thing does.
+47. **Restoring** (2026-10-27) was dropped with "mark as deleted" on 1 November 2026 (decision 66): `wtf <noun> restore` and the `Deleted:` and `Merged into:` lines went.
+    - **Errors** show the server's `hint` on a second line, e.g. how to delete a location that still has stock.
 
 ### Unit families, and no tenants
 
@@ -335,7 +327,7 @@ These follow your answers: all attributes offered, a picker on Tab Tab, bash, zs
     - **An attachment is always named with its object:** `get`, `download`, `set` and `delete` take `TYPE REF ID`, like `list` and `add`.
     - **`add … [--title T] [--photo]`:** the title defaults to the file name.
     - **`photo TYPE REF ID|none`** sets or clears an object's photo, which must be one of its own image attachments. The photo is named after its object: "Item photo set.", and "item photo" in lists.
-    - **`delete TYPE REF ID`** marks it deleted; **`restore TYPE REF ID`** brings it back, as an ordinary attachment. `get` says when one is deleted.
+    - **`delete TYPE REF ID`** deletes it, for good.
     - **`download`** names the file as the server does: the title, with an extension for the type if it lacks one (`internal/mediatype`).
     - **No edit form, and no `add --edit`:** the title is all there is to change, with `set --title`.
 
@@ -362,6 +354,15 @@ Built with the refactored API ([API.md](API.md), API revision 1 again; 2026-10-3
 60. **`wtf login --stay DURATION|forever`** says how long the session may sit unused: `forever` (until logging out), a Go duration (`12h`) or days (`30d`). The configuration keeps the last one given as the default for the next login; without one it is `forever`. The session's client name is `wtf on <host name>`.
 61. **`wtf sessions list`** shows your sessions (* marks this one), and **`wtf sessions logout <id>`** or **`--others`** ends one, or all but this one. (`wtf sessions` alone shows the group's help, as for every group.)
 62. **A new password asks about the other sessions:** `wtf password` asks "Log out your other devices too?", or takes `--log-out-others` or `--keep-others`; an admin's `wtf account set --password` or `--no-password` asks about the account's sessions, or takes `--log-out` or `--keep-sessions`, and the edit form asks too.
-63. **`wtf … history`** pages by `--before` (decision 9 of the API plan) in place of `--offset`.
+63. **`wtf … history`** paged by `--before`, until history went (decision 66).
 64. **Creating always sends every field** the API requires, with null or the old default where none is given; `wtf account add` without `--role` still makes a viewer.
-65. **A restore into something deleted** is recognised by its problem type (`/problems/restore-into-deleted`), not by the hint's text.
+65. **A restore into something deleted** was recognised by its problem type, until restoring went (decision 66).
+
+### Without "mark as deleted" and history (1 November 2026)
+
+[2026-11-01-dropping-deleted-and-history.md](2026-11-01-dropping-deleted-and-history.md).
+
+66. **No `restore` and no `history`:** a delete is final, and a backup is the way back (README.md, "Backups").
+67. **Deleting asks first on a terminal:** `Delete stock 1A7K? This can't be undone. [y/N]`, unless `--yes`. Without a terminal it doesn't ask, so scripts delete as before; a single delete is refused while anything is in or uses what it deletes. A recursive delete still needs `--yes` in a script.
+68. **`wtf stock merge <stock> <into> [amount]`** adds a stock row, or part of it, to another row of the same item with the same values; all of it deletes the row. `wtf stock move` never merges.
+69. **`wtf code`** of a deleted thing's label says that it has been deleted (410), where a code never handed out isn't found.

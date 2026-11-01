@@ -3,7 +3,7 @@
   "info": {
     "title": "WtF API",
     "version": "1",
-    "description": "Version 1 of the API, served under /api/v1. Within a version the API only\ngrows (new routes, optional fields, fields in answers); every answer names\nthe current revision in the `API-Revision` header. A breaking change would\nbecome /api/v2, served next to /api/v1 for a while. A request for a\nversion the server doesn't serve gets an `unsupported-api-version`\nproblem that lists the versions it does serve (`supported`). The\nrefactor of 2026-11-01 changed /api/v1 in place, once, and its revision\nstarted again at 1 (WTFD.md, \"Versions\").\n\nWhere to Find: a register of the things you own and where they are.\nEvery endpoint calls one database function; see API.md for the semantics\nand WTFD.md for the HTTP conventions.\n\n- Numbers of attributes and items with a unit are given and stored in the\n  base unit of the unit's quantity; responses add a `display` value in the\n  best-scaling unit of the unit's family, or in the unit itself when\n  `unit_lock` is set.\n- Outside the unit routes a unit is its id: clients keep the unit families\n  (`GET /unit-families`, revalidated by `ETag`) and look units up there,\n  as they keep the class and location trees.\n- The hostname picks the inventory: its first label is a tenant's host\n  (\"bob\" for bob.wtf.example), see TENANTS.md. A hostname that picks none\n  gets 404 from every route that needs a session, or from /login.\n- Everything has UUIDs as ids. Quantities, unit families and units are\n  global (every tenant sees them) or the tenant's own, and a tenant can\n  turn quantities and families off.\n- Every account has a role (ACCOUNTS.md): a `viewer` reads everything\n  but the accounts; a `user` also changes items and stock rows (with\n  their values and attachments); an `admin` also sets up locations,\n  classes, attributes and units, imports and exports model files, and\n  manages accounts. History of items and stock rows is for every account,\n  the rest for admins. A request the role doesn't allow gets 403.\n- A field the server needs is required in a request body, even if as\n  null; nothing is assumed.\n- Errors are RFC 9457 problem details (`application/problem+json`).\n- `GET /classes`, `GET /locations` and `GET /unit-families` support\n  `ETag` / `If-None-Match`.\n- POST /login sets the session cookie `wtf_session` (HttpOnly,\n  SameSite=Strict, Path=/api); send it back with every request. Only\n  /api/health, /api/v1/openapi and /login work without it; a request\n  without it gets 401 at once. Requests that change something are\n  refused (403) when their Origin header names another site.\n"
+    "description": "Version 1 of the API, served under /api/v1. Within a version the API only\ngrows (new routes, optional fields, fields in answers); every answer names\nthe current revision in the `API-Revision` header. A breaking change would\nbecome /api/v2, served next to /api/v1 for a while. A request for a\nversion the server doesn't serve gets an `unsupported-api-version`\nproblem that lists the versions it does serve (`supported`). The\nrefactor of 2026-11-01 changed /api/v1 in place, once, and its revision\nstarted again at 1 (WTFD.md, \"Versions\").\n\nWhere to Find: a register of the things you own and where they are.\nEvery endpoint calls one database function; see API.md for the semantics\nand WTFD.md for the HTTP conventions.\n\n- Numbers of attributes and items with a unit are given and stored in the\n  base unit of the unit's quantity; responses add a `display` value in the\n  best-scaling unit of the unit's family, or in the unit itself when\n  `unit_lock` is set.\n- Outside the unit routes a unit is its id: clients keep the unit families\n  (`GET /unit-families`, revalidated by `ETag`) and look units up there,\n  as they keep the class and location trees.\n- The hostname picks the inventory: its first label is a tenant's host\n  (\"bob\" for bob.wtf.example), see TENANTS.md. A hostname that picks none\n  gets 404 from every route that needs a session, or from /login.\n- Everything has UUIDs as ids. Quantities, unit families and units are\n  global (every tenant sees them) or the tenant's own, and a tenant can\n  turn quantities and families off.\n- Every account has a role (ACCOUNTS.md): a `viewer` reads everything\n  but the accounts; a `user` also changes items and stock rows (with\n  their values and attachments); an `admin` also sets up locations,\n  classes, attributes and units, imports and exports model files, and\n  manages accounts. A request the role doesn't allow gets 403.\n- A field the server needs is required in a request body, even if as\n  null; nothing is assumed.\n- Errors are RFC 9457 problem details (`application/problem+json`).\n- `GET /classes`, `GET /locations` and `GET /unit-families` support\n  `ETag` / `If-None-Match`.\n- POST /login sets the session cookie `wtf_session` (HttpOnly,\n  SameSite=Strict, Path=/api); send it back with every request. Only\n  /api/health, /api/v1/openapi and /login work without it; a request\n  without it gets 401 at once. Requests that change something are\n  refused (403) when their Origin header names another site.\n"
   },
   "servers": [
     {
@@ -522,7 +522,7 @@
         }
       },
       "delete": {
-        "summary": "Mark an attribute deleted (it must not be in use)",
+        "summary": "Delete an attribute (it must not be in use)",
         "operationId": "attributeDelete",
         "responses": {
           "204": {
@@ -633,7 +633,7 @@
         }
       },
       "delete": {
-        "summary": "Mark an option deleted (it must not be in use)",
+        "summary": "Delete an option (it must not be in use)",
         "operationId": "attributeOptionDelete",
         "responses": {
           "204": {
@@ -730,7 +730,7 @@
         }
       },
       "delete": {
-        "summary": "Mark a class deleted; with recursive=true also every class below it",
+        "summary": "Delete a class; with recursive=true also every class below it",
         "description": "Without `recursive`, the class must have no subclasses or items (else 409).\nWith `recursive=true`, the class and every class below it are deleted in one\ntransaction. If any of them has items, nothing is deleted (409), unless `force=true`,\nwhich deletes the items too (with their values, stock rows and attachments).\n`GET /classes/{id}/deletion` previews it.\n",
         "operationId": "classDelete",
         "parameters": [
@@ -1102,7 +1102,7 @@
         }
       },
       "delete": {
-        "summary": "Mark an item deleted (it must have no stock)",
+        "summary": "Delete an item (it must have no stock)",
         "operationId": "itemDelete",
         "responses": {
           "204": {
@@ -1252,7 +1252,7 @@
         }
       },
       "delete": {
-        "summary": "Mark a location deleted; with recursive=true also every location below it",
+        "summary": "Delete a location; with recursive=true also every location below it",
         "description": "Without `recursive`, the location must have no sublocations or stock (else 409).\nWith `recursive=true`, the location and every location below it are deleted in one\ntransaction. If there is stock in any of them, nothing is deleted (409), unless\n`force=true`, which deletes those stock rows too. `GET /locations/{id}/deletion`\npreviews it.\n",
         "operationId": "locationDelete",
         "parameters": [
@@ -1506,7 +1506,7 @@
         }
       },
       "delete": {
-        "summary": "Mark a stock row deleted",
+        "summary": "Delete a stock row",
         "operationId": "stockDelete",
         "responses": {
           "204": {
@@ -1526,7 +1526,7 @@
       ],
       "post": {
         "summary": "Move (part of) a stock row to another location",
-        "description": "Without quantity the whole row moves. If the destination already holds\nexactly one counted row of the same item, the amount is merged into it.\n",
+        "description": "Without an amount the whole row moves and keeps its code; with one, that\nmuch is split off into a new row at the location. A move never merges\ninto another row: that is POST /stock/{id}/merge.\n",
         "operationId": "stockMove",
         "requestBody": {
           "required": true,
@@ -1655,35 +1655,12 @@
         }
       },
       "delete": {
-        "summary": "Mark an attachment of an item deleted",
-        "description": "If it was the photo, there is no photo any more, also after a restore. It is purged with \"wtfd deleted purge\"; then \"wtfd gc\" removes its file once no attachment has its hash.",
+        "summary": "Delete an attachment of an item",
+        "description": "If it was the photo, the object has no photo any more. \"wtfd gc\" removes its file once no attachment of the tenant has its hash.",
         "operationId": "itemAttachmentDelete",
         "responses": {
           "204": {
             "description": "Deleted."
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/items/{id}/attachments/{attachment}/restore": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        },
-        {
-          "$ref": "#/components/parameters/AttachmentId"
-        }
-      ],
-      "post": {
-        "summary": "Restore a deleted attachment of an item (the object must not be deleted)",
-        "description": "It comes back as an ordinary attachment, not as the photo it may have been.",
-        "operationId": "itemAttachmentRestore",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Attachment"
           },
           "default": {
             "$ref": "#/components/responses/Problem"
@@ -1791,35 +1768,12 @@
         }
       },
       "delete": {
-        "summary": "Mark an attachment of a stock row deleted",
-        "description": "If it was the photo, there is no photo any more, also after a restore. It is purged with \"wtfd deleted purge\"; then \"wtfd gc\" removes its file once no attachment has its hash.",
+        "summary": "Delete an attachment of a stock row",
+        "description": "If it was the photo, the object has no photo any more. \"wtfd gc\" removes its file once no attachment of the tenant has its hash.",
         "operationId": "stockAttachmentDelete",
         "responses": {
           "204": {
             "description": "Deleted."
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/stock/{id}/attachments/{attachment}/restore": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        },
-        {
-          "$ref": "#/components/parameters/AttachmentId"
-        }
-      ],
-      "post": {
-        "summary": "Restore a deleted attachment of a stock row (the object must not be deleted)",
-        "description": "It comes back as an ordinary attachment, not as the photo it may have been.",
-        "operationId": "stockAttachmentRestore",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Attachment"
           },
           "default": {
             "$ref": "#/components/responses/Problem"
@@ -1927,35 +1881,12 @@
         }
       },
       "delete": {
-        "summary": "Mark an attachment of a location deleted",
-        "description": "If it was the photo, there is no photo any more, also after a restore. It is purged with \"wtfd deleted purge\"; then \"wtfd gc\" removes its file once no attachment has its hash.",
+        "summary": "Delete an attachment of a location",
+        "description": "If it was the photo, the object has no photo any more. \"wtfd gc\" removes its file once no attachment of the tenant has its hash.",
         "operationId": "locationAttachmentDelete",
         "responses": {
           "204": {
             "description": "Deleted."
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/locations/{id}/attachments/{attachment}/restore": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        },
-        {
-          "$ref": "#/components/parameters/AttachmentId"
-        }
-      ],
-      "post": {
-        "summary": "Restore a deleted attachment of a location (the object must not be deleted)",
-        "description": "It comes back as an ordinary attachment, not as the photo it may have been.",
-        "operationId": "locationAttachmentRestore",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Attachment"
           },
           "default": {
             "$ref": "#/components/responses/Problem"
@@ -2063,35 +1994,12 @@
         }
       },
       "delete": {
-        "summary": "Mark an attachment of a class deleted",
-        "description": "If it was the photo, there is no photo any more, also after a restore. It is purged with \"wtfd deleted purge\"; then \"wtfd gc\" removes its file once no attachment has its hash.",
+        "summary": "Delete an attachment of a class",
+        "description": "If it was the photo, the object has no photo any more. \"wtfd gc\" removes its file once no attachment of the tenant has its hash.",
         "operationId": "classAttachmentDelete",
         "responses": {
           "204": {
             "description": "Deleted."
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/classes/{id}/attachments/{attachment}/restore": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        },
-        {
-          "$ref": "#/components/parameters/AttachmentId"
-        }
-      ],
-      "post": {
-        "summary": "Restore a deleted attachment of a class (the object must not be deleted)",
-        "description": "It comes back as an ordinary attachment, not as the photo it may have been.",
-        "operationId": "classAttachmentRestore",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Attachment"
           },
           "default": {
             "$ref": "#/components/responses/Problem"
@@ -2498,248 +2406,11 @@
       },
       "delete": {
         "summary": "Delete an account (admins; not your own)",
-        "description": "The account is marked deleted (history keeps referring to it); its email can be used again.",
+        "description": "The account is deleted, with its sessions; its email can be used again. You can't delete your own account.",
         "operationId": "accountDelete",
         "responses": {
           "204": {
             "description": "Deleted."
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/items/{id}/history": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "get": {
-        "summary": "History of an item",
-        "description": "The item, its values, its stock rows and their per-unit values, and the attachments of the item and its stock rows. Newest first; also for deleted objects. Every account may read it.",
-        "operationId": "itemHistory",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Before"
-          },
-          {
-            "$ref": "#/components/parameters/Limit"
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/History"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/stock/{id}/history": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "get": {
-        "summary": "History of a stock row",
-        "description": "The row, its per-unit values and its attachments. Newest first; also for deleted objects. Every account may read it.",
-        "operationId": "stockHistory",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Before"
-          },
-          {
-            "$ref": "#/components/parameters/Limit"
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/History"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/locations/{id}/history": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "get": {
-        "summary": "History of a location",
-        "description": "The location, stock rows that were there (including arrivals and departures), its attachments, and the locations directly inside it being added, moved in or out, deleted, restored or purged. Newest first; also for deleted objects. For admins.",
-        "operationId": "locationHistory",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Before"
-          },
-          {
-            "$ref": "#/components/parameters/Limit"
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/History"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/classes/{id}/history": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "get": {
-        "summary": "History of a class",
-        "description": "The class, its attribute assignments, its attachments, and the classes directly below it and its items being added, moved in or out, deleted, restored or purged. Newest first; also for deleted objects. For admins.",
-        "operationId": "classHistory",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Before"
-          },
-          {
-            "$ref": "#/components/parameters/Limit"
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/History"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/attributes/{id}/history": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "get": {
-        "summary": "History of an attribute",
-        "description": "The attribute and its options. Newest first; also for deleted objects. For admins.",
-        "operationId": "attributeHistory",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Before"
-          },
-          {
-            "$ref": "#/components/parameters/Limit"
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/History"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/accounts/{id}/history": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "get": {
-        "summary": "History of an account",
-        "description": "Changes to the account itself. Newest first; also for deleted objects. For admins.",
-        "operationId": "accountHistory",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Before"
-          },
-          {
-            "$ref": "#/components/parameters/Limit"
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/History"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/locations/history": {
-      "get": {
-        "summary": "History of the top-level locations",
-        "description": "Top-level locations being added, moved to or from the top level, deleted, restored or purged, so that a deleted one can be found. Newest first. For admins.",
-        "operationId": "locationListHistory",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Before"
-          },
-          {
-            "$ref": "#/components/parameters/Limit"
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/History"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/classes/history": {
-      "get": {
-        "summary": "History of the top-level classes",
-        "description": "Top-level classes being added, moved to or from the top level, deleted, restored or purged, so that a deleted one can be found. Newest first. For admins.",
-        "operationId": "classListHistory",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Before"
-          },
-          {
-            "$ref": "#/components/parameters/Limit"
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/History"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/attributes/history": {
-      "get": {
-        "summary": "History of the attributes",
-        "description": "Attributes being added, deleted, restored or purged, so that a deleted one can be found. Newest first. For admins.",
-        "operationId": "attributeListHistory",
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/Before"
-          },
-          {
-            "$ref": "#/components/parameters/Limit"
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/History"
           },
           "default": {
             "$ref": "#/components/responses/Problem"
@@ -2798,202 +2469,12 @@
           },
           "default": {
             "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/items/{id}/restore": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "post": {
-        "summary": "Restore a deleted item, with the stock rows deleted together with it",
-        "operationId": "itemRestore",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "name": {
-                    "type": "string",
-                    "description": "A new name."
-                  },
-                  "class": {
-                    "$ref": "#/components/schemas/Uuid",
-                    "description": "Restore it in this class instead."
-                  },
-                  "with_parents": {
-                    "type": "boolean",
-                    "description": "Also restore its deleted class, and the deleted classes above it."
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Item"
           },
-          "default": {
+          "410": {
             "$ref": "#/components/responses/Problem"
           }
-        }
-      }
-    },
-    "/stock/{id}/restore": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "post": {
-        "summary": "Restore a deleted stock row (not one merged into another)",
-        "operationId": "stockRestore",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "location": {
-                    "$ref": "#/components/schemas/Uuid",
-                    "description": "Restore it at this location instead."
-                  },
-                  "with_parents": {
-                    "type": "boolean",
-                    "description": "Also restore its deleted location, and the deleted locations above it."
-                  }
-                }
-              }
-            }
-          }
         },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Stock"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/locations/{id}/restore": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "post": {
-        "summary": "Restore a deleted location, with what was deleted together with it below it",
-        "operationId": "locationRestore",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TreeNodeRestore"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Location"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/classes/{id}/restore": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "post": {
-        "summary": "Restore a deleted class, with the classes, items and stock rows deleted together with it",
-        "operationId": "classRestore",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TreeNodeRestore"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Class"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/attributes/{id}/restore": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "post": {
-        "summary": "Restore a deleted attribute",
-        "operationId": "attributeRestore",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/NameRestore"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Attribute"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/options/{id}/restore": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "post": {
-        "summary": "Restore a deleted option (its attribute must not be deleted)",
-        "operationId": "optionRestore",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/NameRestore"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Option"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
+        "description": "A code that was handed out but that nothing has any more answers 410\n(/problems/gone): what had it was deleted. A code never handed out is 404.\n"
       }
     },
     "/openapi": {
@@ -3098,6 +2579,53 @@
           }
         }
       }
+    },
+    "/stock/{id}/merge": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        }
+      ],
+      "post": {
+        "summary": "Merge (part of) a stock row into another row of the same item",
+        "description": "Adds the amount (null: all of it) to the row \"into\", which may be at another\nlocation. Both rows must be of the same item and counted, and have exactly\nthe same values (422 otherwise). Merging all of it deletes the row, whose\nlabel then answers 410, and its attachments move to \"into\". Answers \"into\".\n",
+        "operationId": "stockMerge",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "into",
+                  "amount"
+                ],
+                "properties": {
+                  "into": {
+                    "$ref": "#/components/schemas/Uuid"
+                  },
+                  "amount": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "description": "How much to merge; null merges the whole row."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Stock"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3186,15 +2714,6 @@
         "description": "The ETag of the tree the client already has.",
         "schema": {
           "type": "string"
-        }
-      },
-      "Before": {
-        "name": "before",
-        "in": "query",
-        "required": false,
-        "description": "The id of the oldest entry the client has; the page is the entries older than it. Absent: from the newest. History pages refuse offset.",
-        "schema": {
-          "type": "integer"
         }
       }
     },
@@ -3352,28 +2871,6 @@
       }
     },
     "responses": {
-      "History": {
-        "description": "One page of history entries, newest first.",
-        "content": {
-          "application/json": {
-            "schema": {
-              "type": "object",
-              "properties": {
-                "more": {
-                  "type": "boolean",
-                  "description": "Whether there are older entries."
-                },
-                "rows": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/HistoryEntry"
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
       "Attachment": {
         "description": "The attachment.",
         "content": {
@@ -3685,89 +3182,8 @@
           "sqlstate": {
             "type": "string",
             "description": "PostgreSQL error code, when the error came from the database."
-          },
-          "place_key": {
-            "type": "string",
-            "description": "restore-into-deleted only: the request field that restores it somewhere else (class, parent or location)."
-          },
-          "with_parents": {
-            "type": "boolean",
-            "description": "restore-into-deleted only: true, as \"with_parents\": true restores what it is in too."
           }
         }
-      },
-      "TreeNodeRestore": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "name": {
-            "type": "string",
-            "description": "A new name, for when the old one has been taken since."
-          },
-          "parent": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Restore it under this parent instead; null at the top."
-          },
-          "with_parents": {
-            "type": "boolean",
-            "description": "Also restore the deleted nodes it is in."
-          }
-        }
-      },
-      "NameRestore": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "name": {
-            "type": "string",
-            "description": "A new name, for when the old one has been taken since."
-          }
-        }
-      },
-      "Deleted": {
-        "description": "null for a live object; for a deleted one, the action that deleted it, when, and by whom (null: wtfd itself). Lists and trees leave deleted objects out; fetching one by id or code still works.",
-        "oneOf": [
-          {
-            "type": "null"
-          },
-          {
-            "type": "object",
-            "properties": {
-              "action": {
-                "$ref": "#/components/schemas/Uuid"
-              },
-              "at": {
-                "type": "string",
-                "format": "date-time"
-              },
-              "account": {
-                "oneOf": [
-                  {
-                    "type": "object",
-                    "properties": {
-                      "id": {
-                        "$ref": "#/components/schemas/Uuid"
-                      },
-                      "email": {
-                        "type": "string"
-                      }
-                    }
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              }
-            }
-          }
-        ]
       },
       "NamedRef": {
         "type": "object",
@@ -3969,72 +3385,6 @@
           }
         }
       },
-      "HistoryEntry": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "integer",
-            "description": "Newer entries have higher ids; the next page goes before the oldest one."
-          },
-          "action": {
-            "type": "object",
-            "description": "The call the change was part of: entries of one call share it.",
-            "properties": {
-              "id": {
-                "$ref": "#/components/schemas/Uuid"
-              },
-              "at": {
-                "type": "string",
-                "format": "date-time"
-              },
-              "account": {
-                "oneOf": [
-                  {
-                    "type": "object",
-                    "properties": {
-                      "id": {
-                        "$ref": "#/components/schemas/Uuid"
-                      },
-                      "email": {
-                        "type": "string"
-                      },
-                      "deleted": {
-                        "type": "boolean"
-                      }
-                    }
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              }
-            }
-          },
-          "table": {
-            "type": "string",
-            "description": "e.g. item, item_value, stock, stock_value, location, attachment."
-          },
-          "operation": {
-            "type": "string",
-            "enum": [
-              "insert",
-              "update",
-              "delete"
-            ]
-          },
-          "data": {
-            "type": "object",
-            "description": "The row after the change (before it, for a delete)."
-          },
-          "changes": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "description": "Updates only: {column: {old, new}}."
-          }
-        }
-      },
       "Role": {
         "type": "string",
         "enum": [
@@ -4058,10 +3408,6 @@
           },
           "role": {
             "$ref": "#/components/schemas/Role"
-          },
-          "deleted": {
-            "type": "boolean",
-            "description": "Deleted accounts can't log in; they stay visible because history refers to them."
           }
         }
       },
@@ -4085,9 +3431,6 @@
           "hash": {
             "type": "string",
             "description": "Hex SHA-256 of the content."
-          },
-          "deleted": {
-            "$ref": "#/components/schemas/Deleted"
           }
         }
       },
@@ -4173,9 +3516,6 @@
               "$ref": "#/components/schemas/Option"
             },
             "description": "Only for choice attributes in GET /attributes/{id}: its live options, by name."
-          },
-          "deleted": {
-            "$ref": "#/components/schemas/Deleted"
           }
         }
       },
@@ -4190,9 +3530,6 @@
           },
           "name": {
             "type": "string"
-          },
-          "deleted": {
-            "$ref": "#/components/schemas/Deleted"
           }
         }
       },
@@ -4287,9 +3624,6 @@
               "$ref": "#/components/schemas/PathEntry"
             }
           },
-          "deleted": {
-            "$ref": "#/components/schemas/Deleted"
-          },
           "attributes": {
             "type": "array",
             "items": {
@@ -4372,9 +3706,6 @@
               "$ref": "#/components/schemas/PathEntry"
             }
           },
-          "deleted": {
-            "$ref": "#/components/schemas/Deleted"
-          },
           "photo": {
             "oneOf": [
               {
@@ -4420,9 +3751,6 @@
           },
           "unit_lock": {
             "type": "boolean"
-          },
-          "deleted": {
-            "$ref": "#/components/schemas/Deleted"
           },
           "photo": {
             "description": "The item photo, or null.",
@@ -4479,9 +3807,6 @@
           },
           "name": {
             "type": "string"
-          },
-          "deleted": {
-            "$ref": "#/components/schemas/Deleted"
           },
           "class": {
             "$ref": "#/components/schemas/ClassDetail"
@@ -4591,28 +3916,6 @@
           },
           "display": {
             "$ref": "#/components/schemas/Display"
-          },
-          "deleted": {
-            "$ref": "#/components/schemas/Deleted"
-          },
-          "merged_into": {
-            "description": "For a row a move merged into another, that row.",
-            "oneOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "$ref": "#/components/schemas/Uuid"
-                  },
-                  "code": {
-                    "type": "string"
-                  }
-                }
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "values": {
             "$ref": "#/components/schemas/Values",

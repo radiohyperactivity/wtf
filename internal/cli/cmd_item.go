@@ -275,9 +275,6 @@ func itemGroup() group {
 			},
 			editCommand("item", itemParam, resolveItemFn, (*env).editItem),
 			deleteCommand("item", "/items/", resolveItemFn),
-			restoreCommand(restoreKind{kind: "item", prefix: "/items/", codeType: "item", place: "class", placeKind: "class", named: true,
-				show: func(e *env, data json.RawMessage) error { return e.printItemJSON(data) }}),
-			historyCommand("item", "/items/", "", resolveItemFn),
 			valueSetCommand("item", "/items/", itemParam, attributeParam, resolveItemFn, func(e *env, data json.RawMessage) error { return e.printItemJSON(data) }),
 			valueDeleteCommand("item", "/items/", itemParam, attributeParam, resolveItemFn, func(e *env, data json.RawMessage) error { return e.printItemJSON(data) }),
 		},
@@ -390,7 +387,6 @@ func (e *env) printItemJSON(data json.RawMessage) error {
 	fields(w,
 		"Code", it.Code,
 		"Name", it.Name,
-		"Deleted", deletedNote(it.Deleted, "item", it.Code),
 		"Class", pathNames(it.Class.Path),
 		"Unit", unitName(it.Unit, it.UnitLock),
 		"Item photo", photo,
@@ -536,7 +532,7 @@ func stockGroup() group {
 			{
 				name:    "move",
 				args:    "<stock> <location> [amount]",
-				summary: "Move a stock row, or part of it, to another location. Rows with the same values merge.",
+				summary: "Move a stock row, or part of it, to another location; a part becomes a row of its own.",
 				params:  []param{stockParam, locationParam, {name: "Amount", optional: true, variadic: true}},
 				setup: simple(func(e *env, args []string) error {
 					if err := wantArgs(args, 2, -1); err != nil {
@@ -567,6 +563,46 @@ func stockGroup() group {
 						}
 					}
 					data, err := e.do(http.MethodPost, "/stock/"+stockID+"/move", body)
+					if err != nil {
+						return err
+					}
+					return e.emit(data, func() error { return show(e, data) })
+				}),
+			},
+			{
+				name:    "merge",
+				args:    "<stock> <into> [amount]",
+				summary: "Add a stock row, or part of it, to another row of the same item with the same values; all of it deletes the row.",
+				params:  []param{stockParam, stockParam, {name: "Amount", optional: true, variadic: true}},
+				setup: simple(func(e *env, args []string) error {
+					if err := wantArgs(args, 2, -1); err != nil {
+						return err
+					}
+					stockID, err := e.resolveStock(args[0])
+					if err != nil {
+						return err
+					}
+					intoID, err := e.resolveStock(args[1])
+					if err != nil {
+						return err
+					}
+					body := object{"into": intoID, "amount": nil}
+					quantity := strings.Join(args[2:], " ")
+					if quantity == "" {
+						if quantity, err = e.offer("Amount (Enter: all of it)", param{}, args); err != nil {
+							return err
+						}
+					}
+					if quantity != "" {
+						var s stock
+						if err := e.get("/stock/"+stockID, nil, &s); err != nil {
+							return err
+						}
+						if body["amount"], err = e.parseQuantity(quantity, s.Item.Unit); err != nil {
+							return err
+						}
+					}
+					data, err := e.do(http.MethodPost, "/stock/"+stockID+"/merge", body)
 					if err != nil {
 						return err
 					}
@@ -642,8 +678,6 @@ func stockGroup() group {
 			},
 			editCommand("stock", stockParam, resolveStockFn, (*env).editStock),
 			deleteCommand("stock", "/stock/", resolveStockFn),
-			restoreCommand(restoreKind{kind: "stock", prefix: "/stock/", codeType: "stock", place: "location", placeKind: "location", show: show}),
-			historyCommand("stock", "/stock/", "", resolveStockFn),
 			valueSetCommand("stock", "/stock/", stockParam, arg("Attribute", completeAttributes), resolveStockFn, show),
 			valueDeleteCommand("stock", "/stock/", stockParam, arg("Attribute", completeAttributes), resolveStockFn, show),
 		},
@@ -677,14 +711,8 @@ func (e *env) printStockJSON(data json.RawMessage) error {
 		return err
 	}
 	w := e.stdout
-	deleted, merged := deletedNote(s.Deleted, "stock", s.Code), ""
-	if s.MergedInto != nil {
-		deleted, merged = "yes", s.MergedInto.Code+" (a move added its amount to that row)"
-	}
 	fields(w,
 		"Code", s.Code,
-		"Deleted", deleted,
-		"Merged into", merged,
 		"Item", s.Item.Code+"  "+s.Item.Name,
 		"Location", locations.pathString(s.Location),
 		"Amount", formatQuantity(s.Amount, s.Display),

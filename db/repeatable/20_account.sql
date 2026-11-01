@@ -7,19 +7,17 @@ CREATE SCHEMA account;
 -- Helpers
 -- ---------------------------------------------------------------------------
 
--- An account as the API shows it. Built from the row it is given and what
--- its deleted says (util.deleted_json; NULL for a live account), so it
+-- An account as the API shows it, built from the row it is given, so it
 -- queries nothing. The password hash is never shown, only whether there is
 -- one.
-CREATE FUNCTION account.json(p_account public.account, p_deleted jsonb)
+CREATE FUNCTION account.json(p_account public.account)
 RETURNS jsonb
 LANGUAGE sql IMMUTABLE AS $$
     SELECT jsonb_build_object(
         'id',           p_account.id,
         'email',        p_account.email,
         'has_password', p_account.password_hash IS NOT NULL,
-        'role',         p_account.role,
-        'deleted',      p_deleted
+        'role',         p_account.role
     );
 $$;
 
@@ -87,9 +85,6 @@ $$;
 -- failed attempts, one attempt a minute is allowed until one succeeds).
 -- Failures are returned rather than raised, so that the count of failed
 -- attempts is committed. An unknown host is raised (404).
---
--- No action: sessions aren't in history, and neither are the lockout
--- counters, the only change to the account.
 CREATE FUNCTION account.login(
     p_request  public.request,
     p_email    text,
@@ -117,7 +112,6 @@ BEGIN
     FROM public.account a
     WHERE a.tenant = v_tenant
       AND lower(a.email) = lower(btrim(p_email))
-      AND a.deleted IS NULL
     FOR UPDATE;
 
     IF NOT FOUND THEN
@@ -161,7 +155,7 @@ BEGIN
     RETURN jsonb_build_object(
         'ok',      true,
         'token',   v_token,
-        'account', account.json(v_account, NULL)
+        'account', account.json(v_account)
     );
 END;
 $$;
@@ -188,7 +182,7 @@ AS $$
 DECLARE
     v_session record := util.session(p_request, 'viewer');
 BEGIN
-    RETURN (SELECT account.json(a, NULL) FROM public.account a WHERE a.id = v_session.account);
+    RETURN (SELECT account.json(a) FROM public.account a WHERE a.id = v_session.account);
 END;
 $$;
 
@@ -223,7 +217,6 @@ BEGIN
         PERFORM error.invalid('Say whether the other sessions should end');
     END IF;
 
-    PERFORM util.begin_action(v_session);
     UPDATE public.account SET password_hash = account.password_hash(p_new)
     WHERE id = v_session.account;
     IF p_end_other_sessions THEN
@@ -311,7 +304,7 @@ $$;
 -- Managing accounts (admins)
 -- ---------------------------------------------------------------------------
 
--- The tenant's live accounts, by email address.
+-- The tenant's accounts, by email address.
 CREATE FUNCTION account.list(p_request public.request)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -321,17 +314,15 @@ DECLARE
     v_session record := util.session(p_request, 'admin');
 BEGIN
     RETURN (
-        SELECT coalesce(jsonb_agg(account.json(a, NULL)
+        SELECT coalesce(jsonb_agg(account.json(a)
                                   ORDER BY a.email COLLATE public.natural, a.id), '[]')
         FROM public.account a
         WHERE a.tenant = v_session.tenant
-          AND a.deleted IS NULL
     );
 END;
 $$;
 
--- One of the tenant's accounts. A deleted account is returned too, saying
--- when and by whom it was deleted, as history entries still refer to it.
+-- One of the tenant's accounts.
 CREATE FUNCTION account.get(p_request public.request, p_account uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -341,10 +332,8 @@ DECLARE
     v_session record := util.session(p_request, 'admin');
     v_result  jsonb;
 BEGIN
-    SELECT account.json(a, util.deleted_json(d, db)) INTO v_result
+    SELECT account.json(a) INTO v_result
     FROM public.account a
-    LEFT JOIN public.action d   ON d.id = a.deleted
-    LEFT JOIN public.account db ON db.id = d.account
     WHERE a.id = p_account AND a.tenant = v_session.tenant;
     IF NOT FOUND THEN
         PERFORM error.not_found('account', p_account::text);
@@ -374,16 +363,14 @@ BEGIN
     END IF;
     IF EXISTS (SELECT 1 FROM public.account a
                WHERE a.tenant = v_session.tenant
-                 AND lower(a.email) = lower(v_email)
-                 AND a.deleted IS NULL) THEN
+                 AND lower(a.email) = lower(v_email)) THEN
         PERFORM error.duplicate(format('There is an account for %s already', v_email));
     END IF;
 
-    PERFORM util.begin_action(v_session);
     INSERT INTO public.account (tenant, email, password_hash, role)
     VALUES (v_session.tenant, v_email, account.password_hash(p_password), p_role)
     RETURNING * INTO v_account;
-    RETURN account.json(v_account, NULL);
+    RETURN account.json(v_account);
 END;
 $$;
 
@@ -392,8 +379,7 @@ $$;
 -- end_sessions (true or false, and only with it) says whether the
 -- account's sessions end too. An admin's own password is changed with
 -- account.password_change, which needs the current one, and their own role
--- can't be changed, so that a tenant always has an admin. Deleted accounts
--- can't be changed.
+-- can't be changed, so that a tenant always has an admin.
 CREATE FUNCTION account.patch(p_request public.request, p_account uuid, p_patch jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -414,7 +400,7 @@ BEGIN
 
     SELECT a.* INTO v_account
     FROM public.account a
-    WHERE a.id = p_account AND a.tenant = v_session.tenant AND a.deleted IS NULL
+    WHERE a.id = p_account AND a.tenant = v_session.tenant
     FOR UPDATE;
     IF NOT FOUND THEN
         PERFORM error.not_found('account', p_account::text);
@@ -431,13 +417,11 @@ BEGIN
         IF EXISTS (SELECT 1 FROM public.account a
                    WHERE a.tenant = v_session.tenant
                      AND lower(a.email) = lower(v_email)
-                     AND a.id <> p_account
-                     AND a.deleted IS NULL) THEN
+                     AND a.id <> p_account) THEN
             PERFORM error.duplicate(format('There is an account for %s already', v_email));
         END IF;
     END IF;
 
-    PERFORM util.begin_action(v_session);
     UPDATE public.account a
     SET email         = coalesce(v_email, a.email),
         password_hash = CASE WHEN p_patch ? 'password'
@@ -450,15 +434,13 @@ BEGIN
     IF (p_patch ->> 'end_sessions')::boolean THEN
         DELETE FROM public.session s WHERE s.account = p_account;
     END IF;
-    RETURN account.json(v_account, NULL);
+    RETURN account.json(v_account);
 END;
 $$;
 
--- Deletes an account of the tenant: it is marked deleted, by this call's
--- action, and kept, as history still refers to it; its password hash is
--- removed (nothing will check it again, and a hash that isn't kept can't
--- leak) and its sessions end. Its email address can be used for a new
--- account. An admin can't delete their own account.
+-- Deletes an account of the tenant, and with it its sessions. Its email
+-- address can be used for a new account. An admin can't delete their own
+-- account, so that a tenant always has an admin.
 CREATE FUNCTION account.delete(p_request public.request, p_account uuid)
 RETURNS void
 LANGUAGE plpgsql
@@ -466,19 +448,14 @@ SECURITY DEFINER SET search_path = pg_catalog, pg_temp
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'admin');
-    v_action  uuid;
 BEGIN
     IF p_account = v_session.account THEN
         PERFORM error.invalid('You can''t delete your own account');
     END IF;
-
-    v_action := util.begin_action(v_session);
-    UPDATE public.account a
-    SET deleted = v_action, password_hash = NULL
-    WHERE a.id = p_account AND a.tenant = v_session.tenant AND a.deleted IS NULL;
+    DELETE FROM public.account a
+    WHERE a.id = p_account AND a.tenant = v_session.tenant;
     IF NOT FOUND THEN
         PERFORM error.not_found('account', p_account::text);
     END IF;
-    DELETE FROM public.session s WHERE s.account = p_account;
 END;
 $$;
