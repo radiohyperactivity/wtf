@@ -620,7 +620,7 @@ $$;
 CREATE FUNCTION unit.quantity_list(p_request public.request)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'viewer');
@@ -641,7 +641,7 @@ $$;
 CREATE FUNCTION unit.quantity_get(p_request public.request, p_quantity uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'viewer');
@@ -663,7 +663,7 @@ $$;
 CREATE FUNCTION unit.quantity_patch(p_request public.request, p_quantity uuid, p_patch jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session  record := util.session(p_request, 'admin');
@@ -721,7 +721,7 @@ CREATE FUNCTION unit.family_list(
     p_quantity      uuid   DEFAULT NULL
 ) RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'viewer');
@@ -754,7 +754,7 @@ $$;
 CREATE FUNCTION unit.family_get(p_request public.request, p_family uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'viewer');
@@ -777,7 +777,7 @@ $$;
 CREATE FUNCTION unit.family_patch(p_request public.request, p_family uuid, p_patch jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'admin');
@@ -834,7 +834,7 @@ CREATE FUNCTION unit.list(
     p_family   uuid DEFAULT NULL
 ) RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'viewer');
@@ -870,7 +870,7 @@ $$;
 CREATE FUNCTION unit.get(p_request public.request, p_unit uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'viewer');

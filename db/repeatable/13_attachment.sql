@@ -229,7 +229,7 @@ $$;
 CREATE FUNCTION attachment.lock(p_request public.request, p_hash text)
 RETURNS void
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'viewer');
@@ -259,7 +259,7 @@ CREATE FUNCTION attachment.create(
     p_photo      boolean
 ) RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session    record := util.session(p_request, 'viewer');
@@ -292,7 +292,7 @@ CREATE FUNCTION attachment.get(
     p_attachment uuid
 ) RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'viewer');
@@ -318,7 +318,7 @@ CREATE FUNCTION attachment.patch(
     p_patch      jsonb
 ) RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session    record := util.session(p_request, 'viewer');
@@ -353,7 +353,7 @@ CREATE FUNCTION attachment.delete(
     p_attachment uuid
 ) RETURNS void
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'viewer');

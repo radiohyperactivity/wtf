@@ -11,7 +11,7 @@ CREATE SCHEMA meta;
 CREATE FUNCTION meta.schema_version()
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 BEGIN
     RETURN jsonb_build_object(

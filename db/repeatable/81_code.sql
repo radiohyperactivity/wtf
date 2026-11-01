@@ -16,7 +16,7 @@ CREATE SCHEMA code;
 CREATE FUNCTION code.resolve(p_request public.request, p_code text)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session  record := util.session(p_request, 'viewer');

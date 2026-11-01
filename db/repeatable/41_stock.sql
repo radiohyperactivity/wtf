@@ -404,7 +404,7 @@ CREATE FUNCTION stock.list(
     p_offset   integer DEFAULT 0
 ) RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'viewer');
@@ -428,8 +428,10 @@ BEGIN
             UNION
             SELECT l.id FROM public.location l JOIN subtree s ON l.parent = s.id
         ),
+        -- Only what is sorted by and counted: the rows themselves are read
+        -- for the page alone.
         matching AS (
-            SELECT s AS row, i AS item
+            SELECT s.id, i.name
             FROM public.stock s
             JOIN public.location l ON l.id = s.location
             JOIN public.item i     ON i.id = s.item
@@ -437,11 +439,14 @@ BEGIN
               AND (p_item IS NULL OR s.item = p_item)
               AND (p_location IS NULL OR s.location IN (SELECT id FROM subtree))
         ),
+        -- A plain ORDER BY with LIMIT, sorted as a top-N (see item.list).
         page AS (
-            SELECT m.*, row_number() OVER (ORDER BY (m.item).name COLLATE public.natural, (m.row).id) AS position
-            FROM matching m
-            ORDER BY (m.item).name COLLATE public.natural, (m.row).id
-            LIMIT p_limit OFFSET p_offset
+            SELECT s AS row, i AS item
+            FROM (SELECT m.id FROM matching m
+                  ORDER BY m.name COLLATE public.natural, m.id
+                  LIMIT p_limit OFFSET p_offset) x
+            JOIN public.stock s ON s.id = x.id
+            JOIN public.item i  ON i.id = s.item
         )
         SELECT jsonb_build_object(
             'total',  (SELECT count(*) FROM matching),
@@ -453,7 +458,7 @@ BEGIN
                                         'item',    item.json(p.item, attachment.json(iph)),
                                         'display', CASE WHEN d.unit IS NOT NULL
                                                         THEN jsonb_build_object('value', d.value, 'unit', d.unit) END)
-                                 ORDER BY p.position)
+                                 ORDER BY (p.item).name COLLATE public.natural, (p.row).id)
                 FROM page p
                 LEFT JOIN public.attachment ph  ON ph.id = (p.row).photo
                 LEFT JOIN public.attachment iph ON iph.id = (p.item).photo
@@ -467,7 +472,7 @@ $$;
 CREATE FUNCTION stock.get(p_request public.request, p_stock uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'viewer');
@@ -498,7 +503,7 @@ CREATE FUNCTION stock.create(
     p_values   jsonb
 ) RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'user');
@@ -530,7 +535,7 @@ $$;
 CREATE FUNCTION stock.patch(p_request public.request, p_stock uuid, p_patch jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'user');
@@ -592,7 +597,7 @@ $$;
 CREATE FUNCTION stock.move(p_request public.request, p_stock uuid, p_location uuid, p_amount numeric)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'user');
@@ -651,7 +656,7 @@ $$;
 CREATE FUNCTION stock.merge(p_request public.request, p_stock uuid, p_into uuid, p_amount numeric)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session   record := util.session(p_request, 'user');
@@ -719,7 +724,7 @@ $$;
 CREATE FUNCTION stock.delete(p_request public.request, p_stock uuid)
 RETURNS void
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'user');
@@ -742,7 +747,7 @@ $$;
 CREATE FUNCTION stock.value_set(p_request public.request, p_stock uuid, p_attribute uuid, p_value jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'user');
@@ -771,7 +776,7 @@ $$;
 CREATE FUNCTION stock.value_delete(p_request public.request, p_stock uuid, p_attribute uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'user');

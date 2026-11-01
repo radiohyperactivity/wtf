@@ -193,7 +193,7 @@ $$;
 CREATE FUNCTION attribute.list(p_request public.request)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'viewer');
@@ -211,7 +211,7 @@ $$;
 CREATE FUNCTION attribute.get(p_request public.request, p_attribute uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'viewer');
@@ -241,7 +241,7 @@ CREATE FUNCTION attribute.create(
     p_unit_lock boolean
 ) RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session   record := util.session(p_request, 'admin');
@@ -275,7 +275,7 @@ $$;
 CREATE FUNCTION attribute.patch(p_request public.request, p_attribute uuid, p_patch jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session   record := util.session(p_request, 'admin');
@@ -329,7 +329,7 @@ $$;
 CREATE FUNCTION attribute.delete(p_request public.request, p_attribute uuid)
 RETURNS void
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session   record := util.session(p_request, 'admin');
@@ -372,7 +372,7 @@ $$;
 CREATE FUNCTION attribute.option_get(p_request public.request, p_option uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'viewer');
@@ -396,7 +396,7 @@ $$;
 CREATE FUNCTION attribute.option_create(p_request public.request, p_attribute uuid, p_name text)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'admin');
@@ -426,7 +426,7 @@ $$;
 CREATE FUNCTION attribute.option_patch(p_request public.request, p_option uuid, p_patch jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'admin');
@@ -468,7 +468,7 @@ $$;
 CREATE FUNCTION attribute.option_delete(p_request public.request, p_option uuid)
 RETURNS void
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'admin');

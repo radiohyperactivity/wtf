@@ -118,7 +118,7 @@ $$;
 CREATE FUNCTION location.list(p_request public.request, p_known_version bigint DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'viewer');
@@ -147,7 +147,7 @@ $$;
 CREATE FUNCTION location.get(p_request public.request, p_location uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'viewer');
@@ -186,7 +186,7 @@ CREATE FUNCTION location.create(
     p_confirm   boolean
 ) RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session  record := util.session(p_request, 'admin');
@@ -237,7 +237,7 @@ $$;
 CREATE FUNCTION location.patch(p_request public.request, p_location uuid, p_patch jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session  record := util.session(p_request, 'admin');
@@ -291,7 +291,7 @@ $$;
 CREATE FUNCTION location.delete(p_request public.request, p_location uuid)
 RETURNS void
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session  record := util.session(p_request, 'admin');
@@ -334,7 +334,7 @@ CREATE FUNCTION location.delete_tree(
     p_dry_run  boolean
 ) RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'admin');

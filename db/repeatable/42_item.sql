@@ -610,26 +610,27 @@ CREATE FUNCTION item.list(
     p_offset  integer DEFAULT 0
 ) RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session   record := util.session(p_request, 'viewer');
     v_words     text[] := ARRAY(SELECT DISTINCT w
                                 FROM regexp_split_to_table(lower(btrim(coalesce(p_search, ''))), '\s+') w
                                 WHERE w <> '');
-    v_filtering boolean;
+    v_filters   bigint;
 BEGIN
     PERFORM util.check_paging(p_limit, p_offset);
     IF p_class IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.class c
                                            WHERE c.id = p_class AND c.tenant = v_session.tenant) THEN
         PERFORM error.not_found('class', p_class::text);
     END IF;
-    -- The filters, checked once and kept as typed rows. Dropped first, so
-    -- that a second call in one transaction works.
+    -- The filters, checked once and kept as typed rows, each numbered, as
+    -- two may be on one attribute. Dropped first, so that a second call in
+    -- one transaction works.
     DROP TABLE IF EXISTS pg_temp.filter;
     CREATE TEMPORARY TABLE pg_temp.filter ON COMMIT DROP AS
-    SELECT * FROM item.parse_filters(v_session.tenant, p_where);
-    v_filtering := EXISTS (SELECT 1 FROM pg_temp.filter);
+    SELECT row_number() OVER () AS n, f.* FROM item.parse_filters(v_session.tenant, p_where) f;
+    v_filters := (SELECT count(*) FROM pg_temp.filter);
 
     RETURN (
         WITH RECURSIVE subtree (id) AS (
@@ -649,7 +650,7 @@ BEGIN
             SELECT e.* FROM class.effective_attributes(
                        ARRAY(SELECT DISTINCT x.class FROM candidates x)) e
             JOIN public.attribute a ON a.id = e.attribute
-            WHERE (v_filtering AND e.attribute IN (SELECT f.attribute FROM pg_temp.filter f))
+            WHERE (v_filters > 0 AND e.attribute IN (SELECT f.attribute FROM pg_temp.filter f))
                OR (cardinality(v_words) > 0 AND a.datatype IN ('text', 'url', 'choice'))
         ),
         shown AS (
@@ -680,29 +681,47 @@ BEGIN
             JOIN public.class c ON c.id = p.ancestor
             JOIN public.class a ON a.id = c.parent
         ),
+        -- The items that pass every filter: for each, the filters one of
+        -- the values it shows passes, counted. Joins, so that each value
+        -- is looked at once, not once per candidate.
+        passing AS (
+            SELECT s.item
+            FROM shown s
+            JOIN pg_temp.filter f ON f.attribute = s.attribute
+            WHERE item.filter_matches(f.datatype, f.op, f.low_number, f.high_number,
+                                      f.low_date, f.high_date, f.text, f."boolean",
+                                      f.options, s.text, s.number, s.date, s.boolean, s.option)
+            GROUP BY s.item
+            HAVING count(DISTINCT f.n) = v_filters
+        ),
+        -- The items that have every word somewhere: in their name, a class
+        -- in their path, or a text or choice value they show.
+        word_hits (item, word) AS (
+            SELECT c.id, w FROM candidates c, unnest(v_words) w
+            WHERE strpos(lower(c.name), w) > 0
+            UNION
+            SELECT c.id, w FROM candidates c JOIN path_names p ON p.class = c.class, unnest(v_words) w
+            WHERE strpos(p.name, w) > 0
+            UNION
+            SELECT s.item, w FROM shown s LEFT JOIN public.attribute_option o ON o.id = s.option,
+                   unnest(v_words) w
+            WHERE strpos(lower(s.text), w) > 0 OR strpos(lower(o.name), w) > 0
+        ),
+        worded AS (
+            SELECT h.item FROM word_hits h
+            GROUP BY h.item
+            HAVING count(*) = cardinality(v_words)
+        ),
         matching AS (
             SELECT i.id, i.name FROM candidates i
-            WHERE NOT EXISTS (
-                      SELECT 1 FROM pg_temp.filter f
-                      WHERE NOT EXISTS (SELECT 1 FROM shown s
-                                        WHERE s.item = i.id AND s.attribute = f.attribute
-                                          AND item.filter_matches(f.datatype, f.op, f.low_number, f.high_number,
-                                                                  f.low_date, f.high_date, f.text, f."boolean",
-                                                                  f.options, s.text, s.number, s.date,
-                                                                  s.boolean, s.option)))
-              AND NOT EXISTS (
-                      SELECT 1 FROM unnest(v_words) w
-                      WHERE strpos(lower(i.name), w) = 0
-                        AND NOT EXISTS (SELECT 1 FROM path_names p
-                                        WHERE p.class = i.class AND strpos(p.name, w) > 0)
-                        AND NOT EXISTS (SELECT 1 FROM shown s
-                                        LEFT JOIN public.attribute_option o ON o.id = s.option
-                                        WHERE s.item = i.id
-                                          AND (strpos(lower(s.text), w) > 0
-                                               OR strpos(lower(o.name), w) > 0)))
+            WHERE (v_filters = 0 OR i.id IN (SELECT item FROM passing))
+              AND (cardinality(v_words) = 0 OR i.id IN (SELECT item FROM worded))
         ),
+        -- The page: a plain ORDER BY with LIMIT, which PostgreSQL sorts as
+        -- a top-N (keeping only the rows the page needs) in place of sorting
+        -- every match. The answer orders the page's rows again.
         page AS (
-            SELECT m.id, row_number() OVER (ORDER BY m.name COLLATE public.natural, m.id) AS position
+            SELECT m.id, m.name
             FROM matching m
             ORDER BY m.name COLLATE public.natural, m.id
             LIMIT p_limit OFFSET p_offset
@@ -734,7 +753,7 @@ BEGIN
                                                          jsonb_build_object('value', d.value, 'unit', d.unit) END,
                                         'uncounted', coalesce(t.uncounted, false)),
                            'incomplete', p.id IN (SELECT x.item FROM incomplete x))
-                       ORDER BY p.position)
+                       ORDER BY p.name COLLATE public.natural, p.id)
                 FROM page p
                 JOIN public.item i ON i.id = p.id
                 LEFT JOIN public.attachment ph ON ph.id = i.photo
@@ -749,7 +768,7 @@ $$;
 CREATE FUNCTION item.get(p_request public.request, p_item uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'viewer');
@@ -785,7 +804,7 @@ CREATE FUNCTION item.create(
     p_values    jsonb
 ) RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'user');
@@ -818,7 +837,7 @@ $$;
 CREATE FUNCTION item.patch(p_request public.request, p_item uuid, p_patch jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'user');
@@ -869,7 +888,7 @@ $$;
 CREATE FUNCTION item.delete(p_request public.request, p_item uuid)
 RETURNS void
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'user');
@@ -900,7 +919,7 @@ $$;
 CREATE FUNCTION item.value_set(p_request public.request, p_item uuid, p_attribute uuid, p_value jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'user');
@@ -929,7 +948,7 @@ $$;
 CREATE FUNCTION item.value_delete(p_request public.request, p_item uuid, p_attribute uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'user');

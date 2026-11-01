@@ -871,7 +871,7 @@ $$;
 CREATE FUNCTION model.import(p_request public.request, p_data jsonb, p_parent uuid, p_dry_run boolean)
 RETURNS jsonb
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session record := util.session(p_request, 'admin');
@@ -898,7 +898,7 @@ $$;
 CREATE FUNCTION model.export(p_request public.request, p_class uuid)
 RETURNS json
 LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, pg_temp
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
     v_session    record := util.session(p_request, 'admin');

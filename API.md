@@ -35,7 +35,7 @@ The files are applied by `wtfd schema` (see [WTFD.md](WTFD.md)). Migrations run 
 
 - **The session and the role are checked first.** Each function starts with `util.session(p_request, '<role>')`, which finds the session by its token's hash in the tenant of the host, checks the role, renews the session at most once a minute, and returns the session, its tenant, its account and the role. Everything after that works in that tenant only ([TENANTS.md](TENANTS.md)).
 - **Access.**
-  - The functions are `SECURITY DEFINER`, owned by the schema owner, with `SET search_path = pg_catalog, pg_temp`: every name in them is written with its schema (`public.item`, `util.session`), so a caller can't redirect one.
+  - The functions are `SECURITY DEFINER`, owned by the schema owner, with `SET search_path = pg_catalog, pg_temp`: every name in them is written with its schema (`public.item`, `util.session`), so a caller can't redirect one. They also have `SET jit = off`: the planner over-estimates the functions that return rows, and compiling the queries cost seconds that these short queries never win back (see PERFORMANCE.md).
   - `wtf_api`, the role `wtfd serve` connects as, has `USAGE` on the function schemas and `EXECUTE` on these functions only. It has no access to tables, or to the helpers in the same schemas. See [README.md](README.md).
 - **Naming.**
   - `<schema>.<verb>`, the schema being what the function is about: `item.get`, `stock.move`, `class.assign`, `account.session_list`.

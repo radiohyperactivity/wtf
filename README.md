@@ -339,6 +339,14 @@ go test ./internal/integration/ -v
 
 Each run first empties the test database, then brings its schema up to date with the same code as `wtfd schema`. It creates the first account, `admin@test.local`, and logs it in. Each test then empties the user data, leaving the quantities, unit families, units and accounts.
 
+The performance test (`TestPerformance`, in `performance_test.go`) runs only when asked. It loads a tenant of each size given, times the common reads and writes, and can write its tables to a Markdown file. [PERFORMANCE.md](PERFORMANCE.md) has the results so far.
+
+```sh
+export WTFD_TEST_PERF=1000,10000,50000          # the item counts, smallest first
+export WTFD_TEST_PERF_REPORT=perf.md            # optional
+go test ./internal/integration/ -run TestPerformance -v -timeout 120m
+```
+
 ### The same checks as CI
 
 The scripts in `scripts/` are what CI runs. They are bash scripts, which also run in Git Bash on Windows:

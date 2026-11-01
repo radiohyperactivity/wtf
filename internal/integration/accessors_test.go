@@ -131,11 +131,14 @@ func TestFunctionCatalogue(t *testing.T) {
 		}
 	})
 
-	t.Run("the API's functions are SECURITY DEFINER with a fixed search path", func(t *testing.T) {
+	// JIT is off in each: compiling these queries takes far longer than
+	// running them (seconds against milliseconds), and the planner's
+	// estimates of the functions they call are high enough to trigger it.
+	t.Run("the API's functions are SECURITY DEFINER with a fixed search path and no JIT", func(t *testing.T) {
 		if bad := strings_(`SELECT p.oid::regprocedure::text` + ours + `
 			AND p.prosecdef
-			AND p.proconfig IS DISTINCT FROM ARRAY['search_path=pg_catalog, pg_temp']`); len(bad) > 0 {
-			t.Errorf("without search_path = pg_catalog, pg_temp: %v", bad)
+			AND p.proconfig IS DISTINCT FROM ARRAY['search_path=pg_catalog, pg_temp', 'jit=off']`); len(bad) > 0 {
+			t.Errorf("without search_path = pg_catalog, pg_temp and jit = off: %v", bad)
 		}
 		if bad := strings_(`SELECT p.oid::regprocedure::text` + ours + `
 			AND NOT p.prosecdef AND p.proconfig IS NOT NULL`); len(bad) > 0 {
