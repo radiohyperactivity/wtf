@@ -1,256 +1,232 @@
 # WtF Database API
 
-All access to the data goes through the PL/pgSQL functions described here. They are the basis for the REST API. The tables are described in [SCHEMA.md](SCHEMA.md).
+All access to the data goes through the PL/pgSQL functions described here. `wtfd serve` calls one of them for each request; [WTFD.md](WTFD.md) has the routes' side. The tables, and the rules that keep them consistent, are described in [SCHEMA.md](SCHEMA.md).
 
 ## Files
 
-| Documentation                            | SQL                                                        | Contents |
-|------------------------------------------|------------------------------------------------------------|----------|
-| [SCHEMA.md](SCHEMA.md)                   | [db/migrations/0001_schema.sql](db/migrations/0001_schema.sql) | Types, tables, views, integrity triggers |
-| [seed/units.md](seed/units.md)           | [db/migrations/0002_units.sql](db/migrations/0002_units.sql)   | The global units: quantities, unit families and units |
-| [seed/model-format.md](seed/model-format.md) | [db/repeatable/35_model.sql](db/repeatable/35_model.sql) | Model files: attributes and classes set up for one use |
-| [TENANTS.md](TENANTS.md)                 | [db/migrations/0001_schema.sql](db/migrations/0001_schema.sql) | Tenants: many inventories, picked by hostname |
-| [api/helpers.md](api/helpers.md)         | [db/repeatable/10_util.sql](db/repeatable/10_util.sql)         | Schema `util`: internal helpers for errors, paging, paths, typed values, JSON builders |
-| [api/attribute.md](api/attribute.md)     | [db/repeatable/20_attribute.sql](db/repeatable/20_attribute.sql) | `quantity_*`, `unit_family_*`, `unit_*`, `attribute_*`, `attribute_option_*` |
-| [api/class.md](api/class.md)             | [db/repeatable/30_class.sql](db/repeatable/30_class.sql)       | `class_*`, `class_attribute_*` |
-| [api/item.md](api/item.md)               | [db/repeatable/40_item.sql](db/repeatable/40_item.sql)         | `item_*`, `value_*` |
-| [api/location.md](api/location.md)       | [db/repeatable/50_location.sql](db/repeatable/50_location.sql) | `location_*`, `stock_*` |
-| [api/code.md](api/code.md)               | [db/repeatable/70_code.sql](db/repeatable/70_code.sql)         | `code_resolve()` |
-| [api/attachment.md](api/attachment.md)   | [db/repeatable/80_attachment.sql](db/repeatable/80_attachment.sql) | `attachment_*` |
-| [api/account.md](api/account.md)         | [db/repeatable/90_account.sql](db/repeatable/90_account.sql)   | `login`, `session_use`, `logout`, `me`, `password_change`, `account_*` |
-| [api/history.md](api/history.md)         | [db/repeatable/95_history.sql](db/repeatable/95_history.sql)   | `*_history` |
-| [api/deleting.md](api/deleting.md)       | [db/migrations/0001_schema.sql](db/migrations/0001_schema.sql) | Marking deleted, `*_restore`, purging |
-| [api/meta.md](api/meta.md)               | [db/repeatable/60_meta.sql](db/repeatable/60_meta.sql)         | `schema_version()` |
+The functions live in schemas named after what they belong to, one repeatable script each:
 
-The files are applied by `wtfd schema` (see [WTFD.md](WTFD.md)). Migrations run once, in order; the repeatable scripts are rebuilt as a whole whenever one of them changes.
+| Documentation                            | SQL                                                          | Contents |
+|------------------------------------------|--------------------------------------------------------------|----------|
+| [SCHEMA.md](SCHEMA.md)                   | [db/migrations/0001_schema.sql](db/migrations/0001_schema.sql) | Types, tables, indexes |
+| [seed/units.md](seed/units.md)           | [db/migrations/0002_units.sql](db/migrations/0002_units.sql)   | The global units: quantities, unit families and units |
+| [api/helpers.md](api/helpers.md)         | [10_error.sql](db/repeatable/10_error.sql), [11_util.sql](db/repeatable/11_util.sql), [12_tenant.sql](db/repeatable/12_tenant.sql) | Schemas `error`, `util` and `tenant`: errors, the session check, actions, shared rules and JSON pieces |
+| [api/attachment.md](api/attachment.md)   | [13_attachment.sql](db/repeatable/13_attachment.sql)         | `attachment.*` |
+| [api/account.md](api/account.md)         | [20_account.sql](db/repeatable/20_account.sql)               | `account.*`: logging in, sessions, accounts |
+| [api/attribute.md](api/attribute.md)     | [21_unit.sql](db/repeatable/21_unit.sql), [30_attribute.sql](db/repeatable/30_attribute.sql) | `unit.*`, `attribute.*` |
+| [api/class.md](api/class.md)             | [31_class.sql](db/repeatable/31_class.sql)                   | `class.*` |
+| [api/location.md](api/location.md)       | [40_location.sql](db/repeatable/40_location.sql), [41_stock.sql](db/repeatable/41_stock.sql) | `location.*`, `stock.*` |
+| [api/item.md](api/item.md)               | [42_item.sql](db/repeatable/42_item.sql)                     | `item.*` |
+| [seed/model-format.md](seed/model-format.md) | [60_model.sql](db/repeatable/60_model.sql)               | `model.*`: model files |
+| [api/history.md](api/history.md)         | [70_history.sql](db/repeatable/70_history.sql)               | `history.record` and the `….history` pages |
+| [api/deleting.md](api/deleting.md)       | the scripts above                                            | Marking deleted, `….restore`, purging |
+| [api/meta.md](api/meta.md)               | [80_meta.sql](db/repeatable/80_meta.sql)                     | `meta.schema_version()` |
+| [api/code.md](api/code.md)               | [81_code.sql](db/repeatable/81_code.sql)                     | `code.resolve` |
+| [TENANTS.md](TENANTS.md)                 |                                                              | Tenants: many inventories, picked by hostname |
+
+The files are applied by `wtfd schema` (see [WTFD.md](WTFD.md)). Migrations run once, in order. The repeatable scripts are rebuilt as a whole whenever one of them changes: `wtfd schema` drops the function schemas and runs every script again.
 
 ## Conventions
 
-- **Functions, not procedures.** Every API entry point is a `FUNCTION` returning `jsonb` (or `void` for deletes, which mark objects deleted).
-- **History.** Every change to the data is logged by a trigger: who, when, what changed. It can be read per object, items and stock rows by every account and the rest by admins; see [api/history.md](api/history.md).
-- **Deleting marks objects** instead of removing them; see [api/deleting.md](api/deleting.md). Lists and trees leave deleted objects out; `_get` and `code_resolve` still return them, with `deleted: true`. A deleted object can't be changed, only restored (`<entity>_restore(p_id, p_options)`) or purged by the operator.
-- **Logins.** Every API function works on behalf of a logged-in account (see [ACCOUNTS.md](ACCOUNTS.md) and [api/account.md](api/account.md)).
-  - `wtfd` calls `session_use(token, host)` first in each transaction; every function then works in the session's tenant only (TENANTS.md).
-  - The function checks the account's role (`viewer`, `user` or `admin`; ACCOUNTS.md).
+- **The request comes first.** Every function the API calls takes `p_request public.request` as its first argument: `(token, host, address)`, the session token from the cookie, the first label of the request's hostname, and the client's address. `wtfd` passes it in the same statement as the call, so a request is one statement:
+
+  ```sql
+  SELECT item.get(p_request => ROW($1, $2, $3)::public.request, p_item => $4)
+  ```
+
+- **The session and the role are checked first.** Each function starts with `util.session(p_request, '<role>')`, which finds the session by its token's hash in the tenant of the host, checks the role, renews the session at most once a minute, and returns the session, its tenant, its account and the role. Everything after that works in that tenant only ([TENANTS.md](TENANTS.md)).
+- **Every change is an action.** A function that changes something calls `util.begin_action` first. The action (`public.action`: who, when, in which tenant) is what history entries and deleted rows refer to, so all changes of one call share it. A change without an action of its transaction is refused, so nothing writes around history.
 - **Access.**
-  - API functions are `SECURITY DEFINER`: they run with the privileges of their owner, `wtf_dba`, not those of the caller.
-  - Each one pins `search_path = public, pg_temp`, so a caller can't redirect table or function names to objects of its own.
-  - The REST layer connects as `wtf_api`. That role may only `EXECUTE` the API functions; it has no access to tables, views, the `util` schema or other functions. See [README.md](README.md).
+  - The functions are `SECURITY DEFINER`, owned by the schema owner, with `SET search_path = pg_catalog, pg_temp`: every name in them is written with its schema (`public.item`, `util.session`), so a caller can't redirect one.
+  - `wtf_api`, the role `wtfd serve` connects as, has `USAGE` on the function schemas and `EXECUTE` on these functions only. It has no access to tables, or to the helpers in the same schemas. See [README.md](README.md).
 - **Naming.**
-  - API functions are `<entity>_<verb>` in schema `public`: `list`, `get`, `create`, `patch`, `delete`, `restore`, plus a few domain verbs (`class_attribute_set`, `stock_move`).
-  - Internal helpers live in schema `util` and are not called by the REST layer.
-  - Parameters start with `p_`, local variables with `v_`. This keeps them apart from column names such as `class` or `item`.
+  - `<schema>.<verb>`, the schema being what the function is about: `item.get`, `stock.move`, `class.assign`, `account.session_list`.
+  - Parameters start with `p_` and are named after what they are (`p_item`, `p_class`, not `p_id`); local variables start with `v_`.
 - **Create and patch.**
-  - Create functions take every field as a parameter.
-  - Changes go through `<entity>_patch(p_id, p_patch jsonb)`, with PATCH semantics: only the keys present in `p_patch` change, and a key set to `null` clears a nullable field (e.g. `{"parent": null}` makes a class a root).
-  - Unknown keys, and `null` for a required field, are rejected (22023).
-  - Both return the object in the same shape as the matching `get`.
-- **Names are trimmed** before they are stored.
-- **No `/` in class and location names.** The `create` and `patch` functions reject them with 22023 (400), because `/` separates the names in a path.
+  - Creating takes every field as a parameter. The API requires each in the body (null where none is meant), so nothing is left out by mistake.
+  - Changes go through `….patch(p_<object>, p_patch jsonb)`: only the keys present change, and `null` clears a field that may be empty (`{"parent": null}` puts a class at the top). Unknown keys, and `null` for a field that can't be empty, are refused (22023, 400).
+  - Both return the object as the matching `get` does.
+- **Names are trimmed** before they are stored. **No `/` in class and location names** (22023), as `/` separates the names in a path.
+- **Order.** Lists and trees sort names in natural order (the collation `public.natural`): numbers inside names by their value, letter case ignored, so "DIP4" comes before "dip8" and "DIP10"; `id` breaks ties. Numbers are compared as digits, not as what they mean: "4k7" comes before "100R".
 - **Lists.**
-  - The class and location trees sort numbers inside names by their value (`A2` before `A10`, `Shelf 2` before `Shelf 10`), ignoring case (`util.natural_key`).
-  - Lists are sorted by name in natural order (`util.natural_key`): numbers inside names by their value, the rest ignoring case, so "DIP4" comes before "dip8" and "DIP10"; `id` breaks ties. The trees order siblings the same way. Numbers are compared as digits, not as what they mean: "4k7" comes before "100R".
-  - Lists of system data and of things defined once (quantities, unit families, units, attributes, options) are small, and return a plain JSON array of everything.
-  - Only the lists that grow with the inventory, `item_list` and `stock_list`, are paged, with `p_limit` (1–1000, default 100) and `p_offset` (default 0). They return this envelope:
-
-    ```json
-    { "total": 42, "limit": 100, "offset": 0, "rows": [ ... ] }
-    ```
-- **Trees.**
-  - `class_list` and `location_list` always return the whole tree, as nested `{id, name, parent, container, photo, children}` nodes (locations with their `code` too).
-  - Each tree has a version counter that changes with every change to that table. The response is `{version, unchanged, tree}`.
-  - A client that sends the version it already has (`p_known_version`) gets `{version, unchanged: true}` without the tree. This costs a single row lookup.
-  - The REST layer maps this to `ETag` / `If-None-Match` and `304 Not Modified`.
-  - Other objects refer to classes and locations by id; the client resolves them from its cached trees. `class_get` and `location_get` still include the `path` from the root.
-- **Search.** `item_list`'s `p_search` (`GET /items?search=`) is split into words at spaces. Every word must occur, as a case-insensitive substring, in at least one of:
-  - the item name;
-  - the name of a class in the item's class path ("resistor" also finds items in *Resistors → SMD*);
-  - a text or URL value;
-  - the name of a choice value.
-
-  Values include class defaults the item shows. Different words may match in different places, so "resistor 0805" finds 0805 resistors. Results stay in natural order, and the search combines with the `p_class` filter.
-- **Attribute filters.** `item_list`'s `p_where` (`GET /items?where=`, JSON) is a list of conditions on attribute values, all of which must match; see [api/item.md](api/item.md). For example `[{"attribute": "<Resistance>", "op": ">=", "value": 32000}]`. They combine with `p_search` and `p_class`.
-- **Per-unit attributes.** A class assignment with `per_unit` puts the attribute's values on stock rows (`stock_value_set`, or `values` in `stock_create`) instead of on the item, e.g. a serial number or purchase date. Defaults work the same way for both scopes.
-  - **Splitting** a row with `stock_move` copies its per-unit values.
-  - **Merging** only happens when both rows have exactly the same per-unit values; otherwise the moved part becomes a row of its own.
-  - **Search** also finds items by the text and choice values of their stock rows.
-- **Required attributes.** A `required` assignment must be satisfied, by a value or a default, when an item or stock row is created. A required value can't be removed. Requirements added later are only reported:
-  - `item_get` and `stock_get` list `missing` attributes, for the item and for each stock row;
-  - `item_list` rows have `incomplete: true` when the item or one of its stock rows lacks a required value.
-- **Attachments.** Files on items, stock rows, locations and classes; see [api/attachment.md](api/attachment.md). They are listed as `attachments` in the `_get` responses of those objects, with the object's `photo` (one of its own image attachments). Items also show their photo in `item_list`.
-- **Defaults are fallbacks.** A class attribute's default is never stored on an item. `item_get` lists the item's own values, plus the current default for every effective attribute that has no value of its own. Those entries are marked `"is_default": true`, so changing a default affects every item that relies on it.
-- **Typed values.** Values and defaults are passed as `jsonb`. The function converts them using the attribute's datatype:
+  - Lists of things defined once (quantities, unit families, units, attributes, accounts) are small, and return a plain array of everything.
+  - The lists that grow with the inventory, `item.list` and `stock.list`, are paged with `p_limit` (1–1000, default 100) and `p_offset`, and return `{total, limit, offset, rows}`. Each page is one query, whatever its size.
+  - History goes by position instead, `p_before` (an entry's id) and `p_limit`, and returns `{rows, more}`; see [api/history.md](api/history.md).
+- **Versions.** The class tree, the location tree and the unit families each have a version that changes with every change to them. `class.list`, `location.list` and `unit.family_list` take `p_known_version`: when it is the current one, they answer `{version, unchanged: true}` without the rest. `wtfd` turns that into `ETag`, `If-None-Match` and `304 Not Modified`.
+  - The trees come from the database as flat lists of nodes (`{id, name, parent, container, photo, …}`, locations with `code`); `wtfd` nests them (`children`) for the client.
+  - Other objects refer to classes, locations and units by id; clients resolve them from the trees and families they keep. `class.get` and `location.get` include the `path` from the top.
+- **Units by id.** Outside the unit functions, a unit is its id: an attribute's and an item's `unit`, and the `unit` of a `display`. A quantity's `base_unit` is an id too. The unit families' list has every unit, with its symbol and conversion.
+- **Deleting marks objects** instead of removing them; see [api/deleting.md](api/deleting.md). `deleted` is `null`, or when and by whom: `{action, at, account: {id, email}}`. Lists and trees leave deleted objects out; `get` and `code.resolve` still return them. A deleted object can't be changed (55000, 409), only restored or purged.
+- **Search.** `item.list`'s `p_search` is split into words; every word must occur, letter case ignored, in the item's name, a class in its class path, or a text, url or choice value the item or one of its live stock rows shows (own or default). Words may match in different places: "resistor 0805" finds 0805 resistors.
+- **Attribute filters.** `item.list`'s `p_where` is a list of conditions on attribute values, all of which must match; see [api/item.md](api/item.md).
+- **Where values live.** An assignment's `scope` says where an attribute's values are: `"item"`, on the item, or `"stock"`, on each stock row (a serial number, a purchase date). Defaults work the same way for both.
+  - **Splitting** a row with `stock.move` copies its values; **merging** only happens when both rows have exactly the same values.
+  - **Search** also finds items by the values of their stock rows.
+- **Required attributes.** A `required` assignment must be met, by a value or a default, when an item or stock row is created, and a required value can't be removed. Requirements added later are only reported: `item.get` and `stock.get` list what is `missing`, and `item.list` rows say `incomplete`.
+- **Attachments.** Files on items, stock rows, locations and classes; see [api/attachment.md](api/attachment.md). They are listed in the `get` answers of those objects, with the object's `photo`.
+- **Defaults are fallbacks.** A class attribute's default is never stored on an item: `item.get` shows the item's own values, and the current default for every attribute without one, marked `"is_default": true`.
+- **Typed values.** Values and defaults are passed as `jsonb`, and read by the attribute's datatype:
 
   | Datatype  | JSON input                                   | JSON output              |
   |-----------|----------------------------------------------|--------------------------|
   | `text`    | string                                       | string                   |
   | `url`     | string starting with `http://` or `https://` | string                   |
   | `integer` | whole number                                 | number                   |
-  | `float`   | number                                       | number                   |
+  | `decimal` | number                                       | number                   |
   | `date`    | string `"YYYY-MM-DD"`                        | string `"YYYY-MM-DD"`    |
   | `boolean` | `true` / `false`                             | boolean                  |
   | `choice`  | option id or option name (case-insensitive)  | `{"id": …, "name": …}`   |
 
 - **Units.**
-  - **Units:** quantities, unit families and units are global (seeded, see [seed/units.md](seed/units.md), and imported by the operator) or a tenant's own (imported from model files, [seed/model-format.md](seed/model-format.md)). A tenant turns quantities and families on and off. Everything has UUIDs as ids.
-  - **Units:** an attribute (for values and defaults) or an item (for stock quantities) may have a unit. That makes its numbers measurements of the unit's quantity. Each unit belongs to one family, such as Metric length.
-  - **Unit lock:** with `unit_lock`, numbers are always shown in the unit itself. Without it (the default), they are scaled within the unit's family.
-  - **Storage and input:** such numbers are stored, and must be given, in the base unit of the quantity (metres, kilograms, ohms, kelvin, …). Counts use the integer datatype; every other quantity uses float.
-  - **Output:** the number is returned in the base unit, plus a `display` version:
-
-    ```json
-    { "value": 0.0012, "display": { "value": 1.2, "unit": { "symbol": "mm", … } } }
-    ```
-
-    Without Unit lock, the display unit is the largest unit of the family in which |value| ≥ 1. If there is none, the smallest unit is used. Zero is always shown in the unit itself. `display` is `null` when there is no unit.
-  - **Client conversion:** every unit includes its `base_factor` and `base_offset`, so the client can convert input to the base unit, and output to any unit, by itself:
-
-    ```text
-    base = value × base_factor + base_offset
-    ```
-
-    There is no conversion API call.
+  - Quantities, unit families and units are global (seeded, see [seed/units.md](seed/units.md), and imported by the operator) or a tenant's own (imported from model files, [seed/model-format.md](seed/model-format.md)). A tenant turns quantities and families on and off. Every quantity's base unit is one of its units.
+  - An attribute (for values and defaults) or an item (for stock amounts) may have a unit; its numbers are then measurements of the unit's quantity. Counts are integers; every other quantity is decimal.
+  - Numbers are stored, and must be given, in the base unit of the quantity (metres, kilograms, ohms, kelvin, …). Answers give the number in the base unit and a `display`: `{"value": 1.2, "unit": "<the id of mm>"}`. Without Unit lock, the display unit is the largest unit of the family in which |value| ≥ 1, else the smallest; zero is shown in the unit itself; with `unit_lock`, always in the unit itself. `display` is `null` without a unit.
+  - Clients convert by themselves with each unit's `base_factor` and `base_offset`: `base = value × base_factor + base_offset`. There is no conversion call.
 
 ## Errors
 
-Functions raise standard SQLSTATEs. Suggested HTTP mapping for the REST layer:
+Each error keeps its standard SQLSTATE, raised through the `error` schema's functions so the messages are alike. `wtfd` maps them to problems ([WTFD.md](WTFD.md)):
 
-| SQLSTATE | Name                            | Raised when                                                 | HTTP  |
-|----------|---------------------------------|-------------------------------------------------------------|-------|
-| `P0002`  | `no_data_found`                 | The object named by the URL doesn't exist                   | 404   |
-| `22023`  | `invalid_parameter_value`       | Bad input: wrong value type, bad paging, invalid move       | 400   |
-| `22P02`, `22003`, `22008` | invalid text / out of range / bad date | Malformed uuid, number too large, impossible date | 400 |
-| `23514`  | `check_violation`               | Integrity rule from a CHECK or trigger (cycle, wrong datatype, orphaned values, …) | 422 |
-| `23505`  | `unique_violation`              | Duplicate name                                              | 409   |
-| `23001`  | `restrict_violation`            | On delete: something live still depends on the object | 409   |
-| `55000`  | `object_not_in_prerequisite_state` | The object, or one it needs, is deleted; or a restore of something that isn't deleted (the `hint` names the ways out) | 409   |
-| `23503`  | `foreign_key_violation`         | On create/update: a referenced object doesn't exist | 422   |
-| `23502`  | `not_null_violation`            | A required parameter was NULL                               | 400   |
-| `28000`  | `invalid_authorization_specification` | Not logged in, or the session has expired              | 401   |
-| `42501`  | `insufficient_privilege`        | The account's role doesn't allow it                         | 403   |
+| SQLSTATE | Raised by | When | HTTP |
+|----------|-----------|------|------|
+| `P0002` | `error.not_found`, `error.unknown_host` | The object named by the URL doesn't exist (or is another tenant's) | 404 |
+| `22023` | `error.invalid` | Bad input: wrong type of value, bad paging, an invalid move | 400 |
+| `22P02`, `22003`, `22008`, `23502` | PostgreSQL | A malformed id, a number too large, an impossible date, a missing value | 400 |
+| `23514` | the rules | A rule of the schema (a cycle, the wrong datatype, a value its class doesn't take, …) | 422 |
+| `23503` | `error.bad_reference` | A body refers to something that doesn't exist | 422 |
+| `23505` | `error.duplicate` | A name that is taken | 409 |
+| `23001` | `error.in_use` | Deleting something that live objects still depend on | 409 |
+| `55000` | `error.deleted`, `error.not_deleted`, `error.wrong_state` | The object, or one it needs, is deleted; restoring something that isn't; a merged row | 409 (`/problems/wrong-state`) |
+| `WT001` | `error.restore_into_deleted` | Restoring into something deleted; the `DETAIL` names the place to give instead (`class`, `parent` or `location`) | 409 (`/problems/restore-into-deleted`) |
+| `28000` | `error.unauthenticated` | Not logged in, or the session has ended | 401 |
+| `42501` | `error.forbidden`, the role check | The account's role doesn't allow it | 403 |
+
+An error raised by `history.record` (a change without an action, or of another tenant's row) is a plain error, and a 500: it means a bug, not a user without rights.
 
 ## JSON shapes
 
 ```text
-display    { value, unit: unit }    -- a base-unit number as shown: scaled within the family, or in the unit with unit_lock
-tree       { version, unchanged: false, tree: [ node ] }  or  { version, unchanged: true }
-node       { id, name, parent, container, children: [ node ] }   (location nodes also have code)
-quantity   { id, name, datatype, base_unit: { symbol, name } }
-           quantity_get adds   families: [ { id, name, units: [ unit ] } ]
-unit       { id, name, symbol, family: { id, name }, quantity: quantity, base_factor, base_offset }
-unit_family { id, name, quantity: quantity, units: [ unit ] }  (units smallest to largest)
-attribute  { id, name, datatype, unit: unit | null, unit_lock, deleted }
-           attribute_get adds  options: [ { id, name } ]  for choice attributes
+deleted    null | { action, at, account: { id, email } | null }
+display    { value, unit: <unit id> }
+node       { id, name, parent, container, photo }               (locations also code; wtfd adds children)
+quantity   { id, name, datatype, base_unit: <unit id>, global, available, standard, choice }
+           unit.quantity_get adds  families: [ unit family ]
+unit       { id, name, symbol, base_factor, base_offset, global, family: { id, name }, quantity }
+           (in a family's units: without family and quantity)
+unit_family { id, name, quantity, global, available, standard, choice, units: [ unit ] }   (units smallest first)
+attribute  { id, name, datatype, unit: <unit id> | null, unit_lock, deleted }
+           attribute.get adds  options: [ option ]   (choice attributes)
 option     { id, attribute, name, deleted }
 class      { id, name, parent, container, path: [ { id, name } ], deleted }
-           class_get adds  attributes: [ { attribute, defined_on_class, inherited, default, default_display: display | null, per_unit, required } ], photo: attachment | null, attachments: [ attachment ]
+           class.get adds  attributes: [ { attribute, assigned_to, inherited, default, default_display, scope, required } ],
+                           photo, attachments
 location   { id, code, name, parent, container, path: [ { id, name } ], deleted }
-           location_get adds  photo: attachment | null, attachments: [ attachment ]
-attachment { id, title, type, size, hash }   (type: MIME type; size: bytes; hash: hex SHA-256)
-item       (list)  { id, code, name, class: <class id>, unit: unit | null, unit_lock, deleted,
-                     stock: { total, display: display | null, uncounted }, incomplete }
-           (get)   { id, code, name, deleted, class: class, unit: unit | null, unit_lock,
-                     values: [ value ], missing: [ { id, name } ],
-                     stock: [ { id, code, location: <location id>, quantity, display: display | null,
-                                values: [ value ], missing: [ { id, name } ] } ] }
-value      { attribute, value, display: display | null, is_default }
-stock      { id, code, item: item (list form, without stock total), location: <location id>,
-             quantity: number | null, display: display | null,
-             deleted, merged_into: { id, code } | null,
-             values: [ value ], missing: [ { id, name } ] }   (values and missing not in stock_list rows)
+           location.get adds  photo, attachments
+attachment { id, title, media_type, size, hash, deleted }   (size: bytes; hash: hex SHA-256)
+item       (list) { id, code, name, class: <class id>, unit, unit_lock, photo, deleted,
+                    stock: { total, display, uncounted }, incomplete }
+           (get)  { id, code, name, class: class, unit, unit_lock, photo, attachments, deleted,
+                    values: [ value ], missing: [ { id, name } ],
+                    stock: [ { id, code, location: <location id>, amount, display, values, missing, photo, attachments } ] }
+value      { attribute: attribute, value, display, is_default }
+stock      { id, code, item: item (list form), location: <location id>, amount: number | null, display,
+             values: [ value ], missing: [ { id, name } ], photo, attachments, deleted, merged_into: { id, code } | null }
+history    { rows: [ { id, action: { id, at, account: { id, email, deleted } | null },
+                       table, operation, data, changes } ], more }
 ```
 
 ## Function index
 
-Suggested REST routes are only there to show intent. The REST design comes later.
+The 83 functions the API calls, and the routes that call them (under `/api/v1`). `wtfd`'s own work (tenants, accounts of the operator, purging, `gc`) uses the tables directly, as the schema owner ([WTFD.md](WTFD.md)).
 
-| Function | Returns | Suggested route |
-|----------|---------|-----------------|
-| `quantity_list()` | [quantity] | `GET /quantities` |
-| `quantity_get(p_id)` | quantity (+ families with their units) | `GET /quantities/{id}` |
-| `unit_family_list(p_quantity)` | [unit family (+ units)] | `GET /unit-families?quantity=` |
-| `unit_family_get(p_id)` | unit family (+ units) | `GET /unit-families/{id}` |
-| `unit_list(p_quantity, p_family)` | [unit] | `GET /units?quantity=&family=` |
-| `unit_get(p_id)` | unit | `GET /units/{id}` |
-| `model_import(p_data, p_parent, p_dry_run)` | what was added, what was there, conflicts | `POST /model/import?parent=&dry_run=` (body: a model file of units, attributes and classes, [seed/model-format.md](seed/model-format.md)) |
-| `model_export(p_class)` | a model file of the class with everything below it | `GET /classes/{id}/model` |
-| `attribute_list()` | [attribute] | `GET /attributes` |
-| `attribute_get(p_id)` | attribute (+ options) | `GET /attributes/{id}` |
-| `attribute_create(p_name, p_datatype, p_unit, p_unit_lock)` | attribute | `POST /attributes` |
-| `attribute_patch(p_id, p_patch)` | attribute | `PATCH /attributes/{id}` |
-| `attribute_delete(p_id)` | void | `DELETE /attributes/{id}` |
-| `attribute_restore(p_id, p_options)` | attribute (+ options) | `POST /attributes/{id}/restore` |
-| `attribute_option_list(p_attribute)` | [option] | `GET /attributes/{id}/options` |
-| `attribute_option_get(p_id)` | option | `GET /options/{id}` |
-| `attribute_option_create(p_attribute, p_name)` | option | `POST /attributes/{id}/options` |
-| `attribute_option_patch(p_id, p_patch)` | option | `PATCH /options/{id}` |
-| `attribute_option_delete(p_id)` | void | `DELETE /options/{id}` |
-| `attribute_option_restore(p_id, p_options)` | option | `POST /options/{id}/restore` |
-| `class_list(p_known_version)` | tree | `GET /classes` (ETag) |
-| `class_get(p_id)` | class (+ attributes) | `GET /classes/{id}` |
-| `class_create(p_name, p_parent)` | class (+ attributes) | `POST /classes` |
-| `class_patch(p_id, p_patch)` | class (+ attributes) | `PATCH /classes/{id}` |
-| `class_delete(p_id)` | void | `DELETE /classes/{id}` |
-| `class_delete_tree(p_id, p_force, p_dry_run)` | `{classes, items, stock}` deleted | `DELETE /classes/{id}?recursive=true[&force=true]`; preview `GET /classes/{id}/deletion` |
-| `class_restore(p_id, p_options)` | class (+ attributes) | `POST /classes/{id}/restore` |
-| `class_attribute_set(p_class, p_attribute, p_default, p_per_unit, p_required)` | class (+ attributes) | `PUT /classes/{id}/attributes/{attribute}` |
-| `class_attribute_remove(p_class, p_attribute)` | class (+ attributes) | `DELETE /classes/{id}/attributes/{attribute}` |
-| `item_list(p_class, p_search, p_limit, p_offset, p_where)` | page of item (list form, with stock total) | `GET /items?class=&search=&where=` |
-| `item_get(p_id)` | item | `GET /items/{id}` |
-| `item_create(p_class, p_name, p_unit, p_unit_lock, p_values)` | item | `POST /items` |
-| `item_patch(p_id, p_patch)` | item | `PATCH /items/{id}` |
-| `item_delete(p_id)` | void | `DELETE /items/{id}` |
-| `item_restore(p_id, p_options)` | item | `POST /items/{id}/restore` |
-| `value_set(p_item, p_attribute, p_value)` | item | `PUT /items/{id}/values/{attribute}` |
-| `value_delete(p_item, p_attribute)` | item | `DELETE /items/{id}/values/{attribute}` |
-| `location_list(p_known_version)` | tree | `GET /locations` (ETag) |
-| `location_get(p_id)` | location | `GET /locations/{id}` |
-| `location_create(p_name, p_parent)` | location | `POST /locations` |
-| `location_patch(p_id, p_patch)` | location | `PATCH /locations/{id}` |
-| `location_delete(p_id)` | void | `DELETE /locations/{id}` |
-| `location_delete_tree(p_id, p_force, p_dry_run)` | `{locations, stock}` deleted | `DELETE /locations/{id}?recursive=true[&force=true]`; preview `GET /locations/{id}/deletion` |
-| `location_restore(p_id, p_options)` | location | `POST /locations/{id}/restore` |
-| `stock_list(p_item, p_location, p_limit, p_offset)` | page of stock | `GET /stock?item=&location=` |
-| `stock_get(p_id)` | stock | `GET /stock/{id}` |
-| `stock_create(p_item, p_location, p_quantity, p_values)` | stock | `POST /stock` |
-| `stock_patch(p_id, p_patch)` | stock | `PATCH /stock/{id}` |
-| `stock_move(p_id, p_location, p_quantity)` | stock (at destination) | `POST /stock/{id}/move` |
-| `stock_delete(p_id)` | void | `DELETE /stock/{id}` |
-| `stock_restore(p_id, p_options)` | stock | `POST /stock/{id}/restore` |
-| `stock_value_set(p_stock, p_attribute, p_value)` | stock | `PUT /stock/{id}/values/{attribute}` |
-| `stock_value_delete(p_stock, p_attribute)` | stock | `DELETE /stock/{id}/values/{attribute}` |
-| `attachment_lock(p_hash)`, `attachment_create(…)` | attachment | `POST /items\|stock\|locations\|classes/{id}/attachments` (multipart, via wtfd) |
-| `attachment_get(p_kind, p_owner, p_id)` | attachment | `GET /items\|stock\|locations\|classes/{id}/attachments/{attachment}` (content: `…/content`, via wtfd) |
-| `attachment_patch(p_kind, p_owner, p_id, p_patch)` | attachment | `PATCH …/attachments/{attachment}` |
-| `attachment_delete(p_kind, p_owner, p_id)` | void | `DELETE …/attachments/{attachment}` |
-| `tenant_known(p_host)` | boolean | – (wtfd answers 404 for a hostname that picks no tenant) |
-| `login(p_host, p_email, p_password)` | `{ok, token, account}` or `{ok: false, reason}` | `POST /api/v1/login` (the token becomes the session cookie) |
-| `session_use(p_token, p_host)` | void | – (called by wtfd before every function) |
-| `logout()` | void | `POST /logout` |
-| `me()` | account | `GET /me` |
-| `password_change(p_current, p_new)` | void | `PUT /me/password` |
-| `account_list()` | [account] | `GET /accounts` |
-| `account_get(p_id)` | account | `GET /accounts/{id}` |
-| `account_create(p_email, p_password, p_role)` | account | `POST /accounts` |
-| `account_patch(p_id, p_patch)` | account | `PATCH /accounts/{id}` |
-| `account_delete(p_id)` | void | `DELETE /accounts/{id}` |
-| `item_history(p_id, p_limit, p_offset)` | page of history entries | `GET /items/{id}/history` |
-| `stock_history(p_id, p_limit, p_offset)` | page of history entries | `GET /stock/{id}/history` |
-| `location_history(p_id, p_limit, p_offset)` | page of history entries | `GET /locations/{id}/history` |
-| `class_history(p_id, p_limit, p_offset)` | page of history entries | `GET /classes/{id}/history` |
-| `attribute_history(p_id, p_limit, p_offset)` | page of history entries | `GET /attributes/{id}/history` |
-| `account_history(p_id, p_limit, p_offset)` | page of history entries | `GET /accounts/{id}/history` |
-| `location_list_history(p_limit, p_offset)` | page of history entries | `GET /locations/history` |
-| `class_list_history(p_limit, p_offset)` | page of history entries | `GET /classes/history` |
-| `attribute_list_history(p_limit, p_offset)` | page of history entries | `GET /attributes/history` |
-| `code_resolve(p_code)` | `{type, object}` | `GET /codes/{code}` |
-| `schema_version()` | `{version, repeatables}` | – (used by `wtfd serve` at startup) |
+| Function | Returns | Route |
+|----------|---------|-------|
+| `account.login(p_email, p_password, p_client, p_max_idle)` | `{ok, token, account}` or `{ok: false, reason}` | `POST /login` (the token becomes the session cookie) |
+| `account.logout()` | void | `POST /logout` |
+| `account.me()` | account | `GET /me` |
+| `account.password_change(p_current, p_new, p_end_other_sessions)` | void | `PUT /me/password` |
+| `account.session_list()` | [session] | `GET /me/sessions` |
+| `account.session_logout(p_session)` | void | `DELETE /me/sessions/{id}` |
+| `account.session_logout_others()` | the number ended | `POST /me/sessions/logout-others` |
+| `account.list()` | [account] | `GET /accounts` |
+| `account.get(p_account)` | account | `GET /accounts/{id}` |
+| `account.create(p_email, p_password, p_role)` | account | `POST /accounts` |
+| `account.patch(p_account, p_patch)` | account | `PATCH /accounts/{id}` |
+| `account.delete(p_account)` | void | `DELETE /accounts/{id}` |
+| `account.history(p_account, p_before, p_limit)` | history | `GET /accounts/{id}/history` |
+| `unit.quantity_list()` | [quantity] | `GET /quantities` |
+| `unit.quantity_get(p_quantity)` | quantity (+ families) | `GET /quantities/{id}` |
+| `unit.quantity_patch(p_quantity, p_patch)` | quantity | `PATCH /quantities/{id}` |
+| `unit.family_list(p_known_version, p_quantity)` | `{version, families}` | `GET /unit-families` (ETag) |
+| `unit.family_get(p_family)` | unit family | `GET /unit-families/{id}` |
+| `unit.family_patch(p_family, p_patch)` | unit family | `PATCH /unit-families/{id}` |
+| `unit.list(p_quantity, p_family)` | [unit] | `GET /units` |
+| `unit.get(p_unit)` | unit | `GET /units/{id}` |
+| `attribute.list()` | [attribute] | `GET /attributes` |
+| `attribute.get(p_attribute)` | attribute (+ options) | `GET /attributes/{id}` |
+| `attribute.create(p_name, p_datatype, p_unit, p_unit_lock)` | attribute | `POST /attributes` |
+| `attribute.patch(p_attribute, p_patch)` | attribute | `PATCH /attributes/{id}` |
+| `attribute.delete(p_attribute)` | void | `DELETE /attributes/{id}` |
+| `attribute.restore(p_attribute, p_options)` | attribute | `POST /attributes/{id}/restore` |
+| `attribute.history(p_attribute, p_before, p_limit)` | history | `GET /attributes/{id}/history` |
+| `attribute.list_history(p_before, p_limit)` | history | `GET /attributes/history` |
+| `attribute.option_get(p_option)` | option | `GET /options/{id}` |
+| `attribute.option_create(p_attribute, p_name)` | option | `POST /attributes/{id}/options` |
+| `attribute.option_patch(p_option, p_patch)` | option | `PATCH /options/{id}` |
+| `attribute.option_delete(p_option)` | void | `DELETE /options/{id}` |
+| `attribute.option_restore(p_option, p_options)` | option | `POST /options/{id}/restore` |
+| `class.list(p_known_version)` | `{version, nodes}` | `GET /classes` (ETag; nested by wtfd) |
+| `class.get(p_class)` | class (+ attributes) | `GET /classes/{id}` |
+| `class.create(p_name, p_parent, p_container)` | class | `POST /classes` |
+| `class.patch(p_class, p_patch)` | class | `PATCH /classes/{id}` |
+| `class.delete(p_class)` | void | `DELETE /classes/{id}` |
+| `class.delete_tree(p_class, p_force, p_dry_run)` | `{classes, items, stock}` | `DELETE /classes/{id}?recursive=true[&force=true]`; preview `GET /classes/{id}/deletion` |
+| `class.restore(p_class, p_options)` | class | `POST /classes/{id}/restore` |
+| `class.assign(p_class, p_attribute, p_default, p_scope, p_required)` | class | `PUT /classes/{id}/attributes/{attribute}` |
+| `class.unassign(p_class, p_attribute)` | class | `DELETE /classes/{id}/attributes/{attribute}` |
+| `class.history(p_class, p_before, p_limit)` | history | `GET /classes/{id}/history` |
+| `class.list_history(p_before, p_limit)` | history | `GET /classes/history` |
+| `location.list(p_known_version)` | `{version, nodes}` | `GET /locations` (ETag; nested by wtfd) |
+| `location.get(p_location)` | location | `GET /locations/{id}` |
+| `location.create(p_name, p_parent, p_container, p_columns, p_rows, p_confirm)` | location | `POST /locations` (the body's `grid` gives the last three) |
+| `location.patch(p_location, p_patch)` | location | `PATCH /locations/{id}` |
+| `location.delete(p_location)` | void | `DELETE /locations/{id}` |
+| `location.delete_tree(p_location, p_force, p_dry_run)` | `{locations, stock}` | `DELETE /locations/{id}?recursive=true[&force=true]`; preview `GET /locations/{id}/deletion` |
+| `location.restore(p_location, p_options)` | location | `POST /locations/{id}/restore` |
+| `location.history(p_location, p_before, p_limit)` | history | `GET /locations/{id}/history` |
+| `location.list_history(p_before, p_limit)` | history | `GET /locations/history` |
+| `stock.list(p_item, p_location, p_limit, p_offset)` | page of stock | `GET /stock` |
+| `stock.get(p_stock)` | stock | `GET /stock/{id}` |
+| `stock.create(p_item, p_location, p_amount, p_values)` | stock | `POST /stock` |
+| `stock.patch(p_stock, p_patch)` | stock | `PATCH /stock/{id}` |
+| `stock.move(p_stock, p_location, p_amount)` | stock (where it went) | `POST /stock/{id}/move` |
+| `stock.delete(p_stock)` | void | `DELETE /stock/{id}` |
+| `stock.restore(p_stock, p_options)` | stock | `POST /stock/{id}/restore` |
+| `stock.value_set(p_stock, p_attribute, p_value)` | stock | `PUT /stock/{id}/values/{attribute}` |
+| `stock.value_delete(p_stock, p_attribute)` | stock | `DELETE /stock/{id}/values/{attribute}` |
+| `stock.history(p_stock, p_before, p_limit)` | history | `GET /stock/{id}/history` |
+| `item.list(p_class, p_search, p_where, p_limit, p_offset)` | page of items (list form) | `GET /items` |
+| `item.get(p_item)` | item | `GET /items/{id}` |
+| `item.create(p_class, p_name, p_unit, p_unit_lock, p_values)` | item | `POST /items` |
+| `item.patch(p_item, p_patch)` | item | `PATCH /items/{id}` |
+| `item.delete(p_item)` | void | `DELETE /items/{id}` |
+| `item.restore(p_item, p_options)` | item | `POST /items/{id}/restore` |
+| `item.value_set(p_item, p_attribute, p_value)` | item | `PUT /items/{id}/values/{attribute}` |
+| `item.value_delete(p_item, p_attribute)` | item | `DELETE /items/{id}/values/{attribute}` |
+| `item.history(p_item, p_before, p_limit)` | history | `GET /items/{id}/history` |
+| `attachment.lock(p_hash)` | void | `POST /{kind}/{id}/attachments` (multipart; wtfd stores the file between the two calls) |
+| `attachment.create(p_kind, p_owner, p_hash, p_media_type, p_size, p_title, p_photo)` | attachment | the same |
+| `attachment.get(p_kind, p_owner, p_attachment)` | attachment | `GET /{kind}/{id}/attachments/{attachment}` (the file: `…/content`) |
+| `attachment.patch(p_kind, p_owner, p_attachment, p_patch)` | attachment | `PATCH /{kind}/{id}/attachments/{attachment}` |
+| `attachment.delete(p_kind, p_owner, p_attachment)` | void | `DELETE /{kind}/{id}/attachments/{attachment}` |
+| `attachment.restore(p_kind, p_owner, p_attachment, p_options)` | attachment | `POST /{kind}/{id}/attachments/{attachment}/restore` |
+| `model.import(p_data, p_parent, p_dry_run)` | report | `POST /model/import?parent=&dry_run=` |
+| `model.export(p_class)` | a model file | `GET /classes/{id}/model` |
+| `code.resolve(p_code)` | `{type, object}` | `GET /codes/{code}` |
+| `meta.schema_version()` | `{version, repeatables}` | – (wtfd at startup; takes no request) |
 
-## Open questions
+`{kind}` is `items`, `stock`, `locations` or `classes`.
 
-1. **Naming.** Function and parameter names follow the conventions above until we go through your naming preferences.
+## Deferred
 
-### Deferred
-
-- **Search filters.** Structured filters on attribute values (e.g. Resistance between 9 and 11 kΩ). Text search exists; see "Search" above.
 - **Search indexes.** Trigram indexes (`pg_trgm`) for substring search on large data. Not needed at household scale; they can be added in a migration without changing the API.

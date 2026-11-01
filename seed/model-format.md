@@ -102,11 +102,11 @@ An export writes:
 | Key | | |
 |-----|-|-|
 | `name` | required | "Length", "Pressure". Unique, ignoring case. |
-| `datatype` | optional | `"float"` (the default) or `"integer"`, for quantities that are counted, such as pieces. |
+| `datatype` | optional | `"decimal"` (the default) or `"integer"`, for quantities that are counted, such as pieces. |
 | `base_unit` | required | `{"symbol", "name"}` of the unit that numbers are stored in. Every factor in the file is relative to it. |
 | `families` | optional | A list of unit families. |
 
-The base unit doesn't have to be in a family. Charge is stored in coulombs, but its only family, Battery capacity, has mAh and Ah. When a unit has the base unit's symbol, its factor must be 1 and its offset 0.
+A new quantity's base unit must be one of its units, in one of its families, with factor 1 and offset 0: Charge is stored in coulombs, and its family Charge has C beside mAh and Ah. A file that gives the base unit another factor is refused (400); one whose new quantity lacks its base unit among its units has a conflict.
 
 ### A unit family
 
@@ -135,7 +135,7 @@ Factors and offsets are decimals, preferably written as text: `"0.55555555555555
 | Key | | |
 |-----|-|-|
 | `name` | required | Its name. |
-| `datatype` | see below | `text`, `integer`, `float`, `date`, `boolean`, `url` or `choice`. Without a unit it is required; with one it may be left out, and must otherwise be the unit's quantity's (`float`, or `integer` for counts). |
+| `datatype` | see below | `text`, `integer`, `decimal`, `date`, `boolean`, `url` or `choice`. Without a unit it is required; with one it may be left out, and must otherwise be the unit's quantity's (`decimal`, or `integer` for counts). |
 | `unit` | optional | For numbers: the unit they are entered and shown in, by symbol (`"MHz"`) or name (`"megahertz"`). A symbol that several families share needs its family: `"B (Binary bytes)"`. It must be a unit the inventory has available, or one the file brings. |
 | `unit_lock` | optional | `true`: always show values in the unit, instead of scaling them within its family. Only with a unit. |
 | `options` | for `choice` | The options, as text. Only for choice attributes. |
@@ -154,7 +154,7 @@ Factors and offsets are decimals, preferably written as text: `"0.55555555555555
 | Key | | |
 |-----|-|-|
 | `attribute` | required | An attribute's name: one in the file, or one the inventory has. |
-| `per_unit` | optional | `true`: values live on stock rows instead of items. |
+| `scope` | optional | `"item"` (the default) or `"stock"`: values live on stock rows instead of items. |
 | `required` | optional | `true`: new items (or stock rows) need a value, unless there is a default. |
 | `default` | optional | The class's default: text, `true`/`false`, a date as `"YYYY-MM-DD"`, an option's name, or a number in the attribute's unit (16 for 16 MHz). |
 
@@ -175,7 +175,7 @@ Any key that isn't in these tables (or `meta`) is refused.
   - a quantity's datatype and base unit; the quantity a family belongs to; a unit's name, factor and offset;
   - an attribute's datatype, and whether it has a unit and of which quantity;
   - a class's `container`;
-  - an assignment the class itself has of that attribute: `per_unit`, `required` and `default`.
+  - an assignment the class itself has of that attribute: `scope`, `required` and `default`.
 - **Other conflicts:**
   - a unit that isn't there, isn't available, or needs its family named;
   - a unit name that another unit of the family has already;
@@ -196,7 +196,7 @@ An export is of one class, with everything below it:
 - **Classes:** the class and the live classes below it. The class is the file's only top class; where it was is in `meta`.
 - **Assignments:** each class's own. The top class also has the ones it inherits, as its own, so that the file stands on its own.
 - **Attributes:** every attribute the assignments use, with its datatype, unit, unit lock and live options.
-- **Units:** the tenant's own units that the attributes need, with the family they are in and its quantity. All of the tenant's units in such a family go in, not only the one used: the family decides how values are shown. A family that is global is named, with only the tenant's units in it. Units every WtF has are left out.
+- **Units:** the tenant's own units that the attributes need, with the family they are in and its quantity. All of the tenant's units in such a family go in, not only the one used: the family decides how values are shown. A family that is global is named, with only the tenant's units in it. For a quantity of the tenant's own, the family of its base unit goes in too, which importing the file needs. Units every WtF has are left out.
 - **Defaults** are in the attribute's unit, as an import reads them.
 - **Who:** an admin, as only admins can import the file again (ACCOUNTS.md).
 
@@ -222,7 +222,7 @@ Made while you were away; each is easy to change.
 
 These were made for unit files, which are now the `quantities` of a model file.
 
-1. **The quantity's base unit is stored** (migration `0003_base_units.sql`, `base_unit` in the API's quantities). Without it, an import couldn't check point 6 above.
+1. **The quantity's base unit is stored** (`quantity.base_unit`, a unit of the quantity since the database refactor; `base_unit` in the API's quantities, as the unit's id). Without it, an import couldn't check point 6 above.
 2. **A unit is matched by symbol, not name,** within its family. Symbols are what people type; a unit whose name differs in more than case is a conflict.
 3. **Family names are unique across all quantities,** as they already were in the database. A file can't have two families both named "Imperial" for different quantities; they must be "Imperial length" and "Imperial weight".
 4. **Adding units to an existing family is allowed** (a hand to Imperial length). Nothing existing changes. Note that it changes how numbers are scaled on output: with yards in Imperial length, 4 ft would show as 1.33 yd. That is why the bootstrap set leaves them out ([units.md](units.md)).

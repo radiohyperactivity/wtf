@@ -59,21 +59,22 @@ wtf item add            # asks for everything, with Tab completion
 
 | Command | API |
 |---------|-----|
-| `wtf login [--server URL] [--email E]`, `wtf logout`, `wtf whoami`, `wtf password` | `/login`, `/logout`, `/me`, `/me/password` |
+| `wtf login [--server URL] [--email E] [--stay DURATION\|forever]`, `wtf logout`, `wtf whoami`, `wtf password [--log-out-others \| --keep-others]` | `/login`, `/logout`, `/me`, `/me/password` |
+| `wtf sessions list` / `logout <session id> \| --others` | `/me/sessions` |
 | `wtf profile list` / `use <name>` / `delete <name>` | (local configuration) |
 | `wtf find <words…> [--class C] [--where CONDITION]…` | `GET /items?search=&where=`, plus each item's stock locations |
 | `wtf code <code>` | `/codes/{code}` |
 | `wtf item list [--class C] [--search S] [--where CONDITION]…` / `get` / `add <name> --class C [--unit U [--unit-lock]] [--value A=V]… [--edit]` / `set` / `edit` / `delete` / `restore` / `history` | `/items` |
 | `wtf item value-set <item> <attribute> <value…>` / `value-delete <item> <attribute>` | `/items/{id}/values/{attribute}` |
-| `wtf stock list [--item I] [--location L]` / `get` / `add <item> <location> [quantity] [--value A=V]…` / `move <stock> <location> [quantity]` / `set` / `edit` / `delete` / `restore` / `history` | `/stock` |
+| `wtf stock list [--item I] [--location L]` / `get` / `add <item> <location> [amount] [--value A=V]…` / `move <stock> <location> [amount]` / `set [--amount A\|none] [--location L] [--item I]` / `edit` / `delete` / `restore` / `history` | `/stock` |
 | `wtf stock value-set` / `value-delete` | `/stock/{id}/values/{attribute}` |
 | `wtf location tree` / `get` / `add <name or path> [--parent P] [--create-parents] [--container \| --grid COLUMNSxROWS] [--edit]` / `set [--name N] [--parent P\|none] [--container yes\|no]` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` / `restore` / `history [location]` | `/locations` |
 | `wtf class tree` / `get` / `add` / `set` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` / `restore` / `history [class]` / `assign <class> <attribute> [--default V] [--per-unit] [--required]` / `unassign` | `/classes`, `/classes/{id}/attributes/{attribute}` |
 | `wtf attribute list` / `get` / `add <name> [--type T] [--unit U [--unit-lock]] [--edit]` (with a unit, the type follows from it) / `set` / `edit` / `delete` / `restore` / `history [attribute]` | `/attributes` |
-| `wtf option list <attribute>` / `get` / `add <attribute> <name>…` / `set --name N` / `delete` / `restore` | `/attributes/{id}/options`, `/options/{id}` |
+| `wtf option list <attribute>` / `get` / `add <attribute> <name>…` / `set --name N` / `delete` / `restore` | `/attributes/{id}` (its options), `/attributes/{id}/options`, `/options/{id}` |
 | `wtf attachment list <type> <ref>` / `add <type> <ref> <file> [--title T] [--photo]` / `get <type> <ref> <id>` / `download <type> <ref> <id> [-o FILE\|-]` / `set <type> <ref> <id> --title T` / `photo <type> <ref> <id\|none>` / `delete <type> <ref> <id>` / `restore <type> <ref> <id>` | attachments |
 | `wtf quantity list` / `get` / `available <q> on\|off\|default`, `wtf unit-family list [--quantity Q]` / `get` / `available <f> on\|off\|default`, `wtf unit list [--quantity Q] [--family F]` / `get` / `import <file> [--dry-run]` | units: global and the tenant's own, and which are available |
-| `wtf account list` / `get` / `add <email> [--password] [--role R] [--edit]` / `set` / `edit` / `delete` / `history` | `/accounts` |
+| `wtf account list` / `get` / `add <email> [--password] [--role R] [--edit]` / `set [--email E] [--password\|--no-password [--log-out\|--keep-sessions]] [--role R]` / `edit` / `delete` / `history` | `/accounts` |
 
 ## Interactive use
 
@@ -86,9 +87,9 @@ When stdin and stderr are a terminal, `wtf` asks for missing arguments instead o
   - required attribute values that have no value or default, even when the command line was otherwise complete.
 - **What is offered:** once `wtf` has asked for something, the session counts as interactive, and optional data is offered too. Enter skips it.
   - `item add`: the unit, then every attribute of the class, required ones first, with defaults shown as `Colour [red]`.
-  - `stock add`: the quantity (Enter: uncounted) and the per-unit attributes.
-  - `stock move`: the quantity (Enter: all of it).
-  - `attribute add`: a unit for integer and float attributes.
+  - `stock add`: the amount (Enter: uncounted) and the attributes with values on each stock row.
+  - `stock move`: the amount (Enter: all of it).
+  - `attribute add`: a unit for integer and decimal attributes.
 - **Stock for a new item:** after `item add` (not with `--edit`), `wtf` asks once `Add stock for M3? [y/N]` on every terminal, also when the command line was complete. Yes asks for a location, a quantity and the per-unit values, and adds that one stock row.
 - **Bad values:** a value that doesn't parse (`3kg` for a length) is reported, and the prompt asks again.
 - **Cancelling:** Ctrl-C, or Ctrl-D on an empty line, cancels the command without changing anything (exit code 130).
@@ -115,12 +116,14 @@ Tab then completes commands, verbs, flags, and objects from the server, such as 
 
 ### Lists
 
-`find`, `item list`, `stock list` and `… history` show every row:
+`find`, `item list` and `stock list` show every row:
 - **On a terminal:** through a pager that fetches pages only as needed. Space shows the next screen, Enter the next line, and q quits.
 - **Piped:** all rows at once.
 - **With `--limit` or `--offset`:** exactly one page, with a hint for the next `--offset`.
 
 `--json` prints all rows in one envelope, unless `--limit` or `--offset` asks for one page.
+
+`… history` shows one page, newest first (`--limit`, 100 by default), and when there are older entries says how to see them: `--before <id>`, the id of the oldest entry shown. `--json` prints the page as the API answers it, `{rows, more}`.
 
 ## Tests
 
@@ -349,3 +352,16 @@ Built with the server's tenants ([TENANTS.md](TENANTS.md)), API revision 11.
 55. **`wtf model import FILE [--parent CLASS] [--dry-run]`** imports a model file ([seed/model-format.md](seed/model-format.md)): attributes and a tree of classes. It tells what was added (or would be), how much was there already, and every conflict, as `wtf unit import` did; with conflicts nothing is imported, and the exit code is 1. `--parent` puts the file's classes below a class instead of at the top. The cached class tree and attributes are dropped at once.
 56. **Units come in model files** (API revision 12, [seed/model-format.md](seed/model-format.md), decisions 21–35), so `wtf unit import` is gone and `wtf model import` imports them: a file of only quantities is what a unit file was. The report lists added quantities, families and units too, and the cached units are dropped as well, so the new units can be used straight away.
 57. **`wtf model export CLASS [-o FILE] [--force]`** writes the class with everything below it as a model file, indented, with its keys in the format's order: to stdout, or to FILE, which it won't overwrite without `--force`. It needs only read access.
+
+### The refactor of November 2026
+
+Built with the refactored API ([API.md](API.md), API revision 1 again; 2026-10-31-api-refactor.md).
+
+58. **The database's names** in what `wtf` shows and takes: a stock row's **amount** (`--amount`, the prompts and the headings), `decimal` for the datatype, an assignment's scope. `class assign --per-unit` keeps its flag, and sends `scope: "stock"`.
+59. **Units are looked up in the families `wtf` keeps** (`GET /unit-families`, revalidated by its version on every use, as the trees are): answers name units by id, and `wtf` fills them in.
+60. **`wtf login --stay DURATION|forever`** says how long the session may sit unused: `forever` (until logging out), a Go duration (`12h`) or days (`30d`). The configuration keeps the last one given as the default for the next login; without one it is `forever`. The session's client name is `wtf on <host name>`.
+61. **`wtf sessions list`** shows your sessions (* marks this one), and **`wtf sessions logout <id>`** or **`--others`** ends one, or all but this one. (`wtf sessions` alone shows the group's help, as for every group.)
+62. **A new password asks about the other sessions:** `wtf password` asks "Log out your other devices too?", or takes `--log-out-others` or `--keep-others`; an admin's `wtf account set --password` or `--no-password` asks about the account's sessions, or takes `--log-out` or `--keep-sessions`, and the edit form asks too.
+63. **`wtf … history`** pages by `--before` (decision 9 of the API plan) in place of `--offset`.
+64. **Creating always sends every field** the API requires, with null or the old default where none is given; `wtf account add` without `--role` still makes a viewer.
+65. **A restore into something deleted** is recognised by its problem type (`/problems/restore-into-deleted`), not by the hint's text.

@@ -18,7 +18,7 @@ Status: **implemented** (migrations `0001_schema.sql` and `0004_roles.sql`, [api
   | History of locations, classes, attributes and accounts, and of the top-level lists | | | ✓ |
   | Accounts | | | ✓ |
 
-  A new account is a viewer unless it is given another role. The account's own information (`me`, `password_change`, `logout`) needs only a login.
+  A new account gets the role it is given (the API requires one; `wtf account add` makes a viewer unless told otherwise). The account's own information and sessions (`account.me`, `account.password_change`, `account.logout`, `account.session_…`) need only a login.
 
 ## Schema
 
@@ -26,36 +26,37 @@ Status: **implemented** (migrations `0001_schema.sql` and `0004_roles.sql`, [api
   - `id` and `tenant`;
   - `email`, unique case-insensitively among the tenant's live accounts;
   - `password_hash` (`NULL` = can't log in, e.g. until a future reset link is used);
-  - `role`, of the enum `role` (`viewer`, `user`, `admin`, in that order), `viewer` by default;
+  - `role`, of the enum `role` (`viewer`, `user`, `admin`, in that order);
   - `failed_logins` and `last_failed_login`, for the lockout;
-  - `deleted`: a deleted account keeps its row, so history can still say who did what.
-- **`session`:** `token_hash` (SHA-256 of the token; the token itself is never stored), `tenant`, `account` and `last_used`.
-- **`pgcrypto`** is installed in its own schema, `extensions`, which `wtf_api` can't use. Passwords are hashed with bcrypt (`crypt` + `gen_salt('bf')`).
+  - `deleted`, the action that deleted it: a deleted account keeps its row, so history can still say who did what.
+- **`session`:** `token_hash` (SHA-256 of the token; the token itself is never stored, and its hex is the session's id in the API), `account`, `client` (the device's name), `created`, `last_used`, `max_idle` (how long it may sit unused; NULL: until logging out) and `usage` (the addresses it was used from, and when).
+- **`pgcrypto`** is installed in its own schema, `extensions`, which `wtf_api` can't use. Passwords are hashed with bcrypt at cost 12 (`crypt` + `gen_salt('bf', 12)`).
 
 ## Enforcement in the database
 
-1. **Per request,** `wtfd` runs one transaction: `session_use(p_token, p_host)`, then the API function.
-   - `session_use` hashes the token and finds the session. It checks that the session is of the tenant of the request's host and hasn't been unused for 30 days, and sets `last_used` (at most once a minute, to avoid a write on every request).
-   - It then stores the token for the transaction: `set_config('wtf.token', …, true)`.
-2. **Every API function** starts with `util.require('viewer' | 'user' | 'admin')`, or `util.require_login()` for the account's own information. That looks the token up again (by hash), finds the account and its tenant, and checks that the account's role is at least the one named. Every function then filters by that tenant (TENANTS.md, "Isolation").
+1. **Per request,** `wtfd` makes one call: the API function, with the request (token, host label, client address) as its first argument, in one statement.
+2. **Every API function** starts with `util.session(p_request, 'viewer' | 'user' | 'admin')`. It hashes the token and finds the session in the tenant of the request's host; checks that it hasn't sat unused for longer than its `max_idle`, that the account is live, and that its role is at least the one named; and renews it (`last_used` and the address, at most once a minute, to avoid a write on every request). It returns the session, its tenant, its account and the role, and every function then works in that tenant (TENANTS.md, "Isolation").
 3. **Defence in depth:** someone with the `wtf_api` password but no valid token can't act as any user. Without a session, the API functions refuse to work.
 
 ## API
 
 | Method & path | Function | Who |
 |---------------|----------|-----|
-| `POST /api/v1/login` `{email, password}` | `login(p_host, p_email, p_password)` → `{token, account}`, in the tenant of the request's host; `wtfd` sends the token as the session cookie | anonymous |
-| `POST /logout` | `logout()` (revokes the current token) | logged in |
-| `GET /me` | `me()` → the account with its role | logged in |
-| `PUT /me/password` `{current, new}` | `password_change(…)`: revokes all other sessions of the user | logged in |
-| `GET /accounts` | `account_list()` | admin |
-| `POST /accounts` `{email, password?, role?}` | `account_create(…)` | admin |
-| `GET /accounts/{id}` | `account_get` | admin |
-| `PATCH /accounts/{id}` `{email?, password?, role?}` | `account_patch`: changing the password revokes the account's sessions | admin |
-| `DELETE /accounts/{id}` | `account_delete`: marks the account deleted (history keeps referring to it), revokes its sessions; its email can be reused | admin |
+| `POST /api/v1/login` `{email, password, client, max_idle}` | `account.login` → `{token, account}`, in the tenant of the request's host, a session for that client that may sit unused for `max_idle` seconds (null: until logging out); `wtfd` sends the token as the session cookie | anonymous |
+| `POST /logout` | `account.logout` (ends the current session) | logged in |
+| `GET /me` | `account.me` → the account with its role | logged in |
+| `PUT /me/password` `{current, new, end_other_sessions}` | `account.password_change`: with `end_other_sessions`, the account's other sessions end | logged in |
+| `GET /me/sessions` | `account.session_list`: the account's sessions | logged in |
+| `DELETE /me/sessions/{id}` | `account.session_logout`: ends one of them | logged in |
+| `POST /me/sessions/logout-others` | `account.session_logout_others`: ends all but the current one | logged in |
+| `GET /accounts` | `account.list` | admin |
+| `POST /accounts` `{email, password, role}` | `account.create` | admin |
+| `GET /accounts/{id}` | `account.get` | admin |
+| `PATCH /accounts/{id}` `{email?, password?, end_sessions?, role?}` | `account.patch`: with a password, `end_sessions` says whether the account's sessions end | admin |
+| `DELETE /accounts/{id}` | `account.delete`: marks the account deleted (history keeps referring to it), ends its sessions; its email can be reused | admin |
 
-- **Anonymous routes:** only `/api/health`, `/api/v1/openapi.yaml` and `/api/v1/login` work without a session. Every other request needs the session cookie `wtf_session` (see WTFD.md, "Logins").
-- **Tokens** are 32 random bytes (from `pgcrypto`), base64url-encoded. They expire after 30 days without use.
+- **Anonymous routes:** only `/api/health`, `/api/v1/openapi` and `/api/v1/login` work without a session. Every other request needs the session cookie `wtf_session` (see WTFD.md, "Logins").
+- **Tokens** are 32 random bytes (from `pgcrypto`), base64url-encoded. A session expires after its `max_idle` without use, or never; `wtfd gc` removes expired sessions.
 - **Passwords** have at least 8 characters and at most 72 bytes (bcrypt's limit).
 - **Lockout:** after 5 failed logins for an account, only one attempt per minute is accepted until a login succeeds; others get 429. A successful login resets the count.
 - **Admins can't lock themselves out:** you can't change your own role or delete your own account, so there is always at least one admin.
@@ -82,5 +83,5 @@ Passwords travel from the client to `wtfd`, and from `wtfd` to PostgreSQL, becau
 
 - **Naming:** the table is `account` (`user` is a reserved word in SQL). The term "member" is not used.
 - **Roles, not privileges** (2026-10-30, your decision): the four privileges (`data`, `model`, `account`, `history`, each `none`, `read_only` or `read_write`) became one role, to keep it simple for those who only keep the inventory (users) and those who set it up (admins); viewers look. Model exports are for admins, since they couldn't import them again. Migration `0004_roles.sql` made accounts that could write the model or the accounts admins, those that could write the data users, and the rest viewers. Locations moved from the data to the setup: users put stock in them, admins make them.
-- **"Log out everywhere":** left out. Changing your own password already revokes all other sessions.
+- **"Log out everywhere":** left out at first, as changing your own password revoked all other sessions. Since the refactor of November 2026, a user sees their sessions and ends them (`/me/sessions`), and a new password asks whether the others end.
 - **Tenants:** dropped once, and brought back, with accounts per tenant, in [TENANTS.md](TENANTS.md).

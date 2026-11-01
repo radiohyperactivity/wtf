@@ -177,7 +177,7 @@ export WTFD_API_DATABASE_PASSWORD='…'
 ./wtfd serve --files-directory /var/lib/wtf/files
 ```
 
-By default it listens on `127.0.0.1:8080`, for a reverse proxy on the same machine. It refuses to start if the database schema doesn't match the binary; run `wtfd schema` first. Run `./wtfd serve -h` for all flags, and see [WTFD.md](WTFD.md) and `GET /api/v1/openapi.yaml` for the API itself. With `--web-root DIR` it also serves the web app.
+By default it listens on `127.0.0.1:8080`, for a reverse proxy on the same machine; name the proxy with `--trusted-proxies 127.0.0.1` (or `WTFD_TRUSTED_PROXIES`), so that the logs and the session list show the client's address, not the proxy's. It refuses to start if the database schema doesn't match the binary; run `wtfd schema` first. Run `./wtfd serve -h` for all flags, and see [WTFD.md](WTFD.md) and `GET /api/v1/openapi` for the API itself. With `--web-root DIR` it also serves the web app.
 
 **TLS is recommended but not required:** passwords travel to `wtfd` and on to PostgreSQL, which hashes them. Whether to use HTTPS at the proxy and `hostssl` / `--database-sslmode require` for the database connection is the administrator's decision.
 

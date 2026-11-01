@@ -14,23 +14,23 @@ Decisions marked *(yours)* were made by you; the rest are mine, made while you w
 
 ## Isolation: explicit filters *(yours)*
 
-6. **Every table of tenant data has `tenant uuid NOT NULL`,** and `UNIQUE (tenant, id)`. Every reference between those tables is a composite foreign key `(tenant, x) → (tenant, id)`, so a row can never point into another tenant.
-7. **The tenant of a request comes from its session,** never from a value the caller can set: `util.tenant()` finds the session by its token, as `util.current_session()` finds the account. The session belongs to one tenant, and `session_use(token, host)` checks that it is the tenant of the request's hostname.
+6. **A table has `tenant` only where it can't be derived** (since the database refactor of 31 October 2026, its decision 1): accounts, actions, classes, attributes, locations, a tenant's own quantities, families and units, its choices of units, history and the tree versions. The rest reach their tenant through a NOT NULL foreign key: an item through its class, a stock row through its location, a value through its item or stock row, an attachment through its owner. Before, every table had `tenant` and composite foreign keys.
+7. **The tenant of a request comes from its session,** never from a value the caller can set: `util.session(p_request, role)` finds the session by its token's hash in the tenant of the request's host, and returns the session, its tenant and its account. A change's action is made in that tenant, and history takes the tenant from the action.
 8. **The rule for API functions:**
    - **Every id that comes from the request is checked against the tenant where it enters:** `WHERE id = p_id AND tenant = v_tenant`. Anything else answers 404, as if it didn't exist.
    - **Every query that starts from a table, not from a checked id, filters by tenant:** lists, searches, trees, look-ups by name or code, uniqueness checks.
-   - **Every insert writes the tenant.**
-   - **Queries that only follow references from checked rows need no filter,** because the composite foreign keys keep those references inside the tenant. Most `util.*_json` helpers are of this kind.
+   - **Every insert writes the tenant** where the table has one, and every id in a body is checked against the tenant before it is stored (a bad reference, 422, otherwise): that references stay within their tenant is the functions' guarantee.
+   - **Queries that only follow references from checked rows need no filter.** Most of the JSON helpers (`item.json`, `stock.detail_json`, …) are of this kind.
 9. **Unique names are unique per tenant:** sibling classes and locations, attributes, options within their attribute, account emails, codes.
 10. **An isolation test** runs two tenants side by side and checks that one can't see, find, change or delete the other's things, by id, code, list, search or tree.
 
 ## Codes
 
-11. **Codes are per tenant** *(yours).* `tenant.code` holds the next one *(yours; first named `next_code`)*. `next_code(tenant)` takes it for every new item, location and stock row: `UPDATE tenant SET code = code + 1 … RETURNING`. New codes within one tenant wait for each other until commit, which is no problem at this scale. Codes start at 32768 ("1000") in every tenant, so two tenants have the same codes for different things. Looking a code up searches only your own tenant.
+11. **Codes are per tenant** *(yours).* `tenant.code` holds the last one handed out (since the database refactor; it held the next one, first named `next_code`). `tenant.take_codes(tenant, n)` takes the next ones for new items, locations and stock rows in one write: `UPDATE tenant SET code = code + n … RETURNING`. New codes within one tenant wait for each other until commit, which is no problem at this scale. Codes start at 32768 ("1000") in every tenant, so two tenants have the same codes for different things. Looking a code up searches only your own tenant.
 
 ## Accounts
 
-12. **Accounts are per tenant** *(yours)*, as before tenants were dropped. An email is unique within a tenant, and the same email in two tenants means two unrelated accounts. Lockout and sessions are per tenant. A session cookie is limited to its hostname by the browser anyway, and `session_use` refuses a session from another tenant (401).
+12. **Accounts are per tenant** *(yours)*, as before tenants were dropped. An email is unique within a tenant, and the same email in two tenants means two unrelated accounts. Lockout and sessions are per tenant. A session cookie is limited to its hostname by the browser anyway, and `util.session` finds a session only in the tenant of the request's host (401 otherwise).
 13. **Privileges are unchanged.** Running the tenant (users, units, the model) is done by its own accounts with the account and model privileges (since 2026-10-30, its admins: ACCOUNTS.md). Creating and removing tenants is the operator's job.
 
 ## Units
@@ -60,7 +60,7 @@ Decisions marked *(yours)* were made by you; the rest are mine, made while you w
 ## History, versions, purging
 
 21. **History is per tenant:** every entry has its tenant, and the history calls show only your own.
-22. **Tree versions** (`data_version`, the ETag of the class and location trees) are per tenant: `(tenant, name)`.
+22. **Versions** (`data_version`, the ETag of the class and location trees and of the unit families) are per tenant: `(tenant, name)`.
 23. **`wtfd history purge` and `wtfd deleted purge`** work on every tenant, or on one with `--host`.
 
 ## Operator commands
@@ -97,9 +97,9 @@ Run as the DBA role, like the other `wtfd` actions:
 
 26. **A missing reference in a request's body is 422, a missing object in the path 404,** as before tenants. Another tenant's things count as missing either way. The explicit checks raise `foreign_key_violation` (`util.raise_bad_reference`) for body references, so `POST /items` with another tenant's class is 422, while `GET /items/{another tenant's item}` is 404.
 27. **"Still in use" is 409 for every method,** not only DELETE: turning off a family that attributes use is `PATCH`. A `restrict_violation` always means in use; a foreign key error outside DELETE stays 422.
-28. **Tree versions** start at 1 for a tenant that has no row in `data_version` yet; its row appears with the first change. The triggers are per row now (a statement can't tell which tenants it touched), which only means more increments.
+28. **Tree versions** start at 1 for a tenant that has no row in `data_version` yet; its row appears with the first change. The triggers were per row at first; since the database refactor they are per statement, with the changed rows as a transition table, and bump each tenant they touched once.
 29. **The advisory lock of a file** is keyed by its hash alone, shared by all tenants: at worst two uploads of the same content in different tenants wait for each other.
-30. **Importing units** is one function, for the API (the session's tenant) and for `wtfd unit import --global` (no tenant). Since 2026-10-29 that is `util.model_import`, which imports model files; a global import takes only quantities.
+30. **Importing units** is one function, for the API (the session's tenant) and for `wtfd unit import --global` (no tenant). Since 2026-10-29 it imports model files; since the refactor it is `model.import_file`, which `model.import` calls for the API. A global import takes only quantities.
 31. **Lists of units are ordered by name** (quantities, then families, then units by size; names in natural order since 2026-10-29, API.md). The old integer ids happened to keep the seed's order; UUIDs don't, so "Imperial length" now comes before "Metric length".
 32. **Units of a family that is off** still show and convert where they are used. The app's number fields accept units typed from available families and from the unit's own family; the CLI completes only available units; the server refuses the rest.
 33. **The tests** run one tenant, `test` (`test.wtf.example`), and the isolation test adds a second for each run. The CLI tests reach the server through a test server at an IP address, which picks no tenant, so it sets the hostname on each request.

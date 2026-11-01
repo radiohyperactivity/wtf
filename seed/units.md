@@ -6,7 +6,7 @@ The global units, loaded after [SCHEMA.md](../SCHEMA.md): every tenant sees them
 - A **unit family** is a set of units of one quantity that are used together, and that a number is scaled between on output: Metric length is nm … km, Imperial length is mil … mi. A quantity can have several families.
 - A **unit** belongs to exactly one family.
 
-Numbers of every quantity are stored in its base unit, which the quantity names (`base_unit` in the API). Count is stored as integer, every other quantity as float. Every unit converts to the base unit as:
+Numbers of every quantity are stored in its base unit, which the quantity names (`base_unit` in the API). Count is stored as integer, every other quantity as decimal. The base unit is one of the quantity's units. Every unit converts to the base unit as:
 
 ```text
 base = value × base_factor + base_offset
@@ -33,7 +33,7 @@ The SQL is in [`db/migrations/0002_units.sql`](../db/migrations/0002_units.sql).
 | Frequency (Hz) | **Frequency:** Hz, kHz, MHz, GHz |
 | Power (W) | **Power:** µW, mW, W, kW, MW |
 | Energy (J) | **Joules:** mJ, J, kJ, MJ, GJ · **Watt hours:** mWh, Wh, kWh, MWh · **Calories:** cal, kcal |
-| Charge (C) | **Battery capacity:** mAh, Ah |
+| Charge (C) | **Charge:** C, mAh, Ah |
 | Temperature (K) | **Celsius:** °C · **Fahrenheit:** °F · **Kelvin:** K |
 | Bytes (B) | **Decimal bytes:** B, kB, MB, GB, TB, PB · **Binary bytes:** B, KiB, MiB, GiB, TiB, PiB |
 | Bits (bit) | **Bits:** bit, kbit, Mbit, Gbit |
@@ -49,6 +49,6 @@ Notes:
 
 ## Scaling and Unit lock
 
-An attribute (for values and defaults) or an item (for stock quantities) may have a unit. A plain number is read in that unit, and a number with any other unit of the same quantity is converted, whichever family that unit is in.
+An attribute (for values and defaults) or an item (for stock amounts) may have a unit. A plain number is read in that unit, and a number with any other unit of the same quantity is converted, whichever family that unit is in.
 
 On output, a number is shown in the largest unit of the unit's family in which |value| ≥ 1, or else in the smallest. Zero is shown in the unit itself. With **Unit lock** set, numbers are always shown in the unit itself. Unit lock is off by default.
