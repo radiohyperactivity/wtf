@@ -379,10 +379,13 @@ BEGIN
 
     SELECT a.* INTO v_attribute
     FROM public.attribute a
-    WHERE a.id = p_attribute AND a.tenant = v_session.tenant AND a.deleted IS NULL
+    WHERE a.id = p_attribute AND a.tenant = v_session.tenant
     FOR UPDATE;
     IF NOT FOUND THEN
         PERFORM error.not_found('attribute', p_attribute::text);
+    END IF;
+    IF v_attribute.deleted IS NOT NULL THEN
+        PERFORM error.deleted('attribute', p_attribute);
     END IF;
 
     IF p_patch ? 'name' THEN
@@ -431,6 +434,9 @@ BEGIN
     SET deleted = v_action
     WHERE a.id = p_attribute AND a.tenant = v_session.tenant AND a.deleted IS NULL;
     IF NOT FOUND THEN
+        IF EXISTS (SELECT 1 FROM public.attribute a WHERE a.id = p_attribute AND a.tenant = v_session.tenant) THEN
+            PERFORM error.deleted('attribute', p_attribute);
+        END IF;
         PERFORM error.not_found('attribute', p_attribute::text);
     END IF;
 END;
@@ -557,11 +563,14 @@ BEGIN
     FROM public.attribute_option o
     JOIN public.attribute a ON a.id = o.attribute
     WHERE o.id = p_option AND a.tenant = v_session.tenant
-      AND o.deleted IS NULL AND a.deleted IS NULL
     FOR UPDATE OF o;
     IF NOT FOUND THEN
         PERFORM error.not_found('attribute option', p_option::text);
     END IF;
+    IF v_option.deleted IS NOT NULL THEN
+        PERFORM error.deleted('attribute_option', p_option);
+    END IF;
+    PERFORM util.check_live('attribute', v_option.attribute);
 
     IF p_patch ? 'name' THEN
         v_name := util.trim_and_check(p_patch ->> 'name');
@@ -604,6 +613,10 @@ BEGIN
       AND a.id = o.attribute AND a.tenant = v_session.tenant AND a.deleted IS NULL
       AND o.deleted IS NULL;
     IF NOT FOUND THEN
+        IF EXISTS (SELECT 1 FROM public.attribute_option o JOIN public.attribute a ON a.id = o.attribute
+                   WHERE o.id = p_option AND a.tenant = v_session.tenant) THEN
+            PERFORM error.deleted('attribute_option', p_option);
+        END IF;
         PERFORM error.not_found('attribute option', p_option::text);
     END IF;
 END;

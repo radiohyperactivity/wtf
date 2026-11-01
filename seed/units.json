@@ -235,8 +235,9 @@
       "base_unit": { "symbol": "C", "name": "coulomb" },
       "families": [
         {
-          "name": "Battery capacity",
+          "name": "Charge",
           "units": [
+            { "symbol": "C", "name": "coulomb", "factor": "1" },
             { "symbol": "mAh", "name": "milliampere hour", "factor": "3.6" },
             { "symbol": "Ah", "name": "ampere hour", "factor": "3600" }
           ]

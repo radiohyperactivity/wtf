@@ -723,15 +723,18 @@ func optionGroup() group {
 					if err != nil {
 						return err
 					}
-					data, err := e.api.Get(e.ctx, "/attributes/"+a.ID+"/options", nil)
+					list, err := e.options(a.ID)
+					if err != nil {
+						return err
+					}
+					if list == nil {
+						list = []option{} // an empty list in JSON, not null
+					}
+					data, err := json.Marshal(list)
 					if err != nil {
 						return err
 					}
 					return e.emit(data, func() error {
-						var list []option
-						if err := e.decode(data, &list); err != nil {
-							return err
-						}
 						t := newTable(e.stdout, "NAME", "ID")
 						for _, o := range list {
 							t.row(o.Name, o.ID)

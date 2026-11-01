@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -77,9 +78,6 @@ var (
 // schema up to date. It skips the test when no test database is configured.
 func setup(t *testing.T) *environment {
 	t.Helper()
-	// These tests are rewritten for the new API in step 4 of the API
-	// refactor (2026-10-31-api-refactor.md); until then they are skipped.
-	t.Skip("the API's tests are rewritten in step 4 of the API refactor")
 	setupOnce.Do(func() { shared, skipMsg, setupErr = connect() })
 	if skipMsg != "" {
 		t.Skip(skipMsg)
@@ -287,11 +285,59 @@ type response struct {
 	body   any // decoded JSON, nil when there is no body
 }
 
+// requiredFields are the fields that creating (and a few other requests)
+// require, with the value a test gets when it leaves one out: most tests
+// only say what they test. A test of a missing field sends its body as a
+// string, which call sends as is.
+var requiredFields = []struct {
+	method string
+	path   *regexp.Regexp
+	fields map[string]any
+}{
+	{"POST", regexp.MustCompile(`^/classes$`), map[string]any{"parent": nil, "container": false}},
+	{"POST", regexp.MustCompile(`^/locations$`), map[string]any{"parent": nil, "container": false, "grid": nil}},
+	{"POST", regexp.MustCompile(`^/attributes$`), map[string]any{"unit": nil, "unit_lock": false}},
+	{"POST", regexp.MustCompile(`^/items$`), map[string]any{"unit": nil, "unit_lock": false, "values": map[string]any{}}},
+	{"POST", regexp.MustCompile(`^/stock$`), map[string]any{"amount": nil, "values": map[string]any{}}},
+	{"POST", regexp.MustCompile(`^/stock/[^/]+/move$`), map[string]any{"amount": nil}},
+	{"POST", regexp.MustCompile(`^/accounts$`), map[string]any{"password": nil, "role": "viewer"}},
+	{"PUT", regexp.MustCompile(`^/classes/[^/]+/attributes/[^/]+$`), map[string]any{"default": nil, "scope": "item", "required": false}},
+	{"POST", regexp.MustCompile(`^/login$`), map[string]any{"client": nil, "max_idle": nil}},
+	{"PUT", regexp.MustCompile(`^/me/password$`), map[string]any{"end_other_sessions": true}},
+}
+
+// withRequired adds the required fields a body leaves out (requiredFields),
+// and with a password in an account's patch, end_sessions true.
+func withRequired(method, path string, body map[string]any) map[string]any {
+	path, _, _ = strings.Cut(path, "?")
+	filled := map[string]any{}
+	for _, r := range requiredFields {
+		if r.method == method && r.path.MatchString(path) {
+			for k, v := range r.fields {
+				filled[k] = v
+			}
+		}
+	}
+	if _, ok := body["password"]; ok && method == "PATCH" && strings.HasPrefix(path, "/accounts/") {
+		filled["end_sessions"] = true
+	}
+	for k, v := range body {
+		filled[k] = v
+	}
+	return filled
+}
+
 // call sends a request to the API handler. body is encoded as JSON unless it
-// is a string, which is sent as is.
+// is a string, which is sent as is; a map, or no body, gets the fields the
+// request requires and it leaves out (withRequired).
 func (e *environment) call(t *testing.T, method, path string, body any, headers ...string) response {
 	t.Helper()
 	var reader io.Reader
+	if m, ok := body.(map[string]any); ok || body == nil {
+		if filled := withRequired(method, path, m); body != nil || len(filled) > 0 {
+			body = filled
+		}
+	}
 	switch b := body.(type) {
 	case nil:
 	case string:
@@ -384,6 +430,21 @@ func (e *environment) unit(t *testing.T, family, symbol string) string {
 	return ""
 }
 
+// symbol returns the symbol of the unit with id id, which answers outside
+// the unit families name by id.
+func (e *environment) symbol(t *testing.T, id string) string {
+	t.Helper()
+	for _, f := range get(t, e.expect(t, 200, "GET", "/unit-families", nil).body, "families").([]any) {
+		for _, u := range get(t, f, "units").([]any) {
+			if str(t, u, "id") == id {
+				return str(t, u, "symbol")
+			}
+		}
+	}
+	t.Fatalf("no unit %s", id)
+	return ""
+}
+
 // tenantStore is the test tenant's directory in the files directory.
 func (e *environment) tenantStore(t *testing.T) *files.Store {
 	t.Helper()
@@ -395,22 +456,40 @@ func (e *environment) tenantStore(t *testing.T) *files.Store {
 }
 
 // dropTenantUnits removes the units, families and quantities tenants have
-// imported, and the attributes and items that use them, so other tests see
-// only the global ones.
+// imported, and the attributes, items and stock that use them, so other
+// tests see only the global ones. One transaction per tenant, with an action
+// of the tenant's (history records the removals); a quantity and its base
+// unit go together, as the key from one to the other is checked at commit.
 func (e *environment) dropTenantUnits(t *testing.T) {
 	t.Helper()
-	for _, sql := range []string{
-		"DELETE FROM public.item_value v USING public.attribute a, public.unit u WHERE v.attribute = a.id AND a.unit = u.id AND u.tenant IS NOT NULL",
-		"DELETE FROM public.stock_value v USING public.attribute a, public.unit u WHERE v.attribute = a.id AND a.unit = u.id AND u.tenant IS NOT NULL",
-		"DELETE FROM public.class_attribute ca USING public.attribute a, public.unit u WHERE ca.attribute = a.id AND a.unit = u.id AND u.tenant IS NOT NULL",
-		"DELETE FROM public.attribute a USING public.unit u WHERE a.unit = u.id AND u.tenant IS NOT NULL",
-		"DELETE FROM public.stock s USING public.item i, public.unit u WHERE s.item = i.id AND i.unit = u.id AND u.tenant IS NOT NULL",
-		"DELETE FROM public.item i USING public.unit u WHERE i.unit = u.id AND u.tenant IS NOT NULL",
-		"DELETE FROM public.unit WHERE tenant IS NOT NULL",
-		"DELETE FROM public.unit_family WHERE tenant IS NOT NULL",
-		"DELETE FROM public.quantity WHERE tenant IS NOT NULL",
-	} {
-		if _, err := e.dba.Exec(context.Background(), sql); err != nil {
+	ctx := context.Background()
+	rows, _ := e.dba.Query(ctx, "SELECT DISTINCT tenant::text FROM public.unit WHERE tenant IS NOT NULL")
+	tenants, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tenant := range tenants {
+		err := pgx.BeginFunc(ctx, e.dba, func(tx pgx.Tx) error {
+			for _, sql := range []string{
+				"SELECT util.begin_action($1::uuid)",
+				"DELETE FROM public.item_value v USING public.attribute a, public.unit u WHERE v.attribute = a.id AND a.unit = u.id AND u.tenant = $1",
+				"DELETE FROM public.stock_value v USING public.attribute a, public.unit u WHERE v.attribute = a.id AND a.unit = u.id AND u.tenant = $1",
+				"DELETE FROM public.class_attribute ca USING public.attribute a, public.unit u WHERE ca.attribute = a.id AND a.unit = u.id AND u.tenant = $1",
+				"DELETE FROM public.attribute_option o USING public.attribute a, public.unit u WHERE o.attribute = a.id AND a.unit = u.id AND u.tenant = $1",
+				"DELETE FROM public.attribute a USING public.unit u WHERE a.unit = u.id AND u.tenant = $1",
+				"DELETE FROM public.stock s USING public.item i, public.unit u WHERE s.item = i.id AND i.unit = u.id AND u.tenant = $1",
+				"DELETE FROM public.item i USING public.unit u WHERE i.unit = u.id AND u.tenant = $1",
+				"DELETE FROM public.unit WHERE tenant = $1",
+				"DELETE FROM public.unit_family WHERE tenant = $1",
+				"DELETE FROM public.quantity WHERE tenant = $1",
+			} {
+				if _, err := tx.Exec(ctx, sql, tenant); err != nil {
+					return fmt.Errorf("%s: %w", sql, err)
+				}
+			}
+			return nil
+		})
+		if err != nil {
 			t.Error(err)
 		}
 	}

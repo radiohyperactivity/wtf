@@ -107,7 +107,7 @@ func TestNaturalOrder(t *testing.T) {
 		e.expect(t, 201, "POST", "/attributes", obj("name", n, "datatype", "text"))
 		e.expect(t, 201, "POST", "/items", obj("class", class, "name", n))
 	}
-	check("options", names(e.expect(t, 200, "GET", "/attributes/"+pkg+"/options", nil).body, "name"))
+	check("options", names(get(t, e.expect(t, 200, "GET", "/attributes/"+pkg, nil).body, "options"), "name"))
 	var attributes []string
 	for _, n := range names(e.expect(t, 200, "GET", "/attributes", nil).body, "name") {
 		if n != "Package" {

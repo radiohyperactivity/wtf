@@ -85,8 +85,8 @@ func TestModelImport(t *testing.T) {
 		t.Fatalf("an extending file: %v", r)
 	}
 	var defaultClock float64
-	if err := e.dba.QueryRow(t.Context(), `SELECT ca.float_default FROM class_attribute ca
-		JOIN class c ON c.id = ca.class JOIN attribute a ON a.id = ca.attribute
+	if err := e.dba.QueryRow(t.Context(), `SELECT ca.default_number FROM public.class_attribute ca
+		JOIN public.class c ON c.id = ca.class JOIN public.attribute a ON a.id = ca.attribute
 		WHERE c.name = 'PIC' AND a.name = 'Clock'`).Scan(&defaultClock); err != nil || defaultClock != 20e6 {
 		t.Errorf("20 MHz stored as %v (%v)", defaultClock, err)
 	}
@@ -110,8 +110,8 @@ func TestModelImport(t *testing.T) {
 	if get(t, r, "applied") != false || len(conflicts) != 7 {
 		t.Fatalf("conflicts: %v", r)
 	}
-	for _, want := range []string{"datatype float", "measured in Bytes", "no unit furlongs", "several unit families",
-		"a container", "no attribute Nothing", "doesn't fit GPIO pins, an integer attribute"} {
+	for _, want := range []string{"datatype decimal", "measured in Bytes", "no unit furlongs", "several unit families",
+		"a container", "no attribute Nothing", `"GPIO pins" takes a number`} {
 		found := false
 		for _, c := range conflicts {
 			found = found || strings.Contains(str(t, c, "message"), want)
@@ -208,12 +208,13 @@ func TestModelExport(t *testing.T) {
 	e.expect(t, 200, "POST", "/model/import", `{"format": "wtf-model", "version": 1,
 		"quantities": [
 			{"name": "Pressure", "base_unit": {"symbol": "Pa", "name": "pascal"}, "families": [
-				{"name": "Bar", "units": [{"symbol": "mbar", "name": "millibar", "factor": "100"}, {"symbol": "bar", "name": "bar", "factor": "100000"}]}]},
+				{"name": "Bar", "units": [{"symbol": "mbar", "name": "millibar", "factor": "100"}, {"symbol": "bar", "name": "bar", "factor": "100000"}]},
+				{"name": "Pascal", "units": [{"symbol": "Pa", "name": "pascal", "factor": "1"}]}]},
 			{"name": "Length", "base_unit": {"symbol": "m", "name": "metre"}, "families": [
 				{"name": "Imperial length", "units": [{"symbol": "hh", "name": "hand", "factor": "0.1016"}]}]}],
 		"attributes": [{"name": "Air pressure", "unit": "bar"}, {"name": "Height", "unit": "hh", "unit_lock": true}],
 		"classes": [{"name": "MCU", "classes": [{"name": "AVR", "classes": [
-			{"name": "Dev boards", "attributes": [{"attribute": "Air pressure", "default": 2.5}, {"attribute": "Height", "per_unit": true}]}]}]}]}`)
+			{"name": "Dev boards", "attributes": [{"attribute": "Air pressure", "default": 2.5}, {"attribute": "Height", "scope": "stock"}]}]}]}]}`)
 	ids := map[string]string{}
 	var walk func(nodes any, path string)
 	walk = func(nodes any, path string) {
@@ -245,7 +246,7 @@ func TestModelExport(t *testing.T) {
 	}
 	boards := get(t, avr, "classes", 0)
 	if str(t, boards, "name") != "Dev boards" || len(get(t, boards, "attributes").([]any)) != 2 ||
-		get(t, boards, "attributes", 0, "default") != 2.5 || get(t, boards, "attributes", 1, "per_unit") != true {
+		get(t, boards, "attributes", 0, "default") != 2.5 || get(t, boards, "attributes", 1, "scope") != "stock" {
 		t.Errorf("Dev boards, below AVR: %v", boards)
 	}
 	attributes := map[string]any{}
@@ -253,7 +254,7 @@ func TestModelExport(t *testing.T) {
 		attributes[str(t, a, "name")] = a
 	}
 	if len(attributes) != 13 || str(t, attributes["EEPROM"], "unit") != "B (Binary bytes)" ||
-		str(t, attributes["Clock"], "unit") != "MHz" || str(t, attributes["Clock"], "datatype") != "float" ||
+		str(t, attributes["Clock"], "unit") != "MHz" || str(t, attributes["Clock"], "datatype") != "decimal" ||
 		get(t, attributes["Height"], "unit_lock") != true || len(get(t, attributes["Core"], "options").([]any)) != 8 {
 		t.Errorf("the exported attributes: %v", get(t, x, "attributes"))
 	}
@@ -281,7 +282,7 @@ func TestModelExport(t *testing.T) {
 	_, hostname, token := e.otherTenant(t)
 	b := at(hostname, token)
 	r = e.expect(t, 200, "POST", "/model/import", x, b...).body
-	if get(t, r, "applied") != true || len(get(t, r, "units", "added").([]any)) != 3 ||
+	if get(t, r, "applied") != true || len(get(t, r, "units", "added").([]any)) != 4 ||
 		len(get(t, r, "attributes", "added").([]any)) != 13 || len(get(t, r, "classes", "added").([]any)) != 2 {
 		t.Fatalf("the export imported into another tenant: %v", r)
 	}

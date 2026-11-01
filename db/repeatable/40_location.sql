@@ -334,10 +334,13 @@ BEGIN
                              ARRAY['name', 'container']);
     SELECT l.* INTO v_location
     FROM public.location l
-    WHERE l.id = p_location AND l.tenant = v_session.tenant AND l.deleted IS NULL
+    WHERE l.id = p_location AND l.tenant = v_session.tenant
     FOR UPDATE;
     IF NOT FOUND THEN
         PERFORM error.not_found('location', p_location::text);
+    END IF;
+    IF v_location.deleted IS NOT NULL THEN
+        PERFORM error.deleted('location', p_location);
     END IF;
 
     v_name   := CASE WHEN p_patch ? 'name'
@@ -387,6 +390,9 @@ BEGIN
     SET deleted = v_action
     WHERE l.id = p_location AND l.tenant = v_session.tenant AND l.deleted IS NULL;
     IF NOT FOUND THEN
+        IF EXISTS (SELECT 1 FROM public.location l WHERE l.id = p_location AND l.tenant = v_session.tenant) THEN
+            PERFORM error.deleted('location', p_location);
+        END IF;
         PERFORM error.not_found('location', p_location::text);
     END IF;
 END;

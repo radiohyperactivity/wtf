@@ -629,10 +629,13 @@ BEGIN
                              ARRAY['name', 'container']);
     SELECT c.* INTO v_class
     FROM public.class c
-    WHERE c.id = p_class AND c.tenant = v_session.tenant AND c.deleted IS NULL
+    WHERE c.id = p_class AND c.tenant = v_session.tenant
     FOR UPDATE;
     IF NOT FOUND THEN
         PERFORM error.not_found('class', p_class::text);
+    END IF;
+    IF v_class.deleted IS NOT NULL THEN
+        PERFORM error.deleted('class', p_class);
     END IF;
 
     v_name   := CASE WHEN p_patch ? 'name'
@@ -681,6 +684,9 @@ BEGIN
     SET deleted = v_action
     WHERE c.id = p_class AND c.tenant = v_session.tenant AND c.deleted IS NULL;
     IF NOT FOUND THEN
+        IF EXISTS (SELECT 1 FROM public.class c WHERE c.id = p_class AND c.tenant = v_session.tenant) THEN
+            PERFORM error.deleted('class', p_class);
+        END IF;
         PERFORM error.not_found('class', p_class::text);
     END IF;
 END;
@@ -947,6 +953,9 @@ BEGIN
     SELECT c.* INTO v_class FROM public.class c
     WHERE c.id = p_class AND c.tenant = v_session.tenant AND c.deleted IS NULL;
     IF NOT FOUND THEN
+        IF EXISTS (SELECT 1 FROM public.class c WHERE c.id = p_class AND c.tenant = v_session.tenant) THEN
+            PERFORM error.deleted('class', p_class);
+        END IF;
         PERFORM error.not_found('class', p_class::text);
     END IF;
 

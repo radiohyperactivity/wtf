@@ -25,7 +25,7 @@ func TestDeleteTree(t *testing.T) {
 	shelf := location("Shelf", nil)
 	box := location("Box", shelf)
 	item := str(t, e.expect(t, 201, "POST", "/items", obj("class", c, "name", "Widget")).body, "id")
-	stock := str(t, e.expect(t, 201, "POST", "/stock", obj("item", item, "location", box, "quantity", 3)).body, "id")
+	stock := str(t, e.expect(t, 201, "POST", "/stock", obj("item", item, "location", box, "amount", 3)).body, "id")
 
 	// Without recursive, a class with subclasses is still refused.
 	e.expect(t, 409, "DELETE", "/classes/"+a, nil)
@@ -89,7 +89,7 @@ func TestDeleteTree(t *testing.T) {
 	class("Y", x)
 	e.expect(t, 200, "DELETE", "/classes/"+x+"?recursive=true", nil)
 	h := e.expect(t, 200, "GET", "/classes/"+x+"/history", nil)
-	if str(t, h.body, "rows", 0, "operation") != "update" || get(t, h.body, "rows", 0, "changes", "deleted", "new") != true {
+	if str(t, h.body, "rows", 0, "operation") != "update" || get(t, h.body, "rows", 0, "changes", "deleted", "new") == nil {
 		t.Errorf("history: %v", get(t, h.body, "rows", 0))
 	}
 }

@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -34,27 +35,27 @@ func TestHistory(t *testing.T) {
 		obj("class", classID, "name", "Drill", "values", obj(attr, "Makita"))).body, "id")
 	shed := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Shed")).body, "id")
 	van := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Van")).body, "id")
-	stockID := str(t, e.expect(t, 201, "POST", "/stock", obj("item", itemID, "location", shed, "quantity", 5)).body, "id")
+	stockID := str(t, e.expect(t, 201, "POST", "/stock", obj("item", itemID, "location", shed, "amount", 5)).body, "id")
 
 	e.expect(t, 200, "PUT", "/items/"+itemID+"/values/"+attr, obj("value", "Bosch"))
-	e.expect(t, 200, "POST", "/stock/"+stockID+"/move", obj("location", van, "quantity", 2))
+	e.expect(t, 200, "POST", "/stock/"+stockID+"/move", obj("location", van, "amount", 2))
 	e.expect(t, 200, "PATCH", "/items/"+itemID, obj("name", "Cordless drill"))
 
 	// The item's history includes its values and stock rows, newest first.
 	kinds, rows := historyOf(t, e, "/items/"+itemID+"/history")
-	want := []string{"item.update", "stock.insert", "stock.update", "value.update", "stock.insert", "value.insert", "item.insert"}
+	want := []string{"item.update", "stock.insert", "stock.update", "item_value.update", "stock.insert", "item_value.insert", "item.insert"}
 	if strings.Join(kinds, ",") != strings.Join(want, ",") {
 		t.Fatalf("item history: %v\nwant %v", kinds, want)
 	}
-	if str(t, rows[0], "account", "email") != "admin@test.local" {
-		t.Errorf("who: %v", get(t, rows[0], "account"))
+	if str(t, rows[0], "action", "account", "email") != "admin@test.local" {
+		t.Errorf("who: %v", get(t, rows[0], "action"))
 	}
 	if get(t, rows[0], "changes", "name", "old") != "Drill" || get(t, rows[0], "changes", "name", "new") != "Cordless drill" {
 		t.Errorf("changes: %v", get(t, rows[0], "changes"))
 	}
-	// Both rows changed by the move share one transaction.
-	if str(t, rows[1], "transaction") != str(t, rows[2], "transaction") {
-		t.Error("the split's two stock entries have different transactions")
+	// Both rows changed by the move share one action.
+	if str(t, rows[1], "action", "id") != str(t, rows[2], "action", "id") {
+		t.Error("the split's two stock entries have different actions")
 	}
 
 	// Moving the rest away shows up at the shed, as stock leaving.
@@ -65,11 +66,18 @@ func TestHistory(t *testing.T) {
 	}
 	_ = rows
 
-	// Paging.
-	page := e.expect(t, 200, "GET", "/items/"+itemID+"/history?limit=2&offset=1", nil).body
-	if num(t, page, "limit") != 2 || len(get(t, page, "rows").([]any)) != 2 || num(t, page, "total") < 8 {
-		t.Errorf("paging: %v", page)
+	// Paging goes by before: the entries older than a given one.
+	page := e.expect(t, 200, "GET", "/items/"+itemID+"/history?limit=2", nil).body
+	if get(t, page, "more") != true || len(get(t, page, "rows").([]any)) != 2 {
+		t.Fatalf("first page: %v", page)
 	}
+	oldest := fmt.Sprint(get(t, page, "rows", 1, "id"))
+	next := e.expect(t, 200, "GET", "/items/"+itemID+"/history?limit=100&before="+oldest, nil).body
+	if get(t, next, "more") != false || len(get(t, next, "rows").([]any)) < 6 ||
+		fmt.Sprint(get(t, next, "rows", 0, "id")) == oldest {
+		t.Errorf("next page: %v", next)
+	}
+	e.expect(t, 400, "GET", "/items/"+itemID+"/history?offset=1", nil)
 
 	// Deleted accounts: their history stays, they can't log in, and the email can be reused.
 	worker := str(t, e.expect(t, 201, "POST", "/accounts", obj("email", "worker@test.local",
@@ -98,7 +106,7 @@ func TestHistory(t *testing.T) {
 
 	e.expect(t, 401, "GET", "/me", nil, as(workerToken)...)
 	e.loginAs(t, 401, "worker@test.local", "another-password")
-	if get(t, e.expect(t, 200, "GET", "/accounts/"+worker, nil).body, "deleted") != true {
+	if get(t, e.expect(t, 200, "GET", "/accounts/"+worker, nil).body, "deleted") == nil {
 		t.Error("account_get should show the deleted account")
 	}
 	for _, a := range e.expect(t, 200, "GET", "/accounts", nil).body.([]any) {
@@ -108,8 +116,8 @@ func TestHistory(t *testing.T) {
 	}
 	e.expect(t, 201, "POST", "/accounts", obj("email", "worker@test.local"))
 	_, rows = historyOf(t, e, "/items/"+note+"/history")
-	if get(t, rows[0], "account", "email") != "worker@test.local" || get(t, rows[0], "account", "deleted") != true {
-		t.Errorf("who created the note: %v", get(t, rows[0], "account"))
+	if get(t, rows[0], "action", "account", "email") != "worker@test.local" || get(t, rows[0], "action", "account", "deleted") != true {
+		t.Errorf("who created the note: %v", get(t, rows[0], "action"))
 	}
 
 	// Purge.

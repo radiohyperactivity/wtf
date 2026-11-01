@@ -278,6 +278,10 @@ func locationBody() param {
 			{key: "rows", name: "p_rows", typ: "integer"},
 			{key: "confirm", name: "p_confirm", typ: "boolean"},
 		})
+		if p, ok := err.(*problem); ok {
+			// Say which object the field is in.
+			p.Detail = "grid: " + p.Detail
+		}
 		if err != nil {
 			return nil, err
 		}

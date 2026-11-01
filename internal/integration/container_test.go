@@ -36,18 +36,18 @@ func TestContainers(t *testing.T) {
 
 	garage := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Garage", "container", true)).body, "id")
 	shelf := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Shelf", "parent", garage)).body, "id")
-	r = e.expect(t, 422, "POST", "/stock", obj("item", item, "location", garage, "quantity", 1))
+	r = e.expect(t, 422, "POST", "/stock", obj("item", item, "location", garage, "amount", 1))
 	if d := str(t, r.body, "detail"); !strings.Contains(d, `Location "Garage" is a container`) {
 		t.Errorf("detail: %s", d)
 	}
-	stock := str(t, e.expect(t, 201, "POST", "/stock", obj("item", item, "location", shelf, "quantity", 5)).body, "id")
-	e.expect(t, 422, "POST", "/stock/"+stock+"/move", obj("location", garage, "quantity", 2))
+	stock := str(t, e.expect(t, 201, "POST", "/stock", obj("item", item, "location", shelf, "amount", 5)).body, "id")
+	e.expect(t, 422, "POST", "/stock/"+stock+"/move", obj("location", garage, "amount", 2))
 	e.expect(t, 422, "PATCH", "/stock/"+stock, obj("location", garage))
 	e.expect(t, 422, "PATCH", "/locations/"+shelf, obj("container", true))
 
 	// Unmarking always works; then the node takes items and stock again.
 	e.expect(t, 200, "PATCH", "/locations/"+garage, obj("container", false))
-	e.expect(t, 200, "POST", "/stock/"+stock+"/move", obj("location", garage, "quantity", 2))
+	e.expect(t, 200, "POST", "/stock/"+stock+"/move", obj("location", garage, "amount", 2))
 	loc := e.expect(t, 200, "GET", "/locations/"+garage, nil).body
 	if get(t, loc, "container") != false {
 		t.Errorf("location: %v", loc)

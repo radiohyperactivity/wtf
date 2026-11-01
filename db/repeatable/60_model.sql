@@ -331,8 +331,13 @@ BEGIN
 
                 -- A new quantity's base unit is the first unit with its
                 -- symbol; it gets the id the quantity already refers to. Its
-                -- factor 1 and offset 0 are the rule unit.check_base_unit's,
-                -- at commit.
+                -- factor must be 1 and its offset 0 (the rule
+                -- unit.check_base_unit's, at commit); a file that says
+                -- otherwise is refused here, as other malformed files are.
+                IF v_symbol = v_base AND v_base_id IS NOT NULL AND (v_factor <> 1 OR v_offset <> 0) THEN
+                    PERFORM error.invalid(format('The base unit of %s (%s) must have factor 1 and offset 0',
+                                                 v_quantity.name, v_base));
+                END IF;
                 INSERT INTO public.unit (id, tenant, family, name, symbol, base_factor, base_offset)
                 VALUES (CASE WHEN v_symbol = v_base AND v_base_id IS NOT NULL THEN v_base_id ELSE uuidv7() END,
                         p_tenant, v_family.id, v_uname, v_symbol, v_factor, v_offset)
@@ -946,6 +951,15 @@ BEGIN
         WHERE a.id = ANY (v_attributes) AND a.deleted IS NULL
           AND (f.tenant = v_session.tenant
                OR EXISTS (SELECT 1 FROM public.unit x WHERE x.family = f.id AND x.tenant = v_session.tenant)));
+    -- And for a quantity of the tenant's own among them, the family of its
+    -- base unit, which importing the file needs to set the quantity up.
+    v_families := v_families || ARRAY(
+        SELECT DISTINCT b.family
+        FROM public.unit_family f
+        JOIN public.quantity q ON q.id = f.quantity
+        JOIN public.unit b     ON b.id = q.base_unit
+        WHERE f.id = ANY (v_families) AND q.tenant = v_session.tenant
+          AND b.family <> ALL (v_families));
 
     RETURN json_strip_nulls(json_build_object(
         'format',  'wtf-model',

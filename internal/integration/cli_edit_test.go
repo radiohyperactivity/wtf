@@ -74,7 +74,7 @@ func TestCLIEdit(t *testing.T) {
 	// Stock form.
 	c.ok("stock", "add", "M3x10", "Garage/Shelf", "5")
 	out, _ = c.interact([]string{clear + "8\r", "\r"}, false, "stock", "edit", "M3x10")
-	contains(t, out, "Quantity:  8", "Garage/Shelf")
+	contains(t, out, "Amount:    8", "Garage/Shelf")
 
 	// Attribute form with options: add green, rename red.
 	out, _ = c.interact([]string{"\r", "\r", "green\r", "red=Red\r", "\r"}, false, "attribute", "edit", "Colour")
@@ -105,7 +105,7 @@ func TestCLIEdit(t *testing.T) {
 	out, prompts = c.interact([]string{"y\r", "Garage/Shelf A\r", "7\r"},
 		false, "item", "add", "M6", "--class", "Hardware/Screws", "--value", "Length=6mm")
 	contains(t, prompts, "Add stock for M6? [y/N]")
-	contains(t, out, "Location:  Garage/Shelf A", "Quantity:  7")
+	contains(t, out, "Location:  Garage/Shelf A", "Amount:    7")
 	if strings.Contains(prompts, "another") {
 		t.Errorf("asked for more stock:\n%s", prompts)
 	}

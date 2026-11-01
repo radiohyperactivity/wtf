@@ -622,24 +622,24 @@ LANGUAGE sql STABLE AS $$
     -- Every value shown, of the item (stock NULL) and of each stock row:
     -- its own, or the default where it has none.
     shown AS (
-        SELECT NULL::uuid AS stock, e.attribute_row AS a, v IS NULL AS is_default,
+        SELECT NULL::uuid AS stock, e.attribute_row AS a, v.item IS NULL AS is_default,
                coalesce(v.text, e.default_text) AS text, coalesce(v.number, e.default_number) AS number,
                coalesce(v.date, e.default_date) AS date, coalesce(v.boolean, e.default_boolean) AS boolean,
                coalesce(v.option, e.default_option) AS option
         FROM effective e
         LEFT JOIN public.item_value v ON v.item = p_item.id AND v.attribute = e.attribute
         WHERE e.scope = 'item'
-          AND (v IS NOT NULL OR num_nonnulls(e.default_text, e.default_number, e.default_date,
+          AND (v.item IS NOT NULL OR num_nonnulls(e.default_text, e.default_number, e.default_date,
                                              e.default_boolean, e.default_option) = 1)
         UNION ALL
-        SELECT r.id, e.attribute_row, sv IS NULL,
+        SELECT r.id, e.attribute_row, sv.stock IS NULL,
                coalesce(sv.text, e.default_text), coalesce(sv.number, e.default_number),
                coalesce(sv.date, e.default_date), coalesce(sv.boolean, e.default_boolean),
                coalesce(sv.option, e.default_option)
         FROM rows r
         JOIN effective e ON e.scope = 'stock'
         LEFT JOIN public.stock_value sv ON sv.stock = r.id AND sv.attribute = e.attribute
-        WHERE sv IS NOT NULL OR num_nonnulls(e.default_text, e.default_number, e.default_date,
+        WHERE sv.stock IS NOT NULL OR num_nonnulls(e.default_text, e.default_number, e.default_date,
                                              e.default_boolean, e.default_option) = 1
     ),
     values_json AS (
@@ -955,10 +955,13 @@ BEGIN
     SELECT i.* INTO v_item
     FROM public.item i
     JOIN public.class c ON c.id = i.class
-    WHERE i.id = p_item AND c.tenant = v_session.tenant AND i.deleted IS NULL
+    WHERE i.id = p_item AND c.tenant = v_session.tenant
     FOR UPDATE OF i;
     IF NOT FOUND THEN
         PERFORM error.not_found('item', p_item::text);
+    END IF;
+    IF v_item.deleted IS NOT NULL THEN
+        PERFORM error.deleted('item', p_item);
     END IF;
 
     v_class := coalesce((p_patch ->> 'class')::uuid, v_item.class);
@@ -1007,6 +1010,10 @@ BEGIN
     WHERE i.id = p_item AND c.id = i.class AND c.tenant = v_session.tenant
       AND i.deleted IS NULL;
     IF NOT FOUND THEN
+        IF EXISTS (SELECT 1 FROM public.item i JOIN public.class c ON c.id = i.class
+                   WHERE i.id = p_item AND c.tenant = v_session.tenant) THEN
+            PERFORM error.deleted('item', p_item);
+        END IF;
         PERFORM error.not_found('item', p_item::text);
     END IF;
 END;
@@ -1096,9 +1103,12 @@ BEGIN
     SELECT i.* INTO v_item
     FROM public.item i
     JOIN public.class c ON c.id = i.class
-    WHERE i.id = p_item AND c.tenant = v_session.tenant AND i.deleted IS NULL;
+    WHERE i.id = p_item AND c.tenant = v_session.tenant;
     IF NOT FOUND THEN
         PERFORM error.not_found('item', p_item::text);
+    END IF;
+    IF v_item.deleted IS NOT NULL THEN
+        PERFORM error.deleted('item', p_item);
     END IF;
     IF p_value IS NULL OR jsonb_typeof(p_value) = 'null' THEN
         PERFORM error.invalid('Remove a value with value delete');
@@ -1126,9 +1136,12 @@ BEGIN
     SELECT i.* INTO v_item
     FROM public.item i
     JOIN public.class c ON c.id = i.class
-    WHERE i.id = p_item AND c.tenant = v_session.tenant AND i.deleted IS NULL;
+    WHERE i.id = p_item AND c.tenant = v_session.tenant;
     IF NOT FOUND THEN
         PERFORM error.not_found('item', p_item::text);
+    END IF;
+    IF v_item.deleted IS NOT NULL THEN
+        PERFORM error.deleted('item', p_item);
     END IF;
 
     PERFORM util.begin_action(v_session);

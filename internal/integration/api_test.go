@@ -50,7 +50,7 @@ func TestAPIRoleIsRestricted(t *testing.T) {
 	e := setup(t)
 	for _, sql := range []string{
 		"SELECT count(*) FROM item",
-		"SELECT util.raise_invalid('x')",
+		"SELECT error.invalid('x')",
 		"SELECT count(*) FROM wtfd.migration",
 		"CREATE TABLE intruder (id int)",
 	} {
@@ -62,14 +62,14 @@ func TestAPIRoleIsRestricted(t *testing.T) {
 	}
 
 	// Without a session, the API functions refuse to work, even for the API role.
-	_, err := e.api.Exec(context.Background(), "SELECT item_list()")
+	_, err := e.api.Exec(context.Background(), "SELECT item.list(ROW(NULL, $1, NULL)::public.request)", testHost)
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "28000" {
-		t.Errorf("item_list() without a session: got %v, want 28000", err)
+		t.Errorf("item.list without a session: got %v, want 28000", err)
 	}
-	_, err = e.api.Exec(context.Background(), "SELECT set_config('wtf.token', 'guessed', false), item_list()")
+	_, err = e.api.Exec(context.Background(), "SELECT item.list(ROW('guessed', $1, NULL)::public.request)", testHost)
 	if !errors.As(err, &pgErr) || pgErr.Code != "28000" {
-		t.Errorf("item_list() with a made-up token: got %v, want 28000", err)
+		t.Errorf("item.list with a made-up token: got %v, want 28000", err)
 	}
 }
 
@@ -82,22 +82,22 @@ func TestUnitsAndDefaults(t *testing.T) {
 	if loc := class.header.Get("Location"); loc != "/api/v1/classes/"+classID {
 		t.Errorf("Location = %q", loc)
 	}
-	attr := e.expect(t, 201, "POST", "/attributes",
-		obj("name", "Length", "datatype", "float", "unit", e.unit(t, "Metric length", "mm"))).body
+	mm := e.unit(t, "Metric length", "mm")
+	attr := e.expect(t, 201, "POST", "/attributes", obj("name", "Length", "datatype", "decimal", "unit", mm)).body
 	attrID := str(t, attr, "id")
-	if str(t, attr, "unit", "family", "name") != "Metric length" || str(t, attr, "unit", "quantity", "name") != "Length" ||
-		get(t, attr, "unit_lock") != false {
+	// Units are ids outside the unit families.
+	if str(t, attr, "unit") != mm || get(t, attr, "unit_lock") != false {
 		t.Errorf("attribute: %v", attr)
 	}
 
 	c := e.expect(t, 200, "PUT", "/classes/"+classID+"/attributes/"+attrID, obj("default", 0.025)).body
-	if v, u := num(t, c, "attributes", 0, "default_display", "value"), str(t, c, "attributes", 0, "default_display", "unit", "symbol"); v != 2.5 || u != "cm" {
+	if v, u := num(t, c, "attributes", 0, "default_display", "value"), str(t, c, "attributes", 0, "default_display", "unit"); v != 2.5 || u != e.unit(t, "Metric length", "cm") {
 		t.Errorf("default 0.025 m displays as %v %s, want 2.5 cm", v, u)
 	}
 
 	drill := e.expect(t, 201, "POST", "/items",
 		obj("class", classID, "name", "Drill", "values", obj(attrID, 0.0012))).body
-	if v, u := num(t, drill, "values", 0, "display", "value"), str(t, drill, "values", 0, "display", "unit", "symbol"); v != 1.2 || u != "mm" {
+	if v, u := num(t, drill, "values", 0, "display", "value"), str(t, drill, "values", 0, "display", "unit"); v != 1.2 || u != mm {
 		t.Errorf("0.0012 m displays as %v %s, want 1.2 mm", v, u)
 	}
 	if get(t, drill, "values", 0, "is_default") != false {
@@ -113,20 +113,20 @@ func TestUnitsAndDefaults(t *testing.T) {
 	// Defaults are fallbacks: changing the default changes the item.
 	e.expect(t, 200, "PUT", "/classes/"+classID+"/attributes/"+attrID, obj("default", 0.5))
 	saw = e.expect(t, 200, "GET", "/items/"+sawID, nil).body
-	if v, u := num(t, saw, "values", 0, "display", "value"), str(t, saw, "values", 0, "display", "unit", "symbol"); v != 50 || u != "cm" {
+	if v, u := num(t, saw, "values", 0, "display", "value"), e.symbol(t, str(t, saw, "values", 0, "display", "unit")); v != 50 || u != "cm" {
 		t.Errorf("after changing the default: %v %s, want 50 cm", v, u)
 	}
 
 	// Zero is shown in the attribute's unit.
 	drill = e.expect(t, 200, "PUT", "/items/"+str(t, drill, "id")+"/values/"+attrID, obj("value", 0)).body
-	if u := str(t, drill, "values", 0, "display", "unit", "symbol"); u != "mm" {
+	if u := e.symbol(t, str(t, drill, "values", 0, "display", "unit")); u != "mm" {
 		t.Errorf("zero displays in %s, want mm", u)
 	}
 
 	// With the unit locked, every number is shown in it.
 	e.expect(t, 200, "PATCH", "/attributes/"+attrID, obj("unit_lock", true))
 	saw = e.expect(t, 200, "GET", "/items/"+sawID, nil).body
-	if v, u := num(t, saw, "values", 0, "display", "value"), str(t, saw, "values", 0, "display", "unit", "symbol"); v != 500 || u != "mm" {
+	if v, u := num(t, saw, "values", 0, "display", "value"), e.symbol(t, str(t, saw, "values", 0, "display", "unit")); v != 500 || u != "mm" {
 		t.Errorf("locked to mm: %v %s, want 500 mm", v, u)
 	}
 
@@ -135,8 +135,8 @@ func TestUnitsAndDefaults(t *testing.T) {
 	solder := e.expect(t, 201, "POST", "/items", obj("class", parts, "name", "Solder",
 		"unit", e.unit(t, "Metric weight", "g"), "unit_lock", true)).body
 	shelf := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Shelf")).body, "id")
-	row := e.expect(t, 201, "POST", "/stock", obj("item", str(t, solder, "id"), "location", shelf, "quantity", 2.5)).body
-	if v, u := num(t, row, "display", "value"), str(t, row, "display", "unit", "symbol"); v != 2500 || u != "g" {
+	row := e.expect(t, 201, "POST", "/stock", obj("item", str(t, solder, "id"), "location", shelf, "amount", 2.5)).body
+	if v, u := num(t, row, "display", "value"), e.symbol(t, str(t, row, "display", "unit")); v != 2500 || u != "g" {
 		t.Errorf("2.5 kg of solder locked to g: %v %s", v, u)
 	}
 }
@@ -146,7 +146,7 @@ func TestWholeNumbers(t *testing.T) {
 	e.reset(t)
 
 	r := e.expect(t, 422, "POST", "/attributes",
-		obj("name", "Bad count", "datatype", "float", "unit", e.unit(t, "Pieces", "pcs")))
+		obj("name", "Bad count", "datatype", "decimal", "unit", e.unit(t, "Pieces", "pcs")))
 	if str(t, r.body, "type") != "/problems/rule-violation" {
 		t.Errorf("type = %v", get(t, r.body, "type"))
 	}
@@ -155,8 +155,8 @@ func TestWholeNumbers(t *testing.T) {
 	itemID := str(t, e.expect(t, 201, "POST", "/items", obj("class", classID, "name", "Screw")).body, "id")
 	locID := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Drawer")).body, "id")
 
-	e.expect(t, 422, "POST", "/stock", obj("item", itemID, "location", locID, "quantity", 2.5))
-	e.expect(t, 201, "POST", "/stock", obj("item", itemID, "location", locID, "quantity", 3))
+	e.expect(t, 422, "POST", "/stock", obj("item", itemID, "location", locID, "amount", 2.5))
+	e.expect(t, 201, "POST", "/stock", obj("item", itemID, "location", locID, "amount", 3))
 }
 
 func TestStock(t *testing.T) {
@@ -173,32 +173,32 @@ func TestStock(t *testing.T) {
 
 	classID := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Parts")).body, "id")
 	itemID := str(t, e.expect(t, 201, "POST", "/items", obj("class", classID, "name", "Screw")).body, "id")
-	source := str(t, e.expect(t, 201, "POST", "/stock", obj("item", itemID, "location", shelfID, "quantity", 10)).body, "id")
+	source := str(t, e.expect(t, 201, "POST", "/stock", obj("item", itemID, "location", shelfID, "amount", 10)).body, "id")
 
 	// Partial move to a location without stock: split.
-	moved := e.expect(t, 200, "POST", "/stock/"+source+"/move", obj("location", attic, "quantity", 4)).body
+	moved := e.expect(t, 200, "POST", "/stock/"+source+"/move", obj("location", attic, "amount", 4)).body
 	atticRow := str(t, moved, "id")
-	if atticRow == source || num(t, moved, "quantity") != 4 {
+	if atticRow == source || num(t, moved, "amount") != 4 {
 		t.Fatalf("split: %v", moved)
 	}
 
 	// Partial move to a location with exactly one counted row: merge.
-	moved = e.expect(t, 200, "POST", "/stock/"+source+"/move", obj("location", attic, "quantity", 2)).body
-	if str(t, moved, "id") != atticRow || num(t, moved, "quantity") != 6 {
+	moved = e.expect(t, 200, "POST", "/stock/"+source+"/move", obj("location", attic, "amount", 2)).body
+	if str(t, moved, "id") != atticRow || num(t, moved, "amount") != 6 {
 		t.Fatalf("merge: %v", moved)
 	}
 
 	// Whole move into it: merged, and the source row is marked deleted, merged into the other.
 	moved = e.expect(t, 200, "POST", "/stock/"+source+"/move", obj("location", attic)).body
-	if str(t, moved, "id") != atticRow || num(t, moved, "quantity") != 10 {
+	if str(t, moved, "id") != atticRow || num(t, moved, "amount") != 10 {
 		t.Fatalf("whole merge: %v", moved)
 	}
-	if gone := e.expect(t, 200, "GET", "/stock/"+source, nil).body; get(t, gone, "deleted") != true || str(t, gone, "merged_into", "id") != atticRow {
+	if gone := e.expect(t, 200, "GET", "/stock/"+source, nil).body; get(t, gone, "deleted") == nil || str(t, gone, "merged_into", "id") != atticRow {
 		t.Errorf("merged row: %v", gone)
 	}
 
 	// Moving more than there is.
-	e.expect(t, 400, "POST", "/stock/"+atticRow+"/move", obj("location", garage, "quantity", 11))
+	e.expect(t, 400, "POST", "/stock/"+atticRow+"/move", obj("location", garage, "amount", 11))
 
 	// An uncounted row in the garage.
 	e.expect(t, 201, "POST", "/stock", obj("item", itemID, "location", garage))
@@ -265,12 +265,12 @@ func TestUnitChange(t *testing.T) {
 	e.reset(t)
 
 	attr := str(t, e.expect(t, 201, "POST", "/attributes",
-		obj("name", "Length", "datatype", "float", "unit", e.unit(t, "Metric length", "mm"))).body, "id")
+		obj("name", "Length", "datatype", "decimal", "unit", e.unit(t, "Metric length", "mm"))).body, "id")
 	// Another unit of the same quantity, in another family too.
 	e.expect(t, 200, "PATCH", "/attributes/"+attr, obj("unit", e.unit(t, "Metric length", "cm")))
-	if f := str(t, e.expect(t, 200, "PATCH", "/attributes/"+attr, obj("unit", e.unit(t, "Imperial length", "in"))).body,
-		"unit", "family", "name"); f != "Imperial length" {
-		t.Errorf("family after the change: %s", f)
+	inch := e.unit(t, "Imperial length", "in")
+	if u := str(t, e.expect(t, 200, "PATCH", "/attributes/"+attr, obj("unit", inch)).body, "unit"); u != inch {
+		t.Errorf("unit after the change: %s", u)
 	}
 	e.expect(t, 422, "PATCH", "/attributes/"+attr, obj("unit", e.unit(t, "Metric weight", "g")))
 	e.expect(t, 422, "PATCH", "/attributes/"+attr, obj("unit", nil))
@@ -283,7 +283,7 @@ func TestUnitFamilies(t *testing.T) {
 	e := setup(t)
 
 	// The bootstrap set: global units.
-	families := e.expect(t, 200, "GET", "/unit-families", nil).body.([]any)
+	families := get(t, e.expect(t, 200, "GET", "/unit-families", nil).body, "families").([]any)
 	byName := map[string]any{}
 	for _, f := range families {
 		byName[str(t, f, "name")] = f
@@ -355,7 +355,7 @@ func TestUnitImport(t *testing.T) {
 	}
 	r := e.expect(t, 200, "POST", "/model/import", string(seed)).body
 	if get(t, r, "applied") != true || count(r, "quantities", "added")+count(r, "families", "added")+count(r, "units", "added") != 0 ||
-		count(r, "quantities", "existing") != 16 || count(r, "families", "existing") != 25 || count(r, "units", "existing") != 95 ||
+		count(r, "quantities", "existing") != 16 || count(r, "families", "existing") != 25 || count(r, "units", "existing") != 96 ||
 		len(get(t, r, "conflicts").([]any)) != 0 {
 		t.Fatalf("seed/units.json differs from the bootstrap set: %v", r)
 	}
@@ -404,7 +404,7 @@ func TestUnitImport(t *testing.T) {
 			q = x
 		}
 	}
-	if q == nil || str(t, q, "base_unit", "symbol") != "Pa" || str(t, q, "datatype") != "float" {
+	if q == nil || e.symbol(t, str(t, q, "base_unit")) != "Pa" || str(t, q, "datatype") != "decimal" {
 		t.Errorf("Pressure: %v", q)
 	}
 	// Importing it again changes nothing.
@@ -429,10 +429,11 @@ func TestUnitImport(t *testing.T) {
 			}),
 	)).body
 	conflicts := get(t, r, "conflicts").([]any)
-	if get(t, r, "applied") != false || len(conflicts) != 5 {
-		t.Fatalf("want 5 conflicts, not applied: %v", r)
+	// Distance, a new quantity, also lacks its base unit m among its units.
+	if get(t, r, "applied") != false || len(conflicts) != 6 {
+		t.Fatalf("want 6 conflicts, not applied: %v", r)
 	}
-	for i, want := range []string{"Length", "Metric length", "Imperial length", "kB", "KiB"} {
+	for i, want := range []string{"Length", "Metric length", "Distance", "Imperial length", "kB", "KiB"} {
 		if !strings.Contains(str(t, conflicts[i], "where"), want) {
 			t.Errorf("conflict %d: %v, want it about %s", i, conflicts[i], want)
 		}
@@ -582,7 +583,7 @@ func TestSearchWhere(t *testing.T) {
 		return str(t, e.expect(t, 201, "POST", "/attributes",
 			obj(append([]any{"name", name, "datatype", datatype}, more...)...)).body, "id")
 	}
-	ohms := attribute("Resistance", "float", "unit", e.unit(t, "Resistance", "Ω"))
+	ohms := attribute("Resistance", "decimal", "unit", e.unit(t, "Resistance", "Ω"))
 	pkg := attribute("Package", "choice")
 	e.expect(t, 201, "POST", "/attributes/"+pkg+"/options", obj("name", "0805"))
 	e.expect(t, 201, "POST", "/attributes/"+pkg+"/options", obj("name", "0603"))
@@ -593,7 +594,7 @@ func TestSearchWhere(t *testing.T) {
 	e.expect(t, 200, "PUT", "/classes/"+resistors+"/attributes/"+pkg, obj("default", "0805"))
 	e.expect(t, 200, "PUT", "/classes/"+resistors+"/attributes/"+notes, nil)
 	e.expect(t, 200, "PUT", "/classes/"+resistors+"/attributes/"+leadFree, nil)
-	e.expect(t, 200, "PUT", "/classes/"+resistors+"/attributes/"+bought, obj("per_unit", true))
+	e.expect(t, 200, "PUT", "/classes/"+resistors+"/attributes/"+bought, obj("scope", "stock"))
 	shelf := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Shelf")).body, "id")
 
 	item := func(name string, values map[string]any) string {
@@ -604,9 +605,9 @@ func TestSearchWhere(t *testing.T) {
 	r4k7 := item("4k7", obj(ohms, 4700, pkg, "0603"))
 	item("47k", obj(ohms, 47000, notes, "Metal film"))
 	item("100R", obj(ohms, 100, leadFree, true))
-	e.expect(t, 201, "POST", "/stock", obj("item", r10k, "location", shelf, "quantity", 5, "values", obj(bought, "2026-01-10")))
-	e.expect(t, 201, "POST", "/stock", obj("item", r10k, "location", shelf, "quantity", 5, "values", obj(bought, "2025-05-01")))
-	e.expect(t, 201, "POST", "/stock", obj("item", r4k7, "location", shelf, "quantity", 5))
+	e.expect(t, 201, "POST", "/stock", obj("item", r10k, "location", shelf, "amount", 5, "values", obj(bought, "2026-01-10")))
+	e.expect(t, 201, "POST", "/stock", obj("item", r10k, "location", shelf, "amount", 5, "values", obj(bought, "2025-05-01")))
+	e.expect(t, 201, "POST", "/stock", obj("item", r4k7, "location", shelf, "amount", 5))
 
 	where := func(filters ...map[string]any) string {
 		b, err := json.Marshal(append([]map[string]any{}, filters...))
@@ -677,7 +678,7 @@ func TestCodes(t *testing.T) {
 	classID := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Parts")).body, "id")
 	item := e.expect(t, 201, "POST", "/items", obj("class", classID, "name", "Screw")).body
 	stock := e.expect(t, 201, "POST", "/stock",
-		obj("item", str(t, item, "id"), "location", str(t, loc, "id"), "quantity", 5)).body
+		obj("item", str(t, item, "id"), "location", str(t, loc, "id"), "amount", 5)).body
 
 	codes := map[string]string{}
 	for typ, o := range map[string]any{"location": loc, "item": item, "stock": stock} {
@@ -720,7 +721,7 @@ func TestUnitValuesAndRequired(t *testing.T) {
 
 	tools := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Power tools")).body, "id")
 	voltage := str(t, e.expect(t, 201, "POST", "/attributes",
-		obj("name", "Voltage", "datatype", "float", "unit", e.unit(t, "Voltage", "V"))).body, "id")
+		obj("name", "Voltage", "datatype", "decimal", "unit", e.unit(t, "Voltage", "V"))).body, "id")
 	serial := str(t, e.expect(t, 201, "POST", "/attributes", obj("name", "Serial number", "datatype", "text")).body, "id")
 	bought := str(t, e.expect(t, 201, "POST", "/attributes", obj("name", "Purchase date", "datatype", "date")).body, "id")
 	condition := str(t, e.expect(t, 201, "POST", "/attributes", obj("name", "Condition", "datatype", "choice")).body, "id")
@@ -729,11 +730,11 @@ func TestUnitValuesAndRequired(t *testing.T) {
 
 	base := "/classes/" + tools + "/attributes/"
 	e.expect(t, 200, "PUT", base+voltage, obj("required", true))
-	e.expect(t, 200, "PUT", base+serial, obj("per_unit", true, "required", true))
-	e.expect(t, 200, "PUT", base+bought, obj("per_unit", true))
-	c := e.expect(t, 200, "PUT", base+condition, obj("per_unit", true, "default", "Good")).body
+	e.expect(t, 200, "PUT", base+serial, obj("scope", "stock", "required", true))
+	e.expect(t, 200, "PUT", base+bought, obj("scope", "stock"))
+	c := e.expect(t, 200, "PUT", base+condition, obj("scope", "stock", "default", "Good")).body
 	for _, a := range get(t, c, "attributes").([]any) {
-		if str(t, a, "attribute", "id") == serial && (get(t, a, "per_unit") != true || get(t, a, "required") != true) {
+		if str(t, a, "attribute", "id") == serial && (get(t, a, "scope") != "stock" || get(t, a, "required") != true) {
 			t.Errorf("serial number assignment: %v", a)
 		}
 	}
@@ -751,8 +752,8 @@ func TestUnitValuesAndRequired(t *testing.T) {
 	site := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Site")).body, "id")
 
 	// Required per-unit value on create.
-	e.expect(t, 422, "POST", "/stock", obj("item", drillID, "location", shelf, "quantity", 4))
-	row := e.expect(t, 201, "POST", "/stock", obj("item", drillID, "location", shelf, "quantity", 4,
+	e.expect(t, 422, "POST", "/stock", obj("item", drillID, "location", shelf, "amount", 4))
+	row := e.expect(t, 201, "POST", "/stock", obj("item", drillID, "location", shelf, "amount", 4,
 		"values", obj(serial, "BATCH-7", bought, "2026-10-01"))).body
 	rowID := str(t, row, "id")
 	defaults := map[string]any{}
@@ -770,18 +771,18 @@ func TestUnitValuesAndRequired(t *testing.T) {
 	e.expect(t, 200, "PUT", "/stock/"+rowID+"/values/"+condition, obj("value", "Worn"))
 
 	// Split copies the values; merging requires identical values.
-	split := e.expect(t, 200, "POST", "/stock/"+rowID+"/move", obj("location", van, "quantity", 1)).body
+	split := e.expect(t, 200, "POST", "/stock/"+rowID+"/move", obj("location", van, "amount", 1)).body
 	if str(t, split, "id") == rowID || len(get(t, split, "values").([]any)) != 3 {
 		t.Fatalf("split: %v", split)
 	}
-	merged := e.expect(t, 200, "POST", "/stock/"+rowID+"/move", obj("location", van, "quantity", 1)).body
-	if str(t, merged, "id") != str(t, split, "id") || num(t, merged, "quantity") != 2 {
+	merged := e.expect(t, 200, "POST", "/stock/"+rowID+"/move", obj("location", van, "amount", 1)).body
+	if str(t, merged, "id") != str(t, split, "id") || num(t, merged, "amount") != 2 {
 		t.Errorf("merge into the identical row: %v", merged)
 	}
-	e.expect(t, 201, "POST", "/stock", obj("item", drillID, "location", site, "quantity", 1,
+	e.expect(t, 201, "POST", "/stock", obj("item", drillID, "location", site, "amount", 1,
 		"values", obj(serial, "OTHER")))
-	moved := e.expect(t, 200, "POST", "/stock/"+rowID+"/move", obj("location", site, "quantity", 1)).body
-	if num(t, moved, "quantity") != 1 || str(t, get(t, moved, "values").([]any)[2], "value") != "BATCH-7" {
+	moved := e.expect(t, 200, "POST", "/stock/"+rowID+"/move", obj("location", site, "amount", 1)).body
+	if num(t, moved, "amount") != 1 || str(t, get(t, moved, "values").([]any)[2], "value") != "BATCH-7" {
 		t.Errorf("rows with different values must not merge: %v", moved)
 	}
 
@@ -796,12 +797,12 @@ func TestUnitValuesAndRequired(t *testing.T) {
 	}
 
 	// A requirement added later doesn't block anything; it's reported.
-	e.expect(t, 200, "PUT", base+bought, obj("per_unit", true, "required", true))
+	e.expect(t, 200, "PUT", base+bought, obj("scope", "stock", "required", true))
 	other := e.expect(t, 200, "GET", "/items?search=drill", nil).body
 	if get(t, other, "rows", 0, "incomplete") != true {
 		t.Errorf("item with a stock row lacking a newly required value should be incomplete: %v", get(t, other, "rows", 0))
 	}
 
 	// The scope can't change while values exist.
-	e.expect(t, 422, "PUT", base+serial, obj("per_unit", false, "required", true))
+	e.expect(t, 422, "PUT", base+serial, obj("scope", "item", "required", true))
 }

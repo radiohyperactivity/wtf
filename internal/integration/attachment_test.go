@@ -73,7 +73,7 @@ func TestAttachments(t *testing.T) {
 	itemID := str(t, e.expect(t, 201, "POST", "/items", obj("class", classID, "name", "Drill")).body, "id")
 	garage := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Garage")).body, "id")
 	van := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Van")).body, "id")
-	stockID := str(t, e.expect(t, 201, "POST", "/stock", obj("item", itemID, "location", garage, "quantity", 2)).body, "id")
+	stockID := str(t, e.expect(t, 201, "POST", "/stock", obj("item", itemID, "location", garage, "amount", 2)).body, "id")
 	item := "/items/" + itemID + "/attachments"
 
 	// Upload a photo, with a title.
@@ -81,7 +81,7 @@ func TestAttachments(t *testing.T) {
 	photo := r.body
 	photoID := str(t, photo, "id")
 	if r.header.Get("Location") != "/api/v1"+item+"/"+photoID || str(t, photo, "title") != "Front" ||
-		str(t, photo, "type") != "image/png" || num(t, photo, "size") != float64(len(pngBytes)) {
+		str(t, photo, "media_type") != "image/png" || num(t, photo, "size") != float64(len(pngBytes)) {
 		t.Fatalf("upload: %v %v", r.header, photo)
 	}
 	pngHash := str(t, photo, "hash")
@@ -106,7 +106,7 @@ func TestAttachments(t *testing.T) {
 	// PDF can't be a photo (and then nothing is attached).
 	e.upload(t, 422, item, "manual.pdf", "", pdfBytes, "photo", "true")
 	manual := e.upload(t, 201, item, "manual.pdf", "", pdfBytes).body
-	if str(t, manual, "type") != "application/pdf" || str(t, manual, "title") != "manual.pdf" {
+	if str(t, manual, "media_type") != "application/pdf" || str(t, manual, "title") != "manual.pdf" {
 		t.Errorf("manual: %v", manual)
 	}
 	if n := len(get(t, e.expect(t, 200, "GET", "/items/"+itemID, nil).body, "attachments").([]any)); n != 2 {
@@ -203,7 +203,7 @@ func TestAttachments(t *testing.T) {
 		str(t, rows, "rows", 0, "item", "photo", "id") != photoID {
 		t.Errorf("stock_list photos: %v", get(t, rows, "rows", 0))
 	}
-	split := e.expect(t, 200, "POST", "/stock/"+stockID+"/move", obj("location", van, "quantity", 1)).body
+	split := e.expect(t, 200, "POST", "/stock/"+stockID+"/move", obj("location", van, "amount", 1)).body
 	copied := str(t, split, "attachments", 0, "id")
 	if copied == str(t, receipt, "id") || str(t, split, "attachments", 0, "hash") != str(t, receipt, "hash") ||
 		str(t, split, "photo", "id") != copied {
@@ -221,14 +221,14 @@ func TestAttachments(t *testing.T) {
 	if s := e.expect(t, 200, "GET", "/stock/"+stockID, nil).body; get(t, s, "photo") != nil || len(get(t, s, "attachments").([]any)) != 0 {
 		t.Errorf("after deleting: %v", s)
 	}
-	if a := e.expect(t, 200, "GET", receiptPath, nil).body; get(t, a, "deleted") != true {
+	if a := e.expect(t, 200, "GET", receiptPath, nil).body; get(t, a, "deleted") == nil {
 		t.Errorf("a deleted attachment: %v", a)
 	}
 	e.expect(t, 200, "GET", "/stock/"+str(t, split, "id")+"/attachments/"+copied, nil)
 	e.expect(t, 204, "DELETE", receiptPath, nil) // again: nothing changes
 	e.expect(t, 409, "PATCH", receiptPath, obj("title", "x"))
 	e.expect(t, 409, "PATCH", "/stock/"+stockID, obj("photo", str(t, receipt, "id")))
-	if a := e.expect(t, 200, "POST", receiptPath+"/restore", nil).body; get(t, a, "deleted") != false {
+	if a := e.expect(t, 200, "POST", receiptPath+"/restore", nil).body; get(t, a, "deleted") != nil {
 		t.Errorf("restored: %v", a)
 	}
 	if s := e.expect(t, 200, "GET", "/stock/"+stockID, nil).body; get(t, s, "photo") != nil || len(get(t, s, "attachments").([]any)) != 1 {

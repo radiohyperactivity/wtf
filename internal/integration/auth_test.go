@@ -38,9 +38,9 @@ func TestAuthentication(t *testing.T) {
 	// Anonymous requests: only health, openapi and login.
 	e.expect(t, 200, "GET", "/api/health", nil, "Cookie", "")
 	spec := httptest.NewRecorder()
-	e.handler.ServeHTTP(spec, e.newRequest("GET", "/openapi.yaml", nil, "Cookie", ""))
-	if spec.Code != 200 || !strings.HasPrefix(spec.Body.String(), "openapi:") {
-		t.Errorf("GET /api/v1/openapi.yaml: %d", spec.Code)
+	e.handler.ServeHTTP(spec, e.newRequest("GET", "/openapi", nil, "Cookie", ""))
+	if spec.Code != 200 || !strings.HasPrefix(spec.Body.String(), "{") {
+		t.Errorf("GET /api/v1/openapi: %d", spec.Code)
 	}
 	r := e.expect(t, 401, "GET", "/items", nil, "Cookie", "")
 	if !strings.HasPrefix(r.header.Get("WWW-Authenticate"), "Cookie") {
@@ -88,15 +88,16 @@ func TestAuthentication(t *testing.T) {
 	e.expect(t, 400, "PATCH", "/accounts/"+acctID, obj("role", "owner"))
 	e.expect(t, 400, "PATCH", "/accounts/"+acctID, obj("role", nil))
 
-	// You can't lock yourself out.
+	// You can't lock yourself out: changing your own role and deleting your
+	// own account are refused as invalid requests.
 	self := str(t, e.expect(t, 200, "GET", "/me", nil).body, "id")
-	e.expect(t, 422, "PATCH", "/accounts/"+self, obj("role", "user"))
+	e.expect(t, 400, "PATCH", "/accounts/"+self, obj("role", "user"))
 	e.expect(t, 200, "PATCH", "/accounts/"+self, obj("role", "admin"))
-	e.expect(t, 422, "DELETE", "/accounts/"+self, nil)
+	e.expect(t, 400, "DELETE", "/accounts/"+self, nil)
 
 	// Using the session renews its cookie; logout ends the session and
 	// deletes the cookie.
-	if c := e.expect(t, 200, "GET", "/me", nil, reader...).header.Get("Set-Cookie"); !strings.Contains(c, "Max-Age=2592000") {
+	if c := e.expect(t, 200, "GET", "/me", nil, reader...).header.Get("Set-Cookie"); !strings.Contains(c, "Max-Age=34560000") {
 		t.Errorf("renewed cookie: %q", c)
 	}
 	if c := e.expect(t, 204, "POST", "/logout", nil, reader...).header.Get("Set-Cookie"); !strings.Contains(c, "Max-Age=0") {
@@ -149,7 +150,7 @@ func TestLoginLog(t *testing.T) {
 	var buf bytes.Buffer
 	handler := serve.NewHandler(e.api, slog.New(slog.NewTextHandler(&buf, nil)), 1<<20, e.files, testMaxAttachment, "", nil)
 	login := func(password string) int {
-		data, _ := json.Marshal(map[string]string{"email": email, "password": password})
+		data, _ := json.Marshal(map[string]any{"email": email, "password": password, "client": nil, "max_idle": nil})
 		req := httptest.NewRequest("POST", "/api/v1/login", bytes.NewReader(data))
 		req.Host = testHostname
 		rec := httptest.NewRecorder()
@@ -164,11 +165,10 @@ func TestLoginLog(t *testing.T) {
 	}
 	log := buf.String()
 	for _, want := range []string{
-		`level=WARN msg="login failed" host=test email=` + email + " remote=",
+		`level=WARN msg="login failed" host=test email=` + email + " client=<nil> address=",
 		"reason=invalid",
-		`level=INFO msg=login host=test email=` + email + " remote=",
+		`level=INFO msg=login host=test email=` + email + " client=<nil> address=",
 		"account=",
-		"remote=",
 	} {
 		if !strings.Contains(log, want) {
 			t.Errorf("log lacks %q:\n%s", want, log)
@@ -211,10 +211,10 @@ func TestRoles(t *testing.T) {
 	// Items and stock: users.
 	e.expect(t, 403, "POST", "/items", obj("name", "Hammer", "class", tools), viewer...)
 	item := str(t, e.expect(t, 201, "POST", "/items", obj("name", "Hammer", "class", tools), user...).body, "id")
-	e.expect(t, 403, "POST", "/stock", obj("item", item, "location", shelf, "quantity", 1), viewer...)
-	stock := str(t, e.expect(t, 201, "POST", "/stock", obj("item", item, "location", shelf, "quantity", 1), user...).body, "id")
-	e.expect(t, 200, "PATCH", "/stock/"+stock, obj("quantity", 2), user...)
-	e.expect(t, 403, "PATCH", "/stock/"+stock, obj("quantity", 3), viewer...)
+	e.expect(t, 403, "POST", "/stock", obj("item", item, "location", shelf, "amount", 1), viewer...)
+	stock := str(t, e.expect(t, 201, "POST", "/stock", obj("item", item, "location", shelf, "amount", 1), user...).body, "id")
+	e.expect(t, 200, "PATCH", "/stock/"+stock, obj("amount", 2), user...)
+	e.expect(t, 403, "PATCH", "/stock/"+stock, obj("amount", 3), viewer...)
 	for _, who := range [][]string{viewer, user} {
 		e.expect(t, 200, "GET", "/items/"+item+"/history", nil, who...)
 		e.expect(t, 200, "GET", "/stock/"+stock+"/history", nil, who...)
@@ -229,4 +229,68 @@ func TestRoles(t *testing.T) {
 	e.expect(t, 403, "POST", "/accounts", obj("email", "x@test.local"), user...)
 	e.expect(t, 200, "GET", "/classes/"+tools+"/model", nil)
 	e.expect(t, 200, "GET", "/locations/"+shelf+"/history", nil)
+}
+
+// The user's own sessions: listed, ended one at a time or all but the
+// current one, and how long one lasts unused is the login's choice.
+func TestSessions(t *testing.T) {
+	e := setup(t)
+	email := fmt.Sprintf("sessions-%d@test.local", time.Now().UnixNano())
+	e.expect(t, 201, "POST", "/accounts", obj("email", email, "password", "secret-password", "role", "user"))
+
+	login := func(client any, maxIdle any) string {
+		return session(t, e.expect(t, 200, "POST", "/login",
+			obj("email", email, "password", "secret-password", "client", client, "max_idle", maxIdle), "Cookie", ""))
+	}
+	phone := login("phone", 3600)
+	laptop := login("laptop", nil)
+	tablet := login(nil, 86400)
+
+	// Both client and max_idle are required, and max_idle is seconds.
+	e.expect(t, 400, "POST", "/login", `{"email": "`+email+`", "password": "secret-password"}`, "Cookie", "")
+	e.expect(t, 400, "POST", "/login", obj("email", email, "password", "secret-password", "max_idle", "an hour"), "Cookie", "")
+
+	list := e.expect(t, 200, "GET", "/me/sessions", nil, as(laptop)...).body.([]any)
+	if len(list) != 3 {
+		t.Fatalf("sessions: %v", list)
+	}
+	byClient := map[string]any{} // the tablet's, without a client name, is ""
+	for _, s := range list {
+		name, _ := get(t, s, "client").(string)
+		byClient[name] = s
+	}
+	if get(t, byClient["laptop"], "current") != true || get(t, byClient["phone"], "current") != false {
+		t.Errorf("current: %v", list)
+	}
+	if num(t, byClient["phone"], "max_idle") != 3600 || get(t, byClient["phone"], "expires") == nil ||
+		get(t, byClient["laptop"], "max_idle") != nil || get(t, byClient["laptop"], "expires") != nil {
+		t.Errorf("lifetimes: %v", list)
+	}
+
+	// Ending one: the phone is logged out, the others are not.
+	e.expect(t, 204, "DELETE", "/me/sessions/"+str(t, byClient["phone"], "id"), nil, as(laptop)...)
+	e.expect(t, 401, "GET", "/me", nil, as(phone)...)
+	e.expect(t, 200, "GET", "/me", nil, as(tablet)...)
+	// Another account's session is not found.
+	e.expect(t, 404, "DELETE", "/me/sessions/"+str(t, byClient[""], "id"), nil)
+
+	// All but this one.
+	if r := e.expect(t, 200, "POST", "/me/sessions/logout-others", nil, as(laptop)...).body; num(t, r, "ended") != 1 {
+		t.Errorf("logout-others: %v", r)
+	}
+	e.expect(t, 401, "GET", "/me", nil, as(tablet)...)
+	if n := len(e.expect(t, 200, "GET", "/me/sessions", nil, as(laptop)...).body.([]any)); n != 1 {
+		t.Errorf("%d sessions after logout-others", n)
+	}
+
+	// A new password says whether the other sessions end.
+	other := login("other", nil)
+	e.expect(t, 400, "PUT", "/me/password", `{"current": "secret-password", "new": "another-password"}`, as(laptop)...)
+	e.expect(t, 204, "PUT", "/me/password",
+		obj("current", "secret-password", "new", "another-password", "end_other_sessions", false), as(laptop)...)
+	e.expect(t, 200, "GET", "/me", nil, as(other)...)
+	e.expect(t, 204, "PUT", "/me/password",
+		obj("current", "another-password", "new", "third-password", "end_other_sessions", true), as(laptop)...)
+	e.expect(t, 401, "GET", "/me", nil, as(other)...)
+	e.expect(t, 200, "GET", "/me", nil, as(laptop)...)
 }

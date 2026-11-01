@@ -403,10 +403,13 @@ BEGIN
     PERFORM util.check_patch(p_patch, ARRAY['title'], ARRAY['title']);
     SELECT a.* INTO v_attachment
     FROM public.attachment a
-    WHERE a.id = p_attachment AND attachment.owner_of(a) = p_owner AND a.deleted IS NULL
+    WHERE a.id = p_attachment AND attachment.owner_of(a) = p_owner
     FOR UPDATE;
     IF NOT FOUND THEN
         PERFORM error.not_found('attachment', p_attachment::text);
+    END IF;
+    IF v_attachment.deleted IS NOT NULL THEN
+        PERFORM error.deleted('attachment', p_attachment);
     END IF;
 
     PERFORM util.begin_action(v_session);
@@ -421,7 +424,8 @@ $$;
 -- Deletes an attachment of one of the tenant's live objects: it is marked
 -- deleted, by this call's action. If it is the owner's photo, the owner has
 -- no photo any more, also when the attachment is restored. The file stays
--- on disk while any attachment, live or deleted, has its hash.
+-- on disk while any attachment, live or deleted, has its hash. Deleting a
+-- deleted attachment again changes nothing.
 CREATE FUNCTION attachment.delete(
     p_request    public.request,
     p_kind       public.owner_kind,
@@ -434,13 +438,19 @@ AS $$
 DECLARE
     v_session record := util.session(p_request, 'viewer');
     v_photo   uuid;
+    v_deleted boolean;
     v_action  uuid;
 BEGIN
     v_photo := attachment.check_owner(v_session, p_kind, p_owner, true);
-    IF NOT EXISTS (SELECT 1 FROM public.attachment a
-                   WHERE a.id = p_attachment AND attachment.owner_of(a) = p_owner
-                     AND a.deleted IS NULL) THEN
+    SELECT a.deleted IS NOT NULL INTO v_deleted
+    FROM public.attachment a
+    WHERE a.id = p_attachment AND attachment.owner_of(a) = p_owner;
+    IF NOT FOUND THEN
         PERFORM error.not_found('attachment', p_attachment::text);
+    END IF;
+    -- Deleting it again changes nothing.
+    IF v_deleted THEN
+        RETURN;
     END IF;
 
     v_action := util.begin_action(v_session);

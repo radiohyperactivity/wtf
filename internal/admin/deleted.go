@@ -64,13 +64,13 @@ var purgeStatements = map[string]string{
 		  AND NOT EXISTS (SELECT 1 FROM public.item_value v WHERE v.attribute = r.id)
 		  AND NOT EXISTS (SELECT 1 FROM public.stock_value v WHERE v.attribute = r.id)
 		  AND NOT EXISTS (SELECT 1 FROM public.class_attribute ca WHERE ca.attribute = r.id)`,
-	// The tenant's actions that no deleted row and no history entry refers
-	// to any more (an action is the record of who deleted something, and
-	// when, and of a call's history entries); never the purge's own, which
-	// its history entries refer to.
+	// The tenant's actions older than $1 that no deleted row and no history
+	// entry refers to any more (an action is the record of who deleted
+	// something, and when, and of a call's history entries); never the
+	// purge's own, which its history entries refer to.
 	"action": `
 		DELETE FROM public.action a
-		WHERE a.tenant = $2
+		WHERE a.tenant = $2 AND a.at < now() - $1::interval
 		  AND a.id <> current_setting('wtf.action')::uuid
 		  AND NOT EXISTS (SELECT 1 FROM public.history h WHERE h.action = a.id)
 		  AND NOT EXISTS (SELECT 1 FROM public.item x WHERE x.deleted = a.id)

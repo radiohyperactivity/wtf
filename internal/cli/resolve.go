@@ -445,12 +445,22 @@ func (e *env) resolveAttribute(ref string) (*attribute, error) {
 }
 
 // resolveOption returns the id of an option of an attribute, by id or name.
+// options returns the live options of a choice attribute, which come with
+// the attribute.
+func (e *env) options(attributeID string) ([]option, error) {
+	var a attribute
+	if err := e.get("/attributes/"+attributeID, nil, &a); err != nil {
+		return nil, err
+	}
+	return a.Options, nil
+}
+
 func (e *env) resolveOption(attributeID, ref string) (string, error) {
 	if isUUID(ref) {
 		return strings.ToLower(ref), nil
 	}
-	var options []option
-	if err := e.get("/attributes/"+attributeID+"/options", nil, &options); err != nil {
+	options, err := e.options(attributeID)
+	if err != nil {
 		return "", err
 	}
 	for _, o := range options {

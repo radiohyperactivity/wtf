@@ -11,7 +11,7 @@ import (
 // isDeleted checks that the object at path is still there, marked deleted.
 func isDeleted(t *testing.T, e *environment, path string) {
 	t.Helper()
-	if body := e.expect(t, 200, "GET", path, nil).body; get(t, body, "deleted") != true {
+	if body := e.expect(t, 200, "GET", path, nil).body; get(t, body, "deleted") == nil {
 		t.Errorf("%s isn't marked deleted: %v", path, body)
 	}
 }
@@ -31,12 +31,15 @@ func purgeDeleted(t *testing.T, e *environment) map[string]int64 {
 	return counts
 }
 
-// refused checks a 409 because something is deleted, with a message that
-// contains want.
+// refused checks a 409 because something is deleted (or not deleted, when
+// restoring), with a message that contains want: a wrong-state problem, or
+// the restore-into-deleted one.
 func refused(t *testing.T, r response, want string) {
 	t.Helper()
-	if str(t, r.body, "type") != "/problems/deleted" || !strings.Contains(str(t, r.body, "detail"), want) {
-		t.Errorf("want a deleted problem with %q, got %v", want, r.body)
+	kind := str(t, r.body, "type")
+	if kind != "/problems/wrong-state" && kind != "/problems/restore-into-deleted" ||
+		!strings.Contains(str(t, r.body, "detail"), want) {
+		t.Errorf("want a wrong-state problem with %q, got %v", want, r.body)
 	}
 }
 
@@ -66,7 +69,7 @@ func TestDeleted(t *testing.T) {
 	drill := e.expect(t, 201, "POST", "/items", obj("class", tools, "name", "Drill")).body
 	drillID := str(t, drill, "id")
 	shelf := location("Shelf", nil)
-	row := e.expect(t, 201, "POST", "/stock", obj("item", drillID, "location", shelf, "quantity", 2)).body
+	row := e.expect(t, 201, "POST", "/stock", obj("item", drillID, "location", shelf, "amount", 2)).body
 	rowID := str(t, row, "id")
 
 	// Deleting a stock row marks it: it is still there, but lists leave it out.
@@ -82,15 +85,15 @@ func TestDeleted(t *testing.T) {
 		t.Error("a live item lists a deleted stock row")
 	}
 	// Its label code still answers.
-	if r := e.expect(t, 200, "GET", "/codes/"+str(t, row, "code"), nil).body; get(t, r, "object", "deleted") != true {
+	if r := e.expect(t, 200, "GET", "/codes/"+str(t, row, "code"), nil).body; get(t, r, "object", "deleted") == nil {
 		t.Errorf("code of a deleted row: %v", r)
 	}
 
 	// Deleted rows are frozen, and live rows can't use them.
-	refused(t, e.expect(t, 409, "PATCH", "/stock/"+rowID, obj("quantity", 3)), "is deleted")
+	refused(t, e.expect(t, 409, "PATCH", "/stock/"+rowID, obj("amount", 3)), "is deleted")
 	refused(t, e.expect(t, 409, "POST", "/stock/"+rowID+"/move", obj("location", shelf)), "is deleted")
 	e.expect(t, 200, "POST", "/stock/"+rowID+"/restore", nil)
-	if get(t, e.expect(t, 200, "GET", "/stock/"+rowID, nil).body, "deleted") != false {
+	if get(t, e.expect(t, 200, "GET", "/stock/"+rowID, nil).body, "deleted") != nil {
 		t.Error("restored row is still deleted")
 	}
 	refused(t, e.expect(t, 409, "POST", "/stock/"+rowID+"/restore", nil), "is not deleted")
@@ -106,7 +109,7 @@ func TestDeleted(t *testing.T) {
 	newBox := location("Box", shelf)
 	e.expect(t, 409, "POST", "/locations/"+box+"/restore", nil) // duplicate name
 	restored := e.expect(t, 200, "POST", "/locations/"+box+"/restore", obj("name", "Old box")).body
-	if str(t, restored, "name") != "Old box" || get(t, restored, "deleted") != false {
+	if str(t, restored, "name") != "Old box" || get(t, restored, "deleted") != nil {
 		t.Errorf("restored box: %v", restored)
 	}
 	_ = newBox
@@ -126,7 +129,7 @@ func TestDeleted(t *testing.T) {
 		}
 	}
 	find(get(t, e.expect(t, 200, "GET", "/locations", nil).body, "tree"))
-	inA1 := str(t, e.expect(t, 201, "POST", "/stock", obj("item", drillID, "location", compartment["A1"], "quantity", 1)).body, "id")
+	inA1 := str(t, e.expect(t, 201, "POST", "/stock", obj("item", drillID, "location", compartment["A1"], "amount", 1)).body, "id")
 	e.expect(t, 204, "DELETE", "/locations/"+compartment["B1"], nil)
 	e.expect(t, 200, "DELETE", "/locations/"+grid+"?recursive=true&force=true", nil)
 	if names := strings.Join(treeNames(t, e, "/locations"), ","); strings.Contains(names, "Case") || strings.Contains(names, "A1") {
@@ -136,7 +139,7 @@ func TestDeleted(t *testing.T) {
 	if names := strings.Join(treeNames(t, e, "/locations"), ","); !strings.Contains(names, "Case,A1") || strings.Contains(names, "B1") {
 		t.Errorf("tree after restore: %s", names)
 	}
-	if get(t, e.expect(t, 200, "GET", "/stock/"+inA1, nil).body, "deleted") != false {
+	if get(t, e.expect(t, 200, "GET", "/stock/"+inA1, nil).body, "deleted") != nil {
 		t.Error("the stock in A1 wasn't restored")
 	}
 
@@ -148,24 +151,26 @@ func TestDeleted(t *testing.T) {
 	e.expect(t, 204, "DELETE", "/locations/"+room, nil)
 	r := e.expect(t, 409, "POST", "/locations/"+cupboard+"/restore", nil)
 	refused(t, r, `is in "Room", which is deleted`)
-	if !strings.Contains(str(t, r.body, "hint"), "with_parents") {
-		t.Errorf("hint: %v", r.body)
+	// A problem of its own, with the options as fields.
+	if str(t, r.body, "type") != "/problems/restore-into-deleted" || str(t, r.body, "place_key") != "parent" ||
+		get(t, r.body, "with_parents") != true || !strings.Contains(str(t, r.body, "hint"), "with_parents") {
+		t.Errorf("restore into something deleted: %v", r.body)
 	}
 	refused(t, e.expect(t, 409, "POST", "/locations/"+cupboard+"/restore", obj("parent", room)), `"Room" is deleted`)
 	e.expect(t, 200, "POST", "/locations/"+cupboard+"/restore", obj("with_parents", true))
-	if get(t, e.expect(t, 200, "GET", "/locations/"+room, nil).body, "deleted") != false {
+	if get(t, e.expect(t, 200, "GET", "/locations/"+room, nil).body, "deleted") != nil {
 		t.Error("with_parents didn't restore the room")
 	}
 	e.expect(t, 204, "DELETE", "/locations/"+cupboard, nil)
 	e.expect(t, 204, "DELETE", "/locations/"+room, nil)
 	moved := e.expect(t, 200, "POST", "/locations/"+cupboard+"/restore", obj("parent", nil)).body
-	if get(t, moved, "parent") != nil || get(t, e.expect(t, 200, "GET", "/locations/"+room, nil).body, "deleted") != true {
+	if get(t, moved, "parent") != nil || get(t, e.expect(t, 200, "GET", "/locations/"+room, nil).body, "deleted") == nil {
 		t.Errorf("restored at the top: %v", moved)
 	}
 
 	// A stock row at a deleted location, the same way.
 	bin := location("Bin", nil)
-	inBin := str(t, e.expect(t, 201, "POST", "/stock", obj("item", drillID, "location", bin, "quantity", 1)).body, "id")
+	inBin := str(t, e.expect(t, 201, "POST", "/stock", obj("item", drillID, "location", bin, "amount", 1)).body, "id")
 	e.expect(t, 200, "DELETE", "/locations/"+bin+"?recursive=true&force=true", nil)
 	e.expect(t, 204, "DELETE", "/stock/"+rowID, nil)
 	refused(t, e.expect(t, 409, "POST", "/stock/"+inBin+"/restore", nil), `which is deleted`)
@@ -188,13 +193,10 @@ func TestDeleted(t *testing.T) {
 	}
 	refused(t, e.expect(t, 409, "POST", "/items/"+drillID+"/restore", nil), `class "Tools"`)
 	r = e.expect(t, 409, "POST", "/stock/"+inA1+"/restore", nil)
-	refused(t, r, `belongs to Item "Drill", which is deleted`)
-	if !strings.Contains(str(t, r.body, "hint"), "Restore the item") {
-		t.Errorf("hint: %v", r.body)
-	}
+	refused(t, r, `belongs to Item "Drill", which is deleted; restoring the item also restores`)
 	e.expect(t, 200, "POST", "/classes/"+tools+"/restore", nil)
-	if get(t, e.expect(t, 200, "GET", "/items/"+drillID, nil).body, "deleted") != false ||
-		get(t, e.expect(t, 200, "GET", "/stock/"+inA1, nil).body, "deleted") != false {
+	if get(t, e.expect(t, 200, "GET", "/items/"+drillID, nil).body, "deleted") != nil ||
+		get(t, e.expect(t, 200, "GET", "/stock/"+inA1, nil).body, "deleted") != nil {
 		t.Error("restoring the class didn't restore its item and stock")
 	}
 
@@ -219,7 +221,7 @@ func TestDeleted(t *testing.T) {
 	h := e.expect(t, 200, "GET", "/options/"+small, nil).body
 	_ = h
 	rows := get(t, e.expect(t, 200, "GET", "/attributes/"+size+"/history", nil).body, "rows").([]any)
-	if str(t, rows[0], "operation") != "update" || get(t, rows[0], "changes", "deleted", "new") != false {
+	if str(t, rows[0], "operation") != "update" || get(t, rows[0], "changes", "deleted", "new") != nil {
 		t.Errorf("history of a restore: %v", rows[0])
 	}
 
@@ -249,7 +251,7 @@ func TestDeletedRules(t *testing.T) {
 	e.expect(t, 200, "DELETE", "/classes/"+tools+"?recursive=true", nil)
 	e.expect(t, 200, "POST", "/classes/"+cordless+"/restore", obj("with_parents", true))
 	for _, id := range []string{tools, drills, cordless} {
-		if get(t, e.expect(t, 200, "GET", "/classes/"+id, nil).body, "deleted") != false {
+		if get(t, e.expect(t, 200, "GET", "/classes/"+id, nil).body, "deleted") != nil {
 			t.Errorf("class %s still deleted", id)
 		}
 	}
@@ -299,7 +301,7 @@ func TestDeletedRules(t *testing.T) {
 	e.expect(t, 204, "DELETE", "/locations/"+box, nil)
 	kinds, rows := historyOf(t, e, "/locations/"+shed+"/history")
 	if strings.Join(kinds, ",") != "location.update,location.insert,location.insert" ||
-		get(t, rows[0], "changes", "deleted", "new") != true || str(t, rows[0], "data", "id") != box {
+		get(t, rows[0], "changes", "deleted", "new") == nil || str(t, rows[0], "data", "id") != box {
 		t.Errorf("shed history: %v", kinds)
 	}
 	e.expect(t, 204, "DELETE", "/items/"+item, nil)
@@ -346,7 +348,7 @@ func TestListHistory(t *testing.T) {
 	e.expect(t, 200, "DELETE", "/locations/"+shed+"?recursive=true", nil)    // Box goes with it, inside
 	kinds, rows := historyOf(t, e, "/locations/history")
 	if got := strings.Join(kinds, ","); got != "location.update,location.update,location.update,location.insert,location.insert" ||
-		ids(rows) != "Shed,Box,Box,Shed,Garage" || get(t, rows[0], "changes", "deleted", "new") != true {
+		ids(rows) != "Shed,Box,Box,Shed,Garage" || get(t, rows[0], "changes", "deleted", "new") == nil {
 		t.Errorf("top-level locations: %s %s", got, ids(rows))
 	}
 

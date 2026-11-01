@@ -129,14 +129,14 @@ func (e *env) cachedTree(path, name string) (tree, error) {
 func (e *env) cachedGet(path, name string, v any) error {
 	if e.completing {
 		if at, ok := e.readCache(name, v); ok && time.Since(at) < listTTL {
-			return nil
+			return e.fillUnits(v)
 		}
 	}
 	data, err := e.api.Get(e.ctx, path, nil)
 	if err != nil {
 		return err
 	}
-	if err := decode(data, v); err != nil {
+	if err := e.decode(data, v); err != nil {
 		return err
 	}
 	if e.completing {

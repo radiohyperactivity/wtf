@@ -402,13 +402,13 @@ BEGIN
             WHERE i.id = p_stock.item AND e.scope = 'stock'
         ),
         shown AS (
-            SELECT e.attribute_row AS a, sv IS NULL AS is_default,
+            SELECT e.attribute_row AS a, sv.stock IS NULL AS is_default,
                    coalesce(sv.text, e.default_text) AS text, coalesce(sv.number, e.default_number) AS number,
                    coalesce(sv.date, e.default_date) AS date, coalesce(sv.boolean, e.default_boolean) AS boolean,
                    coalesce(sv.option, e.default_option) AS option
             FROM effective e
             LEFT JOIN public.stock_value sv ON sv.stock = p_stock.id AND sv.attribute = e.attribute
-            WHERE sv IS NOT NULL OR num_nonnulls(e.default_text, e.default_number, e.default_date,
+            WHERE sv.stock IS NOT NULL OR num_nonnulls(e.default_text, e.default_number, e.default_date,
                                                  e.default_boolean, e.default_option) = 1
         )
         SELECT stock.json(p_stock, attachment.json(ph, NULL), p_deleted) || jsonb_build_object(
@@ -641,10 +641,13 @@ BEGIN
     SELECT s.* INTO v_stock
     FROM public.stock s
     JOIN public.location l ON l.id = s.location
-    WHERE s.id = p_stock AND l.tenant = v_session.tenant AND s.deleted IS NULL
+    WHERE s.id = p_stock AND l.tenant = v_session.tenant
     FOR UPDATE OF s;
     IF NOT FOUND THEN
         PERFORM error.not_found('stock row', p_stock::text);
+    END IF;
+    IF v_stock.deleted IS NOT NULL THEN
+        PERFORM error.deleted('stock', p_stock);
     END IF;
 
     v_item  := coalesce((p_patch ->> 'item')::uuid, v_stock.item);

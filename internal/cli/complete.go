@@ -195,8 +195,8 @@ func completeOptionsOf(i int) completer {
 }
 
 func (e *env) optionNames(attributeID string) []string {
-	var options []option
-	if e.get("/attributes/"+attributeID+"/options", nil, &options) != nil {
+	options, err := e.options(attributeID)
+	if err != nil {
 		return nil
 	}
 	var out []string

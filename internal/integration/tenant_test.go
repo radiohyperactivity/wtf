@@ -76,7 +76,7 @@ func TestTenants(t *testing.T) {
 	item := e.expect(t, 201, "POST", "/items", obj("class", class, "name", "Drill")).body
 	itemID := str(t, item, "id")
 	stock := str(t, e.expect(t, 201, "POST", "/stock",
-		obj("item", itemID, "location", str(t, garage, "id"), "quantity", 1)).body, "id")
+		obj("item", itemID, "location", str(t, garage, "id"), "amount", 1)).body, "id")
 	attr := str(t, e.expect(t, 201, "POST", "/attributes", obj("name", "Colour", "datatype", "text")).body, "id")
 
 	// The other tenant sees none of them, by id, code, list, search or tree…
@@ -90,7 +90,7 @@ func TestTenants(t *testing.T) {
 	if tree := get(t, e.expect(t, 200, "GET", "/classes", nil, b...).body, "tree").([]any); len(tree) != 0 {
 		t.Errorf("the other tenant's class tree: %v", tree)
 	}
-	if n := num(t, e.expect(t, 200, "GET", "/items/"+itemID+"/history", nil, b...).body, "total"); n != 0 {
+	if n := len(get(t, e.expect(t, 200, "GET", "/items/"+itemID+"/history", nil, b...).body, "rows").([]any)); n != 0 {
 		t.Errorf("the other tenant sees %v history entries", n)
 	}
 	if list := e.expect(t, 200, "GET", "/accounts", nil, b...).body.([]any); len(list) != 1 {
@@ -150,7 +150,7 @@ func TestTenants(t *testing.T) {
 		t.Fatalf("import: %v", r)
 	}
 	var hand string
-	for _, f := range e.expect(t, 200, "GET", "/unit-families", nil, b...).body.([]any) {
+	for _, f := range get(t, e.expect(t, 200, "GET", "/unit-families", nil, b...).body, "families").([]any) {
 		for _, u := range get(t, f, "units").([]any) {
 			if str(t, u, "symbol") == "hh" {
 				hand = str(t, u, "id")
@@ -159,17 +159,17 @@ func TestTenants(t *testing.T) {
 	}
 	e.expect(t, 200, "GET", "/units/"+hand, nil, b...)
 	e.expect(t, 404, "GET", "/units/"+hand, nil)
-	e.expect(t, 422, "POST", "/attributes", obj("name", "Span", "datatype", "float", "unit", hand))
+	e.expect(t, 422, "POST", "/attributes", obj("name", "Span", "datatype", "decimal", "unit", hand))
 
 	// Turning units off: one tenant's choice, refused while something uses them.
 	var imperial, length string
-	for _, f := range e.expect(t, 200, "GET", "/unit-families", nil).body.([]any) {
+	for _, f := range get(t, e.expect(t, 200, "GET", "/unit-families", nil).body, "families").([]any) {
 		if str(t, f, "name") == "Imperial length" {
 			imperial, length = str(t, f, "id"), str(t, f, "quantity", "id")
 		}
 	}
 	inch := e.unit(t, "Imperial length", "in")
-	width := str(t, e.expect(t, 201, "POST", "/attributes", obj("name", "Width", "datatype", "float", "unit", inch), b...).body, "id")
+	width := str(t, e.expect(t, 201, "POST", "/attributes", obj("name", "Width", "datatype", "decimal", "unit", inch), b...).body, "id")
 	if r := e.expect(t, 409, "PATCH", "/unit-families/"+imperial, obj("available", false), b...).body; !bytes.Contains(must(json.Marshal(r)), []byte("Width")) {
 		t.Errorf("the refusal names what uses it: %v", r)
 	}
@@ -178,7 +178,7 @@ func TestTenants(t *testing.T) {
 	if get(t, f, "available") != false || get(t, f, "choice") != false || get(t, f, "standard") != true {
 		t.Errorf("turned off: %v", f)
 	}
-	e.expect(t, 409, "POST", "/attributes", obj("name", "Width", "datatype", "float", "unit", inch), b...)
+	e.expect(t, 409, "POST", "/attributes", obj("name", "Width", "datatype", "decimal", "unit", inch), b...)
 	if get(t, e.expect(t, 200, "GET", "/unit-families/"+imperial, nil).body, "available") != true {
 		t.Error("the test tenant's Imperial length was turned off too")
 	}
@@ -188,7 +188,7 @@ func TestTenants(t *testing.T) {
 	}
 	// A quantity turned off turns its families off.
 	e.expect(t, 200, "PATCH", "/quantities/"+length, obj("available", false), b...)
-	for _, f := range e.expect(t, 200, "GET", "/unit-families?quantity="+length, nil, b...).body.([]any) {
+	for _, f := range get(t, e.expect(t, 200, "GET", "/unit-families?quantity="+length, nil, b...).body, "families").([]any) {
 		if get(t, f, "available") != false {
 			t.Errorf("%s is still available", str(t, f, "name"))
 		}
@@ -209,16 +209,16 @@ func TestTenants(t *testing.T) {
 			}),
 		})))
 	}
-	report, err := admin.ImportGlobalUnits(context.Background(), conn, file("Nautical length"), false)
+	report, err := admin.ImportGlobalUnits(context.Background(), conn, file("Sea length"), false)
 	if err != nil || !bytes.Contains(report, []byte(`"applied": true`)) {
 		t.Fatalf("global import: %s %v", report, err)
 	}
-	if e.unit(t, "Nautical length", "ftm") == "" {
+	if e.unit(t, "Sea length", "ftm") == "" {
 		t.Error("the test tenant doesn't see the global unit")
 	}
-	for _, f := range e.expect(t, 200, "GET", "/unit-families", nil, b...).body.([]any) {
-		if str(t, f, "name") == "Nautical length" && get(t, f, "global") != true {
-			t.Errorf("Nautical length: %v", f)
+	for _, f := range get(t, e.expect(t, 200, "GET", "/unit-families", nil, b...).body, "families").([]any) {
+		if str(t, f, "name") == "Sea length" && get(t, f, "global") != true {
+			t.Errorf("Sea length: %v", f)
 		}
 	}
 	e.expect(t, 200, "POST", "/model/import", obj("format", "wtf-model", "version", 1, "quantities", []any{
@@ -228,11 +228,11 @@ func TestTenants(t *testing.T) {
 	if err != nil || !bytes.Contains(report, []byte(host)) {
 		t.Errorf("a global family named like a tenant's: %s %v", report, err)
 	}
-	if err := admin.SetUnitStandard(context.Background(), conn, "family", "Nautical length", false); err != nil {
+	if err := admin.SetUnitStandard(context.Background(), conn, "family", "Sea length", false); err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range e.expect(t, 200, "GET", "/unit-families", nil).body.([]any) {
-		if str(t, f, "name") == "Nautical length" && get(t, f, "available") != false {
+	for _, f := range get(t, e.expect(t, 200, "GET", "/unit-families", nil).body, "families").([]any) {
+		if str(t, f, "name") == "Sea length" && get(t, f, "available") != false {
 			t.Errorf("not available by default any more: %v", f)
 		}
 	}
