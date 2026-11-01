@@ -64,16 +64,10 @@ openapi/openapi.yaml           OpenAPI description, embedded and served at /api/
 db/embed.go                    //go:embed migrations/*.sql repeatable/*.sql
 db/migrations/0001_schema.sql  versioned migrations
 db/migrations/0002_units.sql
-db/repeatable/10_util.sql      repeatable scripts
-db/repeatable/20_attribute.sql
-db/repeatable/30_class.sql
-db/repeatable/40_item.sql
-db/repeatable/50_location.sql
-db/repeatable/60_meta.sql
-db/repeatable/70_code.sql
-db/repeatable/80_attachment.sql
-db/repeatable/90_account.sql
-db/repeatable/95_history.sql
+db/repeatable/10_error.sql     repeatable scripts, one per function schema:
+db/repeatable/11_util.sql        error, util, tenant, account, unit, class,
+db/repeatable/…                  attribute, item, location, stock, attachment,
+                                 model, history, meta, code
 .gitattributes                 *.sql text eol=lf
 README.md, SCHEMA.md, API.md, … documentation
 ```
@@ -88,7 +82,7 @@ There are two kinds of SQL scripts.
 
 ### Versioned migrations (`db/migrations/`)
 
-- **What:** everything that holds data or that data depends on: types, tables, indexes, constraints, the view, trigger functions and triggers, seed data.
+- **What:** everything that holds data: types, domains, tables, indexes, constraints, and the bootstrap units.
 - **Naming:** `NNNN_description.sql`. The number is the version. Versions start at 1 and have no gaps, so a missing or misnumbered file is detected.
 - **Applied once:** each migration runs exactly once, in version order, each in its own transaction. DDL in PostgreSQL is transactional, so a failing migration leaves nothing half-done.
 - **Immutable once applied:** its SHA-256 checksum is recorded, and a changed file is refused. A change to an applied migration goes into a new migration.
@@ -96,16 +90,16 @@ There are two kinds of SQL scripts.
 
 ### Repeatable scripts (`db/repeatable/`)
 
-- **What:** the `util` helpers and the API functions. Nothing stores data in them, so they can be thrown away and recreated at any time.
-- **Naming:** `NN_description.sql`, applied in file-name order (`util` first).
+- **What:** every function: the rules (trigger functions, with their `CREATE TRIGGER`), the helpers, and the functions the API calls. Each script makes one schema, named after what its functions belong to (`item`, `class`, `unit`, …; `error` for the errors raised on purpose, `util` for what belongs to nothing in particular). These schemas hold only functions, so they can be thrown away and recreated at any time. Nothing that holds data may use one of their functions: a constraint that needs one calls it through a function in a migration.
+- **Naming:** `NN_description.sql`, applied in file-name order (`error` and `util` first, as everything uses them; a SQL function's body must only name what already exists).
 - **Rebuilt as a whole:** if any repeatable script was added, changed or removed, or if any migration was applied in this run, all repeatables are rebuilt in one transaction:
-  1. `DROP SCHEMA util CASCADE`
-  2. drop every `SECURITY DEFINER` function in `public` (the API functions)
+  1. check that dropping the function schemas would take nothing but functions, triggers and views: no table in them, and nothing outside them (a default, a constraint, an index) that uses one of their functions; otherwise refuse, naming what is in the way
+  2. `DROP SCHEMA … CASCADE` for every function schema (every schema the DBA role owns but `public`, `extensions` and `wtfd`), which takes their triggers along
   3. run all repeatable scripts in order
   4. record their checksums
-  5. refresh the grants (below)
+  5. refresh the grants (below), and log the API functions per schema, so a change in the list shows
 
-  Rebuilding everything means changed signatures, renames and removals need no special handling. It takes a fraction of a second for ~70 functions. API calls that are in flight see either the old or the new set of functions, never a mix.
+  Rebuilding everything means changed signatures, renames and removals need no special handling. API calls that are in flight see either the old or the new set of functions, never a mix.
 
 ### Checksums
 
@@ -140,7 +134,7 @@ CREATE TABLE IF NOT EXISTS wtfd.repeatable (
 
 1. **Connect** as `--dba-database-user`, with `application_name = 'wtfd schema'` (visible in `pg_stat_activity`).
 2. **Check preconditions** and stop with a clear message if any fails:
-   - the server is PostgreSQL 15 or newer;
+   - the server is PostgreSQL 18 or newer;
    - the connected role owns the database, so every object it creates is owned by the right role;
    - the API role exists.
 3. **Lock:** `pg_advisory_lock` with a fixed key. A second `wtfd schema` waits instead of running concurrently. The lock is released when the session ends, even if `wtfd` crashes.
@@ -152,8 +146,8 @@ CREATE TABLE IF NOT EXISTS wtfd.repeatable (
 7. **Apply** the pending migrations, in order, one transaction each, recording each in `wtfd.migration`.
 8. **Rebuild** the repeatables if needed (see above).
 9. **Grants**, checked on every run, and corrected if needed:
-   - `wtf_api` has `EXECUTE` on exactly the `SECURITY DEFINER` functions in `public`;
-   - nobody else (`PUBLIC`) has `EXECUTE` on any function in `public` or `util`;
+   - `wtf_api` has `USAGE` on every function schema, and `EXECUTE` on exactly the `SECURITY DEFINER` functions in them (the functions the API calls);
+   - nobody else (`PUBLIC`) has `EXECUTE` on any of our functions;
    - `ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC` is in place for the DBA role. A role may set this for itself, so step 4 of the README's setup wouldn't strictly be needed any more, but keeping it there does no harm.
 10. **Report** a summary and exit 0.
 

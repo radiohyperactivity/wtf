@@ -1,6 +1,6 @@
 # Database refactor – plan
 
-**Status: steps 1–4 done (2026-11-01, overnight); SCHEMA.md next.** Part 1 of 3: the database model, then the PL/pgSQL accessor functions ([2026-10-31-pl-pgsql-accessor-refactor.md](2026-10-31-pl-pgsql-accessor-refactor.md)), then the API ([2026-10-31-api-refactor.md](2026-10-31-api-refactor.md)).
+**Status: done (2026-11-01, overnight), steps 1–5; part 2 next.** Part 1 of 3: the database model, then the PL/pgSQL accessor functions ([2026-10-31-pl-pgsql-accessor-refactor.md](2026-10-31-pl-pgsql-accessor-refactor.md)), then the API ([2026-10-31-api-refactor.md](2026-10-31-api-refactor.md)).
 
 ## How we work
 
@@ -383,3 +383,4 @@ Part 1 is written on a branch and goes live with parts 2 and 3: the new schema c
     - **The API's integration tests are skipped** (`setup` in `internal/integration/setup_test.go`) until part 3 rewrites them: the old accessors went with the old schema, so the old API can't run between parts 1 and 3. The new tests (`database_test.go`, `schema_test.go`, `rules_test.go`) run against the new schema alone.
     - **The benchmark** (step 4) needs `item.list`, so it is written with the accessors' tests (accessor plan, step 4).
 - **2026-11-01:** steps 1–4 done: `0001` and `0002` rewritten, `0003` and `0004` gone; the rules in `db/repeatable/` (`10_error`, `11_util`, `12_tenant`, `21_unit`, `30_class`, `31_attribute`, `40_item`, `41_location`, `42_stock`, `50_attachment`, `70_history`); `wtfd schema` for function schemas and PostgreSQL 18; the rules' tests.
+- **2026-11-01:** step 5 done: SCHEMA.md rewritten for the new schema and its rules; README.md and WTFD.md say PostgreSQL 18 and describe the function schemas. SCHEMA.html (the ER diagram) is not redrawn yet.

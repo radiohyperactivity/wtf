@@ -24,7 +24,7 @@ The examples use these names:
 
 ### 1. Install PostgreSQL
 
-Follow the installation instructions for your platform at <https://www.postgresql.org/download/>. WtF needs **PostgreSQL 15 or newer**, so use the newest release available.
+Follow the installation instructions for your platform at <https://www.postgresql.org/download/>. WtF needs **PostgreSQL 18 or newer**, built with ICU (the usual packages are), so use the newest release available.
 
 The rest of this section assumes an interactive `psql` session as a superuser (usually `postgres`), connected to the `template1` database:
 
@@ -97,7 +97,7 @@ REVOKE ALL ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO wtf_api;
 ```
 
-`USAGE` on a schema only allows looking up the names in it. It doesn't grant access to any table or function. `wtf_api` needs it to find the API functions. (Since PostgreSQL 15, `PUBLIC` can no longer *create* objects in `public`; this also removes its `USAGE`.) `wtf_api` gets no privileges at all on the `util` schema, which holds the internal helpers.
+`USAGE` on a schema only allows looking up the names in it. It doesn't grant access to any table or function. `wtf_api` needs it to find the API functions. (Since PostgreSQL 15, `PUBLIC` can no longer *create* objects in `public`; this also removes its `USAGE`.) `wtfd schema` gives `wtf_api` `USAGE` on the schemas that hold the functions (`item`, `class`, …), and `EXECUTE` on only the functions the API calls.
 
 ```sql
 ALTER DEFAULT PRIVILEGES FOR ROLE wtf_dba
