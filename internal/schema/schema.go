@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	minServerVersion = 150000
+	minServerVersion = 180000
 
 	// Key of the advisory lock that serialises concurrent "wtfd schema" runs.
 	lockKey int64 = 0x7774666473636865 // "wtfdsche"
@@ -197,7 +197,7 @@ func checkPreconditions(ctx context.Context, conn *pgx.Conn, apiUser string) err
 	}
 	switch {
 	case version < minServerVersion:
-		return fmt.Errorf("PostgreSQL %d.%d is too old; 15 or newer is required", version/10000, version%10000)
+		return fmt.Errorf("PostgreSQL %d.%d is too old; 18 or newer is required", version/10000, version%10000)
 	case !isOwner:
 		return errors.New("the DBA role must own the database, so that it owns every object it creates")
 	case !apiExists:
@@ -287,29 +287,38 @@ func applyMigration(ctx context.Context, conn *pgx.Conn, m script, log *slog.Log
 	})
 }
 
+// functionSchemasSQL selects the schemas the repeatable scripts make: every
+// schema the connected role owns, except public (the tables), extensions
+// (pgcrypto) and wtfd (this bookkeeping). They hold only functions, so a
+// rebuild drops them whole.
+const functionSchemasSQL = `
+	SELECT n.oid
+	FROM pg_namespace n
+	WHERE n.nspowner = (SELECT oid FROM pg_roles WHERE rolname = current_user)
+	  AND n.nspname NOT IN ('public', 'extensions', 'wtfd')
+	  AND n.nspname NOT LIKE 'pg\_%'`
+
 // rebuildRepeatables drops every repeatable object and recreates them all,
-// including the grants, in one transaction.
+// including the grants, in one transaction. The function schemas are
+// dropped with CASCADE, which takes their triggers along; before that,
+// refuseToDropData makes sure nothing else would go with them.
 func rebuildRepeatables(ctx context.Context, conn *pgx.Conn, scripts []script, apiUser string, log *slog.Logger) error {
 	return pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "DROP SCHEMA IF EXISTS util CASCADE"); err != nil {
+		if err := refuseToDropData(ctx, tx); err != nil {
 			return err
 		}
-
-		// The API functions are exactly the SECURITY DEFINER functions in public.
 		rows, _ := tx.Query(ctx, `
-			SELECT p.oid::regprocedure::text
-			FROM pg_proc p
-			JOIN pg_namespace n ON n.oid = p.pronamespace
-			WHERE n.nspname = 'public'
-			  AND p.prosecdef
-			  AND p.proowner = (SELECT oid FROM pg_roles WHERE rolname = current_user)`)
-		functions, err := pgx.CollectRows(rows, pgx.RowTo[string])
+			SELECT n.nspname
+			FROM pg_namespace n
+			WHERE n.oid IN (`+functionSchemasSQL+`)
+			ORDER BY n.nspname`)
+		schemas, err := pgx.CollectRows(rows, pgx.RowTo[string])
 		if err != nil {
 			return err
 		}
-		for _, f := range functions {
-			log.Debug("dropping function", "function", f)
-			if _, err := tx.Exec(ctx, "DROP FUNCTION "+f); err != nil {
+		for _, name := range schemas {
+			log.Debug("dropping schema", "schema", name)
+			if _, err := tx.Exec(ctx, "DROP SCHEMA "+pgx.Identifier{name}.Sanitize()+" CASCADE"); err != nil {
 				return err
 			}
 		}
@@ -329,33 +338,112 @@ func rebuildRepeatables(ctx context.Context, conn *pgx.Conn, scripts []script, a
 			}
 		}
 
-		var count int
-		if err := tx.QueryRow(ctx, `
-			SELECT count(*)
+		// The functions the API calls are the SECURITY DEFINER ones; they
+		// are logged per schema, so that a change in the list shows.
+		rows, _ = tx.Query(ctx, `
+			SELECT n.nspname,
+			       count(*),
+			       count(*) FILTER (WHERE p.prosecdef),
+			       coalesce(string_agg(p.proname, ' ' ORDER BY p.proname) FILTER (WHERE p.prosecdef), '')
 			FROM pg_proc p
 			JOIN pg_namespace n ON n.oid = p.pronamespace
-			WHERE (n.nspname = 'public' AND p.prosecdef) OR n.nspname = 'util'`).Scan(&count); err != nil {
+			WHERE n.oid IN (`+functionSchemasSQL+`)
+			GROUP BY n.nspname
+			ORDER BY n.nspname`)
+		var schemaName, apiNames string
+		var functions, apiFunctions, total, totalAPI int
+		if _, err := pgx.ForEachRow(rows, []any{&schemaName, &functions, &apiFunctions, &apiNames}, func() error {
+			total += functions
+			totalAPI += apiFunctions
+			log.Debug("schema", "schema", schemaName, "functions", functions, "api_functions", apiNames)
+			return nil
+		}); err != nil {
 			return err
 		}
-		log.Info("rebuilt repeatable scripts", "scripts", len(scripts), "functions", count)
+		log.Info("rebuilt repeatable scripts", "scripts", len(scripts), "functions", total, "api_functions", totalAPI)
 
 		return applyGrants(ctx, tx, apiUser, log)
 	})
 }
 
+// refuseToDropData returns an error when dropping the function schemas
+// would take more than functions, triggers, views and the types PostgreSQL
+// makes along with them: anything else in those schemas (a table made there
+// by mistake), or anything outside them that uses one of their functions (a
+// column default, a CHECK constraint or an index). Those hold or guard
+// data, so they belong in a migration, and must not depend on a function a
+// rebuild drops (WTFD.md, "Schema").
+func refuseToDropData(ctx context.Context, tx pgx.Tx) error {
+	rows, _ := tx.Query(ctx, `
+		WITH schemas AS (`+functionSchemasSQL+`),
+		functions AS (
+		    SELECT p.oid FROM pg_proc p WHERE p.pronamespace IN (SELECT oid FROM schemas)
+		)
+		SELECT format('%s %s.%s', CASE c.relkind WHEN 'r' THEN 'table' WHEN 'S' THEN 'sequence'
+		                                         WHEN 'i' THEN 'index' ELSE 'relation' END,
+		              n.nspname, c.relname)
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.relnamespace IN (SELECT oid FROM schemas)
+		  AND c.relkind NOT IN ('v', 'c')
+		UNION ALL
+		SELECT format('type %s.%s', n.nspname, t.typname)
+		FROM pg_type t
+		JOIN pg_namespace n ON n.oid = t.typnamespace
+		WHERE t.typnamespace IN (SELECT oid FROM schemas)
+		  AND t.typtype IN ('b', 'd', 'e', 'r', 'm')
+		  AND t.typelem = 0
+		UNION ALL
+		SELECT pg_describe_object(d.classid, d.objid, d.objsubid)
+		       || ' uses ' || pg_describe_object(d.refclassid, d.refobjid, 0)
+		FROM pg_depend d
+		WHERE d.refclassid = 'pg_proc'::regclass
+		  AND d.refobjid IN (SELECT oid FROM functions)
+		  AND d.deptype = 'n'
+		  AND d.classid NOT IN ('pg_proc'::regclass, 'pg_trigger'::regclass, 'pg_rewrite'::regclass)
+		ORDER BY 1`)
+	blockers, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return fmt.Errorf("check what a rebuild would drop: %w", err)
+	}
+	if len(blockers) > 0 {
+		return fmt.Errorf("a rebuild would drop more than functions, triggers and views: %s",
+			strings.Join(blockers, "; "))
+	}
+	return nil
+}
+
 // grantStatements returns the GRANT/REVOKE statements needed so that the API
-// role has EXECUTE on exactly the SECURITY DEFINER functions in public, and
-// PUBLIC has EXECUTE on no function in public or util. Only functions owned by
-// the connected role are considered.
+// role may use every function schema and execute exactly the SECURITY
+// DEFINER functions in them, and PUBLIC may execute none of our functions.
+// Only functions owned by the connected role are considered, in public and
+// the function schemas.
 func grantStatements(ctx context.Context, q querier, apiUser string) ([]string, error) {
+	role := pgx.Identifier{apiUser}.Sanitize()
+	var statements []string
+
 	rows, _ := q.Query(ctx, `
+		SELECT n.nspname
+		FROM pg_namespace n
+		WHERE n.oid IN (`+functionSchemasSQL+`)
+		  AND NOT has_schema_privilege($1, n.oid, 'USAGE')
+		ORDER BY n.nspname`, apiUser)
+	missing, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, fmt.Errorf("check schema grants: %w", err)
+	}
+	for _, name := range missing {
+		statements = append(statements, "GRANT USAGE ON SCHEMA "+pgx.Identifier{name}.Sanitize()+" TO "+role)
+	}
+
+	rows, _ = q.Query(ctx, `
 		WITH f AS (
 		    SELECT p.oid::regprocedure::text                      AS signature,
-		           n.nspname = 'public' AND p.prosecdef           AS want_api,
+		           p.prosecdef AND n.nspname <> 'public'          AS want_api,
 		           coalesce(p.proacl, acldefault('f', p.proowner)) AS acl
 		    FROM pg_proc p
 		    JOIN pg_namespace n ON n.oid = p.pronamespace
-		    WHERE n.nspname IN ('public', 'util')
+		    WHERE (n.nspname = 'public' OR n.oid IN (`+functionSchemasSQL+`))
 		      AND p.prokind = 'f'
 		      AND p.proowner = (SELECT oid FROM pg_roles WHERE rolname = current_user)
 		)
@@ -369,11 +457,9 @@ func grantStatements(ctx context.Context, q querier, apiUser string) ([]string, 
 		FROM f
 		ORDER BY signature`, apiUser)
 
-	role := pgx.Identifier{apiUser}.Sanitize()
-	var statements []string
 	var signature string
 	var wantAPI, publicHas, apiHas bool
-	_, err := pgx.ForEachRow(rows, []any{&signature, &wantAPI, &publicHas, &apiHas}, func() error {
+	_, err = pgx.ForEachRow(rows, []any{&signature, &wantAPI, &publicHas, &apiHas}, func() error {
 		if publicHas {
 			statements = append(statements, "REVOKE EXECUTE ON FUNCTION "+signature+" FROM PUBLIC")
 		}

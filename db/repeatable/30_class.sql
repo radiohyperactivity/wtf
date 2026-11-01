@@ -1,378 +1,384 @@
--- API: classes and class attributes. Explained in api/class.md.
+-- Classes and the attributes assigned to them (schema class): their rules,
+-- and the functions the API calls for them.
+
+CREATE SCHEMA class;
 
 -- ---------------------------------------------------------------------------
--- class
+-- The attributes of a class
 -- ---------------------------------------------------------------------------
 
--- The whole class tree: {version, unchanged, tree}. tree is a nested list of
--- {id, name, parent, container, photo, children}, alphabetically per level.
--- When p_known_version is the current version, the tree is left out and
--- unchanged is true (the REST layer answers 304 Not Modified).
-CREATE FUNCTION class_list(p_known_version bigint DEFAULT NULL) RETURNS jsonb
-LANGUAGE plpgsql STABLE
-SECURITY DEFINER SET search_path = public, pg_temp
-AS $$
-DECLARE
-    v_tenant  uuid;
-    v_version bigint;
-BEGIN
-    PERFORM util.require('viewer');
-    v_tenant := util.tenant();
-    v_version := util.data_version(v_tenant, 'class');
-    IF p_known_version IS NOT DISTINCT FROM v_version THEN
-        RETURN jsonb_build_object('version', v_version, 'unchanged', true);
-    END IF;
-
-    RETURN jsonb_build_object(
-        'version',   v_version,
-        'unchanged', false,
-        'tree',      util.class_tree(v_tenant, NULL)
-    );
-END;
-$$;
-
--- The class with its path and all effective (own + inherited) attributes.
--- A deleted class is returned too, with deleted: true.
-CREATE FUNCTION class_get(p_id uuid) RETURNS jsonb
-LANGUAGE plpgsql STABLE
-SECURITY DEFINER SET search_path = public, pg_temp
-AS $$
-BEGIN
-    PERFORM util.require('viewer');
-    IF NOT EXISTS (SELECT 1 FROM class WHERE id = p_id AND tenant = util.tenant()) THEN
-        PERFORM util.raise_not_found('class', p_id);
-    END IF;
-    RETURN util.class_json(p_id) || jsonb_build_object(
-        'attributes',  util.class_attributes_json(p_id),
-        'photo',       util.attachment_json('class', (SELECT photo FROM class WHERE id = p_id)),
-        'attachments', util.attachments_json(NULL, NULL, NULL, p_id)
-    );
-END;
-$$;
-
-CREATE FUNCTION class_create(p_name text, p_parent uuid DEFAULT NULL, p_container boolean DEFAULT false) RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = public, pg_temp
-AS $$
-DECLARE
-    v_tenant uuid;
-    v_id     uuid;
-BEGIN
-    PERFORM util.require('admin');
-    v_tenant := util.tenant();
-    IF p_parent IS NOT NULL AND NOT EXISTS (SELECT 1 FROM class WHERE id = p_parent AND tenant = v_tenant) THEN
-        PERFORM util.raise_bad_reference('class', p_parent);
-    END IF;
-    INSERT INTO class (tenant, name, parent, container)
-    VALUES (v_tenant, util.clean_path_name(p_name, 'class'), p_parent, COALESCE(p_container, false))
-    RETURNING id INTO v_id;
-
-    RETURN class_get(v_id);
-END;
-$$;
-
--- Changes the fields present in p_patch: name, parent (null = make it a
--- root), container, photo (one of its own image attachments, or null).
--- Moving is rejected if it would create a cycle or leave item values without
--- a matching attribute; becoming a container is rejected while the class has
--- items.
-CREATE FUNCTION class_patch(p_id uuid, p_patch jsonb) RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = public, pg_temp
-AS $$
-DECLARE
-    v_tenant uuid;
-BEGIN
-    PERFORM util.require('admin');
-    v_tenant := util.tenant();
-    PERFORM util.check_patch(p_patch, ARRAY['name', 'parent', 'container', 'photo'], ARRAY['name', 'container']);
-    IF NOT EXISTS (SELECT 1 FROM class WHERE id = p_id AND tenant = v_tenant) THEN
-        PERFORM util.raise_not_found('class', p_id);
-    END IF;
-    IF p_patch ? 'parent' AND p_patch ->> 'parent' IS NOT NULL
-       AND NOT EXISTS (SELECT 1 FROM class WHERE id = (p_patch ->> 'parent')::uuid AND tenant = v_tenant)
-    THEN
-        PERFORM util.raise_bad_reference('class', (p_patch ->> 'parent')::uuid);
-    END IF;
-
-    UPDATE class
-    SET name      = CASE WHEN p_patch ? 'name'
-                         THEN util.clean_path_name(p_patch ->> 'name', 'class') ELSE name END,
-        parent    = CASE WHEN p_patch ? 'parent'
-                         THEN (p_patch ->> 'parent')::uuid ELSE parent END,
-        container = CASE WHEN p_patch ? 'container'
-                         THEN (p_patch ->> 'container')::boolean ELSE container END
-    WHERE id = p_id AND tenant = v_tenant;
-    PERFORM util.set_photo('class', p_id, p_patch);
-    RETURN class_get(p_id);
-END;
-$$;
-
--- Marks a class deleted. Fails (23001, restrict_violation) while it has live
--- subclasses or items.
-CREATE FUNCTION class_delete(p_id uuid) RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = public, pg_temp
-AS $$
-BEGIN
-    PERFORM util.require('admin');
-    UPDATE class SET deleted = true WHERE id = p_id AND tenant = util.tenant();
-
-    IF NOT FOUND THEN
-        PERFORM util.raise_not_found('class', p_id);
-    END IF;
-END;
-$$;
-
--- Marks a class and every live class below it deleted, in one transaction.
---   p_force    false: nothing is deleted while any of them has live items
---              (23001, naming the classes and their item counts);
---              true:  those items are deleted too, with their live stock
---              rows (this needs data write as well).
---   p_dry_run  deletes nothing, and only reports.
--- Returns what is (or would be) deleted:
---   {classes: [{id, path}], items: [{id, code, name, class}], stock: <count>}
--- with classes deepest first and items alphabetically.
-CREATE FUNCTION class_delete_tree(p_id uuid, p_force boolean DEFAULT false, p_dry_run boolean DEFAULT false)
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = public, pg_temp
-AS $$
-DECLARE
-    v_classes uuid[];
-    v_items   uuid[];
-    v_class   uuid;
-    v_in_use  text;
-    v_result  jsonb;
-BEGIN
-    PERFORM util.require('admin');
-    IF NOT EXISTS (SELECT 1 FROM class WHERE id = p_id AND tenant = util.tenant()) THEN
-        PERFORM util.raise_not_found('class', p_id);
-    END IF;
-    PERFORM check_live('class', p_id);
-
-    WITH RECURSIVE below (id, depth) AS (
-        SELECT p_id, 0
+-- Where the values of attribute p_attribute live for items of class
+-- p_class: 'item' (on the item), 'stock' (on each stock row), or NULL when
+-- the attribute isn't assigned to the class or any class above it.
+--
+-- An attribute can be assigned at several levels of the class tree; the
+-- assignment nearest to the class decides (Drills overrides Tools). So this
+-- walks up from the class, and takes the first assignment it meets. For the
+-- rules that write one value; reads use class.effective_attributes.
+CREATE FUNCTION class.attribute_scope(p_class uuid, p_attribute uuid)
+RETURNS public.scope
+LANGUAGE sql STABLE AS $$
+    WITH RECURSIVE path (class, depth) AS (
+        SELECT p_class, 0
         UNION ALL
-        SELECT c.id, b.depth + 1 FROM class c JOIN below b ON c.parent = b.id WHERE NOT c.deleted
+        SELECT c.parent, p.depth + 1
+        FROM public.class c
+        JOIN path p ON c.id = p.class
+        WHERE c.parent IS NOT NULL
     )
-    SELECT array_agg(id ORDER BY depth DESC, id) INTO v_classes FROM below;
-
-    SELECT COALESCE(array_agg(i.id), '{}') INTO v_items
-    FROM item i WHERE i.class = ANY (v_classes) AND NOT i.deleted;
-
-    v_result := jsonb_build_object(
-        'classes', (
-            SELECT jsonb_agg(jsonb_build_object('id', u.id, 'path', util.path_text(util.class_path(u.id)))
-                             ORDER BY u.ord)
-            FROM unnest(v_classes) WITH ORDINALITY AS u(id, ord)
-        ),
-        'items', (
-            SELECT COALESCE(jsonb_agg(jsonb_build_object('id', i.id, 'code', util.code_text(i.code),
-                                                         'name', i.name, 'class', i.class)
-                                      ORDER BY util.natural_key(i.name), i.id), '[]'::jsonb)
-            FROM item i WHERE i.id = ANY (v_items)
-        ),
-        'stock', (SELECT count(*) FROM stock s WHERE s.item = ANY (v_items) AND NOT s.deleted)
-    );
-
-    IF cardinality(v_items) > 0 THEN
-        IF NOT p_force THEN
-            IF p_dry_run THEN
-                RETURN v_result;
-            END IF;
-            SELECT string_agg(format('%s (%s %s)', t.path, t.n, CASE WHEN t.n = 1 THEN 'item' ELSE 'items' END),
-                              ', ' ORDER BY util.natural_key(t.path))
-            INTO v_in_use
-            FROM (
-                SELECT util.path_text(util.class_path(i.class)) AS path, count(*) AS n
-                FROM item i WHERE i.id = ANY (v_items)
-                GROUP BY i.class
-            ) t;
-            RAISE EXCEPTION 'These classes still have items: %', v_in_use
-                USING ERRCODE = 'restrict_violation',
-                      HINT = 'Delete the items first, or force the delete to delete them too.';
-        END IF;
-    END IF;
-
-    IF NOT p_dry_run THEN
-        UPDATE stock SET deleted = true WHERE item = ANY (v_items) AND NOT deleted;
-        UPDATE item SET deleted = true WHERE id = ANY (v_items);
-        -- Deepest first, so no class is deleted while a live child still refers to it.
-        FOREACH v_class IN ARRAY v_classes LOOP
-            UPDATE class SET deleted = true WHERE id = v_class;
-        END LOOP;
-    END IF;
-    RETURN v_result;
-END;
+    SELECT ca.scope
+    FROM path p
+    JOIN public.class_attribute ca ON ca.class = p.class AND ca.attribute = p_attribute
+    ORDER BY p.depth
+    LIMIT 1;
 $$;
 
--- Restores a deleted class, with the classes below it, the items and the
--- stock rows that were deleted together with it (in the same transaction).
--- p_options, all optional:
---   name          a new name, for when the old one has been taken since
---   parent        where to restore it instead (null: at the top)
---   with_parents  true: also restore the deleted classes it is in
--- Without parent or with_parents, a class whose parent is deleted can't be
--- restored (55000). Restoring items needs data write as well.
-CREATE FUNCTION class_restore(p_id uuid, p_options jsonb DEFAULT '{}') RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = public, pg_temp
-AS $$
-DECLARE
-    v_class       class;
-    v_parent      uuid;
-    v_transaction xid8;
-    v_classes     uuid[];
-    v_items       uuid[];
-    v_stock       uuid[];
-    v_child       uuid;
-BEGIN
-    PERFORM util.require('admin');
-    PERFORM util.check_patch(p_options, ARRAY['name', 'parent', 'with_parents'], ARRAY['name', 'with_parents']);
-    SELECT * INTO v_class FROM class WHERE id = p_id AND tenant = util.tenant() FOR UPDATE;
-    IF NOT FOUND THEN
-        PERFORM util.raise_not_found('class', p_id);
-    END IF;
-    IF NOT v_class.deleted THEN
-        PERFORM util.raise_not_deleted('class', p_id);
-    END IF;
-
-    v_parent := CASE WHEN p_options ? 'parent' THEN (p_options ->> 'parent')::uuid ELSE v_class.parent END;
-    IF v_parent IS NOT NULL AND NOT EXISTS (SELECT 1 FROM class WHERE id = v_parent AND tenant = v_class.tenant) THEN
-        PERFORM util.raise_bad_reference('class', v_parent);
-    END IF;
-    IF v_parent IS NOT NULL AND (SELECT deleted FROM class WHERE id = v_parent) THEN
-        IF p_options ? 'parent' THEN
-            PERFORM raise_deleted('class', v_parent);
-        ELSIF COALESCE((p_options ->> 'with_parents')::boolean, false) THEN
-            PERFORM util.restore_class_chain(v_parent);
-        ELSE
-            PERFORM util.raise_restore_into_deleted(row_label('class', p_id),
-                format('"%s"', util.path_text(util.class_path(v_parent))), 'parent');
-        END IF;
-    END IF;
-
-    -- What was deleted with it.
-    v_transaction := util.deletion_transaction('class', p_id);
-    WITH RECURSIVE below (id, depth) AS (
-        SELECT p_id, 0
-        UNION ALL
-        SELECT c.id, b.depth + 1
-        FROM class c JOIN below b ON c.parent = b.id
-        WHERE c.deleted AND c.id IN (SELECT util.deleted_in('class', v_transaction))
-    )
-    SELECT array_agg(id ORDER BY depth, id) INTO v_classes FROM below;
-    v_items := ARRAY(
-        SELECT id FROM item
-        WHERE class = ANY (v_classes) AND deleted AND id IN (SELECT util.deleted_in('item', v_transaction)));
-    v_stock := ARRAY(
-        SELECT id FROM stock
-        WHERE item = ANY (v_items) AND deleted AND id IN (SELECT util.deleted_in('stock', v_transaction)));
-
-    UPDATE class
-    SET deleted = false,
-        name    = CASE WHEN p_options ? 'name' THEN util.clean_path_name(p_options ->> 'name', 'class') ELSE name END,
-        parent  = v_parent
-    WHERE id = p_id;
-    UPDATE class_attribute SET attribute = attribute WHERE class = p_id;
-    FOREACH v_child IN ARRAY v_classes[2:] LOOP
-        PERFORM util.restore_class_row(v_child);
-    END LOOP;
-    PERFORM util.restore_item_rows(v_items);
-    PERFORM util.restore_stock_rows(v_stock);
-
-    RETURN class_get(p_id);
-END;
-$$;
-
--- ---------------------------------------------------------------------------
--- class_attribute
--- ---------------------------------------------------------------------------
-
--- Assigns an attribute to a class, or replaces the assignment if it exists.
--- p_default NULL (or JSON null) means no default. p_per_unit makes it a
--- per-unit attribute (values on stock rows instead of the item). p_required
--- makes new items (or stock rows, for per-unit attributes) need a value,
--- unless there is a default. Changing p_per_unit is rejected while values
--- exist. Returns the class.
-CREATE FUNCTION class_attribute_set(
-    p_class     uuid,
-    p_attribute uuid,
-    p_default   jsonb   DEFAULT NULL,
-    p_per_unit  boolean DEFAULT false,
-    p_required  boolean DEFAULT false
+-- Every attribute that applies to each of the classes p_classes: those
+-- assigned to the class itself and those assigned to any class above it.
+-- Where an attribute is assigned at several levels, the assignment nearest
+-- to the class decides: where its values live, whether they're required,
+-- and the default. All the classes are worked out in one query.
+CREATE FUNCTION class.effective_attributes(p_classes uuid[])
+RETURNS TABLE (
+    class           uuid,          -- one of p_classes
+    attribute       uuid,
+    assigned_to     uuid,          -- the class whose assignment decides
+    depth           integer,       -- 0 when assigned to the class itself, 1 for its parent, …
+    scope           public.scope,
+    required        boolean,
+    default_text    text,
+    default_number  numeric,
+    default_date    date,
+    default_boolean boolean,
+    default_option  uuid
 )
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = public, pg_temp
-AS $$
+LANGUAGE sql STABLE AS $$
+    WITH RECURSIVE path (class, ancestor, depth) AS (
+        SELECT c, c, 0 FROM unnest(p_classes) AS c
+        UNION ALL
+        SELECT p.class, c.parent, p.depth + 1
+        FROM path p
+        JOIN public.class c ON c.id = p.ancestor
+        WHERE c.parent IS NOT NULL
+    )
+    SELECT DISTINCT ON (p.class, ca.attribute)
+           p.class, ca.attribute, ca.class, p.depth, ca.scope, ca.required,
+           ca.default_text, ca.default_number, ca.default_date,
+           ca.default_boolean, ca.default_option
+    FROM path p
+    JOIN public.class_attribute ca ON ca.class = p.ancestor
+    ORDER BY p.class, ca.attribute, p.depth;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Rules
+-- ---------------------------------------------------------------------------
+
+-- Refuses a change of the model that would leave values behind without an
+-- attribute to belong to: a value on an item (or a stock row) whose
+-- attribute no longer applies to the item's class, or no longer with its
+-- values on the item (or on the stock rows).
+--
+-- Checks the live items of class p_class and of every class below it, as
+-- the change affects them all. p_attribute narrows it to one attribute;
+-- NULL checks every attribute. Runs after the change, so the class tree and
+-- the assignments are already as they will be. The attributes of all the
+-- classes in the subtree are worked out in one query.
+CREATE FUNCTION class.check_values_still_apply(p_class uuid, p_attribute uuid)
+RETURNS void
+LANGUAGE plpgsql AS $$
 DECLARE
-    v_tenant  uuid;
-    v_text    text;
-    v_integer bigint;
-    v_float   double precision;
-    v_date    date;
-    v_boolean boolean;
-    v_option  uuid;
+    v_items   bigint;
+    v_example text;
 BEGIN
-    PERFORM util.require('admin');
-    v_tenant := util.tenant();
-    IF NOT EXISTS (SELECT 1 FROM class WHERE id = p_class AND tenant = v_tenant) THEN
-        PERFORM util.raise_not_found('class', p_class);
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM attribute WHERE id = p_attribute AND tenant = v_tenant) THEN
-        PERFORM util.raise_not_found('attribute', p_attribute);
-    END IF;
+    WITH RECURSIVE subtree (class) AS (
+        SELECT p_class
+        UNION
+        SELECT c.id FROM public.class c JOIN subtree s ON c.parent = s.class
+    ),
+    applies AS (
+        SELECT e.class, e.attribute, e.scope
+        FROM class.effective_attributes(ARRAY(SELECT s.class FROM subtree s)) e
+        WHERE p_attribute IS NULL OR e.attribute = p_attribute
+    ),
+    stranded AS (
+        SELECT i.id, i.name
+        FROM subtree s
+        JOIN public.item i       ON i.class = s.class AND i.deleted IS NULL
+        JOIN public.item_value v ON v.item = i.id
+        LEFT JOIN applies a      ON a.class = i.class AND a.attribute = v.attribute AND a.scope = 'item'
+        WHERE a.attribute IS NULL
+          AND (p_attribute IS NULL OR v.attribute = p_attribute)
+        UNION
+        SELECT i.id, i.name
+        FROM subtree s
+        JOIN public.item i         ON i.class = s.class AND i.deleted IS NULL
+        JOIN public.stock st       ON st.item = i.id AND st.deleted IS NULL
+        JOIN public.stock_value sv ON sv.stock = st.id
+        LEFT JOIN applies a        ON a.class = i.class AND a.attribute = sv.attribute AND a.scope = 'stock'
+        WHERE a.attribute IS NULL
+          AND (p_attribute IS NULL OR sv.attribute = p_attribute)
+    )
+    SELECT count(*), min(name) INTO v_items, v_example FROM stranded;
 
-    IF p_default IS NOT NULL AND jsonb_typeof(p_default) <> 'null' THEN
-        SELECT text_v, integer_v, float_v, date_v, boolean_v, option_v
-        INTO v_text, v_integer, v_float, v_date, v_boolean, v_option
-        FROM util.parse_typed_value(p_attribute, p_default);
+    IF v_items > 0 THEN
+        RAISE EXCEPTION '% item(s) would have values without a matching attribute, such as "%"',
+            v_items, v_example
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Clear those values first.';
     END IF;
-
-    INSERT INTO class_attribute (tenant, class, attribute,
-                                 text_default, integer_default, float_default,
-                                 date_default, boolean_default, option_default,
-                                 per_unit, required)
-    VALUES (v_tenant, p_class, p_attribute,
-            v_text, v_integer, v_float,
-            v_date, v_boolean, v_option,
-            p_per_unit, p_required)
-    ON CONFLICT (class, attribute) DO UPDATE SET
-        text_default    = EXCLUDED.text_default,
-        integer_default = EXCLUDED.integer_default,
-        float_default   = EXCLUDED.float_default,
-        date_default    = EXCLUDED.date_default,
-        boolean_default = EXCLUDED.boolean_default,
-        option_default  = EXCLUDED.option_default,
-        per_unit        = EXCLUDED.per_unit,
-        required        = EXCLUDED.required;
-
-    RETURN class_get(p_class);
 END;
 $$;
 
--- Removes an attribute assignment. Rejected while items in the class (or its
--- subclasses) still have values that depend on it. Returns the class.
-CREATE FUNCTION class_attribute_remove(p_class uuid, p_attribute uuid) RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = public, pg_temp
-AS $$
+-- Assigning an attribute to a class, removing it from one, or changing
+-- where its values live (scope).
+--
+-- A new assignment only matters when a class above already assigns the same
+-- attribute with the other scope: the new one is nearer, so the values in
+-- the subtree that followed the inherited scope would end up on the wrong
+-- side (item values where the values now belong on each stock row, or the
+-- other way round). Without an inherited assignment, no class in the
+-- subtree that the new one decides for had the attribute before.
+CREATE FUNCTION class.check_assignment_change()
+RETURNS trigger
+LANGUAGE plpgsql AS $$
 BEGIN
-    PERFORM util.require('admin');
-    IF NOT EXISTS (SELECT 1 FROM class WHERE id = p_class AND tenant = util.tenant()) THEN
-        PERFORM util.raise_not_found('class', p_class);
+    IF TG_OP = 'INSERT' THEN
+        IF EXISTS (
+            SELECT 1
+            FROM public.class c
+            JOIN class.effective_attributes(ARRAY[c.parent]) e ON e.attribute = NEW.attribute
+            WHERE c.id = NEW.class
+              AND c.parent IS NOT NULL
+              AND e.scope <> NEW.scope
+        ) THEN
+            PERFORM class.check_values_still_apply(NEW.class, NEW.attribute);
+        END IF;
+    ELSE
+        PERFORM class.check_values_still_apply(OLD.class, OLD.attribute);
     END IF;
-    PERFORM check_live('class', p_class);
-    DELETE FROM class_attribute
-    WHERE class = p_class
-      AND attribute = p_attribute;
-
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Attribute % is not assigned to class %', p_attribute, p_class
-            USING ERRCODE = 'no_data_found';
-    END IF;
-    RETURN class_get(p_class);
+    RETURN NULL;
 END;
 $$;
+
+CREATE TRIGGER check_assignment_change
+    AFTER INSERT OR DELETE ON public.class_attribute
+    FOR EACH ROW EXECUTE FUNCTION class.check_assignment_change();
+
+CREATE TRIGGER check_assignment_change_scope
+    AFTER UPDATE OF scope ON public.class_attribute
+    FOR EACH ROW
+    WHEN (OLD.scope <> NEW.scope)
+    EXECUTE FUNCTION class.check_assignment_change();
+
+-- Moving a class to another parent: what it inherits may change.
+CREATE FUNCTION class.check_move()
+RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM class.check_values_still_apply(NEW.id, NULL);
+    RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER check_move
+    AFTER UPDATE OF parent ON public.class
+    FOR EACH ROW
+    WHEN (NEW.parent IS DISTINCT FROM OLD.parent)
+    EXECUTE FUNCTION class.check_move();
+
+-- An assignment's default value must fit the attribute's datatype: a
+-- 'decimal' attribute's default is in default_number, an 'integer' one's
+-- is a whole number in default_number, a 'url' one's is a web address in
+-- default_text, and so on (util.typed_value_fits says which). That an
+-- option default is one of this attribute's own options is already ensured
+-- by the foreign key (attribute, default_option). An attribute's datatype
+-- never changes, so nothing needs locking.
+CREATE FUNCTION class.check_default()
+RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_attribute record;
+BEGIN
+    SELECT a.name, a.datatype INTO v_attribute
+    FROM public.attribute a
+    WHERE a.id = NEW.attribute;
+    IF NOT util.typed_value_fits(v_attribute.datatype,
+                                 NEW.default_text, NEW.default_number, NEW.default_date,
+                                 NEW.default_boolean, NEW.default_option) THEN
+        RAISE EXCEPTION 'The default value for "%" doesn''t fit its datatype (%)',
+            v_attribute.name, v_attribute.datatype
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER check_default
+    BEFORE INSERT ON public.class_attribute
+    FOR EACH ROW
+    WHEN (num_nonnulls(NEW.default_text, NEW.default_number, NEW.default_date,
+                       NEW.default_boolean, NEW.default_option) > 0)
+    EXECUTE FUNCTION class.check_default();
+
+CREATE TRIGGER check_default_change
+    BEFORE UPDATE OF attribute, default_text, default_number, default_date,
+                     default_boolean, default_option ON public.class_attribute
+    FOR EACH ROW
+    WHEN (num_nonnulls(NEW.default_text, NEW.default_number, NEW.default_date,
+                       NEW.default_boolean, NEW.default_option) > 0
+          AND (OLD.attribute <> NEW.attribute
+               OR OLD.default_text    IS DISTINCT FROM NEW.default_text
+               OR OLD.default_number  IS DISTINCT FROM NEW.default_number
+               OR OLD.default_date    IS DISTINCT FROM NEW.default_date
+               OR OLD.default_boolean IS DISTINCT FROM NEW.default_boolean
+               OR OLD.default_option  IS DISTINCT FROM NEW.default_option))
+    EXECUTE FUNCTION class.check_default();
+
+-- A class can only become a container while it has no live items: a
+-- container class holds only other classes, never items. Deleted items
+-- don't count, but item.check_container refuses to restore one into a
+-- container. No lock is needed: the update's own lock on the class waits
+-- for any transaction that has locked it to put an item in it.
+CREATE FUNCTION class.check_container()
+RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_items bigint;
+    v_one   text;
+BEGIN
+    IF EXISTS (SELECT 1 FROM public.item i
+               WHERE i.class = NEW.id AND i.deleted IS NULL) THEN
+        SELECT count(*), min(i.name) INTO v_items, v_one
+        FROM public.item i
+        WHERE i.class = NEW.id AND i.deleted IS NULL;
+        RAISE EXCEPTION 'Class "%" can''t become a container: it has % item(s), such as "%"',
+            NEW.name, v_items, v_one
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER check_container_change
+    BEFORE UPDATE OF container ON public.class
+    FOR EACH ROW
+    WHEN (NEW.container AND NOT OLD.container)
+    EXECUTE FUNCTION class.check_container();
+
+-- A live class's parent must be live: a class can't be created in, moved
+-- into or restored into a deleted class. util.check_live locks the parent
+-- for sharing until commit, so that creating a class in a parent and, at
+-- the same time, deleting that parent can't both pass; the other half is
+-- class.check_deletable.
+--
+-- When a class is restored, its assignments come back with it, so they
+-- must refer to live attributes and options too: while the class was
+-- deleted, an attribute or option it uses may have been deleted as well
+-- (their deletable rules only count assignments to live classes). They are
+-- locked for sharing first, so that they can't be deleted while this
+-- transaction restores the class.
+CREATE FUNCTION class.check_live()
+RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_deleted uuid[];
+BEGIN
+    PERFORM util.check_live('class', NEW.parent);
+
+    IF TG_OP = 'UPDATE' AND OLD.deleted IS NOT NULL THEN
+        PERFORM 1 FROM public.attribute a
+        WHERE a.id IN (SELECT ca.attribute FROM public.class_attribute ca WHERE ca.class = NEW.id)
+        FOR SHARE;
+        PERFORM 1 FROM public.attribute_option o
+        WHERE o.id IN (SELECT ca.default_option FROM public.class_attribute ca WHERE ca.class = NEW.id)
+        FOR SHARE;
+
+        SELECT array_agg(ca.attribute) INTO v_deleted
+        FROM public.class_attribute ca
+        JOIN public.attribute a             ON a.id = ca.attribute
+        LEFT JOIN public.attribute_option o ON o.id = ca.default_option
+        WHERE ca.class = NEW.id
+          AND (a.deleted IS NOT NULL OR o.deleted IS NOT NULL);
+        IF v_deleted IS NOT NULL THEN
+            RAISE EXCEPTION 'Class "%" can''t be restored: its assignments of % refer to deleted attributes or options',
+                NEW.name, error.attribute_names(v_deleted)
+                USING ERRCODE = 'object_not_in_prerequisite_state',
+                      HINT = 'Restore those attributes or options first.';
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER check_live
+    BEFORE INSERT ON public.class
+    FOR EACH ROW
+    WHEN (NEW.parent IS NOT NULL)
+    EXECUTE FUNCTION class.check_live();
+
+CREATE TRIGGER check_live_change
+    BEFORE UPDATE OF parent, deleted ON public.class
+    FOR EACH ROW
+    WHEN ((NEW.parent IS NOT NULL AND OLD.parent IS DISTINCT FROM NEW.parent)
+          OR (OLD.deleted IS NOT NULL AND NEW.deleted IS NULL))
+    EXECUTE FUNCTION class.check_live();
+
+-- An assignment's class, attribute and default option must be live. An
+-- assignment has no deleted of its own: it belongs to its class, and comes
+-- back with it (class.check_live checks it then).
+CREATE FUNCTION class.check_assignment_live()
+RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM util.check_live('class', NEW.class);
+    PERFORM util.check_live('attribute', NEW.attribute);
+    PERFORM util.check_live('attribute_option', NEW.default_option);
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER check_assignment_live
+    BEFORE INSERT ON public.class_attribute
+    FOR EACH ROW EXECUTE FUNCTION class.check_assignment_live();
+
+CREATE TRIGGER check_assignment_live_change
+    BEFORE UPDATE OF class, attribute, default_option ON public.class_attribute
+    FOR EACH ROW
+    WHEN (OLD.class <> NEW.class
+          OR OLD.attribute <> NEW.attribute
+          OR OLD.default_option IS DISTINCT FROM NEW.default_option)
+    EXECUTE FUNCTION class.check_assignment_live();
+
+-- A class can only be deleted while nothing live depends on it: no live
+-- subclasses and no live items. Deleting a whole tree (class.delete_tree)
+-- deletes the deepest classes first, so each one is empty when its turn
+-- comes. Raised as restrict_violation, as a foreign key would.
+--
+-- Creating a subclass or an item locks the class for sharing until commit
+-- (util.check_live). This update locks the class too, so it waits for
+-- them to commit, and then sees what they added.
+CREATE FUNCTION class.check_deletable()
+RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM public.class c
+               WHERE c.parent = NEW.id AND c.deleted IS NULL) THEN
+        RAISE EXCEPTION 'Class "%" still has subclasses', NEW.name
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    IF EXISTS (SELECT 1 FROM public.item i
+               WHERE i.class = NEW.id AND i.deleted IS NULL) THEN
+        RAISE EXCEPTION 'Class "%" still has items', NEW.name
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER check_deletable
+    BEFORE UPDATE OF deleted ON public.class
+    FOR EACH ROW
+    WHEN (OLD.deleted IS NULL AND NEW.deleted IS NOT NULL)
+    EXECUTE FUNCTION class.check_deletable();

@@ -1,6 +1,6 @@
 # Database refactor – plan
 
-**Status: planned; every topic decided and every object reviewed.** Part 1 of 3: the database model, then the PL/pgSQL accessor functions ([2026-10-31-pl-pgsql-accessor-refactor.md](2026-10-31-pl-pgsql-accessor-refactor.md)), then the API ([2026-10-31-api-refactor.md](2026-10-31-api-refactor.md)).
+**Status: steps 1–4 done (2026-11-01, overnight); SCHEMA.md next.** Part 1 of 3: the database model, then the PL/pgSQL accessor functions ([2026-10-31-pl-pgsql-accessor-refactor.md](2026-10-31-pl-pgsql-accessor-refactor.md)), then the API ([2026-10-31-api-refactor.md](2026-10-31-api-refactor.md)).
 
 ## How we work
 
@@ -375,3 +375,11 @@ Part 1 is written on a branch and goes live with parts 2 and 3: the new schema c
 - **2026-10-31:** decision 38, history's `about` in place of `object` (from the accessor review, E2); decision 17 replaced.
 - **2026-11-01:** decision 39, a version for the units a tenant sees (from the accessor review); R58.
 - **2026-11-01:** R14 revised: the assignment rule also runs on insert (from the accessor review, model import).
+- **2026-11-01 (overnight, decided on my own; to review):**
+    - **The function schemas are made by the repeatable scripts, not by `0001`** (each script starts with `CREATE SCHEMA`), and `wtfd schema` drops them with `CASCADE` on a rebuild, as decision 30 says. Step 1 had them in the migration with `ALTER DEFAULT PRIVILEGES IN SCHEMA … REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC`, but PostgreSQL can't revoke per schema (per-schema default privileges only add to the global ones), and a schema dropped on rebuild would lose them anyway. New functions stay closed to `PUBLIC` through the global default privilege that `wtfd schema` already sets, and its grant check covers every function schema.
+    - **`unit_family_tenant_lower_name_unique`** for the unit's name index: by decision 10's pattern it and the unit family's name index were both `unit_family_tenant_name_unique`, which PostgreSQL refuses.
+    - **`wtfd schema`'s guard** before dropping the function schemas refuses when anything but functions, triggers, views and their types is in them, or when anything outside them (a default, a constraint, an index) uses one of their functions, naming each.
+    - **`util.begin_action` is written with the rules** (step 2), as the rules' tests need actions; the rest of part 2's shared pieces follow there.
+    - **The API's integration tests are skipped** (`setup` in `internal/integration/setup_test.go`) until part 3 rewrites them: the old accessors went with the old schema, so the old API can't run between parts 1 and 3. The new tests (`database_test.go`, `schema_test.go`, `rules_test.go`) run against the new schema alone.
+    - **The benchmark** (step 4) needs `item.list`, so it is written with the accessors' tests (accessor plan, step 4).
+- **2026-11-01:** steps 1–4 done: `0001` and `0002` rewritten, `0003` and `0004` gone; the rules in `db/repeatable/` (`10_error`, `11_util`, `12_tenant`, `21_unit`, `30_class`, `31_attribute`, `40_item`, `41_location`, `42_stock`, `50_attachment`, `70_history`); `wtfd schema` for function schemas and PostgreSQL 18; the rules' tests.

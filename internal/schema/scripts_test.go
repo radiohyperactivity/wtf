@@ -16,8 +16,8 @@ func TestEmbeddedScriptsLoad(t *testing.T) {
 	if len(migrations) == 0 || len(repeatables) == 0 {
 		t.Fatalf("got %d migrations and %d repeatable scripts", len(migrations), len(repeatables))
 	}
-	if !strings.HasPrefix(repeatables[0].sql, "-- ") || !strings.Contains(repeatables[0].sql, "CREATE SCHEMA util;") {
-		t.Errorf("the first repeatable script must create the util schema, got %s", repeatables[0].name)
+	if !strings.HasPrefix(repeatables[0].sql, "-- ") || !strings.Contains(repeatables[0].sql, "CREATE SCHEMA error;") {
+		t.Errorf("the first repeatable script must create the error schema, got %s", repeatables[0].name)
 	}
 }
 
