@@ -6,250 +6,172 @@ import (
 	"flag"
 	"fmt"
 	iofs "io/fs"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/radiohyperactivity/wtf/internal/mediatype"
 )
 
-func attachmentGroup() group {
-	printAttachment := printAttachmentJSON
-	targetParams := []param{arg("Type", targetTypes), arg("Object", completeTargetOf(0))}
-	withID := append(append([]param{}, targetParams...), arg("Attachment id", nil))
+// owner is an item or a stock row that has files: its API path, its kind
+// ("item" or "stock"), and its class.
+type owner struct {
+	path, kind, class string
+}
+
+// resolveOwner finds the item or stock row ref names: a label code says
+// which it is; ITEM@LOCATION is a stock row; anything else is an item.
+func (e *env) resolveOwner(ref string) (owner, error) {
+	if r, ok, err := e.lookupCode(ref); err != nil {
+		return owner{}, err
+	} else if ok {
+		switch r.Type {
+		case "item":
+			var it item
+			err := e.decode(r.Object, &it)
+			return owner{path: "/items/" + it.ID, kind: "item", class: it.Class.ID}, err
+		case "stock":
+			var s stock
+			err := e.decode(r.Object, &s)
+			return owner{path: "/stock/" + s.ID, kind: "stock", class: s.Item.Class}, err
+		}
+		return owner{}, fmt.Errorf("%s is the code of a %s, which has no files", normalizeCode(ref), r.Type)
+	}
+	if strings.Contains(ref, "@") {
+		id, err := e.resolveStock(ref)
+		if err != nil {
+			return owner{}, err
+		}
+		var s stock
+		err = e.get("/stock/"+id, nil, &s)
+		return owner{path: "/stock/" + id, kind: "stock", class: s.Item.Class}, err
+	}
+	id, err := e.resolveItem(ref)
+	if err != nil {
+		return owner{}, err
+	}
+	var it item
+	err = e.get("/items/"+id, nil, &it)
+	return owner{path: "/items/" + id, kind: "item", class: it.Class.ID}, err
+}
+
+// filePath is the API path of the photo, or of the file of attachment
+// attribute name, of o.
+func (e *env) filePath(o owner, name string) (string, error) {
+	if strings.EqualFold(strings.TrimSpace(name), "photo") {
+		return o.path + "/photo", nil
+	}
+	c, err := e.classDetail(o.class)
+	if err != nil {
+		return "", err
+	}
+	a, err := matchAttribute(c, o.kind, name)
+	if err != nil {
+		return "", err
+	}
+	if a.Type != "attachment" {
+		return "", usagef("%s is %s, not a file", a.Name, article(a.Type))
+	}
+	return o.path + "/files/" + url.PathEscape(a.Name), nil
+}
+
+func fileGroup() group {
+	owner := arg("Item or stock row", completeItems)
+	name := arg("Attribute or photo", completeOwnerFiles(0))
 	return group{
-		name:    "attachment",
-		summary: "Files attached to items, stock, locations and classes",
+		name:    "file",
+		summary: "Files of items and stock rows: their photos and attachment attributes",
 		commands: []command{
 			{
-				name:    "list",
-				args:    "<item|stock|location|class> <ref>",
-				summary: "List an object's attachments (for an item also its stock rows').",
-				params:  targetParams,
-				setup: simple(func(e *env, args []string) error {
-					if err := wantArgs(args, 2, 2); err != nil {
-						return err
-					}
-					path, err := e.targetPath(args[0], args[1])
-					if err != nil {
-						return err
-					}
-					data, err := e.api.Get(e.ctx, path, nil)
-					if err != nil {
-						return err
-					}
-					var obj struct {
-						Photo       *attachment     `json:"photo"`
-						Attachments json.RawMessage `json:"attachments"`
-						Stock       []itemStock     `json:"stock"`
-					}
-					if err := e.decode(data, &obj); err != nil {
-						return err
-					}
-					if e.json {
-						return e.printJSON(obj.Attachments)
-					}
-					var list []attachment
-					if err := e.decode(obj.Attachments, &list); err != nil {
-						return err
-					}
-					printAttachments(e.stdout, "", list, obj.Photo, photoName(args[0]))
-					if args[0] == "item" {
-						for _, s := range obj.Stock {
-							if len(s.Attachments) > 0 {
-								fmt.Fprintf(e.stdout, "Stock %s:\n", s.Code)
-								printAttachments(e.stdout, "  ", s.Attachments, s.Photo, "stock row photo")
-							}
-						}
-					}
-					return nil
-				}),
-			},
-			{
-				name:    "add",
-				args:    "<item|stock|location|class> <ref> <file> [--title T] [--photo]",
-				summary: "Attach a file; its title is the file name unless --title gives one.",
-				params:  append(append([]param{}, targetParams...), fileArg("File")),
-				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					title := fs.String("title", "", "title (default: the file name)")
-					photo := fs.Bool("photo", false, "make it the object's photo (images only)")
-					return func(e *env, args []string) error {
-						if err := wantArgs(args, 3, 3); err != nil {
-							return err
-						}
-						path, err := e.targetPath(args[0], args[1])
-						if err != nil {
-							return err
-						}
-						form := map[string]string{"photo": strconv.FormatBool(*photo)}
-						if *title != "" {
-							form["title"] = *title
-						}
-						data, err := e.api.Upload(e.ctx, path+"/attachments", args[2], form)
-						if err != nil {
-							return err
-						}
-						return e.emit(data, func() error { return printAttachment(e, data) })
-					}
-				},
-			},
-			{
-				name:    "get",
-				args:    "<item|stock|location|class> <ref> <attachment-id>",
-				summary: "Show an attachment's details.",
-				params:  withID,
-				setup: simple(func(e *env, args []string) error {
-					path, err := e.attachmentPath(args)
-					if err != nil {
-						return err
-					}
-					data, err := e.api.Get(e.ctx, path, nil)
-					if err != nil {
-						return err
-					}
-					return e.emit(data, func() error {
-						if err := printAttachment(e, data); err != nil {
-							return err
-						}
-						return nil
-					})
-				}),
-			},
-			{
-				name:    "download",
-				args:    "<item|stock|location|class> <ref> <attachment-id> [-o FILE|-] [--force]",
-				summary: "Save an attachment's content, by default named after its title in the current directory.",
-				params:  withID,
-				flags:   map[string]param{"o": fileArg("Output file")},
-				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					out := fs.String("o", "", "output file, or - for stdout")
-					force := fs.Bool("force", false, "overwrite an existing file")
-					return func(e *env, args []string) error {
-						path, err := e.attachmentPath(args)
-						if err != nil {
-							return err
-						}
-						if *out == "-" {
-							_, err := e.api.Download(e.ctx, path+"/content", e.stdout)
-							return err
-						}
-						name := *out
-						if name == "" {
-							var a attachment
-							if err := e.get(path, nil, &a); err != nil {
-								return err
-							}
-							name = filepath.Base(mediatype.DownloadName(a.Title, a.MediaType))
-							if name == "." || name == string(filepath.Separator) || name == "" {
-								name = a.ID
-							}
-						}
-						flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
-						if *force {
-							flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-						}
-						f, err := os.OpenFile(name, flags, 0o644)
-						if errors.Is(err, iofs.ErrExist) {
-							return fmt.Errorf("%s exists; use --force to overwrite it, or -o FILE", name)
-						}
-						if err != nil {
-							return err
-						}
-						_, err = e.api.Download(e.ctx, path+"/content", f)
-						if cerr := f.Close(); err == nil {
-							err = cerr
-						}
-						if err != nil {
-							os.Remove(name)
-							return err
-						}
-						if !e.json {
-							fmt.Fprintf(e.stdout, "Saved %s.\n", name)
-						}
-						return nil
-					}
-				},
-			},
-			{
-				name:    "set",
-				args:    "<item|stock|location|class> <ref> <attachment-id> --title T",
-				summary: "Change an attachment's title.",
-				params:  withID,
-				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					var title optString
-					fs.Var(&title, "title", "new title")
-					return func(e *env, args []string) error {
-						path, err := e.attachmentPath(args)
-						if err != nil {
-							return err
-						}
-						if !title.set {
-							return usagef("nothing to change")
-						}
-						data, err := e.do(http.MethodPatch, path, object{"title": title.value})
-						if err != nil {
-							return err
-						}
-						return e.emit(data, func() error { return printAttachment(e, data) })
-					}
-				},
-			},
-			{
-				name:    "photo",
-				args:    "<item|stock|location|class> <ref> <attachment-id|none>",
-				summary: "Make one of an object's image attachments its photo (item photo, …), or none.",
-				params:  withID,
+				name:    "put",
+				args:    "<item or stock row> <attribute|photo> <file>",
+				summary: "Upload a file as the photo, or as the file of an attachment attribute; it replaces the one there.",
+				params:  []param{owner, name, fileArg("File")},
 				setup: simple(func(e *env, args []string) error {
 					if err := wantArgs(args, 3, 3); err != nil {
 						return err
 					}
-					path, err := e.targetPath(args[0], args[1])
+					o, err := e.resolveOwner(args[0])
 					if err != nil {
 						return err
 					}
-					var photo any
-					if !isNone(args[2]) {
-						if !isUUID(args[2]) {
-							return usagef("attachments are named by id; 'wtf attachment list TYPE REF' shows them")
-						}
-						photo = strings.ToLower(args[2])
-					}
-					if _, err := e.do(http.MethodPatch, path, object{"photo": photo}); err != nil {
+					path, err := e.filePath(o, args[1])
+					if err != nil {
 						return err
 					}
-					if !e.json {
-						if photo == nil {
-							fmt.Fprintf(e.stdout, "No %s.\n", photoName(args[0]))
-						} else {
-							fmt.Fprintf(e.stdout, "%s set.\n", capitalize(photoName(args[0])))
-						}
+					data, err := e.api.Upload(e.ctx, path, args[2])
+					if err != nil {
+						return err
 					}
-					return nil
+					e.wrote(path)
+					return e.emit(data, func() error {
+						if o.kind == "item" {
+							return e.printItemJSON(data)
+						}
+						return e.printStockJSON(data)
+					})
 				}),
 			},
 			{
-				name:    "delete",
-				args:    "<item|stock|location|class> <ref> <attachment-id> [--yes]",
-				summary: "Delete an attachment, for good; on a terminal it asks first.",
-				params:  withID,
+				name:    "get",
+				args:    "<item or stock row> <attribute|photo> [file] [--force]",
+				summary: "Save a file; without a file name, it is named after the attribute (or Photo), with an extension for its type. - writes it to stdout.",
+				params:  []param{owner, name, {name: "File", files: true, optional: true, complete: completeFiles}},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					yes := fs.Bool("yes", false, "don't ask first")
+					force := fs.Bool("force", false, "overwrite a file that is there")
 					return func(e *env, args []string) error {
-						path, err := e.attachmentPath(args)
+						if err := wantArgs(args, 2, 3); err != nil {
+							return err
+						}
+						o, err := e.resolveOwner(args[0])
 						if err != nil {
 							return err
 						}
-						if err := e.confirmDelete("attachment "+args[2], *yes); err != nil {
+						path, err := e.filePath(o, args[1])
+						if err != nil {
 							return err
 						}
-						if _, err := e.do(http.MethodDelete, path, nil); err != nil {
+						if len(args) == 3 && args[2] == "-" {
+							_, err := e.api.Download(e.ctx, path, e.stdout)
+							return err
+						}
+						// Into a file of its own first, named once the type is known.
+						tmp, err := os.CreateTemp(".", ".wtf-download-*")
+						if err != nil {
+							return err
+						}
+						header, err := e.api.Download(e.ctx, path, tmp)
+						if cerr := tmp.Close(); err == nil {
+							err = cerr
+						}
+						if err != nil {
+							os.Remove(tmp.Name())
+							return err
+						}
+						target := ""
+						if len(args) == 3 {
+							target = args[2]
+						} else {
+							target = downloadName(header, args[1])
+						}
+						if !*force {
+							if _, err := os.Stat(target); err == nil {
+								os.Remove(tmp.Name())
+								return fmt.Errorf("%s exists; use --force to overwrite it, or give another file name", target)
+							} else if !errors.Is(err, iofs.ErrNotExist) {
+								os.Remove(tmp.Name())
+								return err
+							}
+						}
+						if err := os.Rename(tmp.Name(), target); err != nil {
+							os.Remove(tmp.Name())
 							return err
 						}
 						if !e.json {
-							fmt.Fprintf(e.stdout, "Deleted attachment %s.\n", args[2])
+							fmt.Fprintf(e.stdout, "Saved %s.\n", target)
 						}
 						return nil
 					}
@@ -259,37 +181,14 @@ func attachmentGroup() group {
 	}
 }
 
-// photoName names the photo of an object of type ("item", …): "item
-// photo", "stock row photo", "location photo" or "class photo".
-func photoName(typ string) string {
-	if typ == "stock" {
-		return "stock row photo"
+// downloadName is the name a download is saved as: what the server says in
+// Content-Disposition, or else name with an extension for its type, in the
+// current directory.
+func downloadName(header http.Header, name string) string {
+	if _, params, err := mime.ParseMediaType(header.Get("Content-Disposition")); err == nil && params["filename"] != "" {
+		return filepath.Base(params["filename"])
 	}
-	return typ + " photo"
-}
-
-// capitalize upper-cases the first letter of an ASCII text.
-func capitalize(s string) string {
-	if s == "" {
-		return s
-	}
-	return strings.ToUpper(s[:1]) + s[1:]
-}
-
-// attachmentPath is the path of an attachment named by TYPE REF ID:
-// /items/{id}/attachments/{attachment}, and so on.
-func (e *env) attachmentPath(args []string) (string, error) {
-	if err := wantArgs(args, 3, 3); err != nil {
-		return "", err
-	}
-	if !isUUID(args[2]) {
-		return "", usagef("attachments are named by id; 'wtf attachment list TYPE REF' shows them")
-	}
-	path, err := e.targetPath(args[0], args[1])
-	if err != nil {
-		return "", err
-	}
-	return path + "/attachments/" + strings.ToLower(args[2]), nil
+	return filepath.Base(mediatype.DownloadName(name, header.Get("Content-Type")))
 }
 
 func codeCommand() command {
@@ -327,242 +226,6 @@ func codeCommand() command {
 				return e.printJSON(r.Object)
 			})
 		}),
-	}
-}
-
-func quantityGroup() group {
-	return group{
-		name:    "quantity",
-		summary: "Physical quantities, global or your own",
-		commands: []command{
-			{
-				name:    "list",
-				summary: "List the quantities.",
-				setup: simple(func(e *env, args []string) error {
-					if err := wantArgs(args, 0, 0); err != nil {
-						return err
-					}
-					data, err := e.api.Get(e.ctx, "/quantities", nil)
-					if err != nil {
-						return err
-					}
-					return e.emit(data, func() error {
-						var list []quantity
-						if err := e.decode(data, &list); err != nil {
-							return err
-						}
-						t := newTable(e.stdout, "NAME", "TYPE", "AVAILABLE")
-						for _, q := range list {
-							t.row(q.Name, q.Datatype, availability(q.Available, q.Choice))
-						}
-						t.flush()
-						return nil
-					})
-				}),
-			},
-			{
-				name:    "get",
-				args:    "<quantity>",
-				summary: "Show a quantity with its unit families and their units.",
-				params:  []param{arg("Quantity", completeQuantities)},
-				setup: simple(func(e *env, args []string) error {
-					if err := wantArgs(args, 1, 1); err != nil {
-						return err
-					}
-					id, err := e.resolveQuantity(args[0])
-					if err != nil {
-						return err
-					}
-					data, err := e.api.Get(e.ctx, "/quantities/"+id, nil)
-					if err != nil {
-						return err
-					}
-					return e.emit(data, func() error {
-						var q quantity
-						if err := e.decode(data, &q); err != nil {
-							return err
-						}
-						fields(e.stdout, "Name", q.Name, "Type", q.Datatype, "Available", availability(q.Available, q.Choice))
-						var units []unit
-						for _, f := range q.Families {
-							units = append(units, f.Units...)
-						}
-						printUnits(e, units)
-						return nil
-					})
-				}),
-			},
-			availableCommand("quantity"),
-		},
-	}
-}
-
-func printUnits(e *env, units []unit) {
-	t := newTable(e.stdout, "SYMBOL", "NAME", "FAMILY", "QUANTITY", "FACTOR", "OFFSET")
-	for _, u := range units {
-		offset := u.BaseOffset.String()
-		if offset == "0" {
-			offset = ""
-		}
-		t.row(u.Symbol, u.Name, u.Family.Name, u.Quantity.Name, u.BaseFactor.String(), offset)
-	}
-	t.flush()
-}
-
-func unitsGroup() group {
-	return group{
-		name:    "unit",
-		summary: "Units of measurement, global or your own",
-		commands: []command{
-			{
-				name:    "list",
-				args:    "[--quantity Q] [--family F]",
-				summary: "List units: base = value × factor + offset.",
-				flags: map[string]param{
-					"quantity": arg("Quantity", completeQuantities),
-					"family":   arg("Unit family", completeFamilies),
-				},
-				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					q := fs.String("quantity", "", "only units of this quantity")
-					f := fs.String("family", "", "only units of this unit family")
-					return func(e *env, args []string) error {
-						if err := wantArgs(args, 0, 0); err != nil {
-							return err
-						}
-						v := url.Values{}
-						if *q != "" {
-							id, err := e.resolveQuantity(*q)
-							if err != nil {
-								return err
-							}
-							v.Set("quantity", id)
-						}
-						if *f != "" {
-							id, err := e.resolveFamily(*f)
-							if err != nil {
-								return err
-							}
-							v.Set("family", id)
-						}
-						data, err := e.api.Get(e.ctx, "/units", v)
-						if err != nil {
-							return err
-						}
-						return e.emit(data, func() error {
-							var list []unit
-							if err := e.decode(data, &list); err != nil {
-								return err
-							}
-							printUnits(e, list)
-							return nil
-						})
-					}
-				},
-			},
-			{
-				name:    "get",
-				args:    "<unit>",
-				summary: "Show a unit, named by symbol, name or id; \"B (Binary bytes)\" where families share a symbol.",
-				params:  []param{arg("Unit", completeUnits)},
-				setup: simple(func(e *env, args []string) error {
-					if err := wantArgs(args, 1, 1); err != nil {
-						return err
-					}
-					u, err := e.resolveUnit(args[0])
-					if err != nil {
-						return err
-					}
-					data, err := e.api.Get(e.ctx, "/units/"+u.ID, nil)
-					if err != nil {
-						return err
-					}
-					return e.emit(data, func() error {
-						var u unit
-						if err := e.decode(data, &u); err != nil {
-							return err
-						}
-						printUnits(e, []unit{u})
-						return nil
-					})
-				}),
-			},
-		},
-	}
-}
-
-func unitFamilyGroup() group {
-	return group{
-		name:    "unit-family",
-		summary: "Unit families: units used together, such as mm, cm and m",
-		commands: []command{
-			{
-				name:    "list",
-				args:    "[--quantity Q]",
-				summary: "List unit families with their units.",
-				flags:   map[string]param{"quantity": arg("Quantity", completeQuantities)},
-				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					q := fs.String("quantity", "", "only families of this quantity")
-					return func(e *env, args []string) error {
-						if err := wantArgs(args, 0, 0); err != nil {
-							return err
-						}
-						var v url.Values
-						if *q != "" {
-							id, err := e.resolveQuantity(*q)
-							if err != nil {
-								return err
-							}
-							v = url.Values{"quantity": {id}}
-						}
-						data, err := e.api.Get(e.ctx, "/unit-families", v)
-						if err != nil {
-							return err
-						}
-						return e.emit(data, func() error {
-							var list []unitFamily
-							if err := e.decode(data, &list); err != nil {
-								return err
-							}
-							t := newTable(e.stdout, "NAME", "QUANTITY", "UNITS", "AVAILABLE")
-							for _, f := range list {
-								t.row(f.Name, f.Quantity.Name, unitSymbols(f.Units), availability(f.Available, f.Choice))
-							}
-							t.flush()
-							return nil
-						})
-					}
-				},
-			},
-			{
-				name:    "get",
-				args:    "<unit-family>",
-				summary: "Show a unit family with its units.",
-				params:  []param{arg("Unit family", completeFamilies)},
-				setup: simple(func(e *env, args []string) error {
-					if err := wantArgs(args, 1, 1); err != nil {
-						return err
-					}
-					id, err := e.resolveFamily(args[0])
-					if err != nil {
-						return err
-					}
-					data, err := e.api.Get(e.ctx, "/unit-families/"+id, nil)
-					if err != nil {
-						return err
-					}
-					return e.emit(data, func() error {
-						var f unitFamily
-						if err := e.decode(data, &f); err != nil {
-							return err
-						}
-						fields(e.stdout, "Name", f.Name, "Quantity", f.Quantity.Name, "Available", availability(f.Available, f.Choice))
-						printUnits(e, f.Units)
-						return nil
-					})
-				}),
-			},
-			availableCommand("unit-family"),
-		},
 	}
 }
 
@@ -732,21 +395,6 @@ func accountGroup() group {
 	}
 }
 
-// printAttachmentJSON prints an attachment.
-func printAttachmentJSON(e *env, data json.RawMessage) error {
-	var a attachment
-	if err := e.decode(data, &a); err != nil {
-		return err
-	}
-	fields(e.stdout,
-		"Title", a.Title,
-		"Type", a.MediaType,
-		"Size", formatSize(a.Size),
-		"SHA-256", a.Hash,
-		"Id", a.ID)
-	return nil
-}
-
 // printAccountJSON prints an account.
 func printAccountJSON(e *env, data json.RawMessage) error {
 	var a account
@@ -759,66 +407,4 @@ func printAccountJSON(e *env, data json.RawMessage) error {
 		"Role", a.Role,
 		"Id", a.ID)
 	return nil
-}
-
-// availability says whether a quantity or unit family is available, and
-// whether that is the tenant's own choice or the default.
-func availability(available, choice *bool) string {
-	text := "yes"
-	if !isAvailable(available) {
-		text = "no"
-	}
-	if choice != nil {
-		text += " (chosen)"
-	}
-	return text
-}
-
-// availableCommand turns a quantity (kind "quantity") or unit family
-// ("unit-family") on or off, or back to its default: PATCH {available}.
-func availableCommand(kind string) command {
-	label, complete, path := "Quantity", completer(completeQuantities), "/quantities/"
-	resolve := (*env).resolveQuantity
-	if kind == "unit-family" {
-		label, complete, path = "Unit family", completer(completeFamilies), "/unit-families/"
-		resolve = (*env).resolveFamily
-	}
-	return command{
-		name:    "available",
-		args:    "<" + kind + "> on|off|default",
-		summary: "Turn a " + strings.ReplaceAll(kind, "-", " ") + " on or off for choosing units, or back to its default.",
-		params:  []param{arg(label, complete), arg("on, off or default", words("on", "off", "default"))},
-		setup: simple(func(e *env, args []string) error {
-			if err := wantArgs(args, 2, 2); err != nil {
-				return err
-			}
-			var value any
-			switch strings.ToLower(args[1]) {
-			case "on", "yes", "true":
-				value = true
-			case "off", "no", "false":
-				value = false
-			case "default":
-				value = nil
-			default:
-				return usagef("%q: use on, off or default", args[1])
-			}
-			id, err := resolve(e, args[0])
-			if err != nil {
-				return err
-			}
-			data, err := e.do(http.MethodPatch, path+id, object{"available": value})
-			if err != nil {
-				return err
-			}
-			return e.emit(data, func() error {
-				var f unitFamily // a quantity has the same fields that are shown
-				if err := e.decode(data, &f); err != nil {
-					return err
-				}
-				fmt.Fprintf(e.stdout, "%s: available %s.\n", f.Name, availability(f.Available, f.Choice))
-				return nil
-			})
-		}),
-	}
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/radiohyperactivity/wtf/internal/prompt"
@@ -111,31 +112,19 @@ func (e *env) yesNoField(label string, current bool) (bool, error) {
 // valueField asks for a value of attribute a until it parses. Empty input
 // means no value (nil).
 func (e *env) valueField(label, current string, a attribute) (string, any, error) {
-	complete := func(e *env, _ []string, cur string, _ bool) []string { return e.valueCandidates(&a, cur) }
+	complete := func(e *env, _ []string, cur string, _ bool) []string { return valueCandidates(a, cur) }
 	for {
 		text, err := e.field(label, current, complete)
 		if err != nil || text == "" {
 			return text, nil, err
 		}
-		v, err := e.parseValue(&a, text)
+		v, err := parseValue(a, text)
 		if err == nil {
 			return text, v, nil
 		}
 		fmt.Fprintln(e.stderr, err)
 		current = text
 	}
-}
-
-// formatDefault renders a class attribute's default, or "".
-func formatDefault(ca classAttribute) string {
-	if ca.DefaultDisplay != nil {
-		return formatDisplay(ca.DefaultDisplay)
-	}
-	return formatJSONValue(ca.Default)
-}
-
-func hasDefault(ca classAttribute) bool {
-	return len(ca.Default) > 0 && string(ca.Default) != "null"
 }
 
 // editTitle introduces a form.
@@ -251,98 +240,10 @@ func (e *env) editClass(id string) error {
 	if err != nil {
 		return err
 	}
-	e.editTitle("class " + pathNames(c.Path))
+	e.editTitle("class " + pathNames(c.Path) + " (its attributes change with 'wtf class attribute')")
 	p := newPlan("/classes/" + id)
 	if err := e.editTreeFields(p, ix, "class", c.Name, c.Parent, c.Container, completeClasses); err != nil {
 		return err
-	}
-
-	// Attribute assignments: a loop of NAME (assign or change) and -NAME
-	// (remove), until an empty line.
-	own := map[string]classAttribute{}
-	var ownNames []string
-	for _, ca := range c.Attributes {
-		if !ca.Inherited {
-			own[ca.Attribute.ID] = ca
-			ownNames = append(ownNames, "-"+ca.Attribute.Name)
-		}
-	}
-	fmt.Fprintln(e.stderr, "Attributes:")
-	if len(c.Attributes) == 0 {
-		fmt.Fprintln(e.stderr, "  (none)")
-	}
-	for _, ca := range c.Attributes {
-		from := ""
-		if ca.Inherited {
-			from = "inherited from " + ix.pathString(ca.AssignedTo)
-		}
-		var notes []string
-		if hasDefault(ca) {
-			notes = append(notes, "default "+formatDefault(ca))
-		}
-		if ca.Scope == "stock" {
-			notes = append(notes, "per unit")
-		}
-		if ca.Required {
-			notes = append(notes, "required")
-		}
-		fmt.Fprintf(e.stderr, "  %s  %s %s\n", ca.Attribute.Name, strings.Join(notes, ", "), from)
-	}
-	complete := func(e *env, args []string, cur string, full bool) []string {
-		return append(completeAttributes(e, args, cur, full), ownNames...)
-	}
-	for {
-		v, err := e.field("Attribute to assign or change (-NAME removes, Enter: done)", "", complete)
-		if err != nil {
-			return err
-		}
-		if v == "" {
-			break
-		}
-		if name, remove := strings.CutPrefix(v, "-"); remove {
-			a, err := e.resolveAttribute(name)
-			if err != nil {
-				fmt.Fprintln(e.stderr, err)
-				continue
-			}
-			if _, ok := own[a.ID]; !ok {
-				fmt.Fprintf(e.stderr, "%s isn't assigned on this class itself.\n", a.Name)
-				continue
-			}
-			attrID := a.ID
-			p.add("removed "+a.Name, func() error {
-				_, err := e.do(http.MethodDelete, "/classes/"+id+"/attributes/"+attrID, nil)
-				return err
-			})
-			continue
-		}
-		a, err := e.resolveAttribute(v)
-		if err != nil {
-			fmt.Fprintln(e.stderr, err)
-			continue
-		}
-		cur := own[a.ID]
-		curDefault := ""
-		if hasDefault(cur) {
-			curDefault = formatDefault(cur)
-		}
-		_, def, err := e.valueField("  Default (empty: none)", curDefault, *a)
-		if err != nil {
-			return err
-		}
-		perUnit, err := e.yesNoField("  Per unit (values on stock rows)", cur.Scope == "stock")
-		if err != nil {
-			return err
-		}
-		required, err := e.yesNoField("  Required", cur.Required)
-		if err != nil {
-			return err
-		}
-		attrID, body := a.ID, object{"default": def, "scope": scopeOf(perUnit), "required": required}
-		p.add("assigned "+a.Name, func() error {
-			_, err := e.do(http.MethodPut, "/classes/"+id+"/attributes/"+attrID, body)
-			return err
-		})
 	}
 	if err := e.apply(p); err != nil {
 		return err
@@ -350,68 +251,78 @@ func (e *env) editClass(id string) error {
 	return e.showAfterEdit("/classes/"+id, func(e *env, d json.RawMessage) error { return e.printClassJSON(d) })
 }
 
-// editValues asks for the values of a class's attributes of one scope (item
-// values, or with perUnit those of a stock row), and plans the changes on
-// owner ("/items/ID" or "/stock/ID").
-func (e *env) editValues(p *editPlan, owner, classID string, perUnit bool, values []value) error {
-	var c class
-	if err := e.get("/classes/"+classID, nil, &c); err != nil {
-		return err
-	}
-	current := map[string]string{}
-	for _, v := range values {
-		if !v.IsDefault {
-			current[v.Attribute.ID] = formatValue(v)
-		}
-	}
+// editValues asks for the values of class c's attributes of scope ("item"
+// or "stock"), with the values vals and those of them that follow the
+// default, defaulted, and plans the changes in the patch: values to set or
+// remove, and default, those to follow the default again ("default" as the
+// answer). Files are uploaded with 'wtf file put', and left alone here.
+func (e *env) editValues(p *editPlan, c class, scope string, vals values, defaulted []string) error {
+	set := object{}
+	var back []string
 	header := false
-	for _, ca := range c.Attributes {
-		if (ca.Scope == "stock") != perUnit {
+	for _, a := range c.Attributes {
+		if a.Scope != scope || a.Type == "attachment" {
 			continue
 		}
 		if !header {
-			fmt.Fprintln(e.stderr, "Values (empty: none, or the default):")
+			fmt.Fprintln(e.stderr, "Values (empty: none; \"default\": the class's default):")
 			header = true
 		}
-		a := ca.Attribute
 		label := "  " + a.Name
 		switch {
-		case hasDefault(ca):
-			label += " [default " + formatDefault(ca) + "]"
-		case ca.Required:
+		case a.hasDefault():
+			label += " [default " + formatJSONValue(a.Default) + "]"
+		case a.Required:
 			label += " (required)"
 		}
 		if hint := valueHint(a); hint != "" {
 			label += " " + hint
 		}
-		old := current[a.ID]
-		var text string
-		var v any
+		old := ""
+		if raw, ok := vals[a.Name]; ok {
+			old = formatJSONValue(raw)
+			if slices.Contains(defaulted, a.Name) {
+				old = "default"
+			}
+		}
 		for {
-			var err error
-			if text, v, err = e.valueField(label, old, a); err != nil {
+			text, err := e.field(label, old, func(e *env, _ []string, cur string, _ bool) []string {
+				return append(valueCandidates(a, cur), "default")
+			})
+			if err != nil {
 				return err
 			}
-			if text != "" || !ca.Required || hasDefault(ca) {
-				break
+			switch {
+			case text == old:
+			case text == "default":
+				if !a.hasDefault() {
+					fmt.Fprintf(e.stderr, "%s has no default.\n", a.Name)
+					continue
+				}
+				back = append(back, a.Name)
+			case text == "":
+				if a.Required && !a.hasDefault() {
+					fmt.Fprintf(e.stderr, "%s is required.\n", a.Name)
+					continue
+				}
+				set[a.Name] = nil
+			default:
+				v, err := parseValue(a, text)
+				if err != nil {
+					fmt.Fprintln(e.stderr, err)
+					old = text
+					continue
+				}
+				set[a.Name] = v
 			}
-			fmt.Fprintf(e.stderr, "%s is required.\n", a.Name)
+			break
 		}
-		switch {
-		case text == old:
-		case text == "":
-			attrID := a.ID
-			p.add("removed "+a.Name, func() error {
-				_, err := e.do(http.MethodDelete, owner+"/values/"+attrID, nil)
-				return err
-			})
-		default:
-			attrID, body := a.ID, object{"value": v}
-			p.add("set "+a.Name, func() error {
-				_, err := e.do(http.MethodPut, owner+"/values/"+attrID, body)
-				return err
-			})
-		}
+	}
+	if len(set) > 0 {
+		p.patch["values"] = set
+	}
+	if len(back) > 0 {
+		p.patch["default"] = back
 	}
 	return nil
 }
@@ -441,14 +352,21 @@ func (e *env) editItem(id string) error {
 		}
 		p.patch["class"] = classID
 	}
-	// A unit can only be changed to another of the same quantity, never
-	// added or removed, so it is only asked for when there is one.
+	unit := ""
 	if it.Unit != nil {
-		if err := e.editUnit(p, it.Unit, it.UnitLock); err != nil {
-			return err
-		}
+		unit = *it.Unit
 	}
-	if err := e.editValues(p, "/items/"+id, classID, false, it.Values); err != nil {
+	if v, err = e.field("Unit of its stock (empty: pieces)", unit, nil); err != nil {
+		return err
+	}
+	if v != unit {
+		p.patch["unit"] = orNil(v)
+	}
+	c, err := e.classDetail(classID)
+	if err != nil {
+		return err
+	}
+	if err := e.editValues(p, c, "item", it.Values, it.Defaulted); err != nil {
 		return err
 	}
 	if err := e.apply(p); err != nil {
@@ -470,7 +388,7 @@ func (e *env) editStock(id string) error {
 	p := newPlan("/stock/" + id)
 	current := ""
 	if s.Amount != nil {
-		current = formatQuantity(s.Amount, s.Display)
+		current = s.Amount.String()
 	}
 	for {
 		v, err := e.field("Amount (empty: uncounted)", current, nil)
@@ -484,7 +402,7 @@ func (e *env) editStock(id string) error {
 			p.patch["amount"] = nil
 			break
 		}
-		q, err := e.parseQuantity(v, s.Item.Unit)
+		q, err := e.parseAmount(v, s.Item.Unit)
 		if err == nil {
 			p.patch["amount"] = q
 			break
@@ -502,7 +420,27 @@ func (e *env) editStock(id string) error {
 			return err
 		}
 	}
-	if err := e.editValues(p, "/stock/"+id, s.Item.Class, true, s.Values); err != nil {
+	for _, f := range []struct {
+		label, key string
+		current    *string
+	}{{"Reference (empty: none)", "reference", s.Reference}, {"Serial (empty: none)", "serial", s.Serial}} {
+		old := ""
+		if f.current != nil {
+			old = *f.current
+		}
+		v, err := e.field(f.label, old, nil)
+		if err != nil {
+			return err
+		}
+		if v != old {
+			p.patch[f.key] = orNil(v)
+		}
+	}
+	c, err := e.classDetail(s.Item.Class)
+	if err != nil {
+		return err
+	}
+	if err := e.editValues(p, c, "stock", s.Values, s.Defaulted); err != nil {
 		return err
 	}
 	if err := e.apply(p); err != nil {
@@ -511,150 +449,12 @@ func (e *env) editStock(id string) error {
 	return e.showAfterEdit("/stock/"+id, func(e *env, d json.RawMessage) error { return e.printStockJSON(d) })
 }
 
-func (e *env) editAttribute(id string) error {
-	var a attribute
-	if err := e.get("/attributes/"+id, nil, &a); err != nil {
-		return err
+// orNil is nil for "", for a patch that clears a field.
+func orNil(s string) any {
+	if s == "" {
+		return nil
 	}
-	e.editTitle("attribute " + a.Name)
-	p := newPlan("/attributes/" + id)
-	v, err := e.requiredField("Name", a.Name, nil)
-	if err != nil {
-		return err
-	}
-	if v != a.Name {
-		p.patch["name"] = v
-	}
-	datatype := a.Datatype
-	for {
-		if v, err = e.requiredField("Type (text, integer, decimal, date, boolean, url, choice)", datatype, datatypes); err != nil {
-			return err
-		}
-		if strings.Contains(" text integer decimal date boolean url choice ", " "+v+" ") {
-			break
-		}
-		fmt.Fprintf(e.stderr, "%q is not a type.\n", v)
-		datatype = v
-	}
-	if v != a.Datatype {
-		p.patch["datatype"] = v
-	}
-	datatype = v
-	// As for items, the unit is only asked for when there is one.
-	if a.Unit != nil && (datatype == "integer" || datatype == "decimal") {
-		if err := e.editUnit(p, a.Unit, a.UnitLock); err != nil {
-			return err
-		}
-	}
-	if datatype == "choice" {
-		if err := e.editOptions(p, a); err != nil {
-			return err
-		}
-	}
-	if err := e.apply(p); err != nil {
-		return err
-	}
-	return e.showAfterEdit("/attributes/"+id, func(e *env, d json.RawMessage) error { return e.printAttributeJSON(d) })
-}
-
-// editUnit asks for the unit of an attribute or item, which can change to
-// another unit of the same quantity, and for its Unit lock.
-func (e *env) editUnit(p *editPlan, u *unit, lock bool) error {
-	current, err := e.unitLabel(u)
-	if err != nil {
-		return err
-	}
-	for {
-		v, err := e.requiredField("Unit", current, completeQuantityUnits(u.Quantity.ID))
-		if err != nil {
-			return err
-		}
-		if v == current {
-			break
-		}
-		nu, err := e.resolveUnit(v)
-		if err == nil {
-			p.patch["unit"] = nu.ID
-			break
-		}
-		fmt.Fprintln(e.stderr, err)
-		current = v
-	}
-	for {
-		v, err := e.requiredField("Unit lock: always show in this unit (yes/no)", yesNo(lock), words("yes", "no"))
-		if err != nil {
-			return err
-		}
-		if b, ok := parseYesNo(v); ok {
-			if b != lock {
-				p.patch["unit_lock"] = b
-			}
-			return nil
-		}
-		fmt.Fprintf(e.stderr, "%q is not yes or no.\n", v)
-	}
-}
-
-// editOptions is a loop over the options of a choice attribute: NAME adds,
-// -NAME removes, OLD=NEW renames, an empty line ends it.
-func (e *env) editOptions(p *editPlan, a attribute) error {
-	byName := map[string]option{}
-	var names, removable []string
-	for _, o := range a.Options {
-		byName[strings.ToLower(o.Name)] = o
-		names = append(names, o.Name)
-		removable = append(removable, "-"+o.Name)
-	}
-	if len(names) == 0 {
-		fmt.Fprintln(e.stderr, "Options: (none)")
-	} else {
-		fmt.Fprintf(e.stderr, "Options: %s\n", strings.Join(names, ", "))
-	}
-	complete := func(*env, []string, string, bool) []string {
-		var out []string
-		for _, n := range names {
-			out = append(out, n+"=")
-		}
-		return append(out, removable...)
-	}
-	for {
-		v, err := e.field("Option (NAME adds, -NAME removes, OLD=NEW renames, Enter: done)", "", complete)
-		if err != nil {
-			return err
-		}
-		switch old, renamed, isRename := strings.Cut(v, "="); {
-		case v == "":
-			return nil
-		case strings.HasPrefix(v, "-"):
-			o, ok := byName[strings.ToLower(strings.TrimSpace(v[1:]))]
-			if !ok {
-				fmt.Fprintf(e.stderr, "There is no option %q.\n", v[1:])
-				continue
-			}
-			p.add("removed option "+o.Name, func() error {
-				_, err := e.do(http.MethodDelete, "/options/"+o.ID, nil)
-				return err
-			})
-		case isRename:
-			o, ok := byName[strings.ToLower(strings.TrimSpace(old))]
-			renamed = strings.TrimSpace(renamed)
-			if !ok || renamed == "" {
-				fmt.Fprintf(e.stderr, "Write OLD=NEW with an existing option.\n")
-				continue
-			}
-			p.add("renamed option "+o.Name, func() error {
-				_, err := e.do(http.MethodPatch, "/options/"+o.ID, object{"name": renamed})
-				return err
-			})
-		default:
-			name := v
-			attrID := a.ID
-			p.add("added option "+name, func() error {
-				_, err := e.do(http.MethodPost, "/attributes/"+attrID+"/options", object{"name": name})
-				return err
-			})
-		}
-	}
+	return s
 }
 
 func (e *env) editAccount(id string) error {

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -14,14 +13,11 @@ import (
 	"github.com/radiohyperactivity/wtf/internal/client"
 )
 
-// cache holds what is fetched at most once per run: the trees, the
-// attributes and the units of each quantity.
+// cache holds what is fetched at most once per run: the trees, and the
+// classes with their attributes.
 type cache struct {
 	locations, classes *treeIndex
-	attributes         []attribute
-	families           []unitFamily
-	quantities         []quantity
-	units              map[string][]unit // by quantity id
+	details            map[string]class // by id
 }
 
 // treeIndex is a class or location tree with lookups by id.
@@ -403,7 +399,7 @@ func (e *env) resolveStock(ref string) (string, error) {
 	}
 	var candidates []string
 	for _, s := range rows {
-		candidates = append(candidates, s.Code+"  "+ix.pathString(s.Location)+"  "+formatQuantity(s.Amount, s.Display))
+		candidates = append(candidates, s.Code+"  "+ix.pathString(s.Location)+"  "+formatAmount(s.Amount, it.Unit))
 	}
 	if i, ok, err := e.choose(fmt.Sprintf("Which stock of %q? ", it.Name), candidates); ok {
 		if err != nil {
@@ -414,268 +410,33 @@ func (e *env) resolveStock(ref string) (string, error) {
 	return "", ambiguous("stock of", it.Name, candidates)
 }
 
-func (e *env) attributes() ([]attribute, error) {
-	if e.cache.attributes == nil {
-		if err := e.cachedGet("/attributes", "attributes", &e.cache.attributes); err != nil {
-			return nil, err
-		}
+// classDetail returns a class with its attributes, fetched once per run.
+func (e *env) classDetail(id string) (class, error) {
+	if c, ok := e.cache.details[id]; ok {
+		return c, nil
 	}
-	return e.cache.attributes, nil
+	var c class
+	if err := e.get("/classes/"+id, nil, &c); err != nil {
+		return class{}, err
+	}
+	if e.cache.details == nil {
+		e.cache.details = map[string]class{}
+	}
+	e.cache.details[id] = c
+	return c, nil
 }
 
-// resolveAttribute returns an attribute given by id or name.
-func (e *env) resolveAttribute(ref string) (*attribute, error) {
-	if isUUID(ref) {
-		var a attribute
-		if err := e.get("/attributes/"+strings.ToLower(ref), nil, &a); err != nil {
-			return nil, err
-		}
-		return &a, nil
-	}
-	list, err := e.attributes()
+// classAttribute returns the attribute of class classID that ref names (see
+// matchAttribute), of either scope.
+func (e *env) classAttribute(classID, ref string) (attribute, error) {
+	c, err := e.classDetail(classID)
 	if err != nil {
-		return nil, err
+		return attribute{}, err
 	}
-	for i := range list {
-		if strings.EqualFold(list[i].Name, strings.TrimSpace(ref)) {
-			return &list[i], nil
-		}
+	if a, err := matchAttribute(c, "item", ref); err == nil {
+		return a, nil
 	}
-	return nil, fmt.Errorf("no attribute named %q", ref)
-}
-
-// resolveOption returns the id of an option of an attribute, by id or name.
-// options returns the live options of a choice attribute, which come with
-// the attribute.
-func (e *env) options(attributeID string) ([]option, error) {
-	var a attribute
-	if err := e.get("/attributes/"+attributeID, nil, &a); err != nil {
-		return nil, err
-	}
-	return a.Options, nil
-}
-
-func (e *env) resolveOption(attributeID, ref string) (string, error) {
-	if isUUID(ref) {
-		return strings.ToLower(ref), nil
-	}
-	options, err := e.options(attributeID)
-	if err != nil {
-		return "", err
-	}
-	for _, o := range options {
-		if strings.EqualFold(o.Name, strings.TrimSpace(ref)) {
-			return o.ID, nil
-		}
-	}
-	return "", fmt.Errorf("no option named %q", ref)
-}
-
-// unitFamilies returns all unit families the tenant sees, each with its
-// units. They are kept in the cache directory and revalidated by their
-// version (ETag) on every use, as the trees are; each unit is given its
-// family and quantity, which the list leaves out.
-func (e *env) unitFamilies() ([]unitFamily, error) {
-	if e.cache.families != nil {
-		return e.cache.families, nil
-	}
-	var cached familyList
-	_, have := e.readCache("unit-families", &cached)
-	var headers []string
-	if have {
-		headers = []string{"If-None-Match", fmt.Sprintf(`"%d"`, cached.Version)}
-	}
-	data, _, err := e.api.Do(e.ctx, http.MethodGet, "/unit-families", nil, nil, headers...)
-	if err != nil {
-		return nil, err
-	}
-	list := cached
-	if data != nil || !have {
-		if err := decode(data, &list); err != nil {
-			return nil, err
-		}
-		e.writeCache("unit-families", list)
-	}
-	for i := range list.Families {
-		f := &list.Families[i]
-		for j := range f.Units {
-			f.Units[j].Family.ID, f.Units[j].Family.Name = f.ID, f.Name
-			f.Units[j].Quantity = f.Quantity
-		}
-	}
-	e.cache.families = list.Families
-	return e.cache.families, nil
-}
-
-// familyList is GET /unit-families' answer, and how the client keeps it.
-type familyList struct {
-	Version  int64        `json:"version"`
-	Families []unitFamily `json:"families"`
-}
-
-// decode unmarshals API JSON into v, as decode does, and fills in the
-// units given by id only from the unit families the client keeps.
-func (e *env) decode(data []byte, v any) error {
-	if err := decode(data, v); err != nil {
-		return err
-	}
-	return e.fillUnits(v)
-}
-
-var unitType = reflect.TypeFor[unit]()
-
-// fillUnits replaces every unit in v that has only its id by the whole
-// unit, from the unit families. A unit not among them is left as it is.
-func (e *env) fillUnits(v any) error {
-	var index map[string]unit
-	var err error
-	var walk func(r reflect.Value)
-	walk = func(r reflect.Value) {
-		if err != nil {
-			return
-		}
-		switch r.Kind() {
-		case reflect.Pointer, reflect.Interface:
-			if !r.IsNil() {
-				walk(r.Elem())
-			}
-		case reflect.Struct:
-			if r.Type() == unitType {
-				if !r.CanAddr() {
-					return
-				}
-				u := r.Addr().Interface().(*unit)
-				if u.ID == "" || u.Symbol != "" {
-					return
-				}
-				if index == nil {
-					if index, err = e.unitIndex(); err != nil {
-						return
-					}
-				}
-				if full, ok := index[u.ID]; ok {
-					*u = full
-				}
-				return
-			}
-			for i := 0; i < r.NumField(); i++ {
-				if r.Type().Field(i).IsExported() {
-					walk(r.Field(i))
-				}
-			}
-		case reflect.Slice, reflect.Array:
-			for i := 0; i < r.Len(); i++ {
-				walk(r.Index(i))
-			}
-		}
-	}
-	walk(reflect.ValueOf(v))
-	return err
-}
-
-// unitIndex returns every unit the tenant sees by id, each with its family
-// and quantity.
-func (e *env) unitIndex() (map[string]unit, error) {
-	families, err := e.unitFamilies()
-	if err != nil {
-		return nil, err
-	}
-	index := map[string]unit{}
-	for _, f := range families {
-		for _, u := range f.Units {
-			index[u.ID] = u
-		}
-	}
-	return index, nil
-}
-
-// resolveFamily returns the id of a unit family given by id or name.
-func (e *env) resolveFamily(ref string) (string, error) {
-	list, err := e.unitFamilies()
-	if err != nil {
-		return "", err
-	}
-	for _, f := range list {
-		if strings.EqualFold(f.Name, strings.TrimSpace(ref)) || f.ID == strings.TrimSpace(ref) {
-			return f.ID, nil
-		}
-	}
-	return "", fmt.Errorf("no unit family named %q (see 'wtf unit-family list')", ref)
-}
-
-func (e *env) loadQuantities() error {
-	if e.cache.quantities == nil {
-		return e.cachedGet("/quantities", "quantities", &e.cache.quantities)
-	}
-	return nil
-}
-
-// resolveQuantity returns the id of a quantity given by id or name.
-func (e *env) resolveQuantity(ref string) (string, error) {
-	if err := e.loadQuantities(); err != nil {
-		return "", err
-	}
-	for _, q := range e.cache.quantities {
-		if strings.EqualFold(q.Name, strings.TrimSpace(ref)) || q.ID == strings.TrimSpace(ref) {
-			return q.ID, nil
-		}
-	}
-	return "", fmt.Errorf("no quantity named %q (see 'wtf quantity list')", ref)
-}
-
-// resolveUnit returns a unit given by id, symbol or name. A symbol that
-// several families share is told apart by its family, as unitRef writes
-// it: "B (Binary bytes)".
-func (e *env) resolveUnit(ref string) (*unit, error) {
-	families, err := e.unitFamilies()
-	if err != nil {
-		return nil, err
-	}
-	var all []unit
-	for _, f := range families {
-		all = append(all, f.Units...)
-	}
-	ref = strings.TrimSpace(ref)
-	for i := range all {
-		if all[i].ID == ref || unitRef(all, &all[i]) == ref {
-			return &all[i], nil
-		}
-	}
-	if symbol, family, ok := strings.Cut(strings.TrimSuffix(ref, ")"), " ("); ok {
-		var in []unit
-		for _, u := range all {
-			if strings.EqualFold(u.Family.Name, family) {
-				in = append(in, u)
-			}
-		}
-		return matchUnit(in, symbol)
-	}
-	u, err := matchUnit(all, ref)
-	if err != nil {
-		return nil, err
-	}
-	// The same unit in several families: the family must be named.
-	var refs []string
-	for i := range all {
-		if all[i].ID != u.ID && all[i].Symbol == u.Symbol {
-			refs = append(refs, unitRef(all, &all[i]))
-		}
-	}
-	if refs != nil {
-		return nil, ambiguous("unit", ref, append([]string{unitRef(all, u)}, refs...))
-	}
-	return u, nil
-}
-
-// unitRef names a unit for the command line: its symbol, followed by its
-// family when other families have the same symbol.
-func unitRef(all []unit, u *unit) string {
-	for _, v := range all {
-		if v.ID != u.ID && v.Symbol == u.Symbol {
-			return u.Symbol + " (" + u.Family.Name + ")"
-		}
-	}
-	return u.Symbol
+	return matchAttribute(c, "stock", ref)
 }
 
 // resolveAccount returns the id of an account given by id or email.
@@ -695,45 +456,19 @@ func (e *env) resolveAccount(ref string) (string, error) {
 	return "", fmt.Errorf("no account with email %q", ref)
 }
 
-// targetPath maps an attachment target type and reference to its API path.
-func (e *env) targetPath(typ, ref string) (string, error) {
-	var (
-		id  string
-		err error
-	)
-	switch typ {
+// ownerPath is the API path of an item or a stock row (kind "item" or
+// "stock") named by ref.
+func (e *env) ownerPath(kind, ref string) (string, error) {
+	switch kind {
 	case "item":
-		id, err = e.resolveItem(ref)
-		typ = "items"
+		id, err := e.resolveItem(ref)
+		return "/items/" + id, err
 	case "stock":
-		id, err = e.resolveStock(ref)
-	case "location":
-		id, err = e.resolveLocation(ref)
-		typ = "locations"
-	case "class":
-		id, err = e.resolveClass(ref)
-		typ = "classes"
-	default:
-		return "", usagef("unknown type %q: use item, stock, location or class", typ)
+		id, err := e.resolveStock(ref)
+		return "/stock/" + id, err
 	}
-	if err != nil {
-		return "", err
-	}
-	return "/" + typ + "/" + id, nil
+	return "", usagef("unknown kind %q: a file is on an item or a stock row", kind)
 }
 
 // object is a JSON request body.
 type object = map[string]any
-
-// unitLabel names a unit as resolveUnit takes it back (see unitRef).
-func (e *env) unitLabel(u *unit) (string, error) {
-	families, err := e.unitFamilies()
-	if err != nil {
-		return "", err
-	}
-	var all []unit
-	for _, f := range families {
-		all = append(all, f.Units...)
-	}
-	return unitRef(all, u), nil
-}

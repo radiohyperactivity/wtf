@@ -9,21 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // The client keeps a cache per server, in the user's cache directory or
-// $WTF_CACHE_DIR:
-//
-//   - the class and location trees, revalidated on every use with their
-//     version (ETag), which costs the server one row lookup;
-//   - while completing on the command line, the lists of attributes, unit
-//     families, quantities and units, for a minute.
-//
-// A change made by this client refreshes what it makes outdated at once (see
-// wrote). Quantities, unit families and units only change by an import.
-
-const listTTL = time.Minute
+// $WTF_CACHE_DIR: the class and location trees, revalidated on every use
+// with their version (ETag), which costs the server one row lookup. A
+// change made by this client refreshes what it makes outdated at once (see
+// wrote). The classes with their attributes are fetched once per run.
 
 // cacheDir returns the cache directory for the current server, or "".
 func (e *env) cacheDir() string {
@@ -42,21 +34,13 @@ func (e *env) cacheDir() string {
 	return filepath.Join(base, hex.EncodeToString(sum[:8]))
 }
 
-func (e *env) readCache(name string, v any) (time.Time, bool) {
+func (e *env) readCache(name string, v any) bool {
 	dir := e.cacheDir()
 	if dir == "" {
-		return time.Time{}, false
+		return false
 	}
-	path := filepath.Join(dir, name+".json")
-	fi, err := os.Stat(path)
-	if err != nil {
-		return time.Time{}, false
-	}
-	data, err := os.ReadFile(path)
-	if err != nil || decode(data, v) != nil {
-		return time.Time{}, false
-	}
-	return fi.ModTime(), true
+	data, err := os.ReadFile(filepath.Join(dir, name+".json"))
+	return err == nil && decode(data, v) == nil
 }
 
 // writeCache stores v; failures only cost speed, so they are ignored.
@@ -75,28 +59,15 @@ func (e *env) writeCache(name string, v any) {
 	}
 }
 
-// wrote is called after a successful change at path. It drops the copies
-// the change makes outdated, so the next use fetches them again: this run's
-// tree (the cached file is revalidated anyway), or the attributes, including
-// the list kept for completion.
+// wrote is called after a successful change at path. It drops this run's
+// copies the change makes outdated, so the next use fetches them again (the
+// cached trees are revalidated anyway).
 func (e *env) wrote(path string) {
 	switch {
 	case strings.HasPrefix(path, "/locations"):
 		e.cache.locations = nil
-	case strings.HasPrefix(path, "/classes"):
-		e.cache.classes = nil
-	case strings.HasPrefix(path, "/attributes"), strings.HasPrefix(path, "/options"):
-		e.cache.attributes = nil
-		if dir := e.cacheDir(); dir != "" {
-			_ = os.Remove(filepath.Join(dir, "attributes.json"))
-		}
-	case strings.HasPrefix(path, "/quantities"),
-		strings.HasPrefix(path, "/unit-families"):
-		e.cache.families, e.cache.quantities = nil, nil
-		if dir := e.cacheDir(); dir != "" {
-			_ = os.Remove(filepath.Join(dir, "unit-families.json"))
-			_ = os.Remove(filepath.Join(dir, "quantities.json"))
-		}
+	case strings.HasPrefix(path, "/classes"), strings.HasPrefix(path, "/model"):
+		e.cache.classes, e.cache.details = nil, nil
 	}
 }
 
@@ -104,7 +75,7 @@ func (e *env) wrote(path string) {
 // an unchanged tree comes back as 304 Not Modified.
 func (e *env) cachedTree(path, name string) (tree, error) {
 	var cached tree
-	_, have := e.readCache(name, &cached)
+	have := e.readCache(name, &cached)
 	var headers []string
 	if have {
 		headers = []string{"If-None-Match", fmt.Sprintf(`"%d"`, cached.Version)}
@@ -122,26 +93,4 @@ func (e *env) cachedTree(path, name string) (tree, error) {
 	}
 	e.writeCache(name, t)
 	return t, nil
-}
-
-// cachedGet fetches a small list; while completing, a copy younger than
-// listTTL is used instead.
-func (e *env) cachedGet(path, name string, v any) error {
-	if e.completing {
-		if at, ok := e.readCache(name, v); ok && time.Since(at) < listTTL {
-			return e.fillUnits(v)
-		}
-	}
-	data, err := e.api.Get(e.ctx, path, nil)
-	if err != nil {
-		return err
-	}
-	if err := e.decode(data, v); err != nil {
-		return err
-	}
-	if e.completing {
-		var raw json.RawMessage = data
-		e.writeCache(name, raw)
-	}
-	return nil
 }

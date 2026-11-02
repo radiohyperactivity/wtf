@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 )
 
 // modelGroup imports and exports model files: quantities and units,
@@ -19,17 +18,17 @@ import (
 func modelGroup() group {
 	return group{
 		name:    "model",
-		summary: "Model files: units, attributes and classes for one use, such as microcontrollers",
+		summary: "Model files: classes with their attributes for one use, such as microcontrollers",
 		commands: []command{
 			{
 				name:    "import",
 				args:    "<file> [--parent CLASS] [--dry-run]",
-				summary: "Import units, attributes and classes from a model file (seed/model-format.md); what is there and the same is used as it is.",
+				summary: "Import classes and their attributes from a model file (seed/model-format.md); a class that is there gets what it hasn't got.",
 				params:  []param{fileArg("File")},
 				flags:   map[string]param{"parent": arg("Class", completeClasses)},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
 					parent := fs.String("parent", "", "import the file's classes below this class, instead of at the top")
-					dryRun := fs.Bool("dry-run", false, "only tell what would be added, and the conflicts")
+					dryRun := fs.Bool("dry-run", false, "only tell what would be added")
 					return func(e *env, args []string) error {
 						if err := wantArgs(args, 1, 1); err != nil {
 							return err
@@ -56,31 +55,23 @@ func modelGroup() group {
 						if err != nil {
 							return err
 						}
-						// New units, classes and attributes: the cached ones go.
-						e.wrote("/quantities")
+						// New classes and attributes: the cached ones go.
 						e.wrote("/classes")
-						e.wrote("/attributes")
 						var report modelReport
 						if err := e.decode(data, &report); err != nil {
 							return err
 						}
-						if err := e.emit(data, func() error {
+						return e.emit(data, func() error {
 							printModelImport(e, report)
 							return nil
-						}); err != nil {
-							return err
-						}
-						if len(report.Conflicts) > 0 {
-							return fmt.Errorf("nothing was imported: %d conflicts", len(report.Conflicts))
-						}
-						return nil
+						})
 					}
 				},
 			},
 			{
 				name:    "export",
 				args:    "<class> [-o FILE] [--force]",
-				summary: "Export a class and everything below it as a model file, with the attributes and units of your own it needs.",
+				summary: "Export a class and everything below it as a model file, with their attributes.",
 				params:  []param{arg("Class", completeClasses)},
 				flags:   map[string]param{"o": fileArg("Output file")},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
@@ -138,71 +129,30 @@ func modelGroup() group {
 
 // modelReport is the answer of POST /model/import.
 type modelReport struct {
-	Applied     bool `json:"applied"`
-	DryRun      bool `json:"dry_run"`
-	Quantities  struct{ Added, Existing []string }
-	Families    struct{ Added, Existing []string }
-	Units       struct{ Added, Existing []string }
-	Attributes  struct{ Added, Existing []string }
-	Options     struct{ Added []string }
-	Classes     struct{ Added, Existing []string }
-	Assignments struct{ Added, Existing []string }
-	Conflicts   []struct{ Where, Message string }
+	Classes    struct{ Added, Existing int }
+	Attributes struct{ Added, Existing int }
+	Items      int  `json:"items"`
+	Stock      int  `json:"stock"`
+	DryRun     bool `json:"dry_run"`
 }
 
-// printModelImport tells what an import added (or would add), how much was
-// there already, and the conflicts.
+// printModelImport tells what an import added (or would add), and how much
+// was there already.
 func printModelImport(e *env, r modelReport) {
-	verb := "Added"
-	if !r.Applied {
-		verb = "Would add"
+	verb, rewrote := "Added", "Rewrote"
+	if r.DryRun {
+		verb, rewrote = "A dry run: nothing changed. It would add", "It would rewrite"
 	}
-	var lines []string
-	add := func(what string, names []string) {
-		for _, n := range names {
-			lines = append(lines, "  "+what+" "+n)
-		}
-	}
-	add("quantity", r.Quantities.Added)
-	add("unit family", r.Families.Added)
-	add("unit", r.Units.Added)
-	add("attribute", r.Attributes.Added)
-	add("option", r.Options.Added)
-	add("class", r.Classes.Added)
-	add("assignment", r.Assignments.Added)
-	if len(lines) == 0 {
+	added := joinCounts(count(r.Classes.Added, "class", "classes"), count(r.Attributes.Added, "attribute", "attributes"))
+	if added == "" {
 		fmt.Fprintln(e.stdout, "Nothing new.")
 	} else {
-		fmt.Fprintln(e.stdout, verb+":")
-		for _, l := range lines {
-			fmt.Fprintln(e.stdout, l)
-		}
+		fmt.Fprintf(e.stdout, "%s %s.\n", verb, added)
 	}
-	var there []string
-	for _, c := range []struct {
-		n         int
-		one, many string
-	}{
-		{len(r.Quantities.Existing), "quantity", "quantities"},
-		{len(r.Families.Existing), "unit family", "unit families"},
-		{len(r.Units.Existing), "unit", "units"},
-		{len(r.Attributes.Existing), "attribute", "attributes"},
-		{len(r.Classes.Existing), "class", "classes"},
-		{len(r.Assignments.Existing), "assignment", "assignments"},
-	} {
-		if c.n == 1 {
-			there = append(there, "1 "+c.one)
-		} else if c.n > 1 {
-			there = append(there, fmt.Sprintf("%d %s", c.n, c.many))
-		}
+	if there := joinCounts(count(r.Classes.Existing, "class", "classes"), count(r.Attributes.Existing, "attribute", "attributes")); there != "" {
+		fmt.Fprintf(e.stdout, "Already there: %s.\n", there)
 	}
-	if len(there) > 0 {
-		fmt.Fprintf(e.stdout, "Already there: %s.\n", strings.Join(there, ", "))
-	}
-	if len(r.Conflicts) > 0 {
-		fmt.Fprintln(e.stdout, "Conflicts, so nothing was imported:")
-		for _, c := range r.Conflicts {
-			fmt.Fprintf(e.stdout, "  %s: %s\n", c.Where, c.Message)
-		}
+	if rows := joinCounts(count(r.Items, "item", "items"), count(r.Stock, "stock row", "stock rows")); rows != "" {
+		fmt.Fprintf(e.stdout, "%s %s.\n", rewrote, rows)
 	}
 }

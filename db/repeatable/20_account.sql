@@ -21,8 +21,9 @@ LANGUAGE sql IMMUTABLE AS $$
     );
 $$;
 
--- p_email trimmed, if it looks like an email address: something, an @, and
--- something, without spaces. Raises "invalid" otherwise.
+-- p_email trimmed and in lower case, as accounts store it, if it looks like
+-- an email address: something, an @, and something, without spaces. Raises
+-- "invalid" otherwise.
 CREATE FUNCTION account.clean_email(p_email text)
 RETURNS text
 LANGUAGE plpgsql IMMUTABLE AS $$
@@ -30,7 +31,7 @@ BEGIN
     IF p_email IS NULL OR btrim(p_email) !~ '^[^@\s]+@[^@\s]+$' THEN
         PERFORM error.invalid(format('%L is not an email address', p_email));
     END IF;
-    RETURN btrim(p_email);
+    RETURN lower(btrim(p_email));
 END;
 $$;
 
@@ -75,8 +76,7 @@ $$;
 -- Logging in and out, and one's own sessions
 -- ---------------------------------------------------------------------------
 
--- Logs in to the tenant of the request's host with an email address and a
--- password, and starts a session for the client p_client ("WtF on Pixel
+-- Logs in with an email address and a password, and starts a session for the client p_client ("WtF on Pixel
 -- 9"), which may sit unused for p_max_idle before it expires (NULL: never),
 -- with the request's address as the first in its trail.
 --
@@ -84,7 +84,7 @@ $$;
 -- is 'invalid' (unknown email or wrong password) or 'locked' (after 5
 -- failed attempts, one attempt a minute is allowed until one succeeds).
 -- Failures are returned rather than raised, so that the count of failed
--- attempts is committed. An unknown host is raised (404).
+-- attempts is committed.
 CREATE FUNCTION account.login(
     p_request  public.request,
     p_email    text,
@@ -96,22 +96,16 @@ LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
 AS $$
 DECLARE
-    v_tenant  uuid;
     v_account public.account;
     v_token   text;
 BEGIN
-    SELECT t.id INTO v_tenant FROM public.tenant t WHERE t.host = lower((p_request).host);
-    IF NOT FOUND THEN
-        PERFORM error.unknown_host((p_request).host);
-    END IF;
     IF p_max_idle <= interval '0' THEN
         PERFORM error.invalid('A session must be allowed to sit unused for some time, or for ever');
     END IF;
 
     SELECT a.* INTO v_account
     FROM public.account a
-    WHERE a.tenant = v_tenant
-      AND lower(a.email) = lower(btrim(p_email))
+    WHERE a.email = lower(btrim(p_email))
     FOR UPDATE;
 
     IF NOT FOUND THEN
@@ -304,7 +298,7 @@ $$;
 -- Managing accounts (admins)
 -- ---------------------------------------------------------------------------
 
--- The tenant's accounts, by email address.
+-- The accounts, by email address.
 CREATE FUNCTION account.list(p_request public.request)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -317,12 +311,11 @@ BEGIN
         SELECT coalesce(jsonb_agg(account.json(a)
                                   ORDER BY a.email COLLATE public.natural, a.id), '[]')
         FROM public.account a
-        WHERE a.tenant = v_session.tenant
     );
 END;
 $$;
 
--- One of the tenant's accounts.
+-- An account.
 CREATE FUNCTION account.get(p_request public.request, p_account uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -334,7 +327,7 @@ DECLARE
 BEGIN
     SELECT account.json(a) INTO v_result
     FROM public.account a
-    WHERE a.id = p_account AND a.tenant = v_session.tenant;
+    WHERE a.id = p_account;
     IF NOT FOUND THEN
         PERFORM error.not_found('account', p_account::text);
     END IF;
@@ -342,7 +335,7 @@ BEGIN
 END;
 $$;
 
--- Creates an account in the tenant, with the role p_role. With a NULL
+-- Creates an account with the role p_role. With a NULL
 -- p_password it has none, and can't log in until one is set.
 CREATE FUNCTION account.create(
     p_request  public.request,
@@ -362,13 +355,12 @@ BEGIN
         PERFORM error.invalid('An account needs a role: viewer, user or admin');
     END IF;
     IF EXISTS (SELECT 1 FROM public.account a
-               WHERE a.tenant = v_session.tenant
-                 AND lower(a.email) = lower(v_email)) THEN
+               WHERE a.email = v_email) THEN
         PERFORM error.duplicate(format('There is an account for %s already', v_email));
     END IF;
 
-    INSERT INTO public.account (tenant, email, password_hash, role)
-    VALUES (v_session.tenant, v_email, account.password_hash(p_password), p_role)
+    INSERT INTO public.account (email, password_hash, role)
+    VALUES (v_email, account.password_hash(p_password), p_role)
     RETURNING * INTO v_account;
     RETURN account.json(v_account);
 END;
@@ -379,7 +371,7 @@ $$;
 -- end_sessions (true or false, and only with it) says whether the
 -- account's sessions end too. An admin's own password is changed with
 -- account.password_change, which needs the current one, and their own role
--- can't be changed, so that a tenant always has an admin.
+-- can't be changed, so that there is always an admin.
 CREATE FUNCTION account.patch(p_request public.request, p_account uuid, p_patch jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -400,7 +392,7 @@ BEGIN
 
     SELECT a.* INTO v_account
     FROM public.account a
-    WHERE a.id = p_account AND a.tenant = v_session.tenant
+    WHERE a.id = p_account
     FOR UPDATE;
     IF NOT FOUND THEN
         PERFORM error.not_found('account', p_account::text);
@@ -415,8 +407,7 @@ BEGIN
     IF p_patch ? 'email' THEN
         v_email := account.clean_email(p_patch ->> 'email');
         IF EXISTS (SELECT 1 FROM public.account a
-                   WHERE a.tenant = v_session.tenant
-                     AND lower(a.email) = lower(v_email)
+                   WHERE a.email = v_email
                      AND a.id <> p_account) THEN
             PERFORM error.duplicate(format('There is an account for %s already', v_email));
         END IF;
@@ -438,9 +429,9 @@ BEGIN
 END;
 $$;
 
--- Deletes an account of the tenant, and with it its sessions. Its email
+-- Deletes an account, and with it its sessions. Its email
 -- address can be used for a new account. An admin can't delete their own
--- account, so that a tenant always has an admin.
+-- account, so that there is always an admin.
 CREATE FUNCTION account.delete(p_request public.request, p_account uuid)
 RETURNS void
 LANGUAGE plpgsql
@@ -453,7 +444,7 @@ BEGIN
         PERFORM error.invalid('You can''t delete your own account');
     END IF;
     DELETE FROM public.account a
-    WHERE a.id = p_account AND a.tenant = v_session.tenant;
+    WHERE a.id = p_account;
     IF NOT FOUND THEN
         PERFORM error.not_found('account', p_account::text);
     END IF;

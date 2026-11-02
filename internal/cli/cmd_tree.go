@@ -220,7 +220,7 @@ func locationDeletion(data json.RawMessage) (treeDeletion, error) {
 		rows = nil
 		for _, s := range d.Stock {
 			perLocation[s.Location]++
-			rows = append(rows, []string{"  " + s.Code, s.Item.Name, formatQuantity(s.Amount, nil), "at " + paths[s.Location]})
+			rows = append(rows, []string{"  " + s.Code, s.Item.Name, formatAmount(s.Amount, nil), "at " + paths[s.Location]})
 		}
 		t.listing = append(t.listing, tableLines(nil, rows, false)...)
 	}

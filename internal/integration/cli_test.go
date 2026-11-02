@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -25,12 +24,7 @@ type cliEnv struct {
 
 func (e *environment) cli(t *testing.T) *cliEnv {
 	t.Helper()
-	// The test server's address is an IP address, which picks no tenant;
-	// requests arrive as if at the test tenant's hostname.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Host = testHostname
-		e.handler.ServeHTTP(w, r)
-	}))
+	server := httptest.NewServer(e.handler)
 	t.Cleanup(server.Close)
 	return &cliEnv{t: t, config: filepath.Join(t.TempDir(), "config.json"), vars: map[string]string{
 		"WTF_SERVER":    server.URL,
@@ -97,95 +91,83 @@ func TestCLI(t *testing.T) {
 	_, stderr := c.run(1, "", "location", "get", "Shelf 2")
 	contains(t, stderr, "ambiguous", "Garage/Shelf 2", "Attic/Shelf 2")
 
-	c.ok("attribute", "add", "Length", "--unit", "m")
-	c.ok("attribute", "add", "Colour", "--type", "choice")
-	c.ok("option", "add", "Colour", "red", "blue")
-	contains(t, c.ok("option", "list", "colour"), "blue", "red")
-	c.ok("attribute", "add", "Serial", "--type", "text")
-
 	c.ok("class", "add", "Hardware")
 	c.ok("class", "add", "Screws", "--parent", "Hardware")
-	contains(t, c.ok("class", "assign", "Screws", "Length", "--default", "12mm"), "Length", "1.2 cm")
-	c.ok("class", "assign", "Hardware", "Colour")
-	c.ok("class", "assign", "Hardware", "Serial", "--per-unit")
+	c.ok("class", "attribute", "add", "Hardware", "Colour", "--type", "choice", "--choices", "Red,Blue")
+	c.ok("class", "attribute", "add", "Hardware", "Lot", "--type", "text", "--stock")
+	c.ok("class", "attribute", "add", "Hardware", "Manual", "--type", "attachment", "--media", "text/*")
+	contains(t, c.ok("class", "attribute", "add", "Screws", "Length", "--type", "decimal", "--unit", "mm", "--default", "12"),
+		"Length", "mm", "12")
 	contains(t, c.ok("class", "tree"), "Hardware", "  Screws")
-	contains(t, c.ok("class", "get", "Hardware/Screws"), "Colour", "from Hardware", "Length", "1.2 cm")
+	contains(t, c.ok("class", "get", "Hardware/Screws"), "Colour", "from Hardware", "Length", "this class", "Stock attributes:", "Lot")
 
-	// Items with values, given in other units.
-	c.ok("item", "add", "M4 screw", "--class", "Screws", "--value", "Colour=Red")
-	contains(t, c.ok("item", "value-set", "M4 screw", "Length", "25", "mm"), "2.5 cm")
+	// Items with values, by their own flags; a number may carry its unit.
+	contains(t, c.ok("item", "add", "M4 screw", "--class", "Screws", "--colour", "red"), "Length:", "12 mm", "(default)", "Red")
+	contains(t, c.ok("item", "set", "M4 screw", "--length", "25 mm"), "25 mm")
 	var it struct {
-		ID     string `json:"id"`
-		Code   string `json:"code"`
-		Values []struct {
-			Attribute struct{ Name string } `json:"attribute"`
-			Value     any                   `json:"value"`
-		} `json:"values"`
+		ID     string         `json:"id"`
+		Code   string         `json:"code"`
+		Values map[string]any `json:"values"`
 	}
 	c.json(&it, "item", "get", "m4 SCREW")
-	for _, v := range it.Values {
-		if v.Attribute.Name == "Length" && v.Value != 0.025 {
-			t.Errorf("Length = %v, want 0.025 (metres)", v.Value)
-		}
+	if it.Values["Length"] != 25.0 {
+		t.Errorf("Length = %v, want 25", it.Values["Length"])
 	}
-	_, stderr = c.run(1, "", "item", "value-set", "M4 screw", "Length", "3", "kg")
-	contains(t, stderr, "unknown unit", "mm")
+	_, stderr = c.run(1, "", "item", "set", "M4 screw", "--length", "3 kg")
+	contains(t, stderr, "in mm, and nothing converts")
+	_, stderr = c.run(2, "", "item", "set", "M4 screw", "--weight", "3")
+	contains(t, stderr, `no item attribute "weight"`, "Length")
+	contains(t, c.ok("item", "set", "M4 screw", "--default", "length"), "12 mm", "(default)")
+	contains(t, c.ok("item", "set", "M4 screw", "--length", "30", "--no-colour"), "30 mm")
 
-	// A plain number is in the attribute's unit: 20 is 20 °C, stored as
-	// 293.15 K. The type follows from the unit.
-	c.ok("attribute", "add", "Max temperature", "--unit", "degC")
-	c.ok("class", "assign", "Hardware", "Max temperature")
-	contains(t, c.ok("item", "value-set", "M4 screw", "Max temperature", "20"), "20 °C")
-	c.json(&it, "item", "get", "M4 screw")
-	for _, v := range it.Values {
-		if v.Attribute.Name == "Max temperature" && v.Value != 293.15 {
-			t.Errorf("Max temperature = %v, want 293.15 (kelvin)", v.Value)
-		}
-	}
-	contains(t, c.ok("item", "value-set", "M4 screw", "Length", "0.03"), "3 cm")
+	// A changed default reaches the values that follow it, and a dry run
+	// says so without changing anything.
+	c.ok("item", "add", "M3 screw", "--class", "Screws")
+	contains(t, c.ok("class", "attribute", "set", "Screws", "Length", "--default", "16", "--dry-run"), "would rewrite 1 item")
+	contains(t, c.ok("class", "attribute", "set", "Screws", "Length", "--default", "16"), "Rewrote 1 item")
+	contains(t, c.ok("item", "get", "M3 screw"), "16 mm")
+	contains(t, c.ok("class", "attribute", "rename", "Screws", "Length", "Size"), "Rewrote 2 items")
 
-	// Attribute conditions, in any unit; all must match.
-	contains(t, c.ok("item", "list", "--where", "Length>=2.5cm"), "M4 screw")
-	contains(t, c.ok("item", "list", "--where", "Length = 1in..2in", "--where", "Colour=red,blue"), "M4 screw")
-	if out := c.ok("item", "list", "--where", "Length<1in"); strings.Contains(out, "M4 screw") {
-		t.Errorf("Length<1in found the 3 cm screw:\n%s", out)
+	// Attribute conditions, by name; all must match.
+	contains(t, c.ok("item", "list", "--where", "Size>=20"), "M4 screw")
+	contains(t, c.ok("item", "list", "--class", "Screws", "--where", "Size = 10..40", "--where", "Size>15"), "M4 screw", "M3 screw")
+	if out := c.ok("item", "list", "--where", "Size<20"); strings.Contains(out, "M4 screw") {
+		t.Errorf("Size<20 found the 30 mm screw:\n%s", out)
 	}
 	_, stderr = c.run(0, "", "find", "--where", "Colour=Blue")
 	contains(t, stderr, "Nothing found.")
-	_, stderr = c.run(2, "", "item", "list", "--where", "Length~3")
-	contains(t, stderr, "Length can be compared with")
 
-	// Stock: add, find, move part of it, look it up by code.
-	c.ok("stock", "add", "M4 screw", "Garage/Shelf 2", "100", "--value", "Serial=A1")
+	// Stock: add, find, move part of it, merge it back, look it up by code.
+	c.ok("stock", "add", "M4 screw", "Garage/Shelf 2", "100", "--lot", "A1", "--serial", "SN-1")
 	contains(t, c.ok("find", "screw"), "M4 screw", "Hardware/Screws", "Garage/Shelf 2", "100")
 	contains(t, c.ok("stock", "move", "M4 screw@Garage/Shelf 2", "Garage", "40"), "Garage", "40")
 	contains(t, c.ok("stock", "list", "--item", "M4 screw"), "Garage/Shelf 2", "60", "40")
-	_, stderr = c.run(1, "", "stock", "get", "M4 screw")
-	contains(t, stderr, "ambiguous")
+	contains(t, c.ok("stock", "list", "--search", "sn-1"), "M4 screw")
+	c.ok("stock", "set", "M4 screw@Garage", "--lot", "B2", "--no-serial")
+	_, stderr = c.run(1, "", "stock", "merge", "M4 screw@Garage", "M4 screw@Garage/Shelf 2")
+	contains(t, stderr, "differ", "serial", "Lot", "--keep")
+	contains(t, c.ok("stock", "merge", "M4 screw@Garage", "M4 screw@Garage/Shelf 2", "--keep", "serial=into", "--keep", "lot=from"),
+		"100", "B2", "SN-1")
+	_, stderr = c.run(1, "", "stock", "get", "M4 screw@Garage")
+	contains(t, stderr, "no stock")
 	contains(t, c.ok("code", strings.ToLower(it.Code)), "is an item", "M4 screw")
 	contains(t, c.ok("item", "get", it.Code), "M4 screw")
 	contains(t, c.ok("item", "list", "--class", "Hardware"), "M4 screw", "100")
 
-	// Attachments.
+	// Files: an attachment attribute's, and a photo.
 	file := filepath.Join(t.TempDir(), "note.txt")
 	if err := os.WriteFile(file, []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	var att struct{ ID string }
-	c.json(&att, "attachment", "add", "item", "M4 screw", file, "--title", "A note")
-	contains(t, c.ok("attachment", "list", "item", "M4 screw"), att.ID, "A note", "text/plain", "5 B")
-	out, _ := c.run(0, "", "attachment", "download", "item", "M4 screw", att.ID, "-o", "-")
+	contains(t, c.ok("file", "put", "M4 screw", "manual", file), "Manual:", "file ")
+	out, _ := c.run(0, "", "file", "get", "M4 screw", "Manual", "-")
 	if out != "hello" {
 		t.Errorf("download = %q", out)
 	}
-	contains(t, c.ok("attachment", "set", "item", "M4 screw", att.ID, "--title", "Notes"), "Title:", "Notes")
-	_, stderr = c.run(1, "", "attachment", "photo", "item", "M4 screw", att.ID)
+	_, stderr = c.run(1, "", "file", "put", "M4 screw", "photo", file)
 	contains(t, stderr, "must be an image")
-	contains(t, c.ok("attachment", "delete", "item", "M4 screw", att.ID), "Deleted attachment")
-	c.run(1, "", "attachment", "get", "item", "M4 screw", att.ID)
-	if out := c.ok("attachment", "list", "item", "M4 screw"); strings.Contains(out, att.ID) {
-		t.Errorf("a deleted attachment is listed:\n%s", out)
-	}
+	_, stderr = c.run(2, "", "file", "put", "M4 screw", "Size", file)
+	contains(t, stderr, "not a file")
 
 	// Accounts, login and logout through a profile. Accounts outlive reset(),
 	// so the email is new on every run.
@@ -206,7 +188,7 @@ func TestCLI(t *testing.T) {
 
 	// Deleting, as the admin again.
 	c.vars["WTF_TOKEN"] = e.token
-	c.ok("stock", "delete", "M4 screw@Garage")
+	c.ok("stock", "delete", "M4 screw@Garage/Shelf 2")
 	c.ok("account", "delete", bob)
 	_, stderr = c.run(1, "", "location", "delete", "Garage")
 	contains(t, stderr, "Still in use")

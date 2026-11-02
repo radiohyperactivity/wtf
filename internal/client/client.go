@@ -119,8 +119,8 @@ func (c *Client) Get(ctx context.Context, path string, query url.Values) (json.R
 	return data, err
 }
 
-// Upload posts a file as multipart/form-data, with extra text fields.
-func (c *Client) Upload(ctx context.Context, path, file string, fields map[string]string) (json.RawMessage, error) {
+// Upload puts a file as multipart/form-data, in its one part, "file".
+func (c *Client) Upload(ctx context.Context, path, file string) (json.RawMessage, error) {
 	f, err := os.Open(file)
 	if err != nil {
 		return nil, err
@@ -132,11 +132,6 @@ func (c *Client) Upload(ctx context.Context, path, file string, fields map[strin
 	mw := multipart.NewWriter(pw)
 	go func() {
 		err := func() error {
-			for k, v := range fields {
-				if err := mw.WriteField(k, v); err != nil {
-					return err
-				}
-			}
 			h := textproto.MIMEHeader{}
 			h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename=%q`, filepath.Base(file)))
 			if ct := contentTypeByExtension(file); ct != "" {
@@ -154,7 +149,7 @@ func (c *Client) Upload(ctx context.Context, path, file string, fields map[strin
 		pw.CloseWithError(err)
 	}()
 
-	req, err := c.newRequest(ctx, http.MethodPost, path, nil, pr)
+	req, err := c.newRequest(ctx, http.MethodPut, path, nil, pr)
 	if err != nil {
 		return nil, err
 	}

@@ -123,7 +123,7 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) error {
 	// Every login attempt is logged: who, with what and from where.
 	// Passwords never are.
 	who := callerOf(r.Context())
-	attrs := []any{"host", who.host, "email", email, "client", client, "address", who.address}
+	attrs := []any{"email", email, "client", client, "address", who.address}
 	if string(outcome["ok"]) != "true" {
 		var reason string
 		_ = json.Unmarshal(outcome["reason"], &reason)

@@ -25,21 +25,25 @@ const (
 	multipartOverhead = 1 << 20
 )
 
-// upload attaches a multipart/form-data upload to an object of kind, whose
-// routes are under /kindPath.
-// Parts: "file" (required; its Content-Type is kept, and its file name is
-// the title unless a "title" part gives one) and "photo" (true/false: make
-// it the object's photo).
-func (s *server) upload(kind, kindPath string) handlerFunc {
+// upload puts a multipart/form-data upload on an item or a stock row
+// (kind): as its photo, or, with attribute, as the file of attachment
+// attribute {attribute} of its class. The one part is "file". Its media
+// type is found from its first bytes, not taken from the client, so that
+// a photo is an image and an attribute's media types mean what they say.
+// Answers the item or stock row as its get does.
+func (s *server) upload(kind string, attribute bool) handlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		target := r.PathValue("id")
 		if !uuidPattern.MatchString(target) {
 			return invalidInput("%q in the path is not a UUID", target)
 		}
+		name := arg{name: "p_attribute", typ: "text"}
+		if attribute {
+			name.value = r.PathValue("attribute")
+		}
 		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(transferTimeout))
-		// The host and the session are checked before anything is written
-		// to the files directory: nothing is kept for a host that picks no
-		// tenant, or for a request without a valid session.
+		// The session is checked before anything is written to the files
+		// directory: nothing is kept for a request without a valid session.
 		if _, err := s.callJSON(r.Context(), "account.me", nil); err != nil {
 			return err
 		}
@@ -60,12 +64,8 @@ func (s *server) upload(kind, kindPath string) handlerFunc {
 		}
 
 		var (
-			staged      *files.Staged
-			placed      bool
-			fileName    string
-			contentType string
-			title       string
-			photo       bool
+			staged *files.Staged
+			placed bool
 		)
 		defer func() {
 			if staged != nil && !placed {
@@ -81,63 +81,32 @@ func (s *server) upload(kind, kindPath string) handlerFunc {
 			if err != nil {
 				return invalidInput("malformed multipart body: %v", err)
 			}
-			switch part.FormName() {
-			case "file":
-				if staged != nil {
-					return invalidInput("only one \"file\" part is allowed")
+			if part.FormName() != "file" {
+				return invalidInput("unknown part %q; an upload has one part, \"file\"", part.FormName())
+			}
+			if staged != nil {
+				return invalidInput("only one \"file\" part is allowed")
+			}
+			staged, err = s.files.Stage(part, s.maxAttachment)
+			if errors.Is(err, files.ErrTooLarge) {
+				return &problem{
+					Type:   "/problems/body-too-large",
+					Title:  "File too large",
+					Status: http.StatusRequestEntityTooLarge,
+					Detail: "A file may be at most " + strconv.FormatInt(s.maxAttachment, 10) + " bytes.",
 				}
-				fileName = part.FileName()
-				if fileName == "" {
-					return invalidInput("the \"file\" part needs a file name")
-				}
-				contentType = part.Header.Get("Content-Type")
-				store, err := s.files.Tenant(who.host)
-				if err != nil {
-					return err
-				}
-				staged, err = store.Stage(part, s.maxAttachment)
-				if errors.Is(err, files.ErrTooLarge) {
-					return &problem{
-						Type:   "/problems/body-too-large",
-						Title:  "File too large",
-						Status: http.StatusRequestEntityTooLarge,
-						Detail: "An attachment may be at most " + strconv.FormatInt(s.maxAttachment, 10) + " bytes.",
-					}
-				}
-				if err != nil {
-					return err
-				}
-			case "title":
-				if title, err = readField(part); err != nil {
-					return err
-				}
-			case "photo":
-				text, err := readField(part)
-				if err != nil {
-					return err
-				}
-				if photo, err = strconv.ParseBool(text); err != nil {
-					return invalidInput("photo must be true or false")
-				}
-			default:
-				return invalidInput("unknown part %q", part.FormName())
+			}
+			if err != nil {
+				return err
 			}
 		}
 		if staged == nil {
 			return invalidInput("a \"file\" part is required")
 		}
+		contentType := sniff(staged.Head)
 
-		if t, _, err := mime.ParseMediaType(contentType); err == nil && t != "application/octet-stream" {
-			contentType = t
-		} else {
-			contentType, _, _ = mime.ParseMediaType(http.DetectContentType(staged.Head))
-		}
-
-		if strings.TrimSpace(title) == "" {
-			title = fileName
-		}
 		// One transaction of its own: the file's lock (which "wtfd gc" takes
-		// too), the file put in place, and the attachment recorded.
+		// too), the file put in place, and the item or stock row changed.
 		var result string
 		err = pgx.BeginFunc(r.Context(), s.pool, func(tx pgx.Tx) error {
 			sql, values := callSQL("attachment.lock", who, []arg{{name: "p_hash", typ: "text", value: staged.Hash}})
@@ -148,107 +117,98 @@ func (s *server) upload(kind, kindPath string) handlerFunc {
 				return err
 			}
 			placed = true
-			sql, values = callSQL("attachment.create", who, []arg{
-				{name: "p_kind", typ: "public.owner_kind", value: kind},
+			sql, values = callSQL("attachment.set", who, []arg{
+				{name: "p_kind", typ: "text", value: kind},
 				{name: "p_owner", typ: "uuid", value: target},
+				name,
 				{name: "p_hash", typ: "text", value: staged.Hash},
 				{name: "p_media_type", typ: "text", value: contentType},
-				{name: "p_size", typ: "bigint", value: staged.Size},
-				{name: "p_title", typ: "text", value: title},
-				{name: "p_photo", typ: "boolean", value: photo},
 			})
 			return tx.QueryRow(r.Context(), sql+"::text", values...).Scan(&result)
 		})
 		if err != nil {
-			return err // a placed but unrecorded file is removed by "wtfd gc"
+			return err // a placed but unused file is removed by "wtfd gc"
 		}
-
-		var created struct {
-			ID string `json:"id"`
-		}
-		if err := json.Unmarshal([]byte(result), &created); err != nil {
-			return err
-		}
-		w.Header().Set("Location", apiPrefix+"/"+kindPath+"/"+target+"/attachments/"+created.ID)
-		writeJSON(w, http.StatusCreated, []byte(result))
+		writeJSON(w, http.StatusOK, []byte(result))
 		return nil
 	}
 }
 
-// readField reads a small multipart text field.
-func readField(part io.Reader) (string, error) {
-	data, err := io.ReadAll(io.LimitReader(part, 4097))
+// sniff is the media type of a file, from its first bytes (at most 512):
+// http.DetectContentType's, without its parameters.
+func sniff(head []byte) string {
+	t, _, err := mime.ParseMediaType(http.DetectContentType(head))
 	if err != nil {
-		return "", err
+		return "application/octet-stream"
 	}
-	if len(data) > 4096 {
-		return "", invalidInput("text fields may be at most 4096 bytes")
-	}
-	return string(data), nil
+	return t
 }
 
-// download sends an attachment's content, named after its title (see
-// mediatype.DownloadName). Only content types that can't run scripts in a browser are
-// shown inline; everything else is a download. The content of an attachment
-// never changes, so it can be cached for good.
-func (s *server) download(kind string) handlerFunc {
+// download sends a file of an item or a stock row (kind): its photo, or,
+// with attribute, the file of attachment attribute {attribute}, named after
+// the attribute (see mediatype.DownloadName). Its media type is found from
+// its first bytes, as at upload. Only content types that can't run scripts
+// in a browser are shown inline; everything else is a download. A file's
+// content never changes, so it can be cached for good.
+func (s *server) download(kind string, attribute bool) handlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) error {
-		return s.sendAttachment(w, r, kind)
-	}
-}
-
-func (s *server) sendAttachment(w http.ResponseWriter, r *http.Request, kind string) error {
-	args, err := collect(r, []param{constant("p_kind", "public.owner_kind", kind), path("p_owner", "id"),
-		path("p_attachment", "attachment")})
-	if err != nil {
-		return err
-	}
-	result, err := s.callJSON(r.Context(), "attachment.get", args)
-	if err != nil {
-		return err
-	}
-	var a struct {
-		Title string `json:"title"`
-		Type  string `json:"media_type"`
-		Hash  string `json:"hash"`
-	}
-	if err := json.Unmarshal(result, &a); err != nil {
-		return err
-	}
-
-	store, err := s.files.Tenant(callerOf(r.Context()).host)
-	if err != nil {
-		return err
-	}
-	f, err := store.OpenFile(a.Hash)
-	if errors.Is(err, fs.ErrNotExist) {
-		s.log.Error("attachment file missing", "attachment", r.PathValue("attachment"), "sha256", a.Hash)
-		return &problem{
-			Type:   "/problems/internal",
-			Title:  "Attachment file missing",
-			Status: http.StatusInternalServerError,
-			Detail: "The file of this attachment is missing from the files directory; restore it from a backup.",
+		name := arg{name: "p_attribute", typ: "text"}
+		if attribute {
+			name.value = r.PathValue("attribute")
 		}
-	}
-	if err != nil {
-		return err
-	}
-	defer f.Close()
+		args, err := collect(r, []param{constant("p_kind", "text", kind), path("p_owner", "id")})
+		if err != nil {
+			return err
+		}
+		result, err := s.callJSON(r.Context(), "attachment.get", append(args, name))
+		if err != nil {
+			return err
+		}
+		var a struct {
+			Name string `json:"name"`
+			Hash string `json:"hash"`
+		}
+		if err := json.Unmarshal(result, &a); err != nil {
+			return err
+		}
 
-	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(transferTimeout))
-	disposition := "attachment"
-	if inlineSafe(a.Type) {
-		disposition = "inline"
+		f, err := s.files.OpenFile(a.Hash)
+		if errors.Is(err, fs.ErrNotExist) {
+			s.log.Error("file missing", "kind", kind, "id", r.PathValue("id"), "sha256", a.Hash)
+			return &problem{
+				Type:   "/problems/internal",
+				Title:  "File missing",
+				Status: http.StatusInternalServerError,
+				Detail: "This file is missing from the files directory; restore it from a backup.",
+			}
+		}
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		head := make([]byte, 512)
+		n, err := io.ReadFull(f, head)
+		if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+			return err
+		}
+		contentType := sniff(head[:n])
+
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(transferTimeout))
+		disposition := "attachment"
+		if inlineSafe(contentType) {
+			disposition = "inline"
+		}
+		h := w.Header()
+		h.Set("Content-Type", contentType)
+		h.Set("Content-Disposition", mime.FormatMediaType(disposition,
+			map[string]string{"filename": mediatype.DownloadName(a.Name, contentType)}))
+		h.Set("ETag", `"`+a.Hash+`"`)
+		h.Set("Cache-Control", "private, max-age=31536000, immutable")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Content-Security-Policy", "sandbox")
+		http.ServeContent(w, r, "", time.Time{}, f)
+		return nil
 	}
-	h := w.Header()
-	h.Set("Content-Type", a.Type)
-	h.Set("Content-Disposition", mime.FormatMediaType(disposition, map[string]string{"filename": mediatype.DownloadName(a.Title, a.Type)}))
-	h.Set("ETag", `"`+a.Hash+`"`)
-	h.Set("Cache-Control", "private, max-age=31536000, immutable")
-	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Content-Security-Policy", "sandbox")
-	http.ServeContent(w, r, "", time.Time{}, f)
-	return nil
 }
 
 // inlineSafe reports whether a content type may be shown inline: images

@@ -1,10 +1,9 @@
-// Package files stores attachment contents on disk, in a directory per
-// tenant named after its host, addressed by their SHA-256 hash:
-// <directory>/<host>/<first two hex characters>/<hex hash>. A file never
-// changes once stored, and the same content is stored only once per tenant.
+// Package files stores the files of photos and attachment values on disk,
+// addressed by their SHA-256 hash: <directory>/<first two hex
+// characters>/<hex hash>. A file never changes once stored, and the same
+// content is stored only once.
 //
-// Uploads are written to <directory>/<host>/tmp first and renamed into
-// place, so a half-written file never appears under a hash. Placing a file and
+// Uploads are written to <directory>/tmp first and renamed into place, so a half-written file never appears under a hash. Placing a file and
 // recording it in the database happen under a per-hash advisory lock, which
 // "wtfd gc" also takes before removing a file (see GC).
 package files
@@ -27,11 +26,7 @@ var ErrTooLarge = errors.New("file too large")
 
 var hashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// hostPattern is what a tenant's host can be (TENANTS.md), so a host is
-// always a safe directory name.
-var hostPattern = regexp.MustCompile(`^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`)
-
-// Store is the files directory, or one tenant's directory in it (Tenant).
+// Store is the files directory.
 type Store struct {
 	dir string
 }
@@ -42,31 +37,6 @@ func Open(dir string) (*Store, error) {
 		return nil, fmt.Errorf("files directory: %w", err)
 	}
 	return &Store{dir: dir}, nil
-}
-
-// Tenant returns the directory of the tenant with host host. It is created
-// with its first upload.
-func (s *Store) Tenant(host string) (*Store, error) {
-	if !hostPattern.MatchString(host) {
-		return nil, fmt.Errorf("invalid tenant host %q", host)
-	}
-	return &Store{dir: filepath.Join(s.dir, host)}, nil
-}
-
-// Hosts returns the names of the tenant directories in the files
-// directory.
-func (s *Store) Hosts() ([]string, error) {
-	entries, err := os.ReadDir(s.dir)
-	if err != nil {
-		return nil, err
-	}
-	var hosts []string
-	for _, e := range entries {
-		if e.IsDir() && hostPattern.MatchString(e.Name()) {
-			hosts = append(hosts, e.Name())
-		}
-	}
-	return hosts, nil
 }
 
 // Dir is the directory's path.

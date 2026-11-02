@@ -19,15 +19,13 @@ func TestCLIEdit(t *testing.T) {
 	c := e.cli(t)
 	cli.OpenTerminal = func(io.Reader, io.Writer) *prompt.Terminal { return nil }
 
-	c.ok("attribute", "add", "Length", "--unit", "m")
-	c.ok("attribute", "add", "Colour", "--type", "choice")
-	c.ok("option", "add", "Colour", "red", "blue")
 	c.ok("class", "add", "Hardware", "--container")
 	c.ok("class", "add", "Hardware/Screws")
-	c.ok("class", "assign", "Hardware/Screws", "Length", "--required")
+	c.ok("class", "attribute", "add", "Hardware/Screws", "Length", "--type", "decimal", "--unit", "mm", "--required")
+	c.ok("class", "attribute", "add", "Hardware/Screws", "Colour", "--type", "choice", "--choices", "red,blue", "--default", "red")
 	c.ok("location", "add", "Garage", "--container")
 	c.ok("location", "add", "Garage/Shelf")
-	c.ok("item", "add", "M3", "--class", "Hardware/Screws", "--value", "Length=12mm")
+	c.ok("item", "add", "M3", "--class", "Hardware/Screws", "--length", "12")
 
 	// Containers: marked in the tree, refused for items and stock, and only
 	// offered as a way through by completion.
@@ -48,24 +46,22 @@ func TestCLIEdit(t *testing.T) {
 	c.ok("class", "set", "Hardware", "--container", "no")
 	c.ok("class", "set", "Hardware", "--container", "yes")
 
-	// Class form: keep name, parent and container, assign Colour (default
-	// red), then try to remove Length, which M3 still has a value of. The
-	// second step fails, and the message says what was already saved.
-	_, prompts := c.interactExit(1, []string{"\r", "\r", "\r", "Colour\r", "red\r", "\r", "\r", "-Length\r", "\r"},
-		false, "class", "edit", "Hardware/Screws")
+	// Class form: name, parent and container; its attributes change with
+	// 'class attribute'.
+	_, prompts := c.interact([]string{"\r", "\r", "\r"}, false, "class", "edit", "Hardware/Screws")
 	contains(t, prompts, "Editing class Hardware/Screws", "Name: Screws", "Parent (empty: top level): Hardware",
-		"Container (holds only other classes): no", "Length  required", "Already saved: assigned Colour")
-	contains(t, c.ok("class", "get", "Hardware/Screws"), "Colour", "red")
+		"Container (holds only other classes): no", "No changes.")
 
 	// Becoming a container is refused while the class has items.
-	_, prompts = c.interactExit(1, []string{"\r", "\r", clear + "yes\r", "\r"}, false, "class", "edit", "Hardware/Screws")
+	_, prompts = c.interactExit(1, []string{"\r", "\r", clear + "yes\r"}, false, "class", "edit", "Hardware/Screws")
 	contains(t, prompts, "can't become a container")
 
-	// Item form: rename, keep the class, set Colour, change Length.
-	out, prompts := c.interact([]string{clear + "M3x10\r", "\r", "blue\r", clear + "15mm\r"}, false, "item", "edit", "M3")
-	contains(t, prompts, "Class: Hardware/Screws", "Colour [default red]", "Length (required) (m, or another unit of Metric length): 1.2 cm",
-		"Saved: changed name, set Colour, set Length.")
-	contains(t, out, "Name:   M3x10", "blue", "1.5 cm")
+	// Item form: rename, keep the class and the unit, change Length, set
+	// Colour, which followed its default.
+	out, prompts := c.interact([]string{clear + "M3x10\r", "\r", "\r", clear + "15\r", clear + "blue\r"}, false, "item", "edit", "M3")
+	contains(t, prompts, "Class: Hardware/Screws", "Length (required) (mm): 12", "Colour [default red] (red, blue): default",
+		"Saved: changed name, changed values.")
+	contains(t, out, "Name:   M3x10", "blue", "15 mm")
 
 	// Ctrl-C in the middle changes nothing.
 	c.interactExit(130, []string{clear + "Other\r", "\x03"}, false, "item", "edit", "M3x10")
@@ -73,12 +69,8 @@ func TestCLIEdit(t *testing.T) {
 
 	// Stock form.
 	c.ok("stock", "add", "M3x10", "Garage/Shelf", "5")
-	out, _ = c.interact([]string{clear + "8\r", "\r"}, false, "stock", "edit", "M3x10")
-	contains(t, out, "Amount:    8", "Garage/Shelf")
-
-	// Attribute form with options: add green, rename red.
-	out, _ = c.interact([]string{"\r", "\r", "green\r", "red=Red\r", "\r"}, false, "attribute", "edit", "Colour")
-	contains(t, out, "Options:  blue, green, Red")
+	out, _ = c.interact([]string{clear + "8\r", "\r", "PO-7\r", "\r"}, false, "stock", "edit", "M3x10")
+	contains(t, out, "Amount:     8", "Garage/Shelf", "Reference:  PO-7")
 
 	// Location form.
 	out, _ = c.interact([]string{clear + "Shelf A\r", "\r", "\r"}, false, "location", "edit", "Garage/Shelf")
@@ -94,16 +86,16 @@ func TestCLIEdit(t *testing.T) {
 	out, _ = c.interact([]string{"\r", "\r", clear + "yes\r"}, false, "location", "add", "Cellar", "--edit")
 	contains(t, out, "Container:  yes")
 	// With --edit, item add ends with the form: no question about stock.
-	out, prompts = c.interact([]string{"\r", "\r", "red\r", clear + "3mm\r"},
-		false, "item", "add", "M2", "--class", "Hardware/Screws", "--value", "Length=2mm", "--edit")
-	contains(t, out, "Name:   M2", "Colour:  Red", "3 mm") // the option was renamed above
+	out, prompts = c.interact([]string{"\r", "\r", "\r", clear + "3\r", "\r"},
+		false, "item", "add", "M2", "--class", "Hardware/Screws", "--length", "2", "--edit")
+	contains(t, out, "Name:   M2", "Colour:", "red", "(default)", "3 mm")
 	if strings.Contains(prompts, "Add stock") {
 		t.Errorf("asked about stock after --edit:\n%s", prompts)
 	}
 
 	// Without --edit, it asks once and adds one stock row.
 	out, prompts = c.interact([]string{"y\r", "Garage/Shelf A\r", "7\r"},
-		false, "item", "add", "M6", "--class", "Hardware/Screws", "--value", "Length=6mm")
+		false, "item", "add", "M6", "--class", "Hardware/Screws", "--length", "6")
 	contains(t, prompts, "Add stock for M6? [y/N]")
 	contains(t, out, "Location:  Garage/Shelf A", "Amount:    7")
 	if strings.Contains(prompts, "another") {
@@ -111,15 +103,15 @@ func TestCLIEdit(t *testing.T) {
 	}
 	// A failed stock row is reported; the item stays.
 	_, prompts = c.interactExit(1, []string{"y\r", "Garage\r", "\r"},
-		false, "item", "add", "M7", "--class", "Hardware/Screws", "--value", "Length=7mm")
+		false, "item", "add", "M7", "--class", "Hardware/Screws", "--length", "7")
 	contains(t, prompts, "M7 was created, but its stock wasn't", `Location "Garage" is a container`)
 	c.ok("item", "get", "M7")
 	// No question in scripts, or with --json.
-	out, _ = c.run(0, "", "item", "add", "M1", "--class", "Hardware/Screws", "--value", "Length=1mm")
+	out, _ = c.run(0, "", "item", "add", "M1", "--class", "Hardware/Screws", "--length", "1")
 	if strings.Contains(out, "Add stock") {
 		t.Error("asked about stock without a terminal")
 	}
-	out, _ = c.interact(nil, false, "--json", "item", "add", "M5", "--class", "Hardware/Screws", "--value", "Length=5mm")
+	out, _ = c.interact(nil, false, "--json", "item", "add", "M5", "--class", "Hardware/Screws", "--length", "5")
 	if !strings.HasPrefix(strings.TrimSpace(out), "{") {
 		t.Errorf("--json output: %s", out)
 	}

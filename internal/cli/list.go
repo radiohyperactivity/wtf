@@ -12,27 +12,20 @@ import (
 	"github.com/radiohyperactivity/wtf/internal/prompt"
 )
 
-// Paged lists. With --limit or --offset, one page is shown, with a hint for
-// the next one. Otherwise every row is shown: on a terminal through a pager
-// that fetches pages only as they are needed, else all at once.
+// Paged lists, paged by key (the API's after and next). One page is shown,
+// with a note when more follow; with --all, every row is: on a terminal
+// through a pager that fetches pages only as they are needed, else all at
+// once.
 
-// paging is --limit and --offset.
+// paging is --limit and --all.
 type paging struct {
-	limit, offset int
-	explicit      bool // one of them was given
+	limit int
+	all   bool
 }
 
 func (p *paging) register(fs *flag.FlagSet) {
-	p.limit = 100
-	number := func(dst *int) func(string) error {
-		return func(s string) error {
-			n, err := strconv.Atoi(s)
-			*dst, p.explicit = n, true
-			return err
-		}
-	}
-	fs.Func("limit", "show only this many rows (1–1000)", number(&p.limit))
-	fs.Func("offset", "skip this many rows, and show one page", number(&p.offset))
+	fs.IntVar(&p.limit, "limit", 100, "rows on a page (1–1000)")
+	fs.BoolVar(&p.all, "all", false, "show every row, not only the first page")
 }
 
 // listing is a paged API list and how to show it.
@@ -46,13 +39,15 @@ type listing struct {
 	render func(data json.RawMessage, header bool) ([]string, error)
 }
 
-func (e *env) fetchPage(l listing, limit, offset int) (json.RawMessage, page[json.RawMessage], error) {
+func (e *env) fetchPage(l listing, limit int, after string) (json.RawMessage, page[json.RawMessage], error) {
 	q := url.Values{}
 	for k, v := range l.query {
 		q[k] = v
 	}
 	q.Set("limit", strconv.Itoa(limit))
-	q.Set("offset", strconv.Itoa(offset))
+	if after != "" {
+		q.Set("after", after)
+	}
 	var pg page[json.RawMessage]
 	data, err := e.api.Get(e.ctx, l.path, q)
 	if err == nil {
@@ -62,13 +57,17 @@ func (e *env) fetchPage(l listing, limit, offset int) (json.RawMessage, page[jso
 }
 
 func (e *env) list(p paging, l listing) error {
-	if p.explicit {
-		data, pg, err := e.fetchPage(l, p.limit, p.offset)
+	if !p.all {
+		data, pg, err := e.fetchPage(l, p.limit, "")
 		if err != nil {
 			return err
 		}
 		if e.json {
 			return e.printJSON(data)
+		}
+		if len(pg.Rows) == 0 && l.empty != "" {
+			fmt.Fprintln(e.stderr, l.empty)
+			return nil
 		}
 		lines, err := l.render(data, true)
 		if err != nil {
@@ -77,25 +76,24 @@ func (e *env) list(p paging, l listing) error {
 		for _, line := range lines {
 			fmt.Fprintln(e.stdout, line)
 		}
-		e.pageFooter(pg.Total, pg.Limit, pg.Offset, len(pg.Rows))
+		e.pageFooter(pg.More)
 		return nil
 	}
 
 	if e.json {
-		// One envelope with every row.
-		var all page[json.RawMessage]
-		for {
-			_, pg, err := e.fetchPage(l, 1000, len(all.Rows))
+		// One answer with every row.
+		all := page[json.RawMessage]{Rows: []json.RawMessage{}}
+		for after := ""; ; {
+			_, pg, err := e.fetchPage(l, 1000, after)
 			if err != nil {
 				return err
 			}
 			all.Rows = append(all.Rows, pg.Rows...)
-			all.Total = pg.Total
-			if len(pg.Rows) == 0 || len(all.Rows) >= pg.Total {
+			if !pg.More {
 				break
 			}
+			after = pg.Next
 		}
-		all.Limit = len(all.Rows)
 		data, err := json.Marshal(all)
 		if err != nil {
 			return err
@@ -111,16 +109,16 @@ func (e *env) list(p paging, l listing) error {
 			size = 100
 		}
 	}
-	for offset := 0; ; {
-		data, page, err := e.fetchPage(l, size, offset)
+	for after, first := "", true; ; first = false {
+		data, page, err := e.fetchPage(l, size, after)
 		if err != nil {
 			return err
 		}
-		if page.Total == 0 && l.empty != "" {
+		if first && len(page.Rows) == 0 && l.empty != "" {
 			fmt.Fprintln(e.stderr, l.empty)
 			return nil
 		}
-		lines, err := l.render(data, offset == 0)
+		lines, err := l.render(data, first)
 		if err != nil {
 			return err
 		}
@@ -131,10 +129,10 @@ func (e *env) list(p paging, l listing) error {
 				return nil
 			}
 		}
-		offset += len(page.Rows)
-		if len(page.Rows) == 0 || offset >= page.Total {
+		if !page.More {
 			return nil
 		}
+		after = page.Next
 	}
 }
 

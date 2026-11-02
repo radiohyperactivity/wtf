@@ -66,49 +66,43 @@ func TestCLIInteractive(t *testing.T) {
 
 	c.ok("location", "add", "Garage")
 	c.ok("location", "add", "Shelf 2", "--parent", "Garage")
-	c.ok("attribute", "add", "Length", "--unit", "m")
-	c.ok("attribute", "add", "Colour", "--type", "choice")
-	c.ok("option", "add", "Colour", "red", "blue")
-	c.ok("attribute", "add", "Serial", "--type", "text")
 	c.ok("class", "add", "Hardware")
 	c.ok("class", "add", "Screws", "--parent", "Hardware")
-	c.ok("class", "assign", "Screws", "Length", "--required")
-	c.ok("class", "assign", "Screws", "Colour", "--default", "red")
-	c.ok("class", "assign", "Screws", "Serial", "--per-unit")
+	c.ok("class", "attribute", "add", "Screws", "Length", "--type", "decimal", "--unit", "mm", "--required")
+	c.ok("class", "attribute", "add", "Screws", "Colour", "--type", "choice", "--choices", "red,blue", "--default", "red")
+	c.ok("class", "attribute", "add", "Screws", "Lot", "--type", "text", "--stock")
 
 	// A bare "item add" asks for everything: name, class (Tab completes
 	// "Scr" to the path), unit (skipped), the required Length, then
 	// the optional Colour (picked with Tab Tab, filtering on "bl").
-	out, prompts := c.interact([]string{"M3 screw\r", "Scr", "\t", "\r", "\r", "12mm\r", "\t", "\t", "b", "l", "\r", "\r", "\r"}, false, "item", "add") // the last: no stock
-	contains(t, prompts, "Name: ", "Class: ", "Unit (Enter: counted one by one)", "Length (required) (m, or another unit of Metric length): ", "Colour [red]")
-	contains(t, out, "M3 screw", "Hardware/Screws", "1.2 cm", "blue")
+	out, prompts := c.interact([]string{"M3 screw\r", "Scr", "\t", "\r", "\r", "12\r", "\t", "\t", "b", "l", "\r", "\r", "\r"}, false, "item", "add") // the last: no stock
+	contains(t, prompts, "Name: ", "Class: ", "Unit (Enter: pieces)", "Length (required) (mm): ", "Colour [red]")
+	contains(t, out, "M3 screw", "Hardware/Screws", "12 mm", "blue")
 
-	// Stock: the location by Tab, a quantity, and the per-unit Serial.
+	// Stock: the location by Tab, an amount, and the stock attribute Lot.
 	out, _ = c.interact([]string{"Garage/Sh\t\r", "50\r", "S-1\r"}, false, "stock", "add", "M3 screw")
 	contains(t, out, "Garage/Shelf 2", "50", "S-1")
 
 	// With a complete command line only the missing required value is asked
 	// for, again until it parses.
-	out, prompts = c.interact([]string{"3kg\r", "3mm\r", "\r"}, false, "item", "add", "M4 screw", "--class", "Screws")
-	contains(t, prompts, "Length (required)", "unknown unit")
+	out, prompts = c.interact([]string{"3 kg\r", "3\r", "\r"}, false, "item", "add", "M4 screw", "--class", "Screws")
+	contains(t, prompts, "Length (required)", "nothing converts")
 	contains(t, out, "3 mm", "red")
 	if strings.Contains(prompts, "Colour") || strings.Contains(prompts, "Unit (") {
 		t.Errorf("optional data was offered:\n%s", prompts)
 	}
-	_, prompts = c.interact([]string{"red\r"}, false, "item", "value-set", "M3 screw", "Colour")
-	contains(t, prompts, "Value: ")
 
 	// Shell completion.
 	contains(t, c.ok("__complete", "zsh", "location", "get", "gar"), "Garage\n", "Garage/\n")
 	contains(t, c.ok("__complete", "bash", "wtf location get Garage/Sh", "Garage/Sh"), `Garage/Shelf\ 2 `)
-	contains(t, c.ok("__complete", "bash", "wtf item add X --value Colour=b", "b"), "blue ")
 	contains(t, c.ok("__complete", "zsh", "item", "get", "m3"), "M3 screw")
 	contains(t, c.ok("__complete", "zsh", "stock", "move", "M3 screw@"), "M3 screw@Garage/Shelf 2")
-	contains(t, c.ok("__complete", "zsh", "item", "value-set", "M3 screw", "Length", "5"), "5mm", "5cm")
 	contains(t, c.ok("__complete", "powershell", "w:location", "w:get", "w:"), "Garage\n", "Garage/\n")
 	contains(t, c.ok("__complete", "powershell", "w:location", "w:get", "w:Garage/"), "Garage/Shelf 2")
-	contains(t, c.ok("__complete", "zsh", "option", "delete", "Colour", ""), "blue", "red")
-	contains(t, c.ok("__complete", "bash", "wtf attachment add item X ", ""), ":files")
+	contains(t, c.ok("__complete", "zsh", "class", "choice", "remove", "Screws", "Colour", ""), "blue", "red")
+	contains(t, c.ok("__complete", "zsh", "class", "attribute", "set", "Screws", ""), "Colour", "Length")
+	contains(t, c.ok("__complete", "zsh", "file", "put", "M3 screw", ""), "photo")
+	contains(t, c.ok("__complete", "bash", "wtf file put X photo ", ""), ":files")
 
 	// Names can't contain "/", so a path always means one thing. A path
 	// matching several classes is refused with suggestions, also for delete.
@@ -197,8 +191,9 @@ func TestCLIInteractive(t *testing.T) {
 		t.Errorf("--json: %+v", deleted)
 	}
 
-	// Lists: all rows when piped, one page with --limit, and through the
-	// pager on a terminal (24 lines: header and 22 rows, then "q").
+	// Lists: one page, saying when more follow; with --all every row,
+	// through the pager on a terminal (24 lines: header and 22 rows, then
+	// "q").
 	for i := 1; i <= 30; i++ {
 		c.ok("item", "add", fmt.Sprintf("Bolt %02d", i), "--class", "Hardware")
 	}
@@ -207,20 +202,20 @@ func TestCLIInteractive(t *testing.T) {
 	if strings.Contains(out, "Bolt 06") {
 		t.Errorf("--limit 5 shows more:\n%s", out)
 	}
-	contains(t, stderr, "Next: --offset 5")
+	contains(t, stderr, "More rows follow; add --all")
 	var all struct {
-		Total int
-		Rows  []any
+		Rows []any
+		More bool
 	}
-	c.json(&all, "item", "list")
-	if all.Total != 32 || len(all.Rows) != 32 {
-		t.Errorf("--json: total %d, %d rows", all.Total, len(all.Rows))
+	c.json(&all, "item", "list", "--all", "--limit", "7")
+	if len(all.Rows) != 32 || all.More {
+		t.Errorf("--json --all: %d rows, more %v", len(all.Rows), all.More)
 	}
-	out, _ = c.interact([]string{"q"}, true, "item", "list")
+	out, _ = c.interact([]string{"q"}, true, "item", "list", "--all")
 	contains(t, out, "Bolt 22", "-- More --")
 	if strings.Contains(out, "Bolt 23") {
 		t.Errorf("the pager went on after q:\n%s", out)
 	}
-	out, _ = c.interact([]string{"\r", " "}, true, "item", "list")
+	out, _ = c.interact([]string{"\r", " "}, true, "item", "list", "--all")
 	contains(t, out, "Bolt 23", "M3 screw")
 }

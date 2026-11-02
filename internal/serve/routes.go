@@ -23,83 +23,64 @@ type route struct {
 type handlerFunc func(w http.ResponseWriter, r *http.Request) error
 
 func (s *server) routes() []route {
-	limit, offset := query("p_limit", "limit", "integer"), query("p_offset", "offset", "integer")
+	limit, after := query("p_limit", "limit", "integer"), query("p_after", "after", "uuid")
+	dryRun := flag("p_dry_run", "dry_run")
+	class, attribute := path("p_class", "id"), pathText("p_name", "attribute")
 	routes := []route{
 		{"GET /health", s.health},
 		{"GET /openapi", s.openAPI},
 
-		{"GET /quantities", s.read("unit.quantity_list")},
-		{"GET /quantities/{id}", s.read("unit.quantity_get", path("p_quantity", "id"))},
-		{"PATCH /quantities/{id}", s.update("unit.quantity_patch", path("p_quantity", "id"), patch("p_patch"))},
-		{"GET /unit-families", s.versioned("unit.family_list", "families", false, query("p_quantity", "quantity", "uuid"))},
-		{"GET /unit-families/{id}", s.read("unit.family_get", path("p_family", "id"))},
-		{"PATCH /unit-families/{id}", s.update("unit.family_patch", path("p_family", "id"), patch("p_patch"))},
-		{"GET /units", s.read("unit.list",
-			query("p_quantity", "quantity", "uuid"), query("p_family", "family", "uuid"))},
-		{"GET /units/{id}", s.read("unit.get", path("p_unit", "id"))},
 		{"POST /model/import", s.update("model.import", patch("p_data"),
-			queryOrNull("p_parent", "parent", "uuid"), flag("p_dry_run", "dry_run"))},
+			queryOrNull("p_parent", "parent", "uuid"), dryRun)},
 
-		{"GET /attributes", s.read("attribute.list")},
-		{"POST /attributes", s.create("attribute.create", "/attributes/", body(
-			field{key: "name", name: "p_name", typ: "text"},
-			field{key: "datatype", name: "p_datatype", typ: "datatype"},
-			field{key: "unit", name: "p_unit", typ: "uuid"},
-			field{key: "unit_lock", name: "p_unit_lock", typ: "boolean"},
-		))},
-		{"GET /attributes/{id}", s.read("attribute.get", path("p_attribute", "id"))},
-		{"PATCH /attributes/{id}", s.update("attribute.patch", path("p_attribute", "id"), patch("p_patch"))},
-		{"DELETE /attributes/{id}", s.remove("attribute.delete", path("p_attribute", "id"))},
-		{"POST /attributes/{id}/options", s.create("attribute.option_create", "/options/",
-			path("p_attribute", "id"), body(field{key: "name", name: "p_name", typ: "text"}))},
-		{"GET /options/{id}", s.read("attribute.option_get", path("p_option", "id"))},
-		{"PATCH /options/{id}", s.update("attribute.option_patch", path("p_option", "id"), patch("p_patch"))},
-		{"DELETE /options/{id}", s.remove("attribute.option_delete", path("p_option", "id"))},
-
-		{"GET /classes", s.versioned("class.list", "tree", true)},
+		{"GET /classes", s.versioned("class.list", "tree")},
 		{"POST /classes", s.create("class.create", "/classes/", body(
 			field{key: "name", name: "p_name", typ: "text"},
 			field{key: "parent", name: "p_parent", typ: "uuid"},
 			field{key: "container", name: "p_container", typ: "boolean"},
 		))},
-		{"GET /classes/{id}", s.read("class.get", path("p_class", "id"))},
-		{"PATCH /classes/{id}", s.update("class.patch", path("p_class", "id"), patch("p_patch"))},
-		{"DELETE /classes/{id}", s.removeTree("class.delete", "class.delete_tree", path("p_class", "id"))},
-		{"GET /classes/{id}/model", s.read("model.export", path("p_class", "id"))},
-		{"GET /classes/{id}/deletion", s.read("class.delete_tree", path("p_class", "id"),
+		{"GET /classes/{id}", s.read("class.get", class)},
+		{"PATCH /classes/{id}", s.update("class.patch", class, patch("p_patch"))},
+		{"DELETE /classes/{id}", s.removeTree("class.delete", "class.delete_tree", class)},
+		{"GET /classes/{id}/model", s.read("model.export", class)},
+		{"GET /classes/{id}/deletion", s.read("class.delete_tree", class,
 			flag("p_force", "force"), constant("p_dry_run", "boolean", true))},
-		{"PUT /classes/{id}/attributes/{attribute}", s.update("class.assign",
-			path("p_class", "id"), path("p_attribute", "attribute"),
-			body(
-				field{key: "default", name: "p_default", typ: "jsonb"},
-				field{key: "scope", name: "p_scope", typ: "scope"},
-				field{key: "required", name: "p_required", typ: "boolean"},
-			))},
-		{"DELETE /classes/{id}/attributes/{attribute}", s.update("class.unassign",
-			path("p_class", "id"), path("p_attribute", "attribute"))},
+		{"POST /classes/{id}/attributes", s.update("class.attribute_add", class, body(
+			field{key: "name", name: "p_name", typ: "text"},
+			field{key: "definition", name: "p_definition", typ: "jsonb"},
+		), dryRun)},
+		{"PATCH /classes/{id}/attributes/{attribute}", s.update("class.attribute_change",
+			class, attribute, patch("p_patch"), dryRun)},
+		{"DELETE /classes/{id}/attributes/{attribute}", s.update("class.attribute_remove",
+			class, attribute, dryRun)},
+		{"POST /classes/{id}/attributes/{attribute}/rename", s.update("class.attribute_rename",
+			class, attribute, body(field{key: "name", name: "p_new_name", typ: "text"}), dryRun)},
+		{"POST /classes/{id}/attributes/{attribute}/choices", s.update("class.choice_add",
+			class, attribute, body(field{key: "choice", name: "p_choice", typ: "text"}), dryRun)},
+		{"POST /classes/{id}/attributes/{attribute}/choices/{choice}/rename", s.update("class.choice_rename",
+			class, attribute, pathText("p_choice", "choice"),
+			body(field{key: "choice", name: "p_new_choice", typ: "text"}), dryRun)},
+		{"DELETE /classes/{id}/attributes/{attribute}/choices/{choice}", s.update("class.choice_remove",
+			class, attribute, pathText("p_choice", "choice"), dryRun)},
 
 		{"GET /items", s.read("item.list",
 			query("p_class", "class", "uuid"),
 			query("p_search", "search", "text"),
 			query("p_where", "where", "jsonb"),
-			limit, offset)},
+			limit, after)},
 		{"POST /items", s.create("item.create", "/items/", body(
 			field{key: "class", name: "p_class", typ: "uuid"},
 			field{key: "name", name: "p_name", typ: "text"},
-			field{key: "unit", name: "p_unit", typ: "uuid"},
-			field{key: "unit_lock", name: "p_unit_lock", typ: "boolean"},
+			field{key: "unit", name: "p_unit", typ: "text"},
 			field{key: "values", name: "p_values", typ: "jsonb"},
 		))},
 		{"GET /items/{id}", s.read("item.get", path("p_item", "id"))},
 		{"PATCH /items/{id}", s.update("item.patch", path("p_item", "id"), patch("p_patch"))},
 		{"DELETE /items/{id}", s.remove("item.delete", path("p_item", "id"))},
-		{"PUT /items/{id}/values/{attribute}", s.update("item.value_set",
-			path("p_item", "id"), path("p_attribute", "attribute"),
-			body(field{key: "value", name: "p_value", typ: "jsonb"}))},
-		{"DELETE /items/{id}/values/{attribute}", s.update("item.value_delete",
-			path("p_item", "id"), path("p_attribute", "attribute"))},
+		{"GET /items/{id}/photo", s.download("item", false)},
+		{"GET /items/{id}/files/{attribute}", s.download("item", true)},
 
-		{"GET /locations", s.versioned("location.list", "tree", true)},
+		{"GET /locations", s.versioned("location.list", "tree")},
 		{"POST /locations", s.create("location.create", "/locations/", locationBody())},
 		{"GET /locations/{id}", s.read("location.get", path("p_location", "id"))},
 		{"PATCH /locations/{id}", s.update("location.patch", path("p_location", "id"), patch("p_patch"))},
@@ -110,11 +91,14 @@ func (s *server) routes() []route {
 		{"GET /stock", s.read("stock.list",
 			query("p_item", "item", "uuid"),
 			query("p_location", "location", "uuid"),
-			limit, offset)},
+			query("p_search", "search", "text"),
+			limit, after)},
 		{"POST /stock", s.create("stock.create", "/stock/", body(
 			field{key: "item", name: "p_item", typ: "uuid"},
 			field{key: "location", name: "p_location", typ: "uuid"},
 			field{key: "amount", name: "p_amount", typ: "numeric"},
+			field{key: "reference", name: "p_reference", typ: "text"},
+			field{key: "serial", name: "p_serial", typ: "text"},
 			field{key: "values", name: "p_values", typ: "jsonb"},
 		))},
 		{"GET /stock/{id}", s.read("stock.get", path("p_stock", "id"))},
@@ -127,12 +111,10 @@ func (s *server) routes() []route {
 		{"POST /stock/{id}/merge", s.update("stock.merge", path("p_stock", "id"), body(
 			field{key: "into", name: "p_into", typ: "uuid"},
 			field{key: "amount", name: "p_amount", typ: "numeric"},
+			field{key: "resolve", name: "p_resolve", typ: "jsonb"},
 		))},
-		{"PUT /stock/{id}/values/{attribute}", s.update("stock.value_set",
-			path("p_stock", "id"), path("p_attribute", "attribute"),
-			body(field{key: "value", name: "p_value", typ: "jsonb"}))},
-		{"DELETE /stock/{id}/values/{attribute}", s.update("stock.value_delete",
-			path("p_stock", "id"), path("p_attribute", "attribute"))},
+		{"GET /stock/{id}/photo", s.download("stock", false)},
+		{"GET /stock/{id}/files/{attribute}", s.download("stock", true)},
 
 		{"POST /login", s.login},
 		{"POST /logout", s.logout},
@@ -157,38 +139,17 @@ func (s *server) routes() []route {
 
 		{"GET /codes/{code}", s.read("code.resolve", pathText("p_code", "code"))},
 	}
-	// Attachments, only ever reached through their object.
-	for _, k := range attachmentKinds {
-		kind := constant("p_kind", "public.owner_kind", k.kind)
-		owner, attachment := path("p_owner", "id"), path("p_attachment", "attachment")
-		base := "/" + k.path + "/{id}/attachments/{attachment}"
-		routes = append(routes,
-			route{"GET " + base, s.read("attachment.get", kind, owner, attachment)},
-			route{"PATCH " + base, s.update("attachment.patch", kind, owner, attachment, patch("p_patch"))},
-			route{"DELETE " + base, s.remove("attachment.delete", kind, owner, attachment)},
-			route{"GET " + base + "/content", s.download(k.kind)},
-		)
-	}
 	return routes
-}
-
-// attachmentKinds are the kinds of object that have attachments, with the
-// path of their routes.
-var attachmentKinds = []struct{ kind, path string }{
-	{"item", "items"},
-	{"stock", "stock"},
-	{"location", "locations"},
-	{"class", "classes"},
 }
 
 // uploadRoutes are the routes that take a file upload. Their body limit is
 // the attachment size instead of the JSON body size.
 func (s *server) uploadRoutes() []route {
 	return []route{
-		{"POST /items/{id}/attachments", s.upload("item", "items")},
-		{"POST /stock/{id}/attachments", s.upload("stock", "stock")},
-		{"POST /locations/{id}/attachments", s.upload("location", "locations")},
-		{"POST /classes/{id}/attachments", s.upload("class", "classes")},
+		{"PUT /items/{id}/photo", s.upload("item", false)},
+		{"PUT /items/{id}/files/{attribute}", s.upload("item", true)},
+		{"PUT /stock/{id}/photo", s.upload("stock", false)},
+		{"PUT /stock/{id}/files/{attribute}", s.upload("stock", true)},
 	}
 }
 
@@ -349,18 +310,14 @@ func (s *server) removeTree(fn, treeFn string, id param) handlerFunc {
 }
 
 // versioned serves what clients keep and ask for again by version (the
-// class and location trees, the unit families), with ETag and
-// If-None-Match: the function gets the version the client has, and answers
-// {version, unchanged: true} (sent as 304) or {version, unchanged: false,
-// <list>}. The answer is {version, <key>: <list>}; with nest, the list of
-// nodes, each with its parent, is nested into a tree first, each node with
-// its children in the database's order.
-func (s *server) versioned(fn, key string, nest bool, params ...param) handlerFunc {
+// class and location trees), with ETag and If-None-Match: the function gets
+// the version the client has, and answers {version, unchanged: true} (sent
+// as 304) or {version, unchanged: false, nodes}. The answer is {version,
+// <key>: <tree>}, the nodes, each with its parent, nested into a tree, each
+// node with its children in the database's order.
+func (s *server) versioned(fn, key string) handlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) error {
-		args, err := collect(r, params)
-		if err != nil {
-			return err
-		}
+		var args []arg
 		known := arg{name: "p_known_version", typ: "bigint", optional: true}
 		if v, ok := parseETag(r.Header.Get("If-None-Match")); ok {
 			known.value = v
@@ -373,7 +330,6 @@ func (s *server) versioned(fn, key string, nest bool, params ...param) handlerFu
 			Version   int64             `json:"version"`
 			Unchanged bool              `json:"unchanged"`
 			Nodes     []json.RawMessage `json:"nodes"`
-			Families  json.RawMessage   `json:"families"`
 		}
 		if err := json.Unmarshal(result, &answer); err != nil {
 			return err
@@ -385,15 +341,11 @@ func (s *server) versioned(fn, key string, nest bool, params ...param) handlerFu
 			w.WriteHeader(http.StatusNotModified)
 			return nil
 		}
-		var list any = answer.Families
-		if nest {
-			tree, err := s.nest(answer.Nodes)
-			if err != nil {
-				return err
-			}
-			list = tree
+		tree, err := s.nest(answer.Nodes)
+		if err != nil {
+			return err
 		}
-		out, err := json.Marshal(map[string]any{"version": answer.Version, key: list})
+		out, err := json.Marshal(map[string]any{"version": answer.Version, key: tree})
 		if err != nil {
 			return err
 		}
@@ -404,8 +356,8 @@ func (s *server) versioned(fn, key string, nest bool, params ...param) handlerFu
 
 // nest builds a tree from flat nodes, each with its id and parent, in one
 // pass: every node gets children (its child nodes, in the order of the
-// list). A node whose parent isn't in the list, which would be a bug (no
-// live node has a deleted parent), is logged and put at the top.
+// list). A node whose parent isn't in the list, which would be a bug, is
+// logged and put at the top.
 func (s *server) nest(nodes []json.RawMessage) ([]map[string]any, error) {
 	type node = map[string]any
 	all := make([]node, len(nodes))

@@ -1,6 +1,6 @@
 # Attributes in JSON – plan
 
-**Status: planned (2026-11-02); decisions 1–35 settled, nothing rewritten yet.**
+**Status: being rewritten (2026-11-02); decisions 1–49 settled.** The schema, the accessors and `wtfd` were written for decisions 1–35 before tenants were dropped (decisions 36–42), and now change for those too. The CLI's commands are decisions 44–48.
 
 ## How we work
 
@@ -115,7 +115,7 @@ Measured on `main` at `01fce1b`.
 13. **No index is created without a reason written here and your approval** *(yours)*. The proposals are in "Indexes, for approval".
 14. **Indexes are made with the schema, not by API actions** *(yours)*. So a range filter ("Length > 50") reads, at worst, all the tenant's items or stock rows. That is accepted for now *(yours)*.
 15. **Lists give no total** *(yours)*. A page says only whether more follow. A way to ask for the total can come later, if it's needed.
-16. **Item and stock rows carry their tenant,** `item.tenant` and `stock.tenant` *(yours)*. Every index on them can lead with it, so a tenant's queries never read another tenant's rows.
+16. ~~**Item and stock rows carry their tenant,** `item.tenant` and `stock.tenant` *(yours)*. Every index on them can lead with it, so a tenant's queries never read another tenant's rows.~~ Replaced by decision 36: there are no tenants.
 
 ### Units, files and fixed fields
 
@@ -170,6 +170,29 @@ Measured on `main` at `01fce1b`.
     - Stock is searched the same way, by `reference` and `serial`.
 35. **The list index is `item (tenant, name COLLATE public.natural)`, without the id** *(yours)*. Index I-6. PostgreSQL reads it in order and sorts by id only within a group of equal names. The id can be added later without changing a query.
 
+### Dropping tenants
+
+Decided after decisions 1–35, and done in the same rewrite *(yours)*. Where an earlier decision speaks of a tenant, this section says what it becomes.
+
+36. **No tenants** *(yours)*. One database is one installation: its accounts, classes, locations, items and stock. The `tenant` table and every `tenant` column go (`account`, `class`, `location`, `item`, `stock`, `data_version`), with the tenant filter in every query. This replaces decision 16; "the tenant's rows" in decisions 14, 29, 33 and 34 become "all the rows".
+37. **The installation's own data is in one row, `public.meta`** *(yours)*. It has the label code counter, `code`, that `tenant.code` had, and gets more columns as they are needed. The counter stays an `UPDATE` of that row, not a sequence: a sequence leaves gaps when a transaction rolls back, and 410 Gone relies on every code up to the counter having been used (the previous plan's decision 5). The table is in schema `public`; the function schema `meta` is another thing.
+38. **Several installations are several databases, each with its own `wtfd`** *(yours)*. A request's hostname no longer picks anything, so `public.request` loses its host, and `wtfd` its host routing.
+39. **An email address is unique in the database** *(yours)*. The unique index is on `account (email)` (decision 27, without the tenant).
+40. **Files are stored straight in the files directory,** with no directory per host *(yours)*. This replaces the per-host part of decision 18; deleting an installation's files is deleting its files directory.
+41. **The CLI's profiles have the server's address only** *(yours)*, with no host to pick a tenant.
+42. **`wtfd tenant` goes,** and `wtfd account create` loses `--host`. TENANTS.md goes; what of it still matters (the label codes, the files directory) moves to WTFD.md and API.md. The tests of tenant isolation, and the performance test's second tenant, go too.
+
+### Values in one change, and the CLI
+
+43. **An attribute can't be named after a fixed field** *(yours)*: `id`, `code`, `name`, `class`, `unit`, `photo`, `item`, `location`, `amount`, `reference` or `serial`, letter case ignored, for item and stock attributes alike. Then a name means one thing everywhere: in the JSON, in filters, in `wtf file put <item> photo`, and as a CLI flag (decision 45).
+44. **A patch of an item or a stock row changes its values too, in one transaction** *(yours)*: `PATCH /items/{id}` (and `/stock/{id}`) takes `"values": {"Colour": "Blue", "Length": null}` (null removes a value) and `"default": ["Size"]` (back to the class's default), beside its fixed fields. The routes and functions for one value (`value_set`, `value_delete`, `value_default`, for items and stock) go.
+45. **In the CLI, an attribute is a flag of its own** *(yours)*: `--colour Blue` sets "Colour", `--no-colour` removes it, and `--default colour` (as often as needed) puts it back to the default. Letter case is ignored and a hyphen stands for a space (`--supply-voltage` is "Supply voltage"); a flag that would match two attributes is refused, saying which. An attribute whose name is one of the CLI's own flags (`--json`, `--yes`, `--edit`, `--dry-run`, `--all`, `--profile`, …) is set with `--value NAME=V`. This goes for `item add`, `item set`, `stock add` and `stock set`.
+46. **A class's attributes are changed with `wtf class attribute add|set|rename|remove` and `wtf class choice add|rename|remove`** *(yours)*. `add` takes `--type`, `--stock` (a stock attribute), `--unit`, `--required`, `--default`, `--choices A,B,C` and `--media TYPES`; `set` takes `--required yes|no`, `--default V` or `--no-default`, `--unit U` or `--no-unit`, `--media TYPES` or `--no-media`, and `--order N`. Each takes `--dry-run`, and says what it wrote ("Rewrote 1,204 items"); `remove` asks first on a terminal, as deletes do. The groups `attribute`, `option`, `attachment`, `quantity`, `units` and `unit-family` go.
+47. **Files are `wtf file put|get <item or stock row> <attribute or photo> FILE`** *(yours)*.
+48. **Lists show the first page and say when more follow; `--all` follows the pages to the end** *(yours)*. `stock merge` asks for each difference on a terminal, and takes `--keep FIELD=from|into` in scripts. `stock move` and the commands not named here stay as they are, but for values, paging and tenants.
+
+49. **The trees' versions are in the meta row,** `meta.class_version` and `meta.location_version`, and `data_version` goes *(yours)*. With one installation they are two numbers. The meta row also hands out label codes, so a change of a tree moves its version on last, after any rewriting of rows: the row stays locked until commit, and new items, stock rows and locations wait for it only that long.
+
 ## Topics
 
 All settled; the decisions above say how. Kept as they were proposed.
@@ -202,38 +225,39 @@ All settled; the decisions above say how. Kept as they were proposed.
 
 ## Indexes
 
-Approved:
+Approved, as decisions 36–39 change them:
 
 | # | Index | Reason |
 |---|---|---|
-| I-1 | `tenant (host)`, unique | every request finds its tenant by host |
-| I-2 | `account (tenant, email)`, unique (emails in lower case, decision 27); `session (account)` | logins, and the rule that an email is used once per tenant; deleting an account deletes its sessions |
-| I-3 | `class (parent, tenant, lower(name))`, unique, nulls equal | sibling names; the top-level classes; children; the check before deleting a class (decision 32) |
-| I-4 | `location (parent, tenant, lower(name))`, unique, nulls equal; `location (tenant, code)`, unique | as I-3; resolving a label |
-| I-5 | `item (tenant, code)`, unique; `stock (tenant, code)`, unique | resolving a label |
-| I-6 | `item (tenant, name COLLATE public.natural)` | a list page, a search and a filter read the tenant's items in order and stop after the page (decisions 34, 35) |
+| I-1 | ~~`tenant (host)`~~ | gone with the tenants |
+| I-2 | `account (email)`, unique (in lower case, decision 27); `session (account)` | logins, and the rule that an email is used once; deleting an account deletes its sessions |
+| I-3 | `class (parent, lower(name))`, unique, nulls equal | sibling names; the top-level classes (`parent IS NULL`); children; the check before deleting a class (decision 32) |
+| I-4 | `location (parent, lower(name))`, unique, nulls equal; `location (code)`, unique | as I-3; resolving a label |
+| I-5 | `item (code)`, unique; `stock (code)`, unique | resolving a label |
+| I-6 | `item (name COLLATE public.natural)` | a list page, a search and a filter read the items in order and stop after the page (decisions 34, 35) |
 | I-9 | `item (class)` | a class's items, for class lists, class changes and the check before deleting a class |
 | I-10 | `stock (item)`; `stock (location)` | an item's and a location's stock, and the checks before deleting either |
 
-Declined, for now: I-7, a trigram index for search (decision 28); I-8, GIN on `values` (decision 33); I-11, `stock (tenant, serial)` (decision 29).
+Declined, for now: I-7, a trigram index for search (decision 28); I-8, GIN on `values` (decision 33); I-11, `stock (serial)` (decision 29).
 
 ## Plan
 
 On `main`, before the apps, in the same order as the refactor; each step kept working and tested as before.
 
 1. **The schema** (`db/migrations/0001_schema.sql` rewritten in place; `0002_units.sql` and `seed/units.json` go):
-   - `tenant`, `account` (email in lower case), `session` and `data_version` stay as they are;
+   - `meta`, one row with the label code counter and the trees' versions (decisions 37, 49), in place of `tenant`;
+   - `account` (email in lower case, unique) and `session`, without tenants; `data_version` goes (decision 49);
    - `class`: `attributes` (JSON) and `container`, with no photo;
    - `location`: no photo;
-   - `item`: `tenant`, `code`, `class`, `name`, `unit` (text), `values`, `defaulted`, `search`, `photo` (a hash);
-   - `stock`: `tenant`, `code`, `item`, `location`, `amount`, `reference`, `serial`, `values`, `defaulted`, `photo` (a hash);
+   - `item`: `code`, `class`, `name`, `unit` (text), `values`, `defaulted`, `search`, `photo` (a hash);
+   - `stock`: `code`, `item`, `location`, `amount`, `reference`, `serial`, `values`, `defaulted`, `photo` (a hash);
    - `CHECK`s hold the shapes that need no other row: `values` is a JSON object, a photo is a SHA-256 in hex, an email is in lower case;
    - only the indexes above.
 2. **The accessors** (`db/repeatable/`):
    - `21_unit.sql` and `30_attribute.sql` go, and `13_attachment.sql` shrinks to the uploads of attachment values and photos;
    - one function checks a values map against a class's attributes for items or stock, and fills in the defaults;
    - `31_class.sql` gains the attribute functions (decision 24), each rewriting what decision 12 says, with a count and a dry run;
-   - `42_item.sql` writes `search`, and lists by key (decision 23), with search and filters as decisions 33 and 34 say;
+   - `42_item.sql` writes `search`, and lists by key (decision 23), with search and filters as decisions 33 and 34 say; a patch changes values too (decision 44);
    - `41_stock.sql` merges with resolutions (decision 26);
    - `60_model.sql` reads and writes the new model files (decision 31);
    - the tree moves check for cycles and depth (decision 25);
@@ -246,7 +270,7 @@ On `main`, before the apps, in the same order as the refactor; each step kept wo
 5. **The tests:**
    - the accessor tests replace the rules tests;
    - the API and CLI tests follow the changes;
-   - the performance test is reshaped for the new schema and run as before, alone and beside a large tenant, then at tens of millions of rows in the database, as far as the test database allows. The rows are loaded with set-based statements, which skip the accessors' checks.
+   - the performance test is reshaped for the new schema and run as before, then at tens of millions of rows in the database, as far as the test database allows. The rows are loaded with set-based statements, which skip the accessors' checks.
 6. **The documents:**
    - API.md and `api/*.md` (`attribute.md` and `attachment.md` rewritten);
    - SCHEMA.md, WTFD.md, CLI.md and the README;
@@ -259,3 +283,5 @@ On `main`, before the apps, in the same order as the refactor; each step kept wo
 
 - **2026-11-02:** started from the performance results with another tenant in the database; decisions 1–20 from our discussion; topics A–H and indexes I-1 to I-11 proposed.
 - **2026-11-02:** topics A–H and the indexes settled (decisions 21–35); the plan written.
+- **2026-11-02:** the schema, the accessors and `wtfd` written for decisions 1–35, with tests of the new accessors (all pass); then tenants dropped (decisions 36–42), to be done in the same rewrite; the CLI's commands proposed.
+- **2026-11-02:** the CLI's commands settled (decisions 43–48), with the names of the fixed fields reserved and a patch that changes values.

@@ -7,7 +7,7 @@ CREATE SCHEMA meta;
 -- applied repeatable scripts, from wtfd's bookkeeping. "wtfd serve" compares
 -- this with the scripts embedded in the binary when it starts, and refuses
 -- to start on a mismatch. It takes no request: wtfd calls it for itself,
--- before any request, and it tells nothing about any tenant.
+-- before any request, and it tells nothing about the data.
 CREATE FUNCTION meta.schema_version()
 RETURNS jsonb
 LANGUAGE plpgsql

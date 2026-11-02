@@ -1,27 +1,10 @@
 package serve
 
 import (
-	"net"
 	"net/http"
 	"net/netip"
 	"strings"
 )
-
-// A request's tenant is picked by the first label of its hostname: "bob" for
-// bob.wtf.example (TENANTS.md). wtfd passes the label to the database with
-// every call, and the database answers 404 when it picks no tenant; wtfd
-// doesn't look the tenant up itself.
-
-// hostLabel returns the first label of the request's hostname, lower-cased
-// and without the port: "bob" for "Bob.wtf.example:8080".
-func hostLabel(r *http.Request) string {
-	host := r.Host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	label, _, _ := strings.Cut(strings.ToLower(host), ".")
-	return label
-}
 
 // clientAddress returns the address a request came from, for the session's
 // trail and the logs: the connection's own address, or, when the connection

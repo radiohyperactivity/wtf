@@ -12,28 +12,14 @@ RETURNS text
 LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN CASE p_table
-        WHEN 'class'            THEN (SELECT format('Class "%s"', c.name) FROM public.class c WHERE c.id = p_id)
-        WHEN 'location'         THEN (SELECT format('Location "%s"', l.name) FROM public.location l WHERE l.id = p_id)
-        WHEN 'item'             THEN (SELECT format('Item "%s"', i.name) FROM public.item i WHERE i.id = p_id)
-        WHEN 'stock'            THEN (SELECT format('Stock row %s of "%s"', util.code_text(s.code), i.name)
-                                      FROM public.stock s JOIN public.item i ON i.id = s.item WHERE s.id = p_id)
-        WHEN 'attribute'        THEN (SELECT format('Attribute "%s"', a.name) FROM public.attribute a WHERE a.id = p_id)
-        WHEN 'attribute_option' THEN (SELECT format('Option "%s"', o.name) FROM public.attribute_option o WHERE o.id = p_id)
-        WHEN 'attachment'       THEN (SELECT format('Attachment "%s"', a.title) FROM public.attachment a WHERE a.id = p_id)
-        WHEN 'account'          THEN (SELECT format('Account %s', a.email) FROM public.account a WHERE a.id = p_id)
+        WHEN 'class'    THEN (SELECT format('Class "%s"', c.name) FROM public.class c WHERE c.id = p_id)
+        WHEN 'location' THEN (SELECT format('Location "%s"', l.name) FROM public.location l WHERE l.id = p_id)
+        WHEN 'item'     THEN (SELECT format('Item "%s"', i.name) FROM public.item i WHERE i.id = p_id)
+        WHEN 'stock'    THEN (SELECT format('Stock row %s of "%s"', util.code_text(s.code), i.name)
+                              FROM public.stock s JOIN public.item i ON i.id = s.item WHERE s.id = p_id)
+        WHEN 'account'  THEN (SELECT format('Account %s', a.email) FROM public.account a WHERE a.id = p_id)
     END;
 END;
-$$;
-
--- The names of the attributes p_attributes, in alphabetical order and
--- separated by commas, for error messages such as "Item "Drill" is missing
--- required attributes: Colour, Voltage".
-CREATE FUNCTION error.attribute_names(p_attributes uuid[])
-RETURNS text
-LANGUAGE sql STABLE AS $$
-    SELECT string_agg(a.name, ', ' ORDER BY lower(a.name))
-    FROM public.attribute a
-    WHERE a.id = ANY (p_attributes);
 $$;
 
 -- Raises "invalid input" (22023, 400): the request itself is wrong.
@@ -46,7 +32,7 @@ END;
 $$;
 
 -- Raises "not found" (P0002, 404), for the object a request is about (in
--- its path) when it doesn't exist or is another tenant's. The id is text,
+-- its path) when it doesn't exist. The id is text,
 -- as it isn't always a uuid (a session's id is its token's hash).
 CREATE FUNCTION error.not_found(p_entity text, p_id text)
 RETURNS void
@@ -56,19 +42,8 @@ BEGIN
 END;
 $$;
 
--- Raises "no tenant has this host" (P0002, 404), for a request to a
--- hostname that picks no tenant.
-CREATE FUNCTION error.unknown_host(p_host text)
-RETURNS void
-LANGUAGE plpgsql AS $$
-BEGIN
-    RAISE EXCEPTION 'No tenant has the host "%"', p_host USING ERRCODE = 'no_data_found';
-END;
-$$;
-
 -- Raises "bad reference" (23503, 422), as a foreign key would, for a
--- reference in a request's body to something that isn't there or is
--- another tenant's. A missing object in the path is error.not_found's.
+-- reference in a request's body to something that isn't there. A missing object in the path is error.not_found's.
 CREATE FUNCTION error.bad_reference(p_entity text, p_id uuid)
 RETURNS void
 LANGUAGE plpgsql AS $$
@@ -108,7 +83,7 @@ END;
 $$;
 
 -- Raises "not possible in this state" (55000, 409), with a message that
--- says why and, where there is one, the way out: a unit that is turned off.
+-- says why and, where there is one, the way out.
 CREATE FUNCTION error.wrong_state(p_message text)
 RETURNS void
 LANGUAGE plpgsql AS $$

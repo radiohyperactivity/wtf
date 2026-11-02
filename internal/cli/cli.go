@@ -29,9 +29,13 @@ type command struct {
 	// flags (by name), for prompting and completion.
 	params []param
 	flags  map[string]param
+	// values: the command takes attribute values as flags of their own
+	// (--colour Blue), which it finds in env.attrFlags.
+	values bool
 }
 
-// group is a noun with its verbs.
+// group is a noun with its verbs. A name of two words ("class attribute")
+// is a noun of the first one's.
 type group struct {
 	name     string
 	summary  string
@@ -57,6 +61,9 @@ type env struct {
 	term       *prompt.Terminal
 	prompted   bool // the user has been asked for something: ask for more
 	completing bool // running for shell completion
+	// attrFlags are the attribute values given as flags of their own, for a
+	// command with values.
+	attrFlags []attrFlag
 }
 
 // OpenTerminal returns the terminal on in and out, or nil. Tests replace it
@@ -90,7 +97,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 
 	cmd, name, rest, ok := lookup(args)
 	if !ok && name != "" {
-		fmt.Fprintf(stderr, "wtf: %s has no verb %q\n\n", name, args[1])
+		fmt.Fprintf(stderr, "wtf: %s has no verb %q\n\n", name, args[len(strings.Fields(name))])
 		printGroup(stderr, name)
 		return 2
 	}
@@ -113,6 +120,12 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: wtf %s %s\n\n%s\n\nFlags:\n", name, cmd.args, cmd.summary)
 		fs.PrintDefaults()
+		if cmd.values {
+			fmt.Fprintln(stderr, "  --<attribute> VALUE, --no-<attribute>\n    \tan attribute's value, or none (--colour Blue, --supply-voltage 3.3, --no-colour)")
+		}
+	}
+	if cmd.values {
+		rest, e.attrFlags = takeAttributeFlags(fs, rest)
 	}
 	positional, err := parseInterspersed(fs, rest)
 	if err != nil {
@@ -281,24 +294,33 @@ func takesValue(fs *flag.FlagSet, arg string) bool {
 	return !ok || !b.IsBoolFlag()
 }
 
-// lookup finds the command for args: a top-level command, or noun + verb.
-// It returns cmd == nil for a noun without (or with an unknown) verb.
+// lookup finds the command for args: a top-level command, or noun + verb,
+// where a noun may be two words ("class attribute add"). It returns cmd ==
+// nil for a noun without (or with an unknown) verb.
 func lookup(args []string) (*command, string, []string, bool) {
 	for i := range topLevel {
 		if topLevel[i].name == args[0] {
 			return &topLevel[i], args[0], args[1:], true
 		}
 	}
+	noun, verbs := args[0], args[1:]
+	if len(args) > 1 {
+		for _, g := range groups {
+			if g.name == args[0]+" "+args[1] {
+				noun, verbs = g.name, args[2:]
+			}
+		}
+	}
 	for _, g := range groups {
-		if g.name != args[0] {
+		if g.name != noun {
 			continue
 		}
-		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
+		if len(verbs) == 0 || strings.HasPrefix(verbs[0], "-") {
 			return nil, g.name, nil, true
 		}
 		for i := range g.commands {
-			if g.commands[i].name == args[1] {
-				return &g.commands[i], g.name + " " + args[1], args[2:], true
+			if g.commands[i].name == verbs[0] {
+				return &g.commands[i], g.name + " " + verbs[0], verbs[1:], true
 			}
 		}
 		return nil, g.name, nil, false // a noun with an unknown verb

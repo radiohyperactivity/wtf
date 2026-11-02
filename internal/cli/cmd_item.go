@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/radiohyperactivity/wtf/internal/prompt"
@@ -15,7 +16,7 @@ import (
 func findCommand() command {
 	return command{
 		name:    "find",
-		args:    "<words…> [--class C] [--where CONDITION]… [--limit N] [--offset N]",
+		args:    "<words…> [--class C] [--where CONDITION]… [--limit N] [--all]",
 		summary: "Search items by name, class, and text or choice values, and attribute conditions, and show where they are.",
 		params:  []param{{name: "Search", complete: completeItems, variadic: true, optional: true}},
 		flags:   map[string]param{"class": arg("Class", completeClasses)},
@@ -36,18 +37,8 @@ func findCommand() command {
 					}
 					args = []string{v}
 				}
-				q := url.Values{}
-				if len(args) > 0 {
-					q.Set("search", strings.Join(args, " "))
-				}
-				if *classRef != "" {
-					id, err := e.resolveClass(*classRef)
-					if err != nil {
-						return err
-					}
-					q.Set("class", id)
-				}
-				if err := e.setWhere(q, where); err != nil {
+				q, err := e.itemQuery(strings.Join(args, " "), *classRef, where)
+				if err != nil {
 					return err
 				}
 				return e.list(p, listing{
@@ -60,6 +51,36 @@ func findCommand() command {
 			}
 		},
 	}
+}
+
+// itemQuery is the query of GET /items for search words, a class and
+// --where conditions (by the class's attributes, when there is a class).
+func (e *env) itemQuery(search, classRef string, where []string) (url.Values, error) {
+	q := url.Values{}
+	if search != "" {
+		q.Set("search", search)
+	}
+	var c *class
+	if classRef != "" {
+		id, err := e.resolveClass(classRef)
+		if err != nil {
+			return nil, err
+		}
+		q.Set("class", id)
+		detail, err := e.classDetail(id)
+		if err != nil {
+			return nil, err
+		}
+		c = &detail
+	}
+	if len(where) > 0 {
+		filters, err := parseWhere(where, c)
+		if err != nil {
+			return nil, err
+		}
+		q.Set("where", filters)
+	}
+	return q, nil
 }
 
 // renderFound shows each found item with its stock rows.
@@ -85,7 +106,7 @@ func (e *env) renderFound(data json.RawMessage, _ bool) ([]string, error) {
 		lines = append(lines, fmt.Sprintf("%-6s %s  (%s)", r.Code, r.Name, classes.pathString(r.Class)))
 		var rows [][]string
 		for _, s := range it.Stock {
-			rows = append(rows, []string{"      ", s.Code, locations.pathString(s.Location), formatQuantity(s.Amount, s.Display)})
+			rows = append(rows, []string{"      ", s.Code, locations.pathString(s.Location), formatAmount(s.Amount, it.Unit)})
 		}
 		lines = append(lines, tableLines(nil, rows, false)...)
 		if len(it.Stock) == 0 {
@@ -95,16 +116,27 @@ func (e *env) renderFound(data json.RawMessage, _ bool) ([]string, error) {
 	return lines, nil
 }
 
+// valueFlags are the flags of commands that set values, besides the
+// attributes' own: --value NAME=VALUE for an attribute named like one of
+// the command's flags, and --default NAME, for a patch.
+func valueFlags(fs *flag.FlagSet, withDefault bool) (*stringList, *stringList) {
+	var explicit, defaults stringList
+	fs.Var(&explicit, "value", "an attribute's value, NAME=VALUE, for one named like a flag (repeatable)")
+	if withDefault {
+		fs.Var(&defaults, "default", "give an attribute its class's default, and follow it (repeatable)")
+	}
+	return &explicit, &defaults
+}
+
 func itemGroup() group {
 	itemParam := arg("Item", completeItems)
-	attributeParam := arg("Attribute", completeAttributes)
 	return group{
 		name:    "item",
 		summary: "Items (things you own) and their attribute values",
 		commands: []command{
 			{
 				name:    "list",
-				args:    "[--class C] [--search WORDS] [--where CONDITION]… [--limit N] [--offset N]",
+				args:    "[--class C] [--search WORDS] [--where CONDITION]… [--limit N] [--all]",
 				summary: "List items alphabetically.",
 				flags:   map[string]param{"class": arg("Class", completeClasses)},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
@@ -118,18 +150,8 @@ func itemGroup() group {
 						if err := wantArgs(args, 0, 0); err != nil {
 							return err
 						}
-						q := url.Values{}
-						if *search != "" {
-							q.Set("search", *search)
-						}
-						if *classRef != "" {
-							id, err := e.resolveClass(*classRef)
-							if err != nil {
-								return err
-							}
-							q.Set("class", id)
-						}
-						if err := e.setWhere(q, where); err != nil {
+						q, err := e.itemQuery(*search, *classRef, where)
+						if err != nil {
 							return err
 						}
 						return e.list(p, listing{path: "/items", query: q, render: e.renderItems})
@@ -139,7 +161,7 @@ func itemGroup() group {
 			{
 				name:    "get",
 				args:    "<item>",
-				summary: "Show an item with its values, stock and attachments.",
+				summary: "Show an item with its values and stock.",
 				params:  []param{itemParam},
 				setup: simple(func(e *env, args []string) error {
 					if err := wantArgs(args, 1, 1); err != nil {
@@ -154,21 +176,16 @@ func itemGroup() group {
 			},
 			{
 				name:    "add",
-				args:    "<name> --class C [--unit U [--unit-lock]] [--value ATTRIBUTE=VALUE]… [--edit]",
-				summary: "Create an item. Values may carry units (--value Length=12mm).",
+				args:    "<name> --class C [--unit U] [--<attribute> VALUE]… [--edit]",
+				summary: "Create an item, with values for its class's attributes (--length 12, --colour red).",
 				params:  []param{arg("Name", nil)},
-				flags: map[string]param{
-					"class": arg("Class", completeItemClasses),
-					"unit":  arg("Unit", completeUnits),
-					"value": arg("Value", completeAssignment),
-				},
+				flags:   map[string]param{"class": arg("Class", completeItemClasses)},
+				values:  true,
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
 					classRef := fs.String("class", "", "the item's class (required)")
-					unitRef := fs.String("unit", "", "unit of its stock quantities, e.g. m or g (default: counted one by one)")
-					unitLock := fs.Bool("unit-lock", false, "always show its stock in that unit, instead of scaling within the unit's family")
+					unit := fs.String("unit", "", "what its stock is counted in, a label such as m or kg (default: pieces)")
 					editAfter := fs.Bool("edit", false, "open the new item in the edit form")
-					var values stringList
-					fs.Var(&values, "value", "an attribute value, ATTRIBUTE=VALUE (repeatable)")
+					explicit, _ := valueFlags(fs, false)
 					return func(e *env, args []string) error {
 						if *editAfter {
 							if err := e.needTerminal("--edit"); err != nil {
@@ -181,32 +198,28 @@ func itemGroup() group {
 						if err := e.need(classRef, "class", arg("Class", completeItemClasses), args); err != nil {
 							return err
 						}
-						body := object{"name": args[0]}
 						classID, err := e.resolveClass(*classRef)
 						if err != nil {
 							return err
 						}
-						body["class"] = classID
-						if *unitRef == "" {
-							if *unitRef, err = e.offer("Unit (Enter: counted one by one)", arg("", completeUnits), args); err != nil {
-								return err
-							}
-						}
-						if err := e.setUnit(body, *unitRef, *unitLock); err != nil {
-							return err
-						}
-						v, err := e.parseValues(values)
+						c, err := e.classDetail(classID)
 						if err != nil {
 							return err
 						}
-						if v == nil {
-							v = object{}
-						}
-						if err := e.askValues(classID, false, v); err != nil {
+						set, _, err := e.valueChanges(c, "item", *explicit, nil)
+						if err != nil {
 							return err
 						}
-						body["values"] = v
-						data, err := e.do(http.MethodPost, "/items", body)
+						if *unit == "" {
+							if *unit, err = e.offer("Unit (Enter: pieces)", param{}, args); err != nil {
+								return err
+							}
+						}
+						if err := e.askValues(c, "item", set); err != nil {
+							return err
+						}
+						data, err := e.do(http.MethodPost, "/items", object{
+							"name": args[0], "class": classID, "unit": orNil(*unit), "values": set})
 						if err != nil {
 							return err
 						}
@@ -228,20 +241,19 @@ func itemGroup() group {
 			},
 			{
 				name:    "set",
-				args:    "<item> [--name N] [--class C] [--unit U] [--unit-lock yes|no]",
-				summary: "Change an item's name, class, unit (to another of the same quantity) or Unit lock.",
+				args:    "<item> [--name N] [--class C] [--unit U | --no-unit] [--no-photo] [--<attribute> VALUE] [--no-<attribute>] [--default ATTRIBUTE]…",
+				summary: "Change an item's name, class, unit or values, in one change.",
 				params:  []param{itemParam},
-				flags: map[string]param{
-					"class":     arg("Class", completeItemClasses),
-					"unit":      arg("Unit", completeUnits),
-					"unit-lock": arg("Unit lock", words("yes", "no")),
-				},
+				flags:   map[string]param{"class": arg("Class", completeItemClasses)},
+				values:  true,
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					var name, classRef, unitRef, unitLock optString
+					var name, classRef, unit optString
 					fs.Var(&name, "name", "new name")
-					fs.Var(&classRef, "class", "new class")
-					fs.Var(&unitRef, "unit", "new unit, of the same quantity")
-					fs.Var(&unitLock, "unit-lock", "yes: always show stock in the unit; no: scale within its family")
+					fs.Var(&classRef, "class", "new class; its values must fit it")
+					fs.Var(&unit, "unit", "what its stock is counted in, a label")
+					noUnit := fs.Bool("no-unit", false, "count its stock in pieces")
+					noPhoto := fs.Bool("no-photo", false, "remove its photo")
+					explicit, defaults := valueFlags(fs, true)
 					return func(e *env, args []string) error {
 						if err := wantArgs(args, 1, 1); err != nil {
 							return err
@@ -250,17 +262,45 @@ func itemGroup() group {
 						if err != nil {
 							return err
 						}
+						var it item
+						if err := e.get("/items/"+id, nil, &it); err != nil {
+							return err
+						}
 						body := object{}
+						classID := it.Class.ID
 						if name.set {
 							body["name"] = name.value
 						}
 						if classRef.set {
-							if body["class"], err = e.resolveClass(classRef.value); err != nil {
+							if classID, err = e.resolveClass(classRef.value); err != nil {
 								return err
 							}
+							body["class"] = classID
 						}
-						if err := e.patchUnit(body, unitRef, unitLock); err != nil {
+						switch {
+						case unit.set && *noUnit:
+							return usagef("give --unit or --no-unit, not both")
+						case unit.set:
+							body["unit"] = unit.value
+						case *noUnit:
+							body["unit"] = nil
+						}
+						if *noPhoto {
+							body["photo"] = nil
+						}
+						c, err := e.classDetail(classID)
+						if err != nil {
 							return err
+						}
+						set, back, err := e.valueChanges(c, "item", *explicit, *defaults)
+						if err != nil {
+							return err
+						}
+						if len(set) > 0 {
+							body["values"] = set
+						}
+						if len(back) > 0 {
+							body["default"] = back
 						}
 						if len(body) == 0 {
 							return usagef("nothing to change")
@@ -275,8 +315,6 @@ func itemGroup() group {
 			},
 			editCommand("item", itemParam, resolveItemFn, (*env).editItem),
 			deleteCommand("item", "/items/", resolveItemFn),
-			valueSetCommand("item", "/items/", itemParam, attributeParam, resolveItemFn, func(e *env, data json.RawMessage) error { return e.printItemJSON(data) }),
-			valueDeleteCommand("item", "/items/", itemParam, attributeParam, resolveItemFn, func(e *env, data json.RawMessage) error { return e.printItemJSON(data) }),
 		},
 	}
 }
@@ -293,73 +331,9 @@ func (e *env) renderItems(data json.RawMessage, header bool) ([]string, error) {
 	}
 	var rows [][]string
 	for _, r := range pg.Rows {
-		note := ""
-		if r.Incomplete {
-			note = "incomplete"
-		}
-		rows = append(rows, []string{r.Code, r.Name, classes.pathString(r.Class), formatTotal(r.Stock), note})
+		rows = append(rows, []string{r.Code, r.Name, classes.pathString(r.Class), formatTotal(r.Stock, r.Unit)})
 	}
 	return tableLines([]string{"CODE", "NAME", "CLASS", "STOCK"}, rows, header), nil
-}
-
-// valueSetCommand sets one attribute value of an item or stock row.
-func valueSetCommand(kind, prefix string, owner, attr param, resolve func(*env, string) (string, error), show func(*env, json.RawMessage) error) command {
-	return command{
-		name:    "value-set",
-		args:    "<" + kind + "> <attribute> <value…>",
-		summary: "Set an attribute value, e.g. 'Length 12 mm' or 'Colour red'.",
-		params:  []param{owner, attr, rest("Value", completeValueOf(1))},
-		setup: simple(func(e *env, args []string) error {
-			if err := wantArgs(args, 3, -1); err != nil {
-				return err
-			}
-			id, err := resolve(e, args[0])
-			if err != nil {
-				return err
-			}
-			a, err := e.resolveAttribute(args[1])
-			if err != nil {
-				return err
-			}
-			v, err := e.parseValue(a, strings.Join(args[2:], " "))
-			if err != nil {
-				return err
-			}
-			data, err := e.do(http.MethodPut, prefix+id+"/values/"+a.ID, object{"value": v})
-			if err != nil {
-				return err
-			}
-			return e.emit(data, func() error { return show(e, data) })
-		}),
-	}
-}
-
-// valueDeleteCommand removes an attribute value of an item or stock row.
-func valueDeleteCommand(kind, prefix string, owner, attr param, resolve func(*env, string) (string, error), show func(*env, json.RawMessage) error) command {
-	return command{
-		name:    "value-delete",
-		args:    "<" + kind + "> <attribute>",
-		summary: "Remove an attribute value (the class default, if any, shows again).",
-		params:  []param{owner, attr},
-		setup: simple(func(e *env, args []string) error {
-			if err := wantArgs(args, 2, 2); err != nil {
-				return err
-			}
-			id, err := resolve(e, args[0])
-			if err != nil {
-				return err
-			}
-			a, err := e.resolveAttribute(args[1])
-			if err != nil {
-				return err
-			}
-			data, err := e.do(http.MethodDelete, prefix+id+"/values/"+a.ID, nil)
-			if err != nil {
-				return err
-			}
-			return e.emit(data, func() error { return show(e, data) })
-		}),
-	}
 }
 
 func (e *env) showItem(id string) error {
@@ -368,6 +342,14 @@ func (e *env) showItem(id string) error {
 		return err
 	}
 	return e.emit(data, func() error { return e.printItemJSON(data) })
+}
+
+// photoText is how a photo is shown: the start of its file's hash.
+func photoText(hash *string) string {
+	if hash == nil {
+		return ""
+	}
+	return "file " + shortHash(*hash)
 }
 
 func (e *env) printItemJSON(data json.RawMessage) error {
@@ -379,24 +361,26 @@ func (e *env) printItemJSON(data json.RawMessage) error {
 	if err != nil {
 		return err
 	}
+	c, err := e.classDetail(it.Class.ID)
+	if err != nil {
+		return err
+	}
 	w := e.stdout
-	photo := ""
-	if it.Photo != nil {
-		photo = it.Photo.Title + " (" + it.Photo.ID + ")"
+	unit := "pieces"
+	if it.Unit != nil {
+		unit = *it.Unit
 	}
 	fields(w,
 		"Code", it.Code,
 		"Name", it.Name,
 		"Class", pathNames(it.Class.Path),
-		"Unit", unitName(it.Unit, it.UnitLock),
-		"Item photo", photo,
+		"Unit", unit,
+		"Photo", photoText(it.Photo),
 		"Id", it.ID)
 	if len(it.Values) > 0 {
 		fmt.Fprintln(w, "Values:")
-		printValues(w, "  ", it.Values)
+		printValues(w, "  ", c, "item", it.Values, it.Defaulted)
 	}
-	printMissing(w, "", it.Missing)
-	printAttachments(w, "", it.Attachments, it.Photo, "item photo")
 	if len(it.Stock) == 0 {
 		fmt.Fprintln(w, "Stock: none")
 		return nil
@@ -404,13 +388,27 @@ func (e *env) printItemJSON(data json.RawMessage) error {
 	fmt.Fprintln(w, "Stock:")
 	for _, s := range it.Stock {
 		t := newTable(w)
-		t.row("  "+s.Code, locations.pathString(s.Location), formatQuantity(s.Amount, s.Display))
+		t.row("  "+s.Code, locations.pathString(s.Location), formatAmount(s.Amount, it.Unit),
+			stockNotes(s.Reference, s.Serial, s.Photo))
 		t.flush()
-		printValues(w, "      ", s.Values)
-		printMissing(w, "      ", s.Missing)
-		printAttachments(w, "      ", s.Attachments, s.Photo, "stock row photo")
+		printValues(w, "      ", c, "stock", s.Values, s.Defaulted)
 	}
 	return nil
+}
+
+// stockNotes are a stock row's reference, serial and photo, for one line.
+func stockNotes(reference, serial, photo *string) string {
+	var notes []string
+	if reference != nil {
+		notes = append(notes, "ref "+*reference)
+	}
+	if serial != nil {
+		notes = append(notes, "serial "+*serial)
+	}
+	if photo != nil {
+		notes = append(notes, "photo")
+	}
+	return strings.Join(notes, ", ")
 }
 
 func stockGroup() group {
@@ -423,15 +421,16 @@ func stockGroup() group {
 		commands: []command{
 			{
 				name:    "list",
-				args:    "[--item I] [--location L] [--limit N] [--offset N]",
-				summary: "List stock rows, of an item and/or at a location.",
+				args:    "[--item I] [--location L] [--search WORDS] [--limit N] [--all]",
+				summary: "List stock rows, of an item, at a location (and below it), or by reference or serial.",
 				flags: map[string]param{
 					"item":     arg("Item", completeItems),
 					"location": arg("Location", completeLocations),
 				},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
 					itemRef := fs.String("item", "", "only this item's stock")
-					locationRef := fs.String("location", "", "only stock at this location (not below it)")
+					locationRef := fs.String("location", "", "only stock at this location, or below it")
+					search := fs.String("search", "", "words in the reference or the serial")
 					var p paging
 					p.register(fs)
 					return func(e *env, args []string) error {
@@ -452,6 +451,9 @@ func stockGroup() group {
 								return err
 							}
 							q.Set("location", id)
+						}
+						if *search != "" {
+							q.Set("search", *search)
 						}
 						return e.list(p, listing{path: "/stock", query: q, render: e.renderStock})
 					}
@@ -479,14 +481,15 @@ func stockGroup() group {
 			},
 			{
 				name:    "add",
-				args:    "<item> <location> [amount] [--value ATTRIBUTE=VALUE]… [--edit]",
-				summary: "Put an item at a location. Without an amount it is uncounted; amounts may carry units (2.5m).",
+				args:    "<item> <location> [amount] [--reference R] [--serial S] [--<attribute> VALUE]… [--edit]",
+				summary: "Put an item at a location. Without an amount it is uncounted.",
 				params:  []param{arg("Item", completeItems), locationParam, {name: "Amount", optional: true, variadic: true}},
-				flags:   map[string]param{"value": arg("Value", completeAssignment)},
+				values:  true,
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					var values stringList
-					fs.Var(&values, "value", "a per-unit attribute value, ATTRIBUTE=VALUE (repeatable)")
+					reference := fs.String("reference", "", "an order number, an invoice, …")
+					serial := fs.String("serial", "", "a serial number")
 					editAfter := fs.Bool("edit", false, "open the new stock row in the edit form")
+					explicit, _ := valueFlags(fs, false)
 					return func(e *env, args []string) error {
 						if *editAfter {
 							if err := e.needTerminal("--edit"); err != nil {
@@ -508,17 +511,21 @@ func stockGroup() group {
 						if err := e.get("/items/"+itemID, nil, &it); err != nil {
 							return err
 						}
-						quantity := strings.Join(args[2:], " ")
-						if quantity == "" {
-							if quantity, err = e.offer("Amount (Enter: uncounted)", param{}, args); err != nil {
+						amount := strings.Join(args[2:], " ")
+						if amount == "" {
+							if amount, err = e.offer("Amount (Enter: uncounted)", param{}, args); err != nil {
 								return err
 							}
 						}
-						v, err := e.parseValues(values)
+						c, err := e.classDetail(it.Class.ID)
 						if err != nil {
 							return err
 						}
-						data, err := e.createStock(it, locationID, quantity, v)
+						set, _, err := e.valueChanges(c, "stock", *explicit, nil)
+						if err != nil {
+							return err
+						}
+						data, err := e.createStock(it, c, locationID, amount, *reference, *serial, set)
 						if err != nil {
 							return err
 						}
@@ -547,18 +554,18 @@ func stockGroup() group {
 						return err
 					}
 					body := object{"location": locationID, "amount": nil}
-					quantity := strings.Join(args[2:], " ")
-					if quantity == "" {
-						if quantity, err = e.offer("Amount (Enter: all of it)", param{}, args); err != nil {
+					amount := strings.Join(args[2:], " ")
+					if amount == "" {
+						if amount, err = e.offer("Amount (Enter: all of it)", param{}, args); err != nil {
 							return err
 						}
 					}
-					if quantity != "" {
+					if amount != "" {
 						var s stock
 						if err := e.get("/stock/"+stockID, nil, &s); err != nil {
 							return err
 						}
-						if body["amount"], err = e.parseQuantity(quantity, s.Item.Unit); err != nil {
+						if body["amount"], err = e.parseAmount(amount, s.Item.Unit); err != nil {
 							return err
 						}
 					}
@@ -571,58 +578,75 @@ func stockGroup() group {
 			},
 			{
 				name:    "merge",
-				args:    "<stock> <into> [amount]",
-				summary: "Add a stock row, or part of it, to another row of the same item with the same values; all of it deletes the row.",
+				args:    "<stock> <into> [amount] [--keep FIELD=from|into]…",
+				summary: "Add a stock row, or part of it, to another row of the same item; where they differ, it asks which to keep. All of it deletes the row.",
 				params:  []param{stockParam, stockParam, {name: "Amount", optional: true, variadic: true}},
-				setup: simple(func(e *env, args []string) error {
-					if err := wantArgs(args, 2, -1); err != nil {
-						return err
-					}
-					stockID, err := e.resolveStock(args[0])
-					if err != nil {
-						return err
-					}
-					intoID, err := e.resolveStock(args[1])
-					if err != nil {
-						return err
-					}
-					body := object{"into": intoID, "amount": nil}
-					quantity := strings.Join(args[2:], " ")
-					if quantity == "" {
-						if quantity, err = e.offer("Amount (Enter: all of it)", param{}, args); err != nil {
+				setup: func(fs *flag.FlagSet) func(*env, []string) error {
+					var keep stringList
+					fs.Var(&keep, "keep", "which row's value to keep where they differ: reference=from, serial=into, Colour=from … (repeatable)")
+					return func(e *env, args []string) error {
+						if err := wantArgs(args, 2, -1); err != nil {
 							return err
 						}
-					}
-					if quantity != "" {
-						var s stock
-						if err := e.get("/stock/"+stockID, nil, &s); err != nil {
+						stockID, err := e.resolveStock(args[0])
+						if err != nil {
 							return err
 						}
-						if body["amount"], err = e.parseQuantity(quantity, s.Item.Unit); err != nil {
+						intoID, err := e.resolveStock(args[1])
+						if err != nil {
 							return err
 						}
+						var from, into stock
+						if err := e.get("/stock/"+stockID, nil, &from); err != nil {
+							return err
+						}
+						if err := e.get("/stock/"+intoID, nil, &into); err != nil {
+							return err
+						}
+						body := object{"into": intoID, "amount": nil}
+						amount := strings.Join(args[2:], " ")
+						if amount == "" {
+							if amount, err = e.offer("Amount (Enter: all of it)", param{}, args); err != nil {
+								return err
+							}
+						}
+						if amount != "" {
+							if body["amount"], err = e.parseAmount(amount, from.Item.Unit); err != nil {
+								return err
+							}
+						}
+						if body["resolve"], err = e.resolveMerge(from, into, keep); err != nil {
+							return err
+						}
+						data, err := e.do(http.MethodPost, "/stock/"+stockID+"/merge", body)
+						if err != nil {
+							return err
+						}
+						return e.emit(data, func() error { return show(e, data) })
 					}
-					data, err := e.do(http.MethodPost, "/stock/"+stockID+"/merge", body)
-					if err != nil {
-						return err
-					}
-					return e.emit(data, func() error { return show(e, data) })
-				}),
+				},
 			},
 			{
 				name:    "set",
-				args:    "<stock> [--amount A|none] [--location L] [--item I]",
-				summary: "Change a stock row's amount (none: uncounted), location or item.",
+				args:    "<stock> [--amount A|none] [--location L] [--item I] [--reference R | --no-reference] [--serial S | --no-serial] [--no-photo] [--<attribute> VALUE] [--no-<attribute>] [--default ATTRIBUTE]…",
+				summary: "Change a stock row's amount (none: uncounted), location, item, reference, serial or values, in one change.",
 				params:  []param{stockParam},
 				flags: map[string]param{
 					"location": locationParam,
 					"item":     arg("Item", completeItems),
 				},
+				values: true,
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					var quantity, locationRef, itemRef optString
-					fs.Var(&quantity, "amount", "new amount, or none for uncounted")
-					fs.Var(&locationRef, "location", "new location (no merging; see 'stock move')")
-					fs.Var(&itemRef, "item", "new item")
+					var amount, locationRef, itemRef, reference, serial optString
+					fs.Var(&amount, "amount", "new amount, or none for uncounted")
+					fs.Var(&locationRef, "location", "new location (a correction; see 'stock move')")
+					fs.Var(&itemRef, "item", "new item; its class must take the row's values")
+					fs.Var(&reference, "reference", "new reference")
+					fs.Var(&serial, "serial", "new serial number")
+					noReference := fs.Bool("no-reference", false, "remove the reference")
+					noSerial := fs.Bool("no-serial", false, "remove the serial number")
+					noPhoto := fs.Bool("no-photo", false, "remove its photo")
+					explicit, defaults := valueFlags(fs, true)
 					return func(e *env, args []string) error {
 						if err := wantArgs(args, 1, 1); err != nil {
 							return err
@@ -631,39 +655,66 @@ func stockGroup() group {
 						if err != nil {
 							return err
 						}
+						var s stock
+						if err := e.get("/stock/"+id, nil, &s); err != nil {
+							return err
+						}
 						body := object{}
+						classID, unit := s.Item.Class, s.Item.Unit
 						if itemRef.set {
-							if body["item"], err = e.resolveItem(itemRef.value); err != nil {
+							itemID, err := e.resolveItem(itemRef.value)
+							if err != nil {
 								return err
 							}
+							var it item
+							if err := e.get("/items/"+itemID, nil, &it); err != nil {
+								return err
+							}
+							body["item"], classID, unit = itemID, it.Class.ID, it.Unit
 						}
 						if locationRef.set {
 							if body["location"], err = e.resolveLocation(locationRef.value); err != nil {
 								return err
 							}
 						}
-						if quantity.set {
+						if amount.set {
 							body["amount"] = nil
-							if !isNone(quantity.value) {
-								// The unit is the (possibly new) item's.
-								itemID := ""
-								if v, ok := body["item"].(string); ok {
-									itemID = v
-								} else {
-									var s stock
-									if err := e.get("/stock/"+id, nil, &s); err != nil {
-										return err
-									}
-									itemID = s.Item.ID
-								}
-								var it item
-								if err := e.get("/items/"+itemID, nil, &it); err != nil {
-									return err
-								}
-								if body["amount"], err = e.parseQuantity(quantity.value, it.Unit); err != nil {
+							if !isNone(amount.value) {
+								if body["amount"], err = e.parseAmount(amount.value, unit); err != nil {
 									return err
 								}
 							}
+						}
+						for _, f := range []struct {
+							key   string
+							value optString
+							none  bool
+						}{{"reference", reference, *noReference}, {"serial", serial, *noSerial}} {
+							switch {
+							case f.value.set && f.none:
+								return usagef("give --%s or --no-%s, not both", f.key, f.key)
+							case f.value.set:
+								body[f.key] = f.value.value
+							case f.none:
+								body[f.key] = nil
+							}
+						}
+						if *noPhoto {
+							body["photo"] = nil
+						}
+						c, err := e.classDetail(classID)
+						if err != nil {
+							return err
+						}
+						set, back, err := e.valueChanges(c, "stock", *explicit, *defaults)
+						if err != nil {
+							return err
+						}
+						if len(set) > 0 {
+							body["values"] = set
+						}
+						if len(back) > 0 {
+							body["default"] = back
 						}
 						if len(body) == 0 {
 							return usagef("nothing to change")
@@ -678,10 +729,110 @@ func stockGroup() group {
 			},
 			editCommand("stock", stockParam, resolveStockFn, (*env).editStock),
 			deleteCommand("stock", "/stock/", resolveStockFn),
-			valueSetCommand("stock", "/stock/", stockParam, arg("Attribute", completeAttributes), resolveStockFn, show),
-			valueDeleteCommand("stock", "/stock/", stockParam, arg("Attribute", completeAttributes), resolveStockFn, show),
 		},
 	}
+}
+
+// resolveMerge says, for each difference between stock rows from and into,
+// which row's to keep, as stock merge's resolve: from --keep FIELD=from|into
+// (FIELD a fixed field, reference, serial or photo, or an attribute), and on
+// a terminal by asking for the rest. Without a terminal, a difference that
+// --keep doesn't settle is an error that lists them all.
+func (e *env) resolveMerge(from, into stock, keep []string) (object, error) {
+	type difference struct {
+		key, label, fromText, intoText string
+		value                          bool // a value, not a fixed field
+	}
+	text := func(s *string) string {
+		if s == nil {
+			return "(none)"
+		}
+		return *s
+	}
+	var diffs []difference
+	for _, f := range []struct {
+		key  string
+		a, b *string
+	}{{"reference", from.Reference, into.Reference}, {"serial", from.Serial, into.Serial}, {"photo", from.Photo, into.Photo}} {
+		if text(f.a) != text(f.b) {
+			a, b := text(f.a), text(f.b)
+			if f.key == "photo" {
+				a, b = photoText(f.a), photoText(f.b)
+			}
+			diffs = append(diffs, difference{key: f.key, label: f.key, fromText: a, intoText: b})
+		}
+	}
+	var names []string
+	for name := range from.Values {
+		names = append(names, name)
+	}
+	for name := range into.Values {
+		if _, ok := from.Values[name]; !ok {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		a, okA := from.Values[name]
+		b, okB := into.Values[name]
+		if okA && okB && string(a) == string(b) {
+			continue
+		}
+		show := func(raw json.RawMessage, ok bool) string {
+			if !ok {
+				return "(none)"
+			}
+			return formatJSONValue(raw)
+		}
+		diffs = append(diffs, difference{key: name, label: name, fromText: show(a, okA), intoText: show(b, okB), value: true})
+	}
+
+	resolve := object{}
+	vals := object{}
+	settle := func(d difference, side string) {
+		if d.value {
+			vals[d.key] = side
+		} else {
+			resolve[d.key] = side
+		}
+	}
+	given := map[string]string{}
+	for _, k := range keep {
+		field, side, ok := strings.Cut(k, "=")
+		side = strings.ToLower(strings.TrimSpace(side))
+		if !ok || (side != "from" && side != "into") {
+			return nil, usagef("--keep %q: expected FIELD=from or FIELD=into", k)
+		}
+		given[normalizeName(field)] = side
+	}
+	var open []difference
+	for _, d := range diffs {
+		if side, ok := given[normalizeName(d.key)]; ok {
+			settle(d, side)
+		} else {
+			open = append(open, d)
+		}
+	}
+	if len(open) > 0 && e.term == nil {
+		var lines []string
+		for _, d := range open {
+			lines = append(lines, fmt.Sprintf("%s: %s in %s, %s in %s", d.label, d.fromText, from.Code, d.intoText, into.Code))
+		}
+		return nil, fmt.Errorf("%s and %s differ:\n  %s\nSay which to keep with --keep FIELD=from or --keep FIELD=into",
+			from.Code, into.Code, strings.Join(lines, "\n  "))
+	}
+	for _, d := range open {
+		i, err := e.term.Choose(fmt.Sprintf("%s differs. Keep which? ", d.label), []string{
+			fmt.Sprintf("%s (from %s)", d.fromText, from.Code), fmt.Sprintf("%s (in %s)", d.intoText, into.Code)})
+		if err != nil {
+			return nil, err
+		}
+		settle(d, map[int]string{0: "from", 1: "into"}[i])
+	}
+	if len(vals) > 0 {
+		resolve["values"] = vals
+	}
+	return resolve, nil
 }
 
 // renderStock formats a page of stock_list.
@@ -696,7 +847,8 @@ func (e *env) renderStock(data json.RawMessage, header bool) ([]string, error) {
 	}
 	var rows [][]string
 	for _, s := range pg.Rows {
-		rows = append(rows, []string{s.Code, s.Item.Name, locations.pathString(s.Location), formatQuantity(s.Amount, s.Display)})
+		rows = append(rows, []string{s.Code, s.Item.Name, locations.pathString(s.Location),
+			formatAmount(s.Amount, s.Item.Unit), stockNotes(s.Reference, s.Serial, nil)})
 	}
 	return tableLines([]string{"CODE", "ITEM", "LOCATION", "AMOUNT"}, rows, header), nil
 }
@@ -710,41 +862,55 @@ func (e *env) printStockJSON(data json.RawMessage) error {
 	if err != nil {
 		return err
 	}
+	c, err := e.classDetail(s.Item.Class)
+	if err != nil {
+		return err
+	}
 	w := e.stdout
+	reference, serial := "", ""
+	if s.Reference != nil {
+		reference = *s.Reference
+	}
+	if s.Serial != nil {
+		serial = *s.Serial
+	}
 	fields(w,
 		"Code", s.Code,
 		"Item", s.Item.Code+"  "+s.Item.Name,
 		"Location", locations.pathString(s.Location),
-		"Amount", formatQuantity(s.Amount, s.Display),
+		"Amount", formatAmount(s.Amount, s.Item.Unit),
+		"Reference", reference,
+		"Serial", serial,
+		"Photo", photoText(s.Photo),
 		"Id", s.ID)
 	if len(s.Values) > 0 {
 		fmt.Fprintln(w, "Values:")
-		printValues(w, "  ", s.Values)
+		printValues(w, "  ", c, "stock", s.Values, s.Defaulted)
 	}
-	printMissing(w, "", s.Missing)
-	printAttachments(w, "", s.Attachments, s.Photo, "stock row photo")
 	return nil
 }
 
-// createStock puts item it at a location: quantity as typed ("" for
-// uncounted), values as given, and on a terminal the per-unit values it
-// still needs (all of them in an interactive session).
-func (e *env) createStock(it item, locationID, quantity string, values object) (json.RawMessage, error) {
-	body := object{"item": it.ID, "location": locationID, "amount": nil}
-	if quantity != "" {
-		q, err := e.parseQuantity(quantity, it.Unit)
+// createStock puts item it, of class c, at a location: amount as typed (""
+// for uncounted), with a reference, a serial and values as given, and on a
+// terminal the stock values it still needs (all of them in an interactive
+// session).
+func (e *env) createStock(it item, c class, locationID, amount, reference, serial string, set object) (json.RawMessage, error) {
+	body := object{"item": it.ID, "location": locationID, "amount": nil,
+		"reference": orNil(reference), "serial": orNil(serial)}
+	if amount != "" {
+		q, err := e.parseAmount(amount, it.Unit)
 		if err != nil {
 			return nil, err
 		}
 		body["amount"] = q
 	}
-	if values == nil {
-		values = object{}
+	if set == nil {
+		set = object{}
 	}
-	if err := e.askValues(it.Class.ID, true, values); err != nil {
+	if err := e.askValues(c, "stock", set); err != nil {
 		return nil, err
 	}
-	body["values"] = values
+	body["values"] = set
 	return e.do(http.MethodPost, "/stock", body)
 }
 
@@ -766,19 +932,22 @@ func (e *env) offerStock(itemID string) error {
 	if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
 		return nil
 	}
-	e.prompted = true // optional per-unit values are offered too
+	e.prompted = true // optional stock values are offered too
 	where, err := e.ask(arg("Location", completeStockLocations), nil)
 	if err != nil {
 		return err
 	}
-	quantity, err := e.offer("Amount (Enter: uncounted)", param{}, nil)
+	amount, err := e.offer("Amount (Enter: uncounted)", param{}, nil)
 	if err != nil {
 		return err
 	}
 	locationID, err := e.resolveLocation(where)
 	var data json.RawMessage
 	if err == nil {
-		data, err = e.createStock(it, locationID, quantity, nil)
+		var c class
+		if c, err = e.classDetail(it.Class.ID); err == nil {
+			data, err = e.createStock(it, c, locationID, amount, "", "", nil)
+		}
 	}
 	if err != nil {
 		if errors.Is(err, prompt.ErrInterrupted) {

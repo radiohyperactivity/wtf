@@ -43,17 +43,16 @@ func TestDeleting(t *testing.T) {
 	e.expect(t, 204, "DELETE", "/items/"+drill, nil)
 	e.expect(t, 404, "GET", "/items/"+drill, nil)
 
-	// An attribute in use is named, and goes with its options once it isn't.
-	colour := str(t, e.expect(t, 201, "POST", "/attributes", obj("name", "Colour", "datatype", "choice")).body, "id")
-	red := str(t, e.expect(t, 201, "POST", "/attributes/"+colour+"/options", obj("name", "Red")).body, "id")
-	e.expect(t, 200, "PUT", "/classes/"+tools+"/attributes/"+colour, nil)
-	r := e.expect(t, 409, "DELETE", "/attributes/"+colour, nil)
-	if !strings.Contains(str(t, r.body, "detail"), `Attribute "Colour" is still in use: class "Tools" has it`) {
-		t.Errorf("attribute in use: %v", r.body)
+	// A choice in use is named, and goes once nothing has it.
+	e.expect(t, 200, "POST", "/classes/"+tools+"/attributes",
+		obj("name", "Colour", "definition", obj("scope", "item", "type", "choice", "choices", []string{"Red", "Blue"})))
+	red := str(t, e.expect(t, 201, "POST", "/items", obj("class", tools, "name", "Red one", "values", obj("Colour", "Red"))).body, "id")
+	r := e.expect(t, 409, "DELETE", "/classes/"+tools+"/attributes/Colour/choices/Red", nil)
+	if !strings.Contains(str(t, r.body, "detail"), `1 item(s) below class "Tools" has "Red" for "Colour"`) {
+		t.Errorf("choice in use: %v", r.body)
 	}
-	e.expect(t, 200, "DELETE", "/classes/"+tools+"/attributes/"+colour, nil)
-	e.expect(t, 204, "DELETE", "/attributes/"+colour, nil)
-	e.expect(t, 404, "GET", "/options/"+red, nil)
+	e.expect(t, 200, "PATCH", "/items/"+red, obj("values", obj("Colour", "Blue")))
+	e.expect(t, 200, "DELETE", "/classes/"+tools+"/attributes/Colour/choices/Red", nil)
 
 	// An account is deleted for good, and its email address can be used again.
 	email := fmt.Sprintf("leaver-%d@test.local", time.Now().UnixNano())

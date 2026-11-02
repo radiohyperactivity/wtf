@@ -168,166 +168,62 @@ func completeStock(e *env, args []string, cur string, full bool) []string {
 	return out
 }
 
-func completeAttributes(e *env, _ []string, _ string, _ bool) []string {
-	list, err := e.attributes()
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, a := range list {
-		out = append(out, a.Name)
-	}
-	return out
-}
-
-// completeOptionsOf completes the options of the attribute in args[i].
-func completeOptionsOf(i int) completer {
+// completeAttributesOf completes the names of the attributes of the class
+// in args[i]; with own, only those the class defines itself (the ones it
+// can change).
+func completeAttributesOf(i int, own bool) completer {
 	return func(e *env, args []string, _ string, _ bool) []string {
 		if i >= len(args) {
 			return nil
 		}
-		a, err := e.resolveAttribute(args[i])
+		id, err := e.resolveClass(args[i])
 		if err != nil {
 			return nil
 		}
-		return e.optionNames(a.ID)
-	}
-}
-
-func (e *env) optionNames(attributeID string) []string {
-	options, err := e.options(attributeID)
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, o := range options {
-		out = append(out, o.Name)
-	}
-	return out
-}
-
-// completeValueOf completes a value of the attribute in args[i].
-func completeValueOf(i int) completer {
-	return func(e *env, args []string, cur string, _ bool) []string {
-		if i >= len(args) {
-			return nil
-		}
-		a, err := e.resolveAttribute(args[i])
+		c, err := e.classDetail(id)
 		if err != nil {
 			return nil
 		}
-		return e.valueCandidates(a, cur)
+		var out []string
+		for _, a := range c.Attributes {
+			if !own || !a.Inherited {
+				out = append(out, a.Name)
+			}
+		}
+		return out
 	}
 }
 
-// valueCandidates are option names, yes/no, date words, or the typed number
-// with each unit of the attribute's unit family.
-func (e *env) valueCandidates(a *attribute, cur string) []string {
-	switch a.Datatype {
+// completeChoicesOf completes the choices of the attribute in args[j] of the
+// class in args[i].
+func completeChoicesOf(i, j int) completer {
+	return func(e *env, args []string, _ string, _ bool) []string {
+		if j >= len(args) {
+			return nil
+		}
+		id, err := e.resolveClass(args[i])
+		if err != nil {
+			return nil
+		}
+		a, err := e.classAttribute(id, args[j])
+		if err != nil {
+			return nil
+		}
+		return a.Choices
+	}
+}
+
+// valueCandidates are a choice's choices, yes/no, or date words.
+func valueCandidates(a attribute, _ string) []string {
+	switch a.Type {
 	case "choice":
-		return e.optionNames(a.ID)
+		return a.Choices
 	case "boolean":
 		return []string{"yes", "no"}
 	case "date":
-		return []string{"today", "yesterday", "tomorrow"}
-	case "integer", "decimal":
-		if a.Unit == nil {
-			return nil
-		}
-		m := numberPattern.FindStringSubmatch(cur)
-		if m == nil || m[2] != "" {
-			return nil
-		}
-		units, err := e.familyUnits(a.Unit)
-		if err != nil {
-			return nil
-		}
-		var out []string
-		for _, u := range units {
-			out = append(out, strings.TrimSpace(cur)+u.Symbol)
-		}
-		return out
+		return []string{"today"}
 	}
 	return nil
-}
-
-// completeAssignment completes --value ATTRIBUTE=VALUE.
-func completeAssignment(e *env, _ []string, cur string, _ bool) []string {
-	name, value, ok := strings.Cut(cur, "=")
-	if !ok {
-		var out []string
-		for _, n := range completeAttributes(e, nil, "", false) {
-			out = append(out, n+"=")
-		}
-		return out
-	}
-	a, err := e.resolveAttribute(name)
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, v := range e.valueCandidates(a, value) {
-		out = append(out, name+"="+v)
-	}
-	return out
-}
-
-func completeFamilies(e *env, _ []string, _ string, _ bool) []string {
-	list, err := e.unitFamilies()
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, f := range list {
-		out = append(out, f.Name)
-	}
-	return out
-}
-
-func completeQuantities(e *env, _ []string, _ string, _ bool) []string {
-	if err := e.loadQuantities(); err != nil {
-		return nil
-	}
-	var out []string
-	for _, q := range e.cache.quantities {
-		out = append(out, q.Name)
-	}
-	return out
-}
-
-// completeUnits completes units as resolveUnit takes them: by symbol, with
-// the family where several families share it ("B (Binary bytes)").
-func completeUnits(e *env, _ []string, _ string, _ bool) []string {
-	return e.unitRefs("")
-}
-
-// completeQuantityUnits completes the units of one quantity, for changing an
-// attribute's or item's unit.
-func completeQuantityUnits(quantityID string) completer {
-	return func(e *env, _ []string, _ string, _ bool) []string { return e.unitRefs(quantityID) }
-}
-
-// unitRefs are the available units of a quantity ("": of all), named as
-// unitRef does.
-func (e *env) unitRefs(quantityID string) []string {
-	families, err := e.unitFamilies()
-	if err != nil {
-		return nil
-	}
-	var all, available []unit
-	for _, f := range families {
-		all = append(all, f.Units...)
-		if isAvailable(f.Available) {
-			available = append(available, f.Units...)
-		}
-	}
-	var out []string
-	for i := range available {
-		if quantityID == "" || available[i].Quantity.ID == quantityID {
-			out = append(out, unitRef(all, &available[i]))
-		}
-	}
-	return out
 }
 
 func completeAccounts(e *env, _ []string, _ string, _ bool) []string {
@@ -349,24 +245,28 @@ func completeProfiles(e *env, _ []string, _ string, _ bool) []string {
 	return e.config.profileNames()
 }
 
-// completeTargetOf completes the object named after the attachment target
-// type in args[i].
-func completeTargetOf(i int) completer {
-	return func(e *env, args []string, cur string, full bool) []string {
+// completeOwnerFiles completes "photo" and the attachment attributes of the
+// item or stock row in args[i].
+func completeOwnerFiles(i int) completer {
+	return func(e *env, args []string, _ string, _ bool) []string {
+		out := []string{"photo"}
 		if i >= len(args) {
-			return nil
+			return out
 		}
-		switch args[i] {
-		case "item":
-			return completeItems(e, args, cur, full)
-		case "stock":
-			return completeStock(e, args, cur, full)
-		case "location":
-			return completeLocations(e, args, cur, full)
-		case "class":
-			return completeClasses(e, args, cur, full)
+		o, err := e.resolveOwner(args[i])
+		if err != nil {
+			return out
 		}
-		return nil
+		c, err := e.classDetail(o.class)
+		if err != nil {
+			return out
+		}
+		for _, a := range c.Attributes {
+			if a.Type == "attachment" && a.Scope == o.kind {
+				out = append(out, a.Name)
+			}
+		}
+		return out
 	}
 }
 
@@ -385,9 +285,8 @@ func completeFiles(_ *env, _ []string, cur string, _ bool) []string {
 }
 
 var (
-	datatypes   = words("text", "integer", "decimal", "date", "boolean", "url", "choice")
-	roleList    = words("viewer", "user", "admin")
-	targetTypes = words("item", "stock", "location", "class")
+	datatypes = words("text", "integer", "decimal", "date", "boolean", "url", "choice", "attachment")
+	roleList  = words("viewer", "user", "admin")
 )
 
 // candidates returns the completions for the last of words (the arguments
@@ -431,15 +330,22 @@ globals:
 	if prev[0] == "help" {
 		return nil, false
 	}
-	if len(prev) == 1 {
+	if len(prev) <= 2 {
+		noun := strings.Join(prev, " ")
+		var out []string
 		for _, g := range groups {
-			if g.name == prev[0] {
-				var out []string
+			if g.name == noun {
 				for _, c := range g.commands {
 					out = append(out, c.name)
 				}
-				return out, false
 			}
+			// A noun of two words is a verb of the first one's.
+			if first, second, ok := strings.Cut(g.name, " "); ok && first == noun {
+				out = append(out, second)
+			}
+		}
+		if len(out) > 0 {
+			return out, false
 		}
 	}
 	cmd, _, after, ok := lookup(prev)

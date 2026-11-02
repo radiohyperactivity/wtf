@@ -7,94 +7,30 @@ import (
 
 // The API's JSON shapes (see API.md, "JSON shapes"), as far as the client
 // reads them. Numbers stay json.Number so they print exactly as sent.
-//
-// Outside the unit routes the API gives a unit as its id only; such a unit
-// decodes with only its ID, and e.decode fills in the rest from the unit
-// families the client keeps (e.unitFamilies).
 
 type ref struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
 
-// Quantities, unit families and units are global (every tenant sees them)
-// or the tenant's own; a tenant can turn quantities and families on and off
-// (TENANTS.md). Lists and gets say whether they are available, what the
-// default is, and the tenant's own choice (nil: it follows the default).
-
-type quantity struct {
-	ID        string       `json:"id"`
-	Name      string       `json:"name"`
-	Datatype  string       `json:"datatype"`
-	Global    bool         `json:"global"`
-	Available *bool        `json:"available"`
-	Standard  bool         `json:"standard"`
-	Choice    *bool        `json:"choice"`
-	Families  []unitFamily `json:"families"`
-}
-
-type unitFamily struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	Quantity  quantity `json:"quantity"`
-	Global    bool     `json:"global"`
-	Available *bool    `json:"available"`
-	Standard  bool     `json:"standard"`
-	Choice    *bool    `json:"choice"`
-	Units     []unit   `json:"units"`
-}
-
-// isAvailable tells whether a quantity or family (by its available field)
-// can be chosen; nil, from inside another object, counts as available.
-func isAvailable(available *bool) bool {
-	return available == nil || *available
-}
-
-type unit struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Symbol string `json:"symbol"`
-	Global bool   `json:"global"`
-	Family struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	} `json:"family"`
-	Quantity   quantity    `json:"quantity"`
-	BaseFactor json.Number `json:"base_factor"`
-	BaseOffset json.Number `json:"base_offset"`
-}
-
-// UnmarshalJSON reads a unit as an object, or as its id alone (a JSON
-// string), which e.decode then fills in.
-func (u *unit) UnmarshalJSON(data []byte) error {
-	if len(data) > 0 && data[0] == '"' {
-		*u = unit{}
-		return json.Unmarshal(data, &u.ID)
-	}
-	type plain unit
-	d := json.NewDecoder(bytes.NewReader(data))
-	d.UseNumber()
-	return d.Decode((*plain)(u))
-}
-
-type display struct {
-	Value json.Number `json:"value"`
-	Unit  unit        `json:"unit"`
-}
-
+// attribute is one of a class's attributes, its own or inherited.
 type attribute struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Datatype string   `json:"datatype"`
-	Unit     *unit    `json:"unit"`
-	UnitLock bool     `json:"unit_lock"`
-	Options  []option `json:"options"`
+	Name      string          `json:"name"`
+	Class     string          `json:"class"` // the class that defines it
+	Inherited bool            `json:"inherited"`
+	Scope     string          `json:"scope"` // "item" or "stock": where its values live
+	Type      string          `json:"type"`
+	Required  bool            `json:"required"`
+	Unit      string          `json:"unit"`
+	Default   json.RawMessage `json:"default"`
+	Choices   []string        `json:"choices"`
+	Media     []string        `json:"media"`
+	Order     int             `json:"order"`
 }
 
-type option struct {
-	ID        string `json:"id"`
-	Attribute string `json:"attribute"`
-	Name      string `json:"name"`
+// hasDefault tells whether the attribute has a default.
+func (a attribute) hasDefault() bool {
+	return len(a.Default) > 0 && string(a.Default) != "null"
 }
 
 type node struct {
@@ -112,115 +48,93 @@ type tree struct {
 }
 
 type class struct {
-	ID          string           `json:"id"`
-	Name        string           `json:"name"`
-	Parent      *string          `json:"parent"`
-	Container   bool             `json:"container"`
-	Path        []ref            `json:"path"`
-	Attributes  []classAttribute `json:"attributes"`
-	Photo       *attachment      `json:"photo"`
-	Attachments []attachment     `json:"attachments"`
+	ID         string      `json:"id"`
+	Name       string      `json:"name"`
+	Parent     *string     `json:"parent"`
+	Container  bool        `json:"container"`
+	Path       []ref       `json:"path"`
+	Attributes []attribute `json:"attributes"`
 }
 
-type classAttribute struct {
-	Attribute      attribute       `json:"attribute"`
-	AssignedTo     string          `json:"assigned_to"`
-	Inherited      bool            `json:"inherited"`
-	Default        json.RawMessage `json:"default"`
-	DefaultDisplay *display        `json:"default_display"`
-	Scope          string          `json:"scope"` // "item" or "stock": where its values live
-	Required       bool            `json:"required"`
+// classChange is the answer of a change of a class's attributes.
+type classChange struct {
+	Class  class `json:"class"`
+	Items  int   `json:"items"`
+	Stock  int   `json:"stock"`
+	DryRun bool  `json:"dry_run"`
 }
 
 type location struct {
-	ID          string       `json:"id"`
-	Code        string       `json:"code"`
-	Name        string       `json:"name"`
-	Parent      *string      `json:"parent"`
-	Container   bool         `json:"container"`
-	Path        []ref        `json:"path"`
-	Photo       *attachment  `json:"photo"`
-	Attachments []attachment `json:"attachments"`
+	ID        string  `json:"id"`
+	Code      string  `json:"code"`
+	Name      string  `json:"name"`
+	Parent    *string `json:"parent"`
+	Container bool    `json:"container"`
+	Path      []ref   `json:"path"`
 }
 
-type attachment struct {
-	ID        string `json:"id"`
-	Title     string `json:"title"`
-	MediaType string `json:"media_type"`
-	Size      int64  `json:"size"`
-	Hash      string `json:"hash"`
-}
-
-type value struct {
-	Attribute attribute       `json:"attribute"`
-	Value     json.RawMessage `json:"value"`
-	Display   *display        `json:"display"`
-	IsDefault bool            `json:"is_default"`
-}
+// values are an item's or a stock row's values, by attribute name.
+type values = map[string]json.RawMessage
 
 // itemRow is an item in item_list (and, without stock, inside a stock row).
 type itemRow struct {
-	ID         string      `json:"id"`
-	Code       string      `json:"code"`
-	Name       string      `json:"name"`
-	Class      string      `json:"class"`
-	Unit       *unit       `json:"unit"`
-	UnitLock   bool        `json:"unit_lock"`
-	Stock      *stockTotal `json:"stock"`
-	Incomplete bool        `json:"incomplete"`
-	Photo      *attachment `json:"photo"`
+	ID    string      `json:"id"`
+	Code  string      `json:"code"`
+	Name  string      `json:"name"`
+	Class string      `json:"class"`
+	Unit  *string     `json:"unit"`
+	Photo *string     `json:"photo"`
+	Stock *stockTotal `json:"stock"`
 }
 
 type stockTotal struct {
 	Total     json.Number `json:"total"`
-	Display   *display    `json:"display"`
 	Uncounted bool        `json:"uncounted"`
 }
 
 type item struct {
-	ID          string       `json:"id"`
-	Code        string       `json:"code"`
-	Name        string       `json:"name"`
-	Class       class        `json:"class"`
-	Unit        *unit        `json:"unit"`
-	UnitLock    bool         `json:"unit_lock"`
-	Values      []value      `json:"values"`
-	Missing     []ref        `json:"missing"`
-	Photo       *attachment  `json:"photo"`
-	Attachments []attachment `json:"attachments"`
-	Stock       []itemStock  `json:"stock"`
+	ID        string      `json:"id"`
+	Code      string      `json:"code"`
+	Name      string      `json:"name"`
+	Class     class       `json:"class"`
+	Unit      *string     `json:"unit"`
+	Photo     *string     `json:"photo"`
+	Values    values      `json:"values"`
+	Defaulted []string    `json:"defaulted"`
+	Stock     []itemStock `json:"stock"`
 }
 
 type itemStock struct {
-	ID          string       `json:"id"`
-	Code        string       `json:"code"`
-	Location    string       `json:"location"`
-	Amount      *json.Number `json:"amount"`
-	Display     *display     `json:"display"`
-	Values      []value      `json:"values"`
-	Missing     []ref        `json:"missing"`
-	Photo       *attachment  `json:"photo"`
-	Attachments []attachment `json:"attachments"`
+	ID        string       `json:"id"`
+	Code      string       `json:"code"`
+	Location  string       `json:"location"`
+	Amount    *json.Number `json:"amount"`
+	Reference *string      `json:"reference"`
+	Serial    *string      `json:"serial"`
+	Photo     *string      `json:"photo"`
+	Values    values       `json:"values"`
+	Defaulted []string     `json:"defaulted"`
 }
 
 type stock struct {
-	ID          string       `json:"id"`
-	Code        string       `json:"code"`
-	Item        itemRow      `json:"item"`
-	Location    string       `json:"location"`
-	Amount      *json.Number `json:"amount"`
-	Display     *display     `json:"display"`
-	Values      []value      `json:"values"`
-	Missing     []ref        `json:"missing"`
-	Photo       *attachment  `json:"photo"`
-	Attachments []attachment `json:"attachments"`
+	ID        string       `json:"id"`
+	Code      string       `json:"code"`
+	Item      itemRow      `json:"item"`
+	Location  string       `json:"location"`
+	Amount    *json.Number `json:"amount"`
+	Reference *string      `json:"reference"`
+	Serial    *string      `json:"serial"`
+	Photo     *string      `json:"photo"`
+	Values    values       `json:"values"`
+	Defaulted []string     `json:"defaulted"`
 }
 
+// page is one page of a list: its rows, whether more follow, and the row
+// to list after for the next page.
 type page[T any] struct {
-	Total  int `json:"total"`
-	Limit  int `json:"limit"`
-	Offset int `json:"offset"`
-	Rows   []T `json:"rows"`
+	Rows []T    `json:"rows"`
+	More bool   `json:"more"`
+	Next string `json:"next"`
 }
 
 type account struct {
@@ -255,4 +169,9 @@ func decode(data []byte, v any) error {
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 	return d.Decode(v)
+}
+
+// decode is decode, as a method, for the commands.
+func (e *env) decode(data []byte, v any) error {
+	return decode(data, v)
 }

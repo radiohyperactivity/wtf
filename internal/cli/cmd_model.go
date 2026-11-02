@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -377,7 +378,6 @@ func (e *env) printLocationJSON(data json.RawMessage) error {
 		"Container", yesNo(l.Container),
 		"Path", pathNames(l.Path),
 		"Id", l.ID)
-	printAttachments(e.stdout, "", l.Attachments, l.Photo, "location photo")
 	return nil
 }
 
@@ -385,7 +385,7 @@ func classGroup() group {
 	show := func(e *env, data json.RawMessage) error { return e.printClassJSON(data) }
 	return group{
 		name:    "class",
-		summary: "Classes: kinds of items (a tree) and their attributes",
+		summary: "Classes: kinds of items (a tree); their attributes are 'class attribute' and 'class choice'",
 		commands: []command{
 			treeCommand("classes", "/classes"),
 			getCommand("class", "/classes/", resolveClassFn, show),
@@ -393,67 +393,6 @@ func classGroup() group {
 			nodeSetCommand("class", "/classes/", resolveClassFn, show),
 			editCommand("class", objectParam("class"), resolveClassFn, (*env).editClass),
 			treeDeleteCommand("class", "/classes/", resolveClassFn),
-			{
-				name:    "assign",
-				args:    "<class> <attribute> [--default V] [--per-unit] [--required]",
-				summary: "Give a class (and its subclasses) an attribute, or change the assignment. Unset flags are reset.",
-				params:  []param{arg("Class", completeClasses), arg("Attribute", completeAttributes)},
-				flags:   map[string]param{"default": arg("Default", completeValueOf(1))},
-				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					var def optString
-					fs.Var(&def, "default", "default value, which may carry a unit")
-					perUnit := fs.Bool("per-unit", false, "values belong to stock rows (e.g. serial numbers), not to the item")
-					required := fs.Bool("required", false, "new items and stock rows must have a value")
-					return func(e *env, args []string) error {
-						if err := wantArgs(args, 2, 2); err != nil {
-							return err
-						}
-						classID, err := e.resolveClass(args[0])
-						if err != nil {
-							return err
-						}
-						a, err := e.resolveAttribute(args[1])
-						if err != nil {
-							return err
-						}
-						body := object{"default": nil, "scope": scopeOf(*perUnit), "required": *required}
-						if def.set && !isNone(def.value) {
-							if body["default"], err = e.parseValue(a, def.value); err != nil {
-								return err
-							}
-						}
-						data, err := e.do(http.MethodPut, "/classes/"+classID+"/attributes/"+a.ID, body)
-						if err != nil {
-							return err
-						}
-						return e.emit(data, func() error { return show(e, data) })
-					}
-				},
-			},
-			{
-				name:    "unassign",
-				args:    "<class> <attribute>",
-				summary: "Remove an attribute assignment from a class.",
-				params:  []param{arg("Class", completeClasses), arg("Attribute", completeAttributes)},
-				setup: simple(func(e *env, args []string) error {
-					if err := wantArgs(args, 2, 2); err != nil {
-						return err
-					}
-					classID, err := e.resolveClass(args[0])
-					if err != nil {
-						return err
-					}
-					a, err := e.resolveAttribute(args[1])
-					if err != nil {
-						return err
-					}
-					data, err := e.do(http.MethodDelete, "/classes/"+classID+"/attributes/"+a.ID, nil)
-					if err != nil {
-						return err
-					}
-					return e.emit(data, func() error { return show(e, data) })
-				}),
-			},
 		},
 	}
 }
@@ -463,362 +402,386 @@ func (e *env) printClassJSON(data json.RawMessage) error {
 	if err := e.decode(data, &c); err != nil {
 		return err
 	}
+	e.printClass(c)
+	return nil
+}
+
+func (e *env) printClass(c class) {
 	w := e.stdout
 	fields(w,
 		"Name", c.Name,
 		"Container", yesNo(c.Container),
 		"Path", pathNames(c.Path),
 		"Id", c.ID)
-	if len(c.Attributes) > 0 {
-		fmt.Fprintln(w, "Attributes:")
-		t := newTable(w, "  NAME", "TYPE", "DEFAULT", "PER UNIT", "REQUIRED", "FROM")
+	for _, scope := range []string{"item", "stock"} {
+		header := false
+		var t *table
 		for _, a := range c.Attributes {
-			def := formatJSONValue(a.Default)
-			if a.DefaultDisplay != nil {
-				def = formatDisplay(a.DefaultDisplay)
+			if a.Scope != scope {
+				continue
+			}
+			if !header {
+				fmt.Fprintln(w, map[string]string{"item": "Item attributes:", "stock": "Stock attributes:"}[scope])
+				t = newTable(w, "  NAME", "TYPE", "UNIT", "DEFAULT", "REQUIRED", "FROM")
+				header = true
 			}
 			from := "this class"
 			if a.Inherited {
 				from = "inherited"
 				if classes, err := e.classTree(); err == nil {
-					from = "from " + classes.pathString(a.AssignedTo)
+					from = "from " + classes.pathString(a.Class)
 				}
 			}
-			t.row("  "+a.Attribute.Name, datatypeName(a.Attribute), def, yesNo(a.Scope == "stock"), yesNo(a.Required), from)
+			t.row("  "+a.Name, typeText(a), a.Unit, formatJSONValue(a.Default), yesNo(a.Required), from)
 		}
-		t.flush()
+		if t != nil {
+			t.flush()
+		}
 	}
-	printAttachments(w, "", c.Attachments, c.Photo, "class photo")
-	return nil
 }
 
-// datatypeName is the datatype, with the unit if there is one.
-func datatypeName(a attribute) string {
-	if a.Unit != nil {
-		return a.Datatype + " (" + unitName(a.Unit, a.UnitLock) + ")"
+// typeText is an attribute's type, with its choices or media types.
+func typeText(a attribute) string {
+	switch {
+	case a.Type == "choice":
+		return "choice: " + strings.Join(a.Choices, ", ")
+	case a.Type == "attachment" && len(a.Media) > 0:
+		return "attachment: " + strings.Join(a.Media, ", ")
 	}
-	return a.Datatype
+	return a.Type
 }
 
-func attributeGroup() group {
-	show := func(e *env, data json.RawMessage) error { return e.printAttributeJSON(data) }
+// classChange runs a change of a class's attributes: body is sent
+// with method to path (below the class), with ?dry_run=true for --dry-run,
+// and the answer says what it wrote.
+func (e *env) classChange(method, path string, body any, dryRun bool) error {
+	if dryRun {
+		path += "?dry_run=true"
+	}
+	var data json.RawMessage
+	var err error
+	if dryRun {
+		data, _, err = e.api.Do(e.ctx, method, path, nil, body)
+	} else {
+		data, err = e.do(method, path, body)
+	}
+	if err != nil {
+		return err
+	}
+	return e.emit(data, func() error {
+		var r classChange
+		if err := e.decode(data, &r); err != nil {
+			return err
+		}
+		e.printClass(r.Class)
+		rows := joinCounts(count(r.Items, "item", "items"), count(r.Stock, "stock row", "stock rows"))
+		switch {
+		case r.DryRun && rows == "":
+			fmt.Fprintln(e.stdout, "A dry run: nothing changed, and no item or stock row would be rewritten.")
+		case r.DryRun:
+			fmt.Fprintf(e.stdout, "A dry run: nothing changed. It would rewrite %s.\n", rows)
+		case rows != "":
+			fmt.Fprintf(e.stdout, "Rewrote %s.\n", rows)
+		}
+		return nil
+	})
+}
+
+// classAttributePath is the API path of attribute name of the class in ref.
+func (e *env) classAttributePath(classRef, name string) (string, string, error) {
+	classID, err := e.resolveClass(classRef)
+	if err != nil {
+		return "", "", err
+	}
+	a, err := e.classAttribute(classID, name)
+	if err != nil {
+		return "", "", err
+	}
+	return "/classes/" + classID + "/attributes/" + url.PathEscape(a.Name), a.Name, nil
+}
+
+// parseDefault reads a default as a value of definition def.
+func parseDefault(def object, name, text string) (any, error) {
+	a := attribute{Name: name, Type: fmt.Sprint(def["type"])}
+	if u, ok := def["unit"].(string); ok {
+		a.Unit = u
+	}
+	if c, ok := def["choices"].([]string); ok {
+		a.Choices = c
+	}
+	return parseValue(a, text)
+}
+
+// splitList reads a comma-separated list, trimmed.
+func splitList(s string) []string {
+	var out []string
+	for _, x := range strings.Split(s, ",") {
+		if x = strings.TrimSpace(x); x != "" {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+func classAttributeGroup() group {
+	classParam := arg("Class", completeClasses)
+	ownAttribute := arg("Attribute", completeAttributesOf(0, true))
 	return group{
-		name:    "attribute",
-		summary: "Attributes: properties that classes give their items",
+		name:    "class attribute",
+		summary: "The attributes of classes: added, changed, renamed and removed where they are defined",
 		commands: []command{
 			{
-				name:    "list",
-				summary: "List the attributes.",
-				setup: simple(func(e *env, args []string) error {
-					if err := wantArgs(args, 0, 0); err != nil {
-						return err
-					}
-					data, err := e.api.Get(e.ctx, "/attributes", nil)
-					if err != nil {
-						return err
-					}
-					return e.emit(data, func() error {
-						var list []attribute
-						if err := e.decode(data, &list); err != nil {
-							return err
-						}
-						t := newTable(e.stdout, "NAME", "TYPE", "UNIT")
-						for _, a := range list {
-							t.row(a.Name, a.Datatype, unitName(a.Unit, a.UnitLock))
-						}
-						t.flush()
-						return nil
-					})
-				}),
-			},
-			getCommand("attribute", "/attributes/", resolveAttrIDFn, show),
-			{
-				name:    "add",
-				args:    "<name> --type T [--unit U [--unit-lock]] [--edit]",
-				summary: "Create an attribute. Types: text, integer, decimal, date, boolean, url, choice; with a unit, the type follows from it.",
-				params:  []param{arg("Name", nil)},
-				flags: map[string]param{
-					"type": arg("Type", datatypes),
-					"unit": arg("Unit", completeUnits),
-				},
+				name: "add",
+				args: "<class> <name> --type T [--stock] [--unit U] [--required] [--default V] [--choices A,B,C] [--media TYPES] [--order N] [--dry-run]",
+				summary: "Add an attribute to a class and the classes below it. Types: text, integer, decimal, date, boolean, url, choice, attachment. " +
+					"A required one gives its default to every item (or stock row) below.",
+				params: []param{classParam, arg("Name", nil)},
+				flags:  map[string]param{"type": arg("Type", datatypes)},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					datatype := fs.String("type", "", "datatype (required without --unit)")
-					unitRef := fs.String("unit", "", "unit of integer and decimal values, e.g. mm; any unit of its family is accepted")
-					unitLock := fs.Bool("unit-lock", false, "always show values in that unit, instead of scaling within the unit's family")
-					editAfter := fs.Bool("edit", false, "open the new attribute in the edit form")
+					typ := fs.String("type", "", "its type (required)")
+					stock := fs.Bool("stock", false, "its values are on each stock row (a serial number, a purchase date), not on the item")
+					unit := fs.String("unit", "", "a label for its values, e.g. mm (nothing converts)")
+					required := fs.Bool("required", false, "every item (or stock row) must have a value")
+					def := fs.String("default", "", "its default value")
+					choices := fs.String("choices", "", "a choice's choices, separated by commas (required for a choice)")
+					media := fs.String("media", "", "an attachment's media types, separated by commas: application/pdf,image/*")
+					order := fs.Int("order", 0, "its place on screen (default: last)")
+					dryRun := fs.Bool("dry-run", false, "change nothing, and say what it would do")
 					return func(e *env, args []string) error {
-						if *editAfter {
-							if err := e.needTerminal("--edit"); err != nil {
-								return err
-							}
-						}
-						if err := wantArgs(args, 1, 1); err != nil {
+						if err := wantArgs(args, 2, 2); err != nil {
 							return err
 						}
-						if *datatype == "" && *unitRef != "" {
-							u, err := e.resolveUnit(*unitRef)
-							if err != nil {
-								return err
-							}
-							*datatype = u.Quantity.Datatype
-						}
-						if err := e.need(datatype, "type", arg("Type (text, integer, decimal, date, boolean, url, choice)", datatypes), args); err != nil {
+						if err := e.need(typ, "type", arg("Type", datatypes), args); err != nil {
 							return err
 						}
-						body := object{"name": args[0], "datatype": *datatype}
-						var err error
-						if *unitRef == "" && (*datatype == "integer" || *datatype == "decimal") {
-							if *unitRef, err = e.offer("Unit (Enter: none)", arg("", completeUnits), args); err != nil {
-								return err
-							}
-						}
-						if err := e.setUnit(body, *unitRef, *unitLock); err != nil {
-							return err
-						}
-						data, err := e.do(http.MethodPost, "/attributes", body)
+						classID, err := e.resolveClass(args[0])
 						if err != nil {
 							return err
 						}
-						if *editAfter {
-							return e.editCreated(data, (*env).editAttribute)
+						d := object{"scope": "item", "type": *typ, "required": *required}
+						if *stock {
+							d["scope"] = "stock"
 						}
-						return e.emit(data, func() error { return show(e, data) })
+						if *unit != "" {
+							d["unit"] = *unit
+						}
+						if *choices != "" {
+							d["choices"] = splitList(*choices)
+						}
+						if *media != "" {
+							d["media"] = splitList(*media)
+						}
+						if *order != 0 {
+							d["order"] = *order
+						}
+						if *def != "" {
+							if d["default"], err = parseDefault(d, args[1], *def); err != nil {
+								return err
+							}
+						}
+						return e.classChange(http.MethodPost, "/classes/"+classID+"/attributes",
+							object{"name": args[1], "definition": d}, *dryRun)
 					}
 				},
 			},
 			{
-				name:    "set",
-				args:    "<attribute> [--name N] [--type T] [--unit U] [--unit-lock yes|no]",
-				summary: "Change an attribute. Its unit can change to another of the same quantity.",
-				params:  []param{arg("Attribute", completeAttributes)},
-				flags: map[string]param{
-					"type":      arg("Type", datatypes),
-					"unit":      arg("Unit", completeUnits),
-					"unit-lock": arg("Unit lock", words("yes", "no")),
-				},
+				name: "set",
+				args: "<class> <attribute> [--required yes|no] [--default V | --no-default] [--unit U | --no-unit] [--media TYPES | --no-media] [--order N] [--dry-run]",
+				summary: "Change an attribute the class defines. A new default reaches every value below that follows it. " +
+					"Its type and where its values live never change: remove it and add it again.",
+				params: []param{classParam, ownAttribute},
+				flags:  map[string]param{"required": arg("Required", words("yes", "no"))},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					var name, datatype, unitRef, unitLock optString
-					fs.Var(&name, "name", "new name")
-					fs.Var(&datatype, "type", "new datatype")
-					fs.Var(&unitRef, "unit", "new unit, of the same quantity")
-					fs.Var(&unitLock, "unit-lock", "yes: always show values in the unit; no: scale within its family")
+					var required, def, unit, media optString
+					fs.Var(&required, "required", "yes: every item (or stock row) must have a value")
+					fs.Var(&def, "default", "a new default")
+					noDefault := fs.Bool("no-default", false, "no default")
+					fs.Var(&unit, "unit", "a new label for its values")
+					noUnit := fs.Bool("no-unit", false, "no unit label")
+					fs.Var(&media, "media", "an attachment's media types, separated by commas")
+					noMedia := fs.Bool("no-media", false, "an attachment takes any file")
+					var order optString
+					fs.Var(&order, "order", "its place on screen")
+					dryRun := fs.Bool("dry-run", false, "change nothing, and say what it would do")
 					return func(e *env, args []string) error {
-						if err := wantArgs(args, 1, 1); err != nil {
+						if err := wantArgs(args, 2, 2); err != nil {
 							return err
 						}
-						a, err := e.resolveAttribute(args[0])
+						path, name, err := e.classAttributePath(args[0], args[1])
+						if err != nil {
+							return err
+						}
+						classID, _ := e.resolveClass(args[0])
+						a, err := e.classAttribute(classID, name)
 						if err != nil {
 							return err
 						}
 						body := object{}
-						if name.set {
-							body["name"] = name.value
+						if required.set {
+							b, ok := parseYesNo(required.value)
+							if !ok {
+								return usagef("--required takes yes or no")
+							}
+							body["required"] = b
 						}
-						if datatype.set {
-							body["datatype"] = datatype.value
+						for _, f := range []struct {
+							key   string
+							value optString
+							none  bool
+						}{{"default", def, *noDefault}, {"unit", unit, *noUnit}, {"media", media, *noMedia}} {
+							switch {
+							case f.value.set && f.none:
+								return usagef("give --%s or --no-%s, not both", f.key, f.key)
+							case f.none:
+								body[f.key] = nil
+							case f.value.set && f.key == "default":
+								if unit.set {
+									a.Unit = unit.value
+								}
+								if body["default"], err = parseValue(a, f.value.value); err != nil {
+									return err
+								}
+							case f.value.set && f.key == "media":
+								body["media"] = splitList(f.value.value)
+							case f.value.set:
+								body[f.key] = f.value.value
+							}
 						}
-						if err := e.patchUnit(body, unitRef, unitLock); err != nil {
-							return err
+						if order.set {
+							var n int
+							if _, err := fmt.Sscanf(order.value, "%d", &n); err != nil {
+								return usagef("--order takes a whole number")
+							}
+							body["order"] = n
 						}
 						if len(body) == 0 {
 							return usagef("nothing to change")
 						}
-						data, err := e.do(http.MethodPatch, "/attributes/"+a.ID, body)
-						if err != nil {
-							return err
-						}
-						return e.emit(data, func() error { return show(e, data) })
+						return e.classChange(http.MethodPatch, path, body, *dryRun)
 					}
 				},
 			},
-			editCommand("attribute", objectParam("attribute"), resolveAttrIDFn, (*env).editAttribute),
-			deleteCommand("attribute", "/attributes/", resolveAttrIDFn),
+			{
+				name:    "rename",
+				args:    "<class> <attribute> <new name> [--dry-run]",
+				summary: "Rename an attribute the class defines, in every value below it too.",
+				params:  []param{classParam, ownAttribute, arg("New name", nil)},
+				setup: func(fs *flag.FlagSet) func(*env, []string) error {
+					dryRun := fs.Bool("dry-run", false, "change nothing, and say what it would do")
+					return func(e *env, args []string) error {
+						if err := wantArgs(args, 3, 3); err != nil {
+							return err
+						}
+						path, _, err := e.classAttributePath(args[0], args[1])
+						if err != nil {
+							return err
+						}
+						return e.classChange(http.MethodPost, path+"/rename", object{"name": args[2]}, *dryRun)
+					}
+				},
+			},
+			{
+				name:    "remove",
+				args:    "<class> <attribute> [--dry-run] [--yes]",
+				summary: "Remove an attribute the class defines, with its values below it, for good; on a terminal it asks first.",
+				params:  []param{classParam, ownAttribute},
+				setup: func(fs *flag.FlagSet) func(*env, []string) error {
+					dryRun := fs.Bool("dry-run", false, "change nothing, and say what it would do")
+					yes := fs.Bool("yes", false, "don't ask first")
+					return func(e *env, args []string) error {
+						if err := wantArgs(args, 2, 2); err != nil {
+							return err
+						}
+						path, name, err := e.classAttributePath(args[0], args[1])
+						if err != nil {
+							return err
+						}
+						if !*dryRun {
+							if err := e.confirmDelete("attribute "+name+" and its values", *yes); err != nil {
+								return err
+							}
+						}
+						return e.classChange(http.MethodDelete, path, nil, *dryRun)
+					}
+				},
+			},
 		},
 	}
 }
 
-func (e *env) printAttributeJSON(data json.RawMessage) error {
-	var a attribute
-	if err := e.decode(data, &a); err != nil {
-		return err
-	}
-	units := ""
-	if a.Unit != nil {
-		if family, err := e.familyUnits(a.Unit); err == nil {
-			units = unitSymbols(family)
-		}
-	}
-	fields(e.stdout,
-		"Name", a.Name,
-		"Type", a.Datatype,
-		"Unit", unitName(a.Unit, a.UnitLock),
-		"Units", units,
-		"Id", a.ID)
-	if len(a.Options) > 0 {
-		var names []string
-		for _, o := range a.Options {
-			names = append(names, o.Name)
-		}
-		fields(e.stdout, "Options", strings.Join(names, ", "))
-	}
-	return nil
-}
-
-func optionGroup() group {
-	// resolveOptionArgs takes <attribute> <option>, or a single option id.
-	optionParams := []param{arg("Attribute", completeAttributes), optional("Option", completeOptionsOf(0))}
-	resolveOptionArgs := func(e *env, args []string) (string, error) {
-		if len(args) == 1 && isUUID(args[0]) {
-			return strings.ToLower(args[0]), nil
-		}
-		if len(args) == 1 && e.term != nil {
-			p := optionParams[1]
-			p.optional = false
-			v, err := e.ask(p, args)
-			if err != nil {
-				return "", err
-			}
-			args = append(args, v)
-		}
-		if err := wantArgs(args, 2, 2); err != nil {
-			return "", err
-		}
-		a, err := e.resolveAttribute(args[0])
-		if err != nil {
-			return "", err
-		}
-		return e.resolveOption(a.ID, args[1])
-	}
-	printOption := func(e *env, data json.RawMessage) error {
-		var o option
-		if err := e.decode(data, &o); err != nil {
-			return err
-		}
-		fields(e.stdout, "Name", o.Name, "Attribute", o.Attribute, "Id", o.ID)
-		return nil
+func classChoiceGroup() group {
+	classParam := arg("Class", completeClasses)
+	attributeParam := arg("Attribute", completeAttributesOf(0, true))
+	choiceParam := arg("Choice", completeChoicesOf(0, 1))
+	dryRunFlag := func(fs *flag.FlagSet) *bool {
+		return fs.Bool("dry-run", false, "change nothing, and say what it would do")
 	}
 	return group{
-		name:    "option",
-		summary: "Options of choice attributes",
+		name:    "class choice",
+		summary: "The choices of choice attributes",
 		commands: []command{
 			{
-				name:    "list",
-				args:    "<attribute>",
-				summary: "List the options of a choice attribute.",
-				params:  []param{arg("Attribute", completeAttributes)},
-				setup: simple(func(e *env, args []string) error {
-					if err := wantArgs(args, 1, 1); err != nil {
-						return err
-					}
-					a, err := e.resolveAttribute(args[0])
-					if err != nil {
-						return err
-					}
-					list, err := e.options(a.ID)
-					if err != nil {
-						return err
-					}
-					if list == nil {
-						list = []option{} // an empty list in JSON, not null
-					}
-					data, err := json.Marshal(list)
-					if err != nil {
-						return err
-					}
-					return e.emit(data, func() error {
-						t := newTable(e.stdout, "NAME", "ID")
-						for _, o := range list {
-							t.row(o.Name, o.ID)
-						}
-						t.flush()
-						return nil
-					})
-				}),
-			},
-			{
-				name:    "get",
-				args:    "<attribute> <option>",
-				summary: "Show an option.",
-				params:  optionParams,
-				setup: simple(func(e *env, args []string) error {
-					id, err := resolveOptionArgs(e, args)
-					if err != nil {
-						return err
-					}
-					data, err := e.api.Get(e.ctx, "/options/"+id, nil)
-					if err != nil {
-						return err
-					}
-					return e.emit(data, func() error { return printOption(e, data) })
-				}),
-			},
-			{
 				name:    "add",
-				args:    "<attribute> <name>…",
-				summary: "Add options to a choice attribute.",
-				params:  []param{arg("Attribute", completeAttributes), rest("Name", nil)},
-				setup: simple(func(e *env, args []string) error {
-					if err := wantArgs(args, 2, -1); err != nil {
-						return err
-					}
-					a, err := e.resolveAttribute(args[0])
-					if err != nil {
-						return err
-					}
-					for _, name := range args[1:] {
-						data, err := e.do(http.MethodPost, "/attributes/"+a.ID+"/options", object{"name": name})
-						if err != nil {
-							return err
-						}
-						if err := e.emit(data, func() error {
-							fmt.Fprintf(e.stdout, "Added %s.\n", name)
-							return nil
-						}); err != nil {
-							return err
-						}
-					}
-					return nil
-				}),
-			},
-			{
-				name:    "set",
-				args:    "<attribute> <option> --name N",
-				summary: "Rename an option.",
-				params:  optionParams,
+				args:    "<class> <attribute> <choice>… [--dry-run]",
+				summary: "Add choices, last.",
+				params:  []param{classParam, attributeParam, rest("Choice", nil)},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					name := fs.String("name", "", "new name (required)")
+					dryRun := dryRunFlag(fs)
 					return func(e *env, args []string) error {
-						id, err := resolveOptionArgs(e, args)
+						if err := wantArgs(args, 3, -1); err != nil {
+							return err
+						}
+						path, _, err := e.classAttributePath(args[0], args[1])
 						if err != nil {
 							return err
 						}
-						if err := e.need(name, "name", arg("New name", nil), args); err != nil {
-							return err
+						for _, c := range args[2:] {
+							if err := e.classChange(http.MethodPost, path+"/choices", object{"choice": c}, *dryRun); err != nil {
+								return err
+							}
 						}
-						data, err := e.do(http.MethodPatch, "/options/"+id, object{"name": *name})
-						if err != nil {
-							return err
-						}
-						return e.emit(data, func() error { return printOption(e, data) })
+						return nil
 					}
 				},
 			},
 			{
-				name:    "delete",
-				args:    "<attribute> <option>",
-				summary: "Delete an option that no value or default uses.",
-				params:  optionParams,
-				setup: simple(func(e *env, args []string) error {
-					id, err := resolveOptionArgs(e, args)
-					if err != nil {
-						return err
+				name:    "rename",
+				args:    "<class> <attribute> <choice> <new> [--dry-run]",
+				summary: "Rename a choice, in its place, the default, and every value below the class.",
+				params:  []param{classParam, attributeParam, choiceParam, arg("New", nil)},
+				setup: func(fs *flag.FlagSet) func(*env, []string) error {
+					dryRun := dryRunFlag(fs)
+					return func(e *env, args []string) error {
+						if err := wantArgs(args, 4, 4); err != nil {
+							return err
+						}
+						path, _, err := e.classAttributePath(args[0], args[1])
+						if err != nil {
+							return err
+						}
+						return e.classChange(http.MethodPost, path+"/choices/"+url.PathEscape(args[2])+"/rename",
+							object{"choice": args[3]}, *dryRun)
 					}
-					if _, err := e.do(http.MethodDelete, "/options/"+id, nil); err != nil {
-						return err
+				},
+			},
+			{
+				name:    "remove",
+				args:    "<class> <attribute> <choice> [--dry-run]",
+				summary: "Remove a choice that no item (or stock row) below the class has, and that isn't the default.",
+				params:  []param{classParam, attributeParam, choiceParam},
+				setup: func(fs *flag.FlagSet) func(*env, []string) error {
+					dryRun := dryRunFlag(fs)
+					return func(e *env, args []string) error {
+						if err := wantArgs(args, 3, 3); err != nil {
+							return err
+						}
+						path, _, err := e.classAttributePath(args[0], args[1])
+						if err != nil {
+							return err
+						}
+						return e.classChange(http.MethodDelete, path+"/choices/"+url.PathEscape(args[2]), nil, *dryRun)
 					}
-					e.deleted("option " + args[len(args)-1])
-					return nil
-				}),
+				},
 			},
 		},
 	}

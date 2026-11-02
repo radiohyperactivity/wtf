@@ -2,7 +2,6 @@ package cli
 
 import (
 	"flag"
-	"math/big"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -31,83 +30,76 @@ func TestNormalizeCode(t *testing.T) {
 	}
 }
 
-func TestSplitMeasure(t *testing.T) {
-	for _, c := range []struct{ in, num, unit string }{
-		{"12mm", "12", "mm"},
-		{"2.5 m", "5/2", "m"},
-		{"-3 °C", "-3", "°C"},
-		{"1e3", "1000", ""},
-		{".5kΩ", "1/2", "kΩ"},
+func TestParseNumber(t *testing.T) {
+	for _, c := range []struct {
+		in, unit, want string
+		ok             bool
+	}{
+		{"12", "", "12", true},
+		{"2.50", "", "2.5", true},
+		{"-3", "", "-3", true},
+		{"12 mm", "mm", "12", true},
+		{"12MM", "mm", "12", true},
+		{"12 cm", "mm", "", false},
+		{"12 mm", "", "", false},
+		{"twelve", "", "", false},
+		{"1e3", "", "1000", true},
 	} {
-		r, u, err := splitMeasure(c.in)
-		if err != nil {
-			t.Errorf("%q: %v", c.in, err)
-			continue
-		}
-		if r.RatString() != c.num || u != c.unit {
-			t.Errorf("%q = %s %q, want %s %q", c.in, r.RatString(), u, c.num, c.unit)
-		}
-	}
-	if _, _, err := splitMeasure("mm"); err == nil {
-		t.Error("expected an error for a missing number")
-	}
-}
-
-func TestRatNumber(t *testing.T) {
-	for in, want := range map[string]string{
-		"12":        "12",
-		"0.0012":    "0.0012",
-		"1/3":       "0.333333333333333333333333333333",
-		"25315/100": "253.15",
-	} {
-		r, ok := new(big.Rat).SetString(in)
-		if !ok {
-			t.Fatal(in)
-		}
-		if got := ratNumber(r).String(); got != want {
-			t.Errorf("ratNumber(%s) = %s, want %s", in, got, want)
+		got, err := parseNumber(c.in, c.unit)
+		if (err == nil) != c.ok || (c.ok && got.String() != c.want) {
+			t.Errorf("parseNumber(%q, %q) = %q, %v; want %q", c.in, c.unit, got, err, c.want)
 		}
 	}
 }
 
-func TestMatchUnit(t *testing.T) {
-	units := []unit{
-		{Symbol: "Ω", Name: "ohm", BaseFactor: "1"},
-		{Symbol: "mΩ", Name: "milliohm", BaseFactor: "0.001"},
-		{Symbol: "kΩ", Name: "kiloohm", BaseFactor: "1000"},
-		{Symbol: "MΩ", Name: "megaohm", BaseFactor: "1000000"},
-		{Symbol: "µm", Name: "micrometre", BaseFactor: "0.000001"},
-		{Symbol: "°C", Name: "degree Celsius", BaseFactor: "1", BaseOffset: "273.15"},
-		{Symbol: "B", Name: "byte", BaseFactor: "1"}, // decimal bytes
-		{Symbol: "B", Name: "byte", BaseFactor: "1"}, // binary bytes
+func TestAttributeFlags(t *testing.T) {
+	fs := flag.NewFlagSet("", flag.ContinueOnError)
+	fs.String("class", "", "")
+	fs.Bool("edit", false, "")
+	fs.Bool("no-unit", false, "")
+	rest, taken := takeAttributeFlags(fs, []string{
+		"Drill", "--class", "Tools", "--supply-voltage", "18", "--colour=Red", "--no-length",
+		"--temperature", "-5", "--edit", "--no-unit", "--", "--not-a-flag"})
+	if want := []string{"Drill", "--class", "Tools", "--edit", "--no-unit", "--", "--not-a-flag"}; !slices.Equal(rest, want) {
+		t.Errorf("rest = %q, want %q", rest, want)
 	}
-	for in, want := range map[string]string{
-		"kΩ":             "kΩ",
-		"kohm":           "kΩ",
-		"MOhm":           "MΩ",
-		"mohm":           "mΩ", // exact alias before case folding
-		"um":             "µm",
-		"μm":             "µm", // Greek mu
-		"degC":           "°C",
-		"degree celsius": "°C",
-		"KILOOHM":        "kΩ",
-		"MOHM":           "MΩ", // the alias keeps the case of the prefix
-		"byte":           "B",  // two units, but they convert the same
-	} {
-		u, err := matchUnit(units, in)
-		if err != nil {
-			t.Errorf("%q: %v", in, err)
-			continue
-		}
-		if u.Symbol != want {
-			t.Errorf("%q matched %s, want %s", in, u.Symbol, want)
-		}
+	want := []attrFlag{{name: "supply-voltage", value: "18"}, {name: "colour", value: "Red"},
+		{name: "length", remove: true}, {name: "temperature", value: "-5"}}
+	if !reflect.DeepEqual(taken, want) {
+		t.Errorf("taken = %+v, want %+v", taken, want)
 	}
-	if _, err := matchUnit(units, "mω"); err == nil || !strings.Contains(err.Error(), "ambiguous") {
-		t.Errorf("mω: want an ambiguity error, got %v", err)
+
+	c := class{Name: "Tools", Attributes: []attribute{
+		{Name: "Supply voltage", Scope: "item", Type: "decimal", Unit: "V"},
+		{Name: "Supply-voltage", Scope: "stock", Type: "text"},
+		{Name: "Colour", Scope: "item", Type: "choice", Choices: []string{"Red", "Blue"}},
+	}}
+	if a, err := matchAttribute(c, "item", "supply-voltage"); err != nil || a.Name != "Supply voltage" {
+		t.Errorf("match: %v %v", a, err)
 	}
-	if _, err := matchUnit(units, "ft"); err == nil {
-		t.Error("ft: want an error")
+	if _, err := matchAttribute(c, "item", "weight"); err == nil || !strings.Contains(err.Error(), "it has: Supply voltage, Colour") {
+		t.Errorf("no such attribute: %v", err)
+	}
+	if v, err := parseValue(c.Attributes[2], "red"); err != nil || v != "Red" {
+		t.Errorf("choice: %v %v", v, err)
+	}
+	if v, err := parseValue(c.Attributes[0], "3.3 V"); err != nil || v.(interface{ String() string }).String() != "3.3" {
+		t.Errorf("number with its unit: %v %v", v, err)
+	}
+}
+
+func TestParseWhere(t *testing.T) {
+	got, err := parseWhere([]string{"Length>=32", "Size=10..47", "Package=0603,0805", "Notes~metal", "Lead-free=yes"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"attribute":"Length","op":"\u003e=","value":32},` +
+		`{"attribute":"Size","op":"between","value":[10,47]},` +
+		`{"attribute":"Package","op":"in","value":["0603","0805"]},` +
+		`{"attribute":"Notes","op":"contains","value":"metal"},` +
+		`{"attribute":"Lead-free","op":"=","value":true}]`
+	if got != want {
+		t.Errorf("parseWhere:\n got %s\nwant %s", got, want)
 	}
 }
 
@@ -341,15 +333,16 @@ func TestCandidates(t *testing.T) {
 		files bool
 	}{
 		{[]string{"it"}, "item", false},
-		{[]string{"item", ""}, "value-set", false},
+		{[]string{"item", ""}, "set", false},
 		{[]string{"item", "add", "X", "--"}, "--class", false},
 		{[]string{"--json", "stock", "m"}, "move", false},
-		{[]string{"attribute", "add", "Size", "--type", ""}, "choice", false},
-		{[]string{"attribute", "add", "Size", "--type=d"}, "--type=decimal", false},
+		{[]string{"class", ""}, "attribute", false},
+		{[]string{"class", "attribute", ""}, "rename", false},
+		{[]string{"class", "attribute", "add", "Tools", "Size", "--type", ""}, "choice", false},
+		{[]string{"class", "attribute", "add", "Tools", "Size", "--type=d"}, "--type=decimal", false},
 		{[]string{"account", "add", "a@b", "--role", ""}, "admin", false},
 		{[]string{"completion", ""}, "powershell", false},
-		{[]string{"attachment", "add", "item", "Drill", ""}, "", true},
-		{[]string{"attachment", "download", "x", "-o", ""}, "", true},
+		{[]string{"file", "put", "Drill", "photo", ""}, "", true},
 	} {
 		got, files := e.candidates(c.words, false)
 		if files != c.files {

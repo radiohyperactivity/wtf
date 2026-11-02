@@ -3,7 +3,7 @@
   "info": {
     "title": "WtF API",
     "version": "1",
-    "description": "Version 1 of the API, served under /api/v1. Within a version the API only\ngrows (new routes, optional fields, fields in answers); every answer names\nthe current revision in the `API-Revision` header. A breaking change would\nbecome /api/v2, served next to /api/v1 for a while. A request for a\nversion the server doesn't serve gets an `unsupported-api-version`\nproblem that lists the versions it does serve (`supported`). The\nrefactor of 2026-11-01 changed /api/v1 in place, once, and its revision\nstarted again at 1 (WTFD.md, \"Versions\").\n\nWhere to Find: a register of the things you own and where they are.\nEvery endpoint calls one database function; see API.md for the semantics\nand WTFD.md for the HTTP conventions.\n\n- Numbers of attributes and items with a unit are given and stored in the\n  base unit of the unit's quantity; responses add a `display` value in the\n  best-scaling unit of the unit's family, or in the unit itself when\n  `unit_lock` is set.\n- Outside the unit routes a unit is its id: clients keep the unit families\n  (`GET /unit-families`, revalidated by `ETag`) and look units up there,\n  as they keep the class and location trees.\n- The hostname picks the inventory: its first label is a tenant's host\n  (\"bob\" for bob.wtf.example), see TENANTS.md. A hostname that picks none\n  gets 404 from every route that needs a session, or from /login.\n- Everything has UUIDs as ids. Quantities, unit families and units are\n  global (every tenant sees them) or the tenant's own, and a tenant can\n  turn quantities and families off.\n- Every account has a role (ACCOUNTS.md): a `viewer` reads everything\n  but the accounts; a `user` also changes items and stock rows (with\n  their values and attachments); an `admin` also sets up locations,\n  classes, attributes and units, imports and exports model files, and\n  manages accounts. A request the role doesn't allow gets 403.\n- A field the server needs is required in a request body, even if as\n  null; nothing is assumed.\n- Errors are RFC 9457 problem details (`application/problem+json`).\n- `GET /classes`, `GET /locations` and `GET /unit-families` support\n  `ETag` / `If-None-Match`.\n- POST /login sets the session cookie `wtf_session` (HttpOnly,\n  SameSite=Strict, Path=/api); send it back with every request. Only\n  /api/health, /api/v1/openapi and /login work without it; a request\n  without it gets 401 at once. Requests that change something are\n  refused (403) when their Origin header names another site.\n"
+    "description": "Version 1 of the API, served under /api/v1. Within a version the API only\ngrows (new routes, optional fields, fields in answers); every answer names\nthe current revision in the `API-Revision` header. A breaking change would\nbecome /api/v2, served next to /api/v1 for a while. A request for a\nversion the server doesn't serve gets an `unsupported-api-version`\nproblem that lists the versions it does serve (`supported`). The\nrefactors of 2026-11-01 and 2026-11-02 changed /api/v1 in place, and its\nrevision started again at 1 (WTFD.md, \"Versions\").\n\nWhere to Find: a register of the things you own and where they are.\nEvery endpoint calls one database function; see API.md for the semantics\nand WTFD.md for the HTTP conventions. One server is one installation.\n\n- A class has attributes, its own and those it inherits. An item's and a\n  stock row's values are a JSON object by attribute name (`values`), with\n  the names of those that follow the class's default (`defaulted`).\n- Everything has UUIDs as ids; attributes are named.\n- Every account has a role (ACCOUNTS.md): a `viewer` reads everything\n  but the accounts; a `user` also changes items and stock rows (with\n  their values and files); an `admin` also sets up locations and classes\n  with their attributes, imports and exports model files, and manages\n  accounts. A request the role doesn't allow gets 403.\n- A field the server needs is required in a request body, even if as\n  null; nothing is assumed.\n- Lists are paged by key: a page answers `more` and, when there is more,\n  `next`, the `after` of the next page. They give no total.\n- Errors are RFC 9457 problem details (`application/problem+json`).\n- `GET /classes` and `GET /locations` support `ETag` / `If-None-Match`.\n- POST /login sets the session cookie `wtf_session` (HttpOnly,\n  SameSite=Strict, Path=/api); send it back with every request. Only\n  /api/health, /api/v1/openapi and /login work without it; a request\n  without it gets 401 at once. Requests that change something are\n  refused (403) when their Origin header names another site.\n"
   },
   "servers": [
     {
@@ -48,159 +48,11 @@
         }
       }
     },
-    "/quantities": {
-      "get": {
-        "summary": "The quantities the tenant sees",
-        "operationId": "quantityList",
-        "responses": {
-          "200": {
-            "description": "Quantities, alphabetically.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Quantity"
-                  }
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/quantities/{id}": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "get": {
-        "summary": "One quantity with the unit families the tenant sees, each with its units",
-        "operationId": "quantityGet",
-        "responses": {
-          "200": {
-            "description": "The quantity.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/QuantityDetail"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      },
-      "patch": {
-        "summary": "Turn a quantity on or off for the tenant (admins)",
-        "operationId": "quantityPatch",
-        "description": "Turning a quantity off turns its families off too. A quantity whose\nunits live attributes or items use can't be turned off (409).\n",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AvailabilityPatch"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "The quantity.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/QuantityDetail"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/units": {
-      "get": {
-        "summary": "The units the tenant sees",
-        "operationId": "unitList",
-        "parameters": [
-          {
-            "name": "quantity",
-            "in": "query",
-            "schema": {
-              "$ref": "#/components/schemas/Uuid"
-            },
-            "description": "Only units of this quantity."
-          },
-          {
-            "name": "family",
-            "in": "query",
-            "schema": {
-              "$ref": "#/components/schemas/Uuid"
-            },
-            "description": "Only units of this family."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Units, by family, smallest first.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Unit"
-                  }
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/units/{id}": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "get": {
-        "summary": "One unit",
-        "operationId": "unitGet",
-        "responses": {
-          "200": {
-            "description": "The unit.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Unit"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
     "/model/import": {
       "post": {
         "summary": "Import units, attributes and classes from a model file (admins)",
         "operationId": "modelImport",
-        "description": "The body is a model file (seed/model-format.md): quantities with their\nunit families and units, attributes, and a tree of classes with their\nattribute assignments. What the tenant has (or sees, for units) and\nis the same is used as it is; what isn't there is added, as the\ntenant's own; what differs is a conflict. An assignment that is the\nsame as one the class inherits is there already. All or nothing: with\na conflict, or with dry_run, nothing is kept. A body that isn't a\nvalid model file is refused with 400. A file of only quantities is\nhow units are imported.\n",
+        "description": "The body is a model file (seed/model-format.md): a tree of classes with\ntheir attributes. A class that is there already, by name, is imported\ninto: it gets the attributes it hasn't got, and an attribute it has must\nbe the same (409 otherwise). Rows below a class that gets a required\nattribute are checked and given its default, as a class change does. All\nor nothing; with dry_run, nothing is kept. A body that isn't a valid model\nfile is refused with 400.\n",
         "parameters": [
           {
             "name": "parent",
@@ -211,12 +63,7 @@
             "description": "The class to import below; the top of the class tree without it."
           },
           {
-            "name": "dry_run",
-            "in": "query",
-            "schema": {
-              "type": "boolean"
-            },
-            "description": "true: nothing is kept, and the report says what would be. Absent: false."
+            "$ref": "#/components/parameters/DryRun"
           }
         ],
         "requestBody": {
@@ -232,412 +79,14 @@
         },
         "responses": {
           "200": {
-            "description": "What was (or would be) added, what was there already, and the conflicts.",
+            "description": "What it added, and what was there already.",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "applied": {
-                      "type": "boolean",
-                      "description": "Whether the import was kept."
-                    },
-                    "dry_run": {
-                      "type": "boolean"
-                    },
-                    "quantities": {
-                      "$ref": "#/components/schemas/ModelImportSection"
-                    },
-                    "families": {
-                      "$ref": "#/components/schemas/ModelImportSection"
-                    },
-                    "units": {
-                      "$ref": "#/components/schemas/ModelImportSection"
-                    },
-                    "attributes": {
-                      "$ref": "#/components/schemas/ModelImportSection"
-                    },
-                    "options": {
-                      "type": "object",
-                      "properties": {
-                        "added": {
-                          "type": "array",
-                          "items": {
-                            "type": "string"
-                          },
-                          "description": "\"Attribute: option\""
-                        }
-                      }
-                    },
-                    "classes": {
-                      "$ref": "#/components/schemas/ModelImportSection"
-                    },
-                    "assignments": {
-                      "$ref": "#/components/schemas/ModelImportSection"
-                    },
-                    "conflicts": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "where": {
-                            "type": "string",
-                            "description": "'e.g. \"Class MCU/AVR: Clock\", \"Length › Imperial length › in\"'"
-                          },
-                          "message": {
-                            "type": "string"
-                          }
-                        }
-                      }
-                    }
-                  }
+                  "$ref": "#/components/schemas/ModelImportReport"
                 }
               }
             }
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/unit-families": {
-      "get": {
-        "summary": "The unit families the tenant sees, with their units",
-        "operationId": "unitFamilyList",
-        "parameters": [
-          {
-            "name": "quantity",
-            "in": "query",
-            "schema": {
-              "$ref": "#/components/schemas/Uuid"
-            },
-            "description": "Only families of this quantity."
-          },
-          {
-            "$ref": "#/components/parameters/IfNoneMatch"
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/UnitFamilies"
-          },
-          "304": {
-            "$ref": "#/components/responses/NotModified"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        },
-        "description": "Every unit family the tenant sees, with its units. Clients keep them, and ask again with If-None-Match: 304 when unchanged."
-      }
-    },
-    "/unit-families/{id}": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "get": {
-        "summary": "One unit family with its units, smallest first",
-        "operationId": "unitFamilyGet",
-        "responses": {
-          "200": {
-            "description": "The unit family.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UnitFamilyDetail"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      },
-      "patch": {
-        "summary": "Turn a unit family on or off for the tenant (admins)",
-        "operationId": "unitFamilyPatch",
-        "description": "A family of a quantity that is turned off stays off. A family whose\nunits live attributes or items use can't be turned off (409).\n",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AvailabilityPatch"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "The unit family.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UnitFamilyDetail"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/attributes": {
-      "get": {
-        "summary": "All attributes",
-        "operationId": "attributeList",
-        "responses": {
-          "200": {
-            "description": "Attributes, alphabetically.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Attribute"
-                  }
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      },
-      "post": {
-        "summary": "Create an attribute",
-        "operationId": "attributeCreate",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "name",
-                  "datatype",
-                  "unit",
-                  "unit_lock"
-                ],
-                "properties": {
-                  "unit": {
-                    "oneOf": [
-                      {
-                        "$ref": "#/components/schemas/Uuid"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "unit_lock": {
-                    "type": "boolean"
-                  },
-                  "name": {
-                    "type": "string"
-                  },
-                  "datatype": {
-                    "$ref": "#/components/schemas/Datatype"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "$ref": "#/components/responses/AttributeCreated"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/attributes/{id}": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "get": {
-        "summary": "One attribute (with options for choice attributes)",
-        "operationId": "attributeGet",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Attribute"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      },
-      "patch": {
-        "summary": "Change an attribute",
-        "operationId": "attributePatch",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "name": {
-                    "type": "string"
-                  },
-                  "unit": {
-                    "oneOf": [
-                      {
-                        "$ref": "#/components/schemas/Uuid"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "unit_lock": {
-                    "type": "boolean"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Attribute"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      },
-      "delete": {
-        "summary": "Delete an attribute (it must not be in use)",
-        "operationId": "attributeDelete",
-        "responses": {
-          "204": {
-            "description": "Deleted."
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/attributes/{id}/options": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "post": {
-        "summary": "Add an option to a choice attribute",
-        "operationId": "attributeOptionCreate",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "name"
-                ],
-                "properties": {
-                  "name": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Created. `Location` points at /options/{id}.",
-            "headers": {
-              "Location": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Option"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/options/{id}": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "get": {
-        "summary": "One option",
-        "operationId": "attributeOptionGet",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Option"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      },
-      "patch": {
-        "summary": "Rename an option",
-        "operationId": "attributeOptionPatch",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "name": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Option"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      },
-      "delete": {
-        "summary": "Delete an option (it must not be in use)",
-        "operationId": "attributeOptionDelete",
-        "responses": {
-          "204": {
-            "description": "Deleted."
           },
           "default": {
             "$ref": "#/components/responses/Problem"
@@ -770,7 +219,7 @@
       "get": {
         "summary": "The class with everything below it, as a model file (admins)",
         "operationId": "modelExport",
-        "description": "A model file (seed/model-format.md) of the class and the live classes\nbelow it, with the class's inherited assignments as its own, every\nattribute they use, and the units of the tenant's own those attributes\nneed, with their families. Units every WtF has are left out. \"meta\"\nnames the class, the tenant and when. Importing the file where the\nclass is changes nothing; importing it elsewhere sets up the same.\n",
+        "description": "A model file (seed/model-format.md) of the class and the classes below it:\nthe class with all its attributes, its inherited ones as its own, and\nthe classes below with their own. Importing the file where the class is\nchanges nothing; importing it elsewhere sets up the same.\n",
         "responses": {
           "200": {
             "description": "A model file.",
@@ -821,76 +270,9 @@
         }
       }
     },
-    "/classes/{id}/attributes/{attribute}": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        },
-        {
-          "$ref": "#/components/parameters/Attribute"
-        }
-      ],
-      "put": {
-        "summary": "Assign an attribute to a class, or change its default",
-        "operationId": "classAttributeSet",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "default": {
-                    "description": "Optional default in the attribute's datatype (numbers in the base unit); null for none."
-                  },
-                  "scope": {
-                    "type": "string",
-                    "enum": [
-                      "item",
-                      "stock"
-                    ],
-                    "description": "Where its values live: on the item, or on each stock row."
-                  },
-                  "required": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "New items (or stock rows, for per-unit attributes) need a value unless there is a default."
-                  }
-                },
-                "required": [
-                  "default",
-                  "scope",
-                  "required"
-                ]
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Class"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      },
-      "delete": {
-        "summary": "Remove an attribute from a class",
-        "operationId": "classAttributeRemove",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Class"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
     "/items": {
       "get": {
-        "summary": "Items, alphabetically, paged",
+        "summary": "Items, by name, paged by key",
         "operationId": "itemList",
         "parameters": [
           {
@@ -907,7 +289,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Words separated by spaces. Every word must occur, as a case-insensitive\nsubstring, in the item name, a class in the item's class path, a text\nor url value, or a choice value (including class defaults the item\nshows). Different words may match in different places, so\n\"resistor 0805\" finds 0805 resistors.\n"
+            "description": "Words separated by spaces. Every word must occur, letter case ignored, as part of the item's search text: its name, the names of the classes in its path, and its text, url and choice values."
           },
           {
             "name": "where",
@@ -915,13 +297,13 @@
             "schema": {
               "type": "string"
             },
-            "description": "Attribute filters, all of which must match: a JSON list of\n{attribute, op, value}. Numbers and dates take =, >, >=, <, <= or\nbetween [low, high] (numbers in the base unit); text and url take\n= or contains; choices take = (one option) or in (a list), by id\nor name; booleans take = true or false. Compared with the values\nthe item shows, class defaults included; a per-unit attribute\nmatches when any live stock row does. See api/item.md.\n"
+            "description": "Attribute filters, all of which must pass: a JSON list of {attribute, op, value}, the attribute by name. = takes a number, a text or true or false; >, >=, < and <= a number or a date (YYYY-MM-DD); between [low, high]; contains a text; in a list of texts. Texts ignore letter case. One passes when the item's values do, or one of its stock rows'. See api/item.md."
           },
           {
             "$ref": "#/components/parameters/Limit"
           },
           {
-            "$ref": "#/components/parameters/Offset"
+            "$ref": "#/components/parameters/After"
           }
         ],
         "responses": {
@@ -965,41 +347,35 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": [
-                  "class",
-                  "name",
-                  "unit",
-                  "unit_lock",
-                  "values"
-                ],
                 "properties": {
-                  "unit": {
-                    "oneOf": [
-                      {
-                        "$ref": "#/components/schemas/Uuid"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
                   "class": {
                     "$ref": "#/components/schemas/Uuid"
                   },
                   "name": {
                     "type": "string"
                   },
-                  "unit_lock": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "Always show stock in the unit, instead of scaling it within its family."
+                  "unit": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "What its stock is counted in, a label (\"m\"); null for pieces."
                   },
                   "values": {
-                    "type": "object",
-                    "description": "Initial values, keyed by attribute id.",
-                    "additionalProperties": true
+                    "allOf": [
+                      {
+                        "$ref": "#/components/schemas/Values"
+                      }
+                    ],
+                    "description": "Values for its item attributes; the others get their class's defaults. Files are uploaded afterwards."
                   }
-                }
+                },
+                "required": [
+                  "class",
+                  "name",
+                  "unit",
+                  "values"
+                ]
               }
             }
           }
@@ -1064,28 +440,27 @@
                     "type": "string"
                   },
                   "unit": {
-                    "oneOf": [
-                      {
-                        "$ref": "#/components/schemas/Uuid"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "unit_lock": {
-                    "type": "boolean"
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "A label; null for pieces."
                   },
                   "photo": {
-                    "oneOf": [
-                      {
-                        "$ref": "#/components/schemas/Uuid"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "description": "One of its own image attachments, or null for none."
+                    "type": "null",
+                    "description": "null removes the photo; a photo is uploaded."
+                  },
+                  "values": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "description": "Values to set, by attribute name; null removes one. Either way it no longer follows the class's default. A file is uploaded instead."
+                  },
+                  "default": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Attributes to give their class's default, and to follow it."
                   }
                 }
               }
@@ -1099,7 +474,8 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "description": "Changes the fields it has, and its values, in one transaction; refused as a whole when the values don't fit the class it is in then."
       },
       "delete": {
         "summary": "Delete an item (it must have no stock)",
@@ -1107,59 +483,6 @@
         "responses": {
           "204": {
             "description": "Deleted."
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/items/{id}/values/{attribute}": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        },
-        {
-          "$ref": "#/components/parameters/Attribute"
-        }
-      ],
-      "put": {
-        "summary": "Set one value of an item",
-        "operationId": "valueSet",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "value"
-                ],
-                "properties": {
-                  "value": {
-                    "description": "The value in the attribute's datatype; numbers in the base unit."
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Item"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      },
-      "delete": {
-        "summary": "Remove one value of an item",
-        "operationId": "valueDelete",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Item"
           },
           "default": {
             "$ref": "#/components/responses/Problem"
@@ -1337,10 +660,18 @@
             "description": "Only this location and everything below it."
           },
           {
+            "name": "search",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Words that must each occur, letter case ignored, in the reference or the serial."
+          },
+          {
             "$ref": "#/components/parameters/Limit"
           },
           {
-            "$ref": "#/components/parameters/Offset"
+            "$ref": "#/components/parameters/After"
           }
         ],
         "responses": {
@@ -1384,12 +715,6 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": [
-                  "item",
-                  "location",
-                  "amount",
-                  "values"
-                ],
                 "properties": {
                   "item": {
                     "$ref": "#/components/schemas/Uuid"
@@ -1402,14 +727,37 @@
                       "number",
                       "null"
                     ],
-                    "description": "In the base unit of the item's unit; null: not counted."
+                    "description": "In the item's unit; null: present, not counted."
+                  },
+                  "reference": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "serial": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
                   },
                   "values": {
-                    "type": "object",
-                    "description": "Per-unit values, keyed by attribute id.",
-                    "additionalProperties": true
+                    "allOf": [
+                      {
+                        "$ref": "#/components/schemas/Values"
+                      }
+                    ],
+                    "description": "Values for its stock attributes."
                   }
-                }
+                },
+                "required": [
+                  "item",
+                  "location",
+                  "amount",
+                  "reference",
+                  "serial",
+                  "values"
+                ]
               }
             }
           }
@@ -1457,7 +805,7 @@
         }
       },
       "patch": {
-        "summary": "Correct a stock row",
+        "summary": "Change a stock row",
         "operationId": "stockPatch",
         "requestBody": {
           "required": true,
@@ -1478,18 +826,35 @@
                       "number",
                       "null"
                     ],
-                    "description": "In the base unit of the item's unit; null: not counted."
+                    "description": "In the item's unit; null: not counted."
+                  },
+                  "reference": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "serial": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
                   },
                   "photo": {
-                    "oneOf": [
-                      {
-                        "$ref": "#/components/schemas/Uuid"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "description": "One of its own image attachments, or null for none."
+                    "type": "null",
+                    "description": "null removes the photo; a photo is uploaded."
+                  },
+                  "values": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "description": "Values to set, by attribute name; null removes one. Either way it no longer follows the class's default. A file is uploaded instead."
+                  },
+                  "default": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Attributes to give their class's default, and to follow it."
                   }
                 }
               }
@@ -1503,7 +868,8 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "description": "Changes the fields it has, and its values, in one transaction. To move things, use move; a location here is for corrections."
       },
       "delete": {
         "summary": "Delete a stock row",
@@ -1526,7 +892,7 @@
       ],
       "post": {
         "summary": "Move (part of) a stock row to another location",
-        "description": "Without an amount the whole row moves and keeps its code; with one, that\nmuch is split off into a new row at the location. A move never merges\ninto another row: that is POST /stock/{id}/merge.\n",
+        "description": "A whole row changes location and keeps its code; a part is split off into a new row with a code of its own and everything else the row has. It never merges.",
         "operationId": "stockMove",
         "requestBody": {
           "required": true,
@@ -1558,511 +924,6 @@
         "responses": {
           "200": {
             "$ref": "#/components/responses/Stock"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/stock/{id}/values/{attribute}": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        },
-        {
-          "$ref": "#/components/parameters/Attribute"
-        }
-      ],
-      "put": {
-        "summary": "Set one per-unit value of a stock row",
-        "operationId": "stockValueSet",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "value"
-                ],
-                "properties": {
-                  "value": {
-                    "description": "The value in the attribute's datatype; numbers in the base unit."
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Stock"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      },
-      "delete": {
-        "summary": "Remove one per-unit value of a stock row",
-        "operationId": "stockValueDelete",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Stock"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/items/{id}/attachments/{attachment}": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        },
-        {
-          "$ref": "#/components/parameters/AttachmentId"
-        }
-      ],
-      "get": {
-        "summary": "An attachment of an item",
-        "operationId": "itemAttachmentGet",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Attachment"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      },
-      "patch": {
-        "summary": "Change the title of an attachment of an item",
-        "operationId": "itemAttachmentPatch",
-        "requestBody": {
-          "$ref": "#/components/requestBodies/AttachmentPatch"
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Attachment"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      },
-      "delete": {
-        "summary": "Delete an attachment of an item",
-        "description": "If it was the photo, the object has no photo any more. \"wtfd gc\" removes its file once no attachment of the tenant has its hash.",
-        "operationId": "itemAttachmentDelete",
-        "responses": {
-          "204": {
-            "description": "Deleted."
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/items/{id}/attachments/{attachment}/content": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        },
-        {
-          "$ref": "#/components/parameters/AttachmentId"
-        }
-      ],
-      "get": {
-        "summary": "The content of an attachment of an item",
-        "description": "Images (except SVG), PDF and plain text are sent inline, everything\nelse as a download, named after the title with an extension for the\ntype. The ETag is the SHA-256 of the content, which never changes;\nRange requests are supported.\n",
-        "operationId": "itemAttachmentContent",
-        "responses": {
-          "200": {
-            "description": "The file.",
-            "headers": {
-              "ETag": {
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "Content-Disposition": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "content": {
-              "*/*": {}
-            }
-          },
-          "304": {
-            "description": "Not modified."
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/items/{id}/attachments": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "post": {
-        "summary": "Attach a file to an item",
-        "operationId": "itemAttachmentCreate",
-        "requestBody": {
-          "$ref": "#/components/requestBodies/Upload"
-        },
-        "responses": {
-          "201": {
-            "$ref": "#/components/responses/AttachmentCreated"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/stock/{id}/attachments/{attachment}": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        },
-        {
-          "$ref": "#/components/parameters/AttachmentId"
-        }
-      ],
-      "get": {
-        "summary": "An attachment of a stock row",
-        "operationId": "stockAttachmentGet",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Attachment"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      },
-      "patch": {
-        "summary": "Change the title of an attachment of a stock row",
-        "operationId": "stockAttachmentPatch",
-        "requestBody": {
-          "$ref": "#/components/requestBodies/AttachmentPatch"
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Attachment"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      },
-      "delete": {
-        "summary": "Delete an attachment of a stock row",
-        "description": "If it was the photo, the object has no photo any more. \"wtfd gc\" removes its file once no attachment of the tenant has its hash.",
-        "operationId": "stockAttachmentDelete",
-        "responses": {
-          "204": {
-            "description": "Deleted."
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/stock/{id}/attachments/{attachment}/content": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        },
-        {
-          "$ref": "#/components/parameters/AttachmentId"
-        }
-      ],
-      "get": {
-        "summary": "The content of an attachment of a stock row",
-        "description": "Images (except SVG), PDF and plain text are sent inline, everything\nelse as a download, named after the title with an extension for the\ntype. The ETag is the SHA-256 of the content, which never changes;\nRange requests are supported.\n",
-        "operationId": "stockAttachmentContent",
-        "responses": {
-          "200": {
-            "description": "The file.",
-            "headers": {
-              "ETag": {
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "Content-Disposition": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "content": {
-              "*/*": {}
-            }
-          },
-          "304": {
-            "description": "Not modified."
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/stock/{id}/attachments": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "post": {
-        "summary": "Attach a file to a stock row",
-        "operationId": "stockAttachmentCreate",
-        "requestBody": {
-          "$ref": "#/components/requestBodies/Upload"
-        },
-        "responses": {
-          "201": {
-            "$ref": "#/components/responses/AttachmentCreated"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/locations/{id}/attachments/{attachment}": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        },
-        {
-          "$ref": "#/components/parameters/AttachmentId"
-        }
-      ],
-      "get": {
-        "summary": "An attachment of a location",
-        "operationId": "locationAttachmentGet",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Attachment"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      },
-      "patch": {
-        "summary": "Change the title of an attachment of a location",
-        "operationId": "locationAttachmentPatch",
-        "requestBody": {
-          "$ref": "#/components/requestBodies/AttachmentPatch"
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Attachment"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      },
-      "delete": {
-        "summary": "Delete an attachment of a location",
-        "description": "If it was the photo, the object has no photo any more. \"wtfd gc\" removes its file once no attachment of the tenant has its hash.",
-        "operationId": "locationAttachmentDelete",
-        "responses": {
-          "204": {
-            "description": "Deleted."
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/locations/{id}/attachments/{attachment}/content": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        },
-        {
-          "$ref": "#/components/parameters/AttachmentId"
-        }
-      ],
-      "get": {
-        "summary": "The content of an attachment of a location",
-        "description": "Images (except SVG), PDF and plain text are sent inline, everything\nelse as a download, named after the title with an extension for the\ntype. The ETag is the SHA-256 of the content, which never changes;\nRange requests are supported.\n",
-        "operationId": "locationAttachmentContent",
-        "responses": {
-          "200": {
-            "description": "The file.",
-            "headers": {
-              "ETag": {
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "Content-Disposition": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "content": {
-              "*/*": {}
-            }
-          },
-          "304": {
-            "description": "Not modified."
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/locations/{id}/attachments": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "post": {
-        "summary": "Attach a file to a location",
-        "operationId": "locationAttachmentCreate",
-        "requestBody": {
-          "$ref": "#/components/requestBodies/Upload"
-        },
-        "responses": {
-          "201": {
-            "$ref": "#/components/responses/AttachmentCreated"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/classes/{id}/attachments/{attachment}": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        },
-        {
-          "$ref": "#/components/parameters/AttachmentId"
-        }
-      ],
-      "get": {
-        "summary": "An attachment of a class",
-        "operationId": "classAttachmentGet",
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Attachment"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      },
-      "patch": {
-        "summary": "Change the title of an attachment of a class",
-        "operationId": "classAttachmentPatch",
-        "requestBody": {
-          "$ref": "#/components/requestBodies/AttachmentPatch"
-        },
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Attachment"
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      },
-      "delete": {
-        "summary": "Delete an attachment of a class",
-        "description": "If it was the photo, the object has no photo any more. \"wtfd gc\" removes its file once no attachment of the tenant has its hash.",
-        "operationId": "classAttachmentDelete",
-        "responses": {
-          "204": {
-            "description": "Deleted."
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/classes/{id}/attachments/{attachment}/content": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        },
-        {
-          "$ref": "#/components/parameters/AttachmentId"
-        }
-      ],
-      "get": {
-        "summary": "The content of an attachment of a class",
-        "description": "Images (except SVG), PDF and plain text are sent inline, everything\nelse as a download, named after the title with an extension for the\ntype. The ETag is the SHA-256 of the content, which never changes;\nRange requests are supported.\n",
-        "operationId": "classAttachmentContent",
-        "responses": {
-          "200": {
-            "description": "The file.",
-            "headers": {
-              "ETag": {
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "Content-Disposition": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "content": {
-              "*/*": {}
-            }
-          },
-          "304": {
-            "description": "Not modified."
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
-      }
-    },
-    "/classes/{id}/attachments": {
-      "parameters": [
-        {
-          "$ref": "#/components/parameters/Id"
-        }
-      ],
-      "post": {
-        "summary": "Attach a file to a class",
-        "operationId": "classAttachmentCreate",
-        "requestBody": {
-          "$ref": "#/components/requestBodies/Upload"
-        },
-        "responses": {
-          "201": {
-            "$ref": "#/components/responses/AttachmentCreated"
           },
           "default": {
             "$ref": "#/components/responses/Problem"
@@ -2499,7 +1360,7 @@
             }
           }
         },
-        "description": "openapi/openapi.json, as application/json, or as application/yaml when Accept asks for YAML (JSON is valid YAML). Served for any host, without a session."
+        "description": "openapi/openapi.json, as application/json, or as application/yaml when Accept asks for YAML (JSON is valid YAML). Served without a session."
       }
     },
     "/me/sessions": {
@@ -2588,7 +1449,7 @@
       ],
       "post": {
         "summary": "Merge (part of) a stock row into another row of the same item",
-        "description": "Adds the amount (null: all of it) to the row \"into\", which may be at another\nlocation. Both rows must be of the same item and counted, and have exactly\nthe same values (422 otherwise). Merging all of it deletes the row, whose\nlabel then answers 410, and its attachments move to \"into\". Answers \"into\".\n",
+        "description": "Adds the amount (null: all of it) to the row \"into\", which may be at another location. Both rows must be of the same item and counted. Where they differ (reference, serial, photo, or a value), resolve must say which row's to keep for each, or the merge is refused (422, naming the differences). Merging all of it deletes the row, whose label then answers 410. Answers \"into\".",
         "operationId": "stockMerge",
         "requestBody": {
           "required": true,
@@ -2597,10 +1458,6 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": [
-                  "into",
-                  "amount"
-                ],
                 "properties": {
                   "into": {
                     "$ref": "#/components/schemas/Uuid"
@@ -2611,6 +1468,506 @@
                       "null"
                     ],
                     "description": "How much to merge; null merges the whole row."
+                  },
+                  "resolve": {
+                    "type": [
+                      "object",
+                      "null"
+                    ],
+                    "description": "{\"reference\": \"from\" | \"into\", \"serial\": …, \"photo\": …, \"values\": {\"<name>\": \"from\" | \"into\"}}"
+                  }
+                },
+                "required": [
+                  "into",
+                  "amount",
+                  "resolve"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Stock"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/classes/{id}/attributes": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        }
+      ],
+      "post": {
+        "summary": "Add an attribute to a class",
+        "description": "Refused when the class has an attribute of that name, or a class below it has one of its own. A required one gets its default on every item (or stock row) below the class, and is refused without a default while there are any.",
+        "operationId": "classAttributeAdd",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DryRun"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "definition": {
+                    "$ref": "#/components/schemas/AttributeDefinition"
+                  }
+                },
+                "required": [
+                  "name",
+                  "definition"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ClassChange"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/classes/{id}/attributes/{attribute}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        },
+        {
+          "$ref": "#/components/parameters/Attribute"
+        }
+      ],
+      "patch": {
+        "summary": "Change an attribute the class defines",
+        "description": "Fields: required, default, unit, order, and media; null removes a default, a unit or media types. Its type and scope never change. A changed default reaches every value below that follows it.",
+        "operationId": "classAttributeChange",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DryRun"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ClassChange"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove an attribute the class defines",
+        "description": "From the class and the classes below it, and its values from every item (or stock row) below it.",
+        "operationId": "classAttributeRemove",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DryRun"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ClassChange"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/classes/{id}/attributes/{attribute}/rename": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        },
+        {
+          "$ref": "#/components/parameters/Attribute"
+        }
+      ],
+      "post": {
+        "summary": "Rename an attribute the class defines",
+        "operationId": "classAttributeRename",
+        "description": "In the class, the classes below it, and every value below it.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DryRun"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ClassChange"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/classes/{id}/attributes/{attribute}/choices": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        },
+        {
+          "$ref": "#/components/parameters/Attribute"
+        }
+      ],
+      "post": {
+        "summary": "Add a choice to a choice attribute",
+        "operationId": "classChoiceAdd",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DryRun"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "choice": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "choice"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ClassChange"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/classes/{id}/attributes/{attribute}/choices/{choice}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        },
+        {
+          "$ref": "#/components/parameters/Attribute"
+        },
+        {
+          "$ref": "#/components/parameters/Choice"
+        }
+      ],
+      "delete": {
+        "summary": "Remove a choice",
+        "operationId": "classChoiceRemove",
+        "description": "Refused while it is the default, or an item (or stock row) below the class has it.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DryRun"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ClassChange"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/classes/{id}/attributes/{attribute}/choices/{choice}/rename": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        },
+        {
+          "$ref": "#/components/parameters/Attribute"
+        },
+        {
+          "$ref": "#/components/parameters/Choice"
+        }
+      ],
+      "post": {
+        "summary": "Rename a choice",
+        "operationId": "classChoiceRename",
+        "description": "In its place, in the default, and in every value below the class that has it.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DryRun"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "choice": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "choice"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ClassChange"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/items/{id}/photo": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        }
+      ],
+      "get": {
+        "summary": "The item photo",
+        "operationId": "itemPhotoGet",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/File"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "put": {
+        "summary": "Upload the item photo",
+        "description": "It must be an image. PATCH photo null removes it.",
+        "operationId": "itemPhotoPut",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Item"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/items/{id}/files/{attribute}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        },
+        {
+          "$ref": "#/components/parameters/Attribute"
+        }
+      ],
+      "get": {
+        "summary": "The file of an attachment attribute",
+        "operationId": "itemFileGet",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/File"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "put": {
+        "summary": "Upload the file of an attachment attribute",
+        "description": "Of the media types the attribute takes, when it lists them. A patch with the value null removes it.",
+        "operationId": "itemFilePut",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Item"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/stock/{id}/photo": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        }
+      ],
+      "get": {
+        "summary": "The stock photo",
+        "operationId": "stockPhotoGet",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/File"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "put": {
+        "summary": "Upload the stock photo",
+        "description": "It must be an image. PATCH photo null removes it.",
+        "operationId": "stockPhotoPut",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Stock"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/stock/{id}/files/{attribute}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        },
+        {
+          "$ref": "#/components/parameters/Attribute"
+        }
+      ],
+      "get": {
+        "summary": "The file of an attachment attribute",
+        "operationId": "stockFileGet",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/File"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "put": {
+        "summary": "Upload the file of an attachment attribute",
+        "description": "Of the media types the attribute takes, when it lists them. A patch with the value null removes it.",
+        "operationId": "stockFilePut",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
                   }
                 }
               }
@@ -2654,21 +2011,13 @@
           "$ref": "#/components/schemas/Uuid"
         }
       },
-      "AttachmentId": {
-        "name": "attachment",
-        "in": "path",
-        "required": true,
-        "schema": {
-          "$ref": "#/components/schemas/Uuid"
-        }
-      },
       "Attribute": {
         "name": "attribute",
         "in": "path",
         "required": true,
-        "description": "Attribute id.",
+        "description": "The attribute's name.",
         "schema": {
-          "$ref": "#/components/schemas/Uuid"
+          "type": "string"
         }
       },
       "Recursive": {
@@ -2699,15 +2048,6 @@
           "default": 100
         }
       },
-      "Offset": {
-        "name": "offset",
-        "in": "query",
-        "schema": {
-          "type": "integer",
-          "minimum": 0,
-          "default": 0
-        }
-      },
       "IfNoneMatch": {
         "name": "If-None-Match",
         "in": "header",
@@ -2715,6 +2055,32 @@
         "schema": {
           "type": "string"
         }
+      },
+      "Choice": {
+        "name": "choice",
+        "in": "path",
+        "required": true,
+        "description": "The choice, as its text.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "After": {
+        "name": "after",
+        "in": "query",
+        "schema": {
+          "$ref": "#/components/schemas/Uuid"
+        },
+        "description": "The last row of the page before (its `next`); none for the first page."
+      },
+      "DryRun": {
+        "name": "dry_run",
+        "in": "query",
+        "schema": {
+          "type": "boolean",
+          "default": false
+        },
+        "description": "Change nothing, and answer what the change would do; refused as the change would be."
       }
     },
     "requestBodies": {
@@ -2871,33 +2237,6 @@
       }
     },
     "responses": {
-      "Attachment": {
-        "description": "The attachment.",
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/Attachment"
-            }
-          }
-        }
-      },
-      "AttachmentCreated": {
-        "description": "Created. `Location` points at the attachment, under its object.",
-        "headers": {
-          "Location": {
-            "schema": {
-              "type": "string"
-            }
-          }
-        },
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/Attachment"
-            }
-          }
-        }
-      },
       "Problem": {
         "description": "An error (RFC 9457).",
         "content": {
@@ -2931,43 +2270,6 @@
           "application/json": {
             "schema": {
               "$ref": "#/components/schemas/Tree"
-            }
-          }
-        }
-      },
-      "AttributeCreated": {
-        "description": "Created. `Location` points at /attributes/{id}.",
-        "headers": {
-          "Location": {
-            "schema": {
-              "type": "string"
-            }
-          }
-        },
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/Attribute"
-            }
-          }
-        }
-      },
-      "Attribute": {
-        "description": "The attribute.",
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/Attribute"
-            }
-          }
-        }
-      },
-      "Option": {
-        "description": "The option.",
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/Option"
             }
           }
         }
@@ -3012,19 +2314,23 @@
           }
         }
       },
-      "UnitFamilies": {
-        "description": "The unit families with their version.",
-        "headers": {
-          "ETag": {
-            "schema": {
-              "type": "string"
-            }
-          }
-        },
+      "ClassChange": {
+        "description": "The class, and what the change wrote.",
         "content": {
           "application/json": {
             "schema": {
-              "$ref": "#/components/schemas/UnitFamilies"
+              "$ref": "#/components/schemas/ClassChange"
+            }
+          }
+        }
+      },
+      "File": {
+        "description": "The file; its media type is found from its first bytes.",
+        "content": {
+          "*/*": {
+            "schema": {
+              "type": "string",
+              "format": "binary"
             }
           }
         }
@@ -3140,18 +2446,6 @@
           }
         }
       },
-      "Datatype": {
-        "type": "string",
-        "enum": [
-          "text",
-          "integer",
-          "decimal",
-          "date",
-          "boolean",
-          "url",
-          "choice"
-        ]
-      },
       "Problem": {
         "type": "object",
         "required": [
@@ -3202,186 +2496,23 @@
       "Page": {
         "type": "object",
         "properties": {
-          "total": {
-            "type": "integer"
-          },
-          "limit": {
-            "type": "integer"
-          },
-          "offset": {
-            "type": "integer"
-          },
           "rows": {
             "type": "array"
-          }
-        }
-      },
-      "Quantity": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "$ref": "#/components/schemas/Uuid"
           },
-          "name": {
-            "type": "string"
-          },
-          "datatype": {
-            "type": "string",
-            "enum": [
-              "integer",
-              "decimal"
-            ]
-          },
-          "base_unit": {
-            "$ref": "#/components/schemas/Uuid",
-            "description": "The unit numbers are stored in (factor 1, offset 0), in the same lists."
-          },
-          "global": {
+          "more": {
             "type": "boolean",
-            "description": "Every tenant sees it; otherwise it is the tenant's own."
+            "description": "Whether more rows follow."
           },
-          "available": {
-            "type": "boolean",
-            "description": "Lists and gets of quantities only: whether the tenant can choose its units."
-          },
-          "standard": {
-            "type": "boolean",
-            "description": "Lists and gets of quantities only: available when the tenant hasn't chosen (always true for its own)."
-          },
-          "choice": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "Lists and gets of quantities only: the tenant's choice; null follows the default."
-          }
-        }
-      },
-      "QuantityDetail": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/Quantity"
-          },
-          {
-            "type": "object",
-            "properties": {
-              "families": {
-                "type": "array",
-                "description": "By name, without their quantity.",
-                "items": {
-                  "$ref": "#/components/schemas/UnitFamilyDetail"
-                }
-              }
-            }
-          }
-        ]
-      },
-      "AvailabilityPatch": {
-        "type": "object",
-        "properties": {
-          "available": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "true or false; null follows the default again."
-          }
-        }
-      },
-      "ModelImportSection": {
-        "type": "object",
-        "properties": {
-          "added": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "'Names; families as \"Quantity › Family\", units as \"Quantity › Family › symbol\"; classes as paths (\"MCU/AVR\"); assignments as \"path: attribute\".'"
-          },
-          "existing": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        }
-      },
-      "Unit": {
-        "type": "object",
-        "description": "base = value × base_factor + base_offset.",
-        "properties": {
-          "id": {
-            "$ref": "#/components/schemas/Uuid"
-          },
-          "name": {
-            "type": "string"
-          },
-          "symbol": {
-            "type": "string"
-          },
-          "global": {
-            "type": "boolean",
-            "description": "Every tenant sees it; otherwise it is the tenant's own."
-          },
-          "family": {
-            "type": "object",
-            "properties": {
-              "id": {
+          "next": {
+            "oneOf": [
+              {
                 "$ref": "#/components/schemas/Uuid"
               },
-              "name": {
-                "type": "string"
+              {
+                "type": "null"
               }
-            }
-          },
-          "quantity": {
-            "$ref": "#/components/schemas/Quantity"
-          },
-          "base_factor": {
-            "type": "number"
-          },
-          "base_offset": {
-            "type": "number"
-          }
-        }
-      },
-      "UnitFamilyDetail": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "$ref": "#/components/schemas/Uuid"
-          },
-          "name": {
-            "type": "string"
-          },
-          "quantity": {
-            "$ref": "#/components/schemas/Quantity"
-          },
-          "global": {
-            "type": "boolean",
-            "description": "Every tenant sees it; otherwise it is the tenant's own."
-          },
-          "available": {
-            "type": "boolean",
-            "description": "Whether the tenant can choose its units; never while its quantity is off."
-          },
-          "standard": {
-            "type": "boolean",
-            "description": "Available when the tenant hasn't chosen (always true for its own)."
-          },
-          "choice": {
-            "type": [
-              "boolean",
-              "null"
             ],
-            "description": "The tenant's choice; null follows the default."
-          },
-          "units": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/UnitMember"
-            },
-            "description": "The ones the tenant sees, smallest first."
+            "description": "With more: the `after` for the next page."
           }
         }
       },
@@ -3411,127 +2542,37 @@
           }
         }
       },
-      "Attachment": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "$ref": "#/components/schemas/Uuid"
-          },
-          "title": {
-            "type": "string"
-          },
-          "media_type": {
-            "type": "string",
-            "description": "The media type (MIME type)."
-          },
-          "size": {
-            "type": "integer",
-            "description": "In bytes."
-          },
-          "hash": {
-            "type": "string",
-            "description": "Hex SHA-256 of the content."
-          }
-        }
-      },
-      "Attachments": {
-        "type": "array",
-        "description": "The photo first, then by title.",
-        "items": {
-          "$ref": "#/components/schemas/Attachment"
-        }
-      },
       "Values": {
-        "type": "array",
-        "description": "Own values plus class defaults (is_default) where there is no own value.",
-        "items": {
-          "type": "object",
-          "properties": {
-            "attribute": {
-              "$ref": "#/components/schemas/Attribute"
-            },
-            "value": {
-              "description": "The value in the attribute's datatype; numbers in the base unit of the attribute's unit."
-            },
-            "display": {
-              "$ref": "#/components/schemas/Display"
-            },
-            "is_default": {
-              "type": "boolean",
-              "description": "The class default, shown because there is no own value."
-            }
-          }
-        }
-      },
-      "Missing": {
-        "type": "array",
-        "description": "Required attributes without a value (and without a default).",
-        "items": {
-          "$ref": "#/components/schemas/NamedRef"
-        }
-      },
-      "Display": {
-        "type": [
-          "object",
-          "null"
-        ],
-        "description": "A base-unit number in the best-scaling unit of the family, or in the unit itself with unit_lock.",
-        "properties": {
-          "value": {
-            "type": "number"
-          },
-          "unit": {
-            "$ref": "#/components/schemas/Uuid"
-          }
-        }
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Values by attribute name: a number, a text, a date (YYYY-MM-DD), true or false, a choice's text, or a file's hash. An attribute without a value is left out."
       },
       "Attribute": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "$ref": "#/components/schemas/Uuid"
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/AttributeDefinition"
           },
-          "name": {
-            "type": "string"
-          },
-          "datatype": {
-            "$ref": "#/components/schemas/Datatype"
-          },
-          "unit": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Uuid"
+          {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Not the name of a fixed field: id, code, name, class, unit, photo, item, location, amount, reference or serial."
               },
-              {
-                "type": "null"
+              "class": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/Uuid"
+                  }
+                ],
+                "description": "The class that defines it."
+              },
+              "inherited": {
+                "type": "boolean"
               }
-            ]
-          },
-          "unit_lock": {
-            "type": "boolean"
-          },
-          "options": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Option"
-            },
-            "description": "Only for choice attributes in GET /attributes/{id}: its live options, by name."
+            }
           }
-        }
-      },
-      "Option": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "$ref": "#/components/schemas/Uuid"
-          },
-          "attribute": {
-            "$ref": "#/components/schemas/Uuid"
-          },
-          "name": {
-            "type": "string"
-          }
-        }
+        ]
       },
       "TreeNode": {
         "type": "object",
@@ -3558,17 +2599,6 @@
           },
           "container": {
             "type": "boolean"
-          },
-          "photo": {
-            "description": "The class or location photo, or null.",
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Attachment"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "children": {
             "type": "array",
@@ -3627,49 +2657,9 @@
           "attributes": {
             "type": "array",
             "items": {
-              "type": "object",
-              "properties": {
-                "attribute": {
-                  "$ref": "#/components/schemas/Attribute"
-                },
-                "assigned_to": {
-                  "$ref": "#/components/schemas/Uuid"
-                },
-                "inherited": {
-                  "type": "boolean"
-                },
-                "default": {
-                  "description": "The default in the attribute's datatype, or null."
-                },
-                "default_display": {
-                  "$ref": "#/components/schemas/Display"
-                },
-                "scope": {
-                  "type": "string",
-                  "enum": [
-                    "item",
-                    "stock"
-                  ],
-                  "description": "Where its values live: on the item, or on each stock row."
-                },
-                "required": {
-                  "type": "boolean"
-                }
-              }
-            }
-          },
-          "photo": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Attachment"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "attachments": {
-            "$ref": "#/components/schemas/Attachments"
+              "$ref": "#/components/schemas/Attribute"
+            },
+            "description": "Every attribute it has, its own and those it inherits: the item attributes, then the stock attributes, each by order."
           }
         }
       },
@@ -3705,21 +2695,6 @@
             "items": {
               "$ref": "#/components/schemas/PathEntry"
             }
-          },
-          "photo": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Attachment"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Only in GET /locations/{id}."
-          },
-          "attachments": {
-            "$ref": "#/components/schemas/Attachments",
-            "description": "Only in GET /locations/{id}."
           }
         }
       },
@@ -3740,23 +2715,16 @@
             "$ref": "#/components/schemas/Uuid"
           },
           "unit": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Uuid"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "unit_lock": {
-            "type": "boolean"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What its stock is counted in, a label; null for pieces."
           },
           "photo": {
-            "description": "The item photo, or null.",
             "oneOf": [
               {
-                "$ref": "#/components/schemas/Attachment"
+                "$ref": "#/components/schemas/Hash"
               },
               {
                 "type": "null"
@@ -3779,117 +2747,56 @@
                   "total": {
                     "type": "number"
                   },
-                  "display": {
-                    "$ref": "#/components/schemas/Display"
-                  },
                   "uncounted": {
                     "type": "boolean"
                   }
                 }
-              },
-              "incomplete": {
-                "type": "boolean",
-                "description": "The item or one of its stock rows lacks a required value."
               }
             }
           }
         ]
       },
       "ItemDetail": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "$ref": "#/components/schemas/Uuid"
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ItemSummary"
           },
-          "code": {
-            "type": "string",
-            "description": "Label code (Crockford Base32), e.g. 1A7K."
-          },
-          "name": {
-            "type": "string"
-          },
-          "class": {
-            "$ref": "#/components/schemas/ClassDetail"
-          },
-          "unit": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Unit"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "unit_lock": {
-            "type": "boolean"
-          },
-          "values": {
-            "$ref": "#/components/schemas/Values"
-          },
-          "missing": {
-            "$ref": "#/components/schemas/Missing"
-          },
-          "photo": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/Attachment"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "attachments": {
-            "$ref": "#/components/schemas/Attachments"
-          },
-          "stock": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "$ref": "#/components/schemas/Uuid"
-                },
-                "code": {
-                  "type": "string",
-                  "description": "Label code (Crockford Base32), e.g. 1A7K."
-                },
-                "location": {
-                  "$ref": "#/components/schemas/Uuid"
-                },
-                "amount": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "display": {
-                  "$ref": "#/components/schemas/Display"
-                },
-                "values": {
-                  "$ref": "#/components/schemas/Values"
-                },
-                "missing": {
-                  "$ref": "#/components/schemas/Missing"
-                },
-                "photo": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/Attachment"
-                    },
-                    {
-                      "type": "null"
+          {
+            "type": "object",
+            "properties": {
+              "class": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "$ref": "#/components/schemas/Uuid"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/PathEntry"
                     }
-                  ]
-                },
-                "attachments": {
-                  "$ref": "#/components/schemas/Attachments"
+                  }
                 }
+              },
+              "values": {
+                "$ref": "#/components/schemas/Values"
+              },
+              "defaulted": {
+                "$ref": "#/components/schemas/Defaulted"
+              },
+              "stock": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Stock"
+                },
+                "description": "Its stock rows, by location name."
               }
             }
           }
-        }
+        ]
       },
       "Stock": {
         "type": "object",
@@ -3902,7 +2809,15 @@
             "description": "Label code (Crockford Base32), e.g. 1A7K."
           },
           "item": {
-            "$ref": "#/components/schemas/ItemSummary"
+            "description": "Its id in an item's stock rows; the item otherwise.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "$ref": "#/components/schemas/ItemSummary"
+              }
+            ]
           },
           "location": {
             "$ref": "#/components/schemas/Uuid"
@@ -3912,73 +2827,45 @@
               "number",
               "null"
             ],
-            "description": "In the base unit of the item's unit (counted if none); null: present, not counted."
+            "description": "In the item's unit (whole for pieces); null: present, not counted."
           },
-          "display": {
-            "$ref": "#/components/schemas/Display"
+          "reference": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
-          "values": {
-            "$ref": "#/components/schemas/Values",
-            "description": "Not in GET /stock list rows."
-          },
-          "missing": {
-            "$ref": "#/components/schemas/Missing",
-            "description": "Not in GET /stock list rows."
+          "serial": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "photo": {
-            "description": "The stock row photo, or null.",
             "oneOf": [
               {
-                "$ref": "#/components/schemas/Attachment"
+                "$ref": "#/components/schemas/Hash"
               },
               {
                 "type": "null"
               }
             ]
           },
-          "attachments": {
-            "$ref": "#/components/schemas/Attachments",
+          "values": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Values"
+              }
+            ],
             "description": "Not in GET /stock list rows."
-          }
-        }
-      },
-      "UnitMember": {
-        "type": "object",
-        "description": "A unit in its family's list, without its family and quantity. base = value × base_factor + base_offset.",
-        "properties": {
-          "id": {
-            "$ref": "#/components/schemas/Uuid"
           },
-          "name": {
-            "type": "string"
-          },
-          "symbol": {
-            "type": "string"
-          },
-          "base_factor": {
-            "type": "number"
-          },
-          "base_offset": {
-            "type": "number"
-          },
-          "global": {
-            "type": "boolean",
-            "description": "Every tenant sees it; otherwise it is the tenant's own."
-          }
-        }
-      },
-      "UnitFamilies": {
-        "type": "object",
-        "properties": {
-          "version": {
-            "type": "integer",
-            "description": "Also the ETag."
-          },
-          "families": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/UnitFamilyDetail"
-            }
+          "defaulted": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Defaulted"
+              }
+            ],
+            "description": "Not in GET /stock list rows."
           }
         }
       },
@@ -4038,6 +2925,135 @@
                 }
               }
             }
+          }
+        }
+      },
+      "Hash": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$",
+        "description": "The SHA-256 of a file's content, as hex."
+      },
+      "AttributeDefinition": {
+        "type": "object",
+        "required": [
+          "scope",
+          "type"
+        ],
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "item",
+              "stock"
+            ],
+            "description": "Where its values live: on the item, or on each stock row."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "integer",
+              "decimal",
+              "date",
+              "boolean",
+              "url",
+              "choice",
+              "attachment"
+            ]
+          },
+          "required": {
+            "type": "boolean",
+            "default": false
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A label for the values (\"mm\"); nothing converts."
+          },
+          "default": {
+            "description": "A value that fits; none for an attachment."
+          },
+          "choices": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "For a choice only, and needed."
+          },
+          "media": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "For an attachment only: the media types it takes (\"application/pdf\", \"image/*\")."
+          },
+          "order": {
+            "type": "integer",
+            "description": "Its place on screen among the attributes of its scope."
+          }
+        }
+      },
+      "Defaulted": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "The names of the values that follow the class's default."
+      },
+      "ClassChange": {
+        "type": "object",
+        "properties": {
+          "class": {
+            "$ref": "#/components/schemas/ClassDetail"
+          },
+          "items": {
+            "type": "integer",
+            "description": "How many items it wrote (or would have)."
+          },
+          "stock": {
+            "type": "integer",
+            "description": "How many stock rows it wrote (or would have)."
+          },
+          "dry_run": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ModelImportReport": {
+        "type": "object",
+        "properties": {
+          "classes": {
+            "type": "object",
+            "properties": {
+              "added": {
+                "type": "integer"
+              },
+              "existing": {
+                "type": "integer"
+              }
+            }
+          },
+          "attributes": {
+            "type": "object",
+            "properties": {
+              "added": {
+                "type": "integer"
+              },
+              "existing": {
+                "type": "integer"
+              }
+            }
+          },
+          "items": {
+            "type": "integer"
+          },
+          "stock": {
+            "type": "integer"
+          },
+          "dry_run": {
+            "type": "boolean"
           }
         }
       }

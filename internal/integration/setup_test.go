@@ -1,6 +1,6 @@
 // Package integration tests the whole stack against a real PostgreSQL test
 // database: the schema scripts (applied with the code of "wtfd schema"), the
-// database functions and triggers, and the HTTP layer of "wtfd serve".
+// database functions, and the HTTP layer of "wtfd serve".
 //
 // The tests are skipped unless WTFD_TEST_DATABASE_NAME is set. Its value must
 // end in "_test": the tests delete all data in it. See README.md, "Tests".
@@ -17,7 +17,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -27,9 +26,7 @@ import (
 
 	"github.com/radiohyperactivity/wtf/db"
 	"github.com/radiohyperactivity/wtf/internal/admin"
-	"github.com/radiohyperactivity/wtf/internal/config"
 	"github.com/radiohyperactivity/wtf/internal/files"
-	"github.com/radiohyperactivity/wtf/internal/schema"
 	"github.com/radiohyperactivity/wtf/internal/serve"
 )
 
@@ -46,15 +43,10 @@ type environment struct {
 	token string
 }
 
-// The tenant of every test run, and its first account. Requests reach it
-// by testHostname, whose first label is its host.
-const (
-	testHost     = "test"
-	testHostname = "test.wtf.example"
-	adminEmail   = "admin@test.local"
-)
+// The first account of every test run.
+const adminEmail = "admin@test.local"
 
-// Attachments in tests are limited to 1 MiB.
+// Files in tests are limited to 1 MiB.
 const testMaxAttachment = 1 << 20
 
 var filesDir string // temporary files directory, removed by TestMain
@@ -71,125 +63,68 @@ var (
 	setupOnce sync.Once
 	shared    *environment
 	setupErr  error
-	skipMsg   string
 )
 
-// setup connects to the test database once per test run and brings its
-// schema up to date. It skips the test when no test database is configured.
+// setup gives a test the API on the test database (database, which builds
+// the schema once per test run), with the first account, an admin, logged
+// in. It skips the test when no test database is configured.
 func setup(t *testing.T) *environment {
 	t.Helper()
-	setupOnce.Do(func() { shared, skipMsg, setupErr = connect() })
-	if skipMsg != "" {
-		t.Skip(skipMsg)
-	}
+	d := database(t)
+	setupOnce.Do(func() { shared, setupErr = connect(d) })
 	if setupErr != nil {
 		t.Fatal(setupErr)
 	}
 	return shared
 }
 
-func connect() (*environment, string, error) {
-	name := os.Getenv("WTFD_TEST_DATABASE_NAME")
-	if name == "" {
-		return nil, "WTFD_TEST_DATABASE_NAME is not set", nil
-	}
-	if !strings.HasSuffix(name, "_test") {
-		return nil, "", fmt.Errorf("WTFD_TEST_DATABASE_NAME %q must end in _test: the tests delete all its data", name)
-	}
-	port, err := strconv.Atoi(getenv("WTFD_TEST_DATABASE_PORT", "5432"))
-	if err != nil {
-		return nil, "", fmt.Errorf("WTFD_TEST_DATABASE_PORT: %w", err)
-	}
-	database := &config.Database{
-		Host:    getenv("WTFD_TEST_DATABASE_HOST", "localhost"),
-		Port:    port,
-		Name:    name,
-		SSLMode: getenv("WTFD_TEST_DATABASE_SSLMODE", "prefer"),
-		DBAUser: getenv("WTFD_DBA_DATABASE_USER", "wtf_dba"),
-		APIUser: getenv("WTFD_API_DATABASE_USER", "wtf_api"),
-	}
+func connect(d *testDatabase) (*environment, error) {
 	ctx := context.Background()
 	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	dbaConfig, err := database.ConnConfig(database.DBAUser, os.Getenv(config.DBAPasswordEnv), "wtfd integration test")
-	if err != nil {
-		return nil, "", err
+	if err := serve.CheckSchema(ctx, d.api, db.Scripts); err != nil {
+		return nil, err
 	}
-	// The test database is disposable: every run builds its schema from
-	// nothing, as on a new installation.
-	if err := dropEverything(ctx, dbaConfig); err != nil {
-		return nil, "", err
-	}
-	if _, err := schema.Run(ctx, schema.Options{
-		ConnConfig: dbaConfig,
-		APIUser:    database.APIUser,
-		Scripts:    db.Scripts,
-		Logger:     quiet,
-	}); err != nil {
-		return nil, "", fmt.Errorf("wtfd schema: %w", err)
-	}
-
-	dba, err := pgxpool.New(ctx, database.ConnString(database.DBAUser, os.Getenv(config.DBAPasswordEnv), "wtfd integration test"))
-	if err != nil {
-		return nil, "", err
-	}
-	apiConfig, err := pgxpool.ParseConfig(database.ConnString(database.APIUser, os.Getenv(config.APIPasswordEnv), "wtfd integration test"))
-	if err != nil {
-		return nil, "", err
-	}
-	apiConfig.ConnConfig.RuntimeParams["search_path"] = "public"
-	api, err := pgxpool.NewWithConfig(ctx, apiConfig)
-	if err != nil {
-		return nil, "", err
-	}
-	if err := serve.CheckSchema(ctx, api, db.Scripts); err != nil {
-		return nil, "", err
-	}
+	var err error
 	if filesDir, err = os.MkdirTemp("", "wtfd-files-*"); err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	store, err := files.Open(filesDir)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-
 	e := &environment{
-		dba:       dba,
-		api:       api,
-		handler:   serve.NewHandler(api, quiet, 1<<20, store, testMaxAttachment, "", nil),
-		dbaConfig: dbaConfig,
-		apiUser:   database.APIUser,
+		dba:       d.dba,
+		api:       d.api,
+		handler:   serve.NewHandler(d.api, quiet, 1<<20, store, testMaxAttachment, "", nil),
+		dbaConfig: d.dbaConfig,
+		apiUser:   d.apiUser,
 		files:     store,
 	}
 
-	// The tenant and its first account, as "wtfd tenant create" makes
-	// them, logged in.
-	conn, err := admin.Connect(ctx, dbaConfig)
+	// The first account, as "wtfd account create" makes it, logged in.
+	conn, err := admin.Connect(ctx, d.dbaConfig)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	defer conn.Close(ctx)
-	password, err := admin.CreateTenant(ctx, conn, testHost, adminEmail)
+	if _, err := conn.Exec(ctx, "DELETE FROM public.account WHERE email = $1", adminEmail); err != nil {
+		return nil, err
+	}
+	password, err := admin.CreateAccount(ctx, conn, adminEmail, "admin")
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	if e.token, err = e.login(adminEmail, password); err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	return e, "", nil
+	return e, nil
 }
 
-// login logs in to the test tenant through the API and returns the session
-// token, which the API sends as the session cookie.
+// login logs in through the API and returns the session token, which the
+// API sends as the session cookie.
 func (e *environment) login(email, password string) (string, error) {
-	return e.loginTo(testHostname, email, password)
-}
-
-// loginTo logs in at hostname (and so to its tenant).
-func (e *environment) loginTo(hostname, email, password string) (string, error) {
 	data, _ := json.Marshal(map[string]any{"email": email, "password": password, "client": "integration test", "max_idle": nil})
 	req := httptest.NewRequest("POST", "/api/v1/login", bytes.NewReader(data))
-	req.Host = hostname
 	rec := httptest.NewRecorder()
 	e.handler.ServeHTTP(rec, req)
 	token := sessionCookie(rec.Result())
@@ -218,18 +153,14 @@ func apiPath(path string) string {
 	return "/api/v1" + path
 }
 
-// newRequest builds a request to the test tenant, logged in as the admin.
-// headers override that: "Cookie" another login ("" sends none), "Host"
-// another hostname. path is relative to /api/v1 unless it starts with
-// /api/.
+// newRequest builds a request, logged in as the admin. headers override
+// that: "Cookie" another login ("" sends none). path is relative to /api/v1
+// unless it starts with /api/.
 func (e *environment) newRequest(method, path string, body io.Reader, headers ...string) *http.Request {
 	req := httptest.NewRequest(method, apiPath(path), body)
-	req.Host = testHostname
 	req.Header.Set("Cookie", "wtf_session="+e.token)
 	for i := 0; i+1 < len(headers); i += 2 {
 		switch {
-		case headers[i] == "Host":
-			req.Host = headers[i+1]
 		case headers[i+1] == "":
 			req.Header.Del(headers[i])
 		default:
@@ -263,14 +194,10 @@ func getenv(name, fallback string) string {
 	return fallback
 }
 
-// reset deletes all user data, of every tenant, and the tenants' choices
-// of units. Tenants, units and accounts stay.
+// reset empties the data (testDatabase.reset).
 func (e *environment) reset(t *testing.T) {
 	t.Helper()
-	if _, err := e.dba.Exec(context.Background(),
-		"TRUNCATE public.attachment, public.stock_value, public.stock, public.item_value, public.item, public.class_attribute, public.attribute_option, public.attribute, public.class, public.location, public.tenant_quantity, public.tenant_unit_family"); err != nil {
-		t.Fatal(err)
-	}
+	database(t).reset(t)
 }
 
 // response is the result of an API request.
@@ -291,13 +218,11 @@ var requiredFields = []struct {
 }{
 	{"POST", regexp.MustCompile(`^/classes$`), map[string]any{"parent": nil, "container": false}},
 	{"POST", regexp.MustCompile(`^/locations$`), map[string]any{"parent": nil, "container": false, "grid": nil}},
-	{"POST", regexp.MustCompile(`^/attributes$`), map[string]any{"unit": nil, "unit_lock": false}},
-	{"POST", regexp.MustCompile(`^/items$`), map[string]any{"unit": nil, "unit_lock": false, "values": map[string]any{}}},
-	{"POST", regexp.MustCompile(`^/stock$`), map[string]any{"amount": nil, "values": map[string]any{}}},
+	{"POST", regexp.MustCompile(`^/items$`), map[string]any{"unit": nil, "values": map[string]any{}}},
+	{"POST", regexp.MustCompile(`^/stock$`), map[string]any{"amount": nil, "reference": nil, "serial": nil, "values": map[string]any{}}},
 	{"POST", regexp.MustCompile(`^/stock/[^/]+/move$`), map[string]any{"amount": nil}},
-	{"POST", regexp.MustCompile(`^/stock/[^/]+/merge$`), map[string]any{"amount": nil}},
+	{"POST", regexp.MustCompile(`^/stock/[^/]+/merge$`), map[string]any{"amount": nil, "resolve": nil}},
 	{"POST", regexp.MustCompile(`^/accounts$`), map[string]any{"password": nil, "role": "viewer"}},
-	{"PUT", regexp.MustCompile(`^/classes/[^/]+/attributes/[^/]+$`), map[string]any{"default": nil, "scope": "item", "required": false}},
 	{"POST", regexp.MustCompile(`^/login$`), map[string]any{"client": nil, "max_idle": nil}},
 	{"PUT", regexp.MustCompile(`^/me/password$`), map[string]any{"end_other_sessions": true}},
 }
@@ -406,86 +331,4 @@ func num(t *testing.T, v any, path ...any) float64 {
 		t.Fatalf("get %v: not a number: %v", path, get(t, v, path...))
 	}
 	return n
-}
-
-// unit returns the id of a unit the test tenant sees, by family name and
-// symbol.
-func (e *environment) unit(t *testing.T, family, symbol string) string {
-	t.Helper()
-	for _, f := range get(t, e.expect(t, 200, "GET", "/unit-families", nil).body, "families").([]any) {
-		if str(t, f, "name") != family {
-			continue
-		}
-		for _, u := range get(t, f, "units").([]any) {
-			if str(t, u, "symbol") == symbol {
-				return str(t, u, "id")
-			}
-		}
-	}
-	t.Fatalf("unit %s of %s not found", symbol, family)
-	return ""
-}
-
-// symbol returns the symbol of the unit with id id, which answers outside
-// the unit families name by id.
-func (e *environment) symbol(t *testing.T, id string) string {
-	t.Helper()
-	for _, f := range get(t, e.expect(t, 200, "GET", "/unit-families", nil).body, "families").([]any) {
-		for _, u := range get(t, f, "units").([]any) {
-			if str(t, u, "id") == id {
-				return str(t, u, "symbol")
-			}
-		}
-	}
-	t.Fatalf("no unit %s", id)
-	return ""
-}
-
-// tenantStore is the test tenant's directory in the files directory.
-func (e *environment) tenantStore(t *testing.T) *files.Store {
-	t.Helper()
-	store, err := e.files.Tenant(testHost)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return store
-}
-
-// dropTenantUnits removes the units, families and quantities tenants have
-// imported, and the attributes, items and stock that use them, so other
-// tests see only the global ones. One transaction per tenant: a quantity
-// and its base unit go together, as the key from one to the other is
-// checked at commit.
-func (e *environment) dropTenantUnits(t *testing.T) {
-	t.Helper()
-	ctx := context.Background()
-	rows, _ := e.dba.Query(ctx, "SELECT DISTINCT tenant::text FROM public.unit WHERE tenant IS NOT NULL")
-	tenants, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, tenant := range tenants {
-		err := pgx.BeginFunc(ctx, e.dba, func(tx pgx.Tx) error {
-			for _, sql := range []string{
-				"DELETE FROM public.item_value v USING public.attribute a, public.unit u WHERE v.attribute = a.id AND a.unit = u.id AND u.tenant = $1",
-				"DELETE FROM public.stock_value v USING public.attribute a, public.unit u WHERE v.attribute = a.id AND a.unit = u.id AND u.tenant = $1",
-				"DELETE FROM public.class_attribute ca USING public.attribute a, public.unit u WHERE ca.attribute = a.id AND a.unit = u.id AND u.tenant = $1",
-				"DELETE FROM public.attribute_option o USING public.attribute a, public.unit u WHERE o.attribute = a.id AND a.unit = u.id AND u.tenant = $1",
-				"DELETE FROM public.attribute a USING public.unit u WHERE a.unit = u.id AND u.tenant = $1",
-				"DELETE FROM public.stock s USING public.item i, public.unit u WHERE s.item = i.id AND i.unit = u.id AND u.tenant = $1",
-				"DELETE FROM public.item i USING public.unit u WHERE i.unit = u.id AND u.tenant = $1",
-				"DELETE FROM public.unit WHERE tenant = $1",
-				"DELETE FROM public.unit_family WHERE tenant = $1",
-				"DELETE FROM public.quantity WHERE tenant = $1",
-			} {
-				if _, err := tx.Exec(ctx, sql, tenant); err != nil {
-					return fmt.Errorf("%s: %w", sql, err)
-				}
-			}
-			return nil
-		})
-		if err != nil {
-			t.Error(err)
-		}
-	}
 }

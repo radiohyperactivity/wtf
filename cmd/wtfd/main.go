@@ -3,9 +3,7 @@
 //	wtfd schema [flags]    create or upgrade the database schema
 //	wtfd serve [flags]     run the REST API
 //	wtfd gc [flags]        remove attachment files nothing refers to any more
-//	wtfd tenant <command>  create, list or rename tenants
 //	wtfd account <command> create an account, or set a lost password
-//	wtfd unit <command>    import global units, or set their standard
 //
 // Run "wtfd <action> -h" for the flags of an action. See WTFD.md.
 package main
@@ -42,10 +40,8 @@ const usage = `Usage: wtfd <action> [flags]
 Actions:
   schema    create or upgrade the database schema and function grants
   serve     run the REST API
-  gc        remove attachment files nothing refers to any more
-  tenant    create, list or rename tenants
+  gc        remove files nothing refers to any more
   account   create an account, or set a lost password
-  unit      import global units, or set whether they are available as standard
 
 Run "wtfd <action> -h" for the flags of an action.
 `
@@ -66,12 +62,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runServe(args[1:], stderr)
 	case "gc":
 		return runGC(args[1:], stderr)
-	case "tenant":
-		return runTenant(args[1:], stdout, stderr)
 	case "account":
 		return runAccount(args[1:], stdout, stderr)
-	case "unit":
-		return runUnit(args[1:], stdout, stderr)
 	case "help", "-h", "-help", "--help":
 		fmt.Fprint(stderr, usage)
 		return exitOK
@@ -259,11 +251,11 @@ func runGC(args []string, stderr io.Writer) int {
 }
 
 const accountUsage = `Usage:
-  wtfd account create --host HOST --email EMAIL [--role ROLE] [database flags]
-  wtfd account password --host HOST --email EMAIL [database flags]
+  wtfd account create --email EMAIL [--role ROLE] [database flags]
+  wtfd account password --email EMAIL [database flags]
 
-create makes an account in the tenant with host HOST, an admin unless
---role says viewer or user; password gives an account a new password, when it is lost. Both print a
+create makes an account, such as the first, an admin unless --role says
+viewer or user; password gives an account a new password, when it is lost. Both print a
 generated password once.
 `
 
@@ -285,7 +277,6 @@ func runAccount(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("wtfd account "+command, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	database := config.RegisterDatabase(fs)
-	host := fs.String("host", "", "the tenant's host (required)")
 	email := fs.String("email", "", "the account's email (required)")
 	role := "admin"
 	if command == "create" {
@@ -301,8 +292,8 @@ func runAccount(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "wtfd account %s: unexpected argument %q\n", command, fs.Arg(0))
 		return exitUsage
 	}
-	if *host == "" || *email == "" {
-		fmt.Fprintf(stderr, "wtfd account %s: --host and --email are required\n", command)
+	if *email == "" {
+		fmt.Fprintf(stderr, "wtfd account %s: --email is required\n", command)
 		return exitUsage
 	}
 	if !slices.Contains(admin.Roles, role) {
@@ -330,9 +321,9 @@ func runAccount(args []string, stdout, stderr io.Writer) int {
 
 	var password string
 	if command == "create" {
-		password, err = admin.CreateAccount(ctx, conn, *host, *email, role)
+		password, err = admin.CreateAccount(ctx, conn, *email, role)
 	} else {
-		password, err = admin.SetPassword(ctx, conn, *host, *email)
+		password, err = admin.SetPassword(ctx, conn, *email)
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "wtfd account %s: %v\n", command, err)

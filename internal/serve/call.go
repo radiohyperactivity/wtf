@@ -23,10 +23,9 @@ type arg struct {
 
 // caller is who a request comes from, as every function the API calls is
 // told in its first argument, p_request: the session cookie's token ("" for
-// none), the first label of the request's hostname, and the client's
-// address ("" when it can't be told).
+// none), and the client's address ("" when it can't be told).
 type caller struct {
-	token, host, address string
+	token, address string
 }
 
 type callerKey struct{}
@@ -45,12 +44,12 @@ func nullable(s string) any {
 	return s
 }
 
-// callSQL builds "SELECT fn(p_request => ROW($1, $2, $3)::public.request,
-// p_a => $4::type, …)" and its argument values: the caller first, then the
+// callSQL builds "SELECT fn(p_request => ROW($1, $2)::public.request,
+// p_a => $3::type, …)" and its argument values: the caller first, then the
 // arguments.
 func callSQL(fn string, who caller, args []arg) (string, []any) {
-	parts := []string{"p_request => ROW($1::text, $2::text, $3::inet)::public.request"}
-	values := []any{nullable(who.token), who.host, nullable(who.address)}
+	parts := []string{"p_request => ROW($1::text, $2::inet)::public.request"}
+	values := []any{nullable(who.token), nullable(who.address)}
 	for _, a := range args {
 		if a.optional && a.value == nil {
 			continue

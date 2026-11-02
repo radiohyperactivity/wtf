@@ -42,7 +42,7 @@ type server struct {
 	pool          *pgxpool.Pool
 	log           *slog.Logger
 	maxBody       int64
-	files         *files.Store // every tenant's directory is in it
+	files         *files.Store
 	maxAttachment int64
 	webRoot       string
 	trusted       []netip.Prefix
@@ -201,12 +201,12 @@ func (s *server) handler() http.Handler {
 
 // wrap turns a handlerFunc into an http.Handler: it requires the session
 // cookie (unless anonymous), at once and without the database, passes the
-// caller (the session's token, the host and the client's address) on in the
+// caller (the session's token and the client's address) on in the
 // context, limits the request body and converts returned errors into
 // problem responses.
 func (s *server) wrap(h handlerFunc, maxBody int64, anonymous bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		who := caller{host: hostLabel(r), address: clientAddress(r, s.trusted)}
+		who := caller{address: clientAddress(r, s.trusted)}
 		if !anonymous {
 			token, ok := sessionToken(r)
 			if !ok {

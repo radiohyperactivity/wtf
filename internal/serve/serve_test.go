@@ -64,18 +64,18 @@ func TestRoutesMatchOpenAPI(t *testing.T) {
 }
 
 func TestCallSQL(t *testing.T) {
-	sql, values := callSQL("item.list", caller{token: "tok", host: "bob"}, []arg{
+	sql, values := callSQL("item.list", caller{token: "tok"}, []arg{
 		{name: "p_class", typ: "uuid", optional: true},
 		{name: "p_search", typ: "text", value: "drill", optional: true},
 		{name: "p_name", typ: "text"},
 	})
-	want := "SELECT item.list(p_request => ROW($1::text, $2::text, $3::inet)::public.request, " +
-		"p_search => $4::text, p_name => $5::text)"
+	want := "SELECT item.list(p_request => ROW($1::text, $2::inet)::public.request, " +
+		"p_search => $3::text, p_name => $4::text)"
 	if sql != want {
 		t.Errorf("sql = %q, want %q", sql, want)
 	}
-	if len(values) != 5 || values[0] != "tok" || values[1] != "bob" || values[2] != nil ||
-		values[3] != "drill" || values[4] != nil {
+	if len(values) != 4 || values[0] != "tok" || values[1] != nil ||
+		values[2] != "drill" || values[3] != nil {
 		t.Errorf("values = %#v", values)
 	}
 }
@@ -178,7 +178,7 @@ func TestUnknownRouteAndMethod(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/v1/quantities", nil))
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/api/v1/me", nil))
 	if rec.Code != 405 || rec.Header().Get("Allow") != "GET" {
 		t.Errorf("wrong method: %d, Allow %q", rec.Code, rec.Header().Get("Allow"))
 	}
@@ -337,25 +337,6 @@ func TestWebApp(t *testing.T) {
 		rec.ServeHTTP(r, httptest.NewRequest(http.MethodGet, "/", nil))
 		if r.Code != 404 {
 			t.Errorf("no web root: %d, want 404", r.Code)
-		}
-	}
-}
-
-// The first label of the hostname, without the port, picks the tenant; an
-// IP address never does (TENANTS.md).
-func TestHostLabel(t *testing.T) {
-	for host, want := range map[string]string{
-		"bob.wtf.example":         "bob",
-		"Bob.WTF.example:8443":    "bob",
-		"bob.192.168.1.10.nip.io": "bob",
-		"localhost:8080":          "localhost",
-		"192.168.1.10:8080":       "192",
-		"[::1]:8080":              "::1",
-	} {
-		r := httptest.NewRequest(http.MethodGet, "/", nil)
-		r.Host = host
-		if got := hostLabel(r); got != want {
-			t.Errorf("%s: %q, want %q", host, got, want)
 		}
 	}
 }

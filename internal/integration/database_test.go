@@ -22,8 +22,8 @@ import (
 )
 
 // testDatabase is the test database with its schema built from nothing, for
-// the tests of the rules and of the accessors, which call the database
-// directly rather than through the API.
+// every test: the tests of the accessors call the database directly, and
+// the others go through the API (setup).
 type testDatabase struct {
 	dba       *pgxpool.Pool // the schema owner
 	api       *pgxpool.Pool // the API role, as wtfd serve connects
@@ -191,15 +191,13 @@ func (d *testDatabase) value(t *testing.T, sql string, args ...any) any {
 	return v
 }
 
-// newTenant makes a tenant of its own for a test, with host host, and
-// returns its id. Tests that each use their own tenant don't see each
-// other's data.
-func (d *testDatabase) newTenant(t *testing.T, host string) string {
+// reset empties the data: the stock, items, classes and locations. The
+// accounts stay, and so does the meta row, with the label code counter (so
+// that codes are never handed out twice) and the trees' versions.
+func (d *testDatabase) reset(t *testing.T) {
 	t.Helper()
-	var id string
-	if err := d.dba.QueryRow(context.Background(),
-		"INSERT INTO public.tenant (host) VALUES ($1) RETURNING id", host).Scan(&id); err != nil {
+	if _, err := d.dba.Exec(context.Background(),
+		"TRUNCATE public.stock, public.item, public.class, public.location"); err != nil {
 		t.Fatal(err)
 	}
-	return id
 }

@@ -75,41 +75,31 @@ func (e *env) offer(label string, p param, args []string) (string, error) {
 	return e.askLabel(label+": ", p, args)
 }
 
-// askValues asks for attribute values of a class: item values, or with
-// perUnit the values of a stock row. Required attributes without a value or
-// default are always asked for (with a terminal); in an interactive session
-// all others are offered too, required ones first.
-func (e *env) askValues(classID string, perUnit bool, values object) error {
+// askValues asks for the values of class c's attributes of scope ("item"
+// or "stock") that set doesn't have. Required attributes without a default
+// are always asked for (with a terminal); in an interactive session all
+// others are offered too, required ones first. Files are uploaded with 'wtf
+// file put', and not asked for.
+func (e *env) askValues(c class, scope string, set object) error {
 	if e.term == nil {
 		return nil
 	}
 	interactive := e.prompted
-	var c class
-	if err := e.get("/classes/"+classID, nil, &c); err != nil {
-		return err
-	}
-	var list []classAttribute
-	for _, a := range c.Attributes {
-		if _, given := values[a.Attribute.ID]; (a.Scope == "stock") == perUnit && !given {
-			list = append(list, a)
-		}
-	}
 	for _, required := range []bool{true, false} {
-		for _, ca := range list {
-			if ca.Required != required {
+		for _, a := range c.Attributes {
+			if _, given := set[a.Name]; a.Scope != scope || given || a.Required != required || a.Type == "attachment" {
 				continue
 			}
-			hasDefault := len(ca.Default) > 0 && string(ca.Default) != "null"
-			must := ca.Required && !hasDefault
+			must := a.Required && !a.hasDefault()
 			if !must && !interactive {
 				continue
 			}
-			v, err := e.askValue(ca, must)
+			v, err := e.askValue(a, must)
 			if err != nil {
 				return err
 			}
 			if v != nil {
-				values[ca.Attribute.ID] = v
+				set[a.Name] = v
 			}
 		}
 	}
@@ -117,14 +107,11 @@ func (e *env) askValues(classID string, perUnit bool, values object) error {
 }
 
 // askValue reads one attribute value until it parses; nil means skipped.
-func (e *env) askValue(ca classAttribute, must bool) (any, error) {
-	a := ca.Attribute
+func (e *env) askValue(a attribute, must bool) (any, error) {
 	label := a.Name
 	switch {
-	case ca.DefaultDisplay != nil:
-		label += " [" + formatDisplay(ca.DefaultDisplay) + "]"
-	case len(ca.Default) > 0 && string(ca.Default) != "null":
-		label += " [" + formatJSONValue(ca.Default) + "]"
+	case a.hasDefault():
+		label += " [" + formatJSONValue(a.Default) + "]"
 	case must:
 		label += " (required)"
 	}
@@ -132,7 +119,7 @@ func (e *env) askValue(ca classAttribute, must bool) (any, error) {
 		label += " " + hint
 	}
 	p := param{optional: !must, complete: func(e *env, _ []string, cur string, _ bool) []string {
-		return e.valueCandidates(&a, cur)
+		return valueCandidates(a, cur)
 	}}
 	for {
 		text, err := e.askLabel(label+": ", p, nil)
@@ -142,7 +129,7 @@ func (e *env) askValue(ca classAttribute, must bool) (any, error) {
 		if text == "" {
 			return nil, nil
 		}
-		v, err := e.parseValue(&a, text)
+		v, err := parseValue(a, text)
 		if err == nil {
 			return v, nil
 		}
@@ -153,23 +140,14 @@ func (e *env) askValue(ca classAttribute, must bool) (any, error) {
 // valueHint tells what kind of value is expected.
 func valueHint(a attribute) string {
 	switch {
-	case a.Unit != nil:
-		return "(" + a.Unit.Symbol + ", or another unit of " + a.Unit.Family.Name + ")"
-	case a.Datatype == "date":
+	case a.Unit != "":
+		return "(" + a.Unit + ")"
+	case a.Type == "date":
 		return "(YYYY-MM-DD, today, +N[d|w|m|y])"
-	case a.Datatype == "boolean":
+	case a.Type == "boolean":
 		return "(yes/no)"
-	case a.Datatype == "choice":
-		return "(Tab Tab: options)"
+	case a.Type == "choice":
+		return "(" + strings.Join(a.Choices, ", ") + ")"
 	}
 	return ""
-}
-
-// scopeOf is the scope of an assignment: "stock" when its values belong to
-// stock rows, "item" when to the item.
-func scopeOf(perUnit bool) string {
-	if perUnit {
-		return "stock"
-	}
-	return "item"
 }

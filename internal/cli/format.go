@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -68,37 +69,29 @@ func fields(w io.Writer, pairs ...string) {
 	t.flush()
 }
 
-// formatDisplay is "1.2 mm".
-func formatDisplay(d *display) string {
-	if d == nil {
-		return ""
-	}
-	return d.Value.String() + " " + d.Unit.Symbol
-}
-
-// formatQuantity is a stock quantity: in its display unit, a plain count, or
+// formatAmount is a stock amount, with the item's unit (nil: pieces), or
 // "uncounted".
-func formatQuantity(q *json.Number, d *display) string {
+func formatAmount(q *json.Number, unit *string) string {
 	switch {
 	case q == nil:
 		return "uncounted"
-	case d != nil:
-		return formatDisplay(d)
+	case unit != nil:
+		return q.String() + " " + *unit
 	}
 	return q.String()
 }
 
-// formatTotal is an item's total stock.
-func formatTotal(t *stockTotal) string {
+// formatTotal is an item's total stock, with its unit.
+func formatTotal(t *stockTotal, unit *string) string {
 	if t == nil {
 		return ""
 	}
 	s := t.Total.String()
-	if t.Display != nil {
-		s = formatDisplay(t.Display)
+	if unit != nil {
+		s += " " + *unit
 	}
 	if t.Uncounted {
-		if s == "0" {
+		if t.Total.String() == "0" {
 			return "uncounted"
 		}
 		s += " + uncounted"
@@ -106,8 +99,7 @@ func formatTotal(t *stockTotal) string {
 	return s
 }
 
-// formatJSONValue renders a typed value: strings as they are, booleans as
-// yes/no, choices by name.
+// formatJSONValue renders a value: strings as they are, booleans as yes/no.
 func formatJSONValue(raw json.RawMessage) string {
 	var v any
 	if err := decode(raw, &v); err != nil || v == nil {
@@ -123,20 +115,29 @@ func formatJSONValue(raw json.RawMessage) string {
 		return "no"
 	case json.Number:
 		return x.String()
-	case map[string]any:
-		if name, ok := x["name"].(string); ok {
-			return name
-		}
 	}
 	return strings.TrimSpace(string(raw))
 }
 
-// formatValue renders a value in its display unit when it has one.
-func formatValue(v value) string {
-	if v.Display != nil {
-		return formatDisplay(v.Display)
+// formatAttributeValue renders a value of attribute a: with its unit label,
+// and a file by the start of its hash.
+func formatAttributeValue(a attribute, raw json.RawMessage) string {
+	s := formatJSONValue(raw)
+	switch {
+	case a.Type == "attachment":
+		return "file " + shortHash(s)
+	case a.Unit != "":
+		return s + " " + a.Unit
 	}
-	return formatJSONValue(v.Value)
+	return s
+}
+
+// shortHash is the start of a file's hash, enough to tell files apart.
+func shortHash(h string) string {
+	if len(h) > 12 {
+		return h[:12]
+	}
+	return h
 }
 
 func pathNames(p []ref) string {
@@ -145,19 +146,6 @@ func pathNames(p []ref) string {
 		names = append(names, r.Name)
 	}
 	return strings.Join(names, "/")
-}
-
-// unitName is an attribute's or item's unit with its family, and whether it
-// is locked: "mm (Metric length), locked".
-func unitName(u *unit, lock bool) string {
-	if u == nil {
-		return ""
-	}
-	s := u.Symbol + " (" + u.Family.Name + ")"
-	if lock {
-		s += ", locked"
-	}
-	return s
 }
 
 func yesNo(b bool) string {
@@ -188,74 +176,38 @@ func printTree(w io.Writer, nodes []*node) {
 	walk(nodes, "")
 }
 
-// printValues prints attribute values as a table; defaults are marked.
-func printValues(w io.Writer, indent string, values []value) {
+// printValues prints the values of an item or a stock row (scope) of class
+// c as a table, in the class's order, the defaults it follows marked.
+// Values of attributes the class doesn't list (it changed since) come last.
+func printValues(w io.Writer, indent string, c class, scope string, vals values, defaulted []string) {
 	t := newTable(w)
-	for _, v := range values {
+	seen := map[string]bool{}
+	row := func(a attribute, raw json.RawMessage) {
 		note := ""
-		if v.IsDefault {
+		if slices.Contains(defaulted, a.Name) {
 			note = "(default)"
 		}
-		t.row(indent+v.Attribute.Name+":", formatValue(v), note)
+		t.row(indent+a.Name+":", formatAttributeValue(a, raw), note)
 	}
-	t.flush()
-}
-
-func printMissing(w io.Writer, indent string, missing []ref) {
-	if len(missing) == 0 {
-		return
-	}
-	var names []string
-	for _, m := range missing {
-		names = append(names, m.Name)
-	}
-	fmt.Fprintf(w, "%sMissing required: %s\n", indent, strings.Join(names, ", "))
-}
-
-// printAttachments lists an object's attachments; photoName ("item photo",
-// …) marks its photo.
-func printAttachments(w io.Writer, indent string, list []attachment, photo *attachment, photoName string) {
-	if len(list) == 0 {
-		return
-	}
-	fmt.Fprintf(w, "%sAttachments:\n", indent)
-	t := newTable(w)
-	for _, a := range list {
-		note := ""
-		if photo != nil && photo.ID == a.ID {
-			note = photoName
+	for _, a := range c.Attributes {
+		if raw, ok := vals[a.Name]; ok && a.Scope == scope {
+			row(a, raw)
+			seen[a.Name] = true
 		}
-		t.row(indent+"  "+a.ID, a.Title, a.MediaType, formatSize(a.Size), note)
+	}
+	for _, name := range sortedKeys(vals) {
+		if !seen[name] {
+			row(attribute{Name: name}, vals[name])
+		}
 	}
 	t.flush()
 }
 
-func formatSize(n int64) string {
-	switch {
-	case n >= 1<<30:
-		return fmt.Sprintf("%.1f GiB", float64(n)/(1<<30))
-	case n >= 1<<20:
-		return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
-	case n >= 1<<10:
-		return fmt.Sprintf("%.1f KiB", float64(n)/(1<<10))
+// pageFooter says that more rows follow a page, and how to see them.
+func (e *env) pageFooter(more bool) {
+	if more {
+		fmt.Fprintln(e.stderr, "More rows follow; add --all to show them all.")
 	}
-	return fmt.Sprintf("%d B", n)
-}
-
-// pageFooter tells how to see more rows of a paged list.
-func (e *env) pageFooter(total, limit, offset, shown int) {
-	if offset == 0 && shown >= total {
-		return
-	}
-	if shown == 0 {
-		fmt.Fprintf(e.stderr, "No rows at offset %d of %d.\n", offset, total)
-		return
-	}
-	fmt.Fprintf(e.stderr, "Rows %d–%d of %d.", offset+1, offset+shown, total)
-	if offset+shown < total {
-		fmt.Fprintf(e.stderr, " Next: --offset %d", offset+shown)
-	}
-	fmt.Fprintln(e.stderr)
 }
 
 // localTime shows an API timestamp in local time, to the second.

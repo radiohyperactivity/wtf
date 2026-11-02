@@ -130,13 +130,13 @@ func TestLockout(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close(context.Background())
-	password, err := admin.SetPassword(context.Background(), conn, testHost, "LockMe@test.local")
+	password, err := admin.SetPassword(context.Background(), conn, "LockMe@test.local")
 	if err != nil {
 		t.Fatal(err)
 	}
 	e.loginAs(t, 401, "lockme@test.local", "right-password")
 	e.loginAs(t, 200, "lockme@test.local", password)
-	if _, err := admin.SetPassword(context.Background(), conn, testHost, "nobody@test.local"); err == nil {
+	if _, err := admin.SetPassword(context.Background(), conn, "nobody@test.local"); err == nil {
 		t.Error("a new password for an unknown account")
 	}
 }
@@ -152,7 +152,6 @@ func TestLoginLog(t *testing.T) {
 	login := func(password string) int {
 		data, _ := json.Marshal(map[string]any{"email": email, "password": password, "client": nil, "max_idle": nil})
 		req := httptest.NewRequest("POST", "/api/v1/login", bytes.NewReader(data))
-		req.Host = testHostname
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		return rec.Code
@@ -165,9 +164,9 @@ func TestLoginLog(t *testing.T) {
 	}
 	log := buf.String()
 	for _, want := range []string{
-		`level=WARN msg="login failed" host=test email=` + email + " client=<nil> address=",
+		`level=WARN msg="login failed" email=` + email + " client=<nil> address=",
 		"reason=invalid",
-		`level=INFO msg=login host=test email=` + email + " client=<nil> address=",
+		`level=INFO msg=login email=` + email + " client=<nil> address=",
 		"account=",
 	} {
 		if !strings.Contains(log, want) {
@@ -199,9 +198,8 @@ func TestRoles(t *testing.T) {
 	for _, who := range [][]string{viewer, user} {
 		e.expect(t, 200, "GET", "/items", nil, who...)
 		e.expect(t, 200, "GET", "/classes", nil, who...)
-		e.expect(t, 200, "GET", "/attributes", nil, who...)
+		e.expect(t, 200, "GET", "/classes/"+tools, nil, who...)
 		e.expect(t, 200, "GET", "/locations/"+shelf, nil, who...)
-		e.expect(t, 200, "GET", "/quantities", nil, who...)
 		e.expect(t, 403, "GET", "/accounts", nil, who...)
 		e.expect(t, 403, "GET", "/classes/"+tools+"/model", nil, who...)
 	}
@@ -218,8 +216,9 @@ func TestRoles(t *testing.T) {
 	e.expect(t, 403, "POST", "/locations", obj("name", "Shed"), user...)
 	e.expect(t, 403, "PATCH", "/locations/"+shelf, obj("name", "Top shelf"), user...)
 	e.expect(t, 403, "POST", "/classes", obj("name", "Parts"), user...)
-	e.expect(t, 403, "POST", "/attributes", obj("name", "Length", "datatype", "text"), user...)
-	e.expect(t, 403, "POST", "/model/import?dry_run=true", obj("format", "wtf-model", "version", 1), user...)
+	e.expect(t, 403, "POST", "/classes/"+tools+"/attributes",
+		obj("name", "Length", "definition", obj("scope", "item", "type", "text")), user...)
+	e.expect(t, 403, "POST", "/model/import?dry_run=true", obj("format", "wtf-model", "version", 2), user...)
 	e.expect(t, 403, "POST", "/accounts", obj("email", "x@test.local"), user...)
 	e.expect(t, 200, "GET", "/classes/"+tools+"/model", nil)
 }

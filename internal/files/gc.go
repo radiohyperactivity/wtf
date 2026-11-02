@@ -2,7 +2,6 @@ package files
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -12,22 +11,38 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// hashUsed tells whether any attachment of tenant $1 has the file with
-// hash $2. An attachment's tenant is its owner's: an item's
-// through its class, a stock row's through its location.
-const hashUsed = `SELECT EXISTS (
-	SELECT 1
-	FROM public.attachment a
-	LEFT JOIN public.item i      ON i.id = a.item
-	LEFT JOIN public.class ic    ON ic.id = i.class
-	LEFT JOIN public.stock s     ON s.id = a.stock
-	LEFT JOIN public.location sl ON sl.id = s.location
-	LEFT JOIN public.location l  ON l.id = a.location
-	LEFT JOIN public.class c     ON c.id = a.class
-	WHERE a.hash = $2
-	  AND coalesce(ic.tenant, sl.tenant, l.tenant, c.tenant) = $1)`
+// hashesUsed is the hashes of the files in use: the photos of the items and
+// stock rows, and the values of their attachment attributes. One read of
+// the items and stock rows, once per run.
+const hashesUsed = `
+	SELECT i.photo FROM public.item i WHERE i.photo IS NOT NULL
+	UNION
+	SELECT s.photo FROM public.stock s WHERE s.photo IS NOT NULL
+	UNION
+	SELECT e.value
+	FROM public.item i
+	JOIN public.class c ON c.id = i.class
+	CROSS JOIN LATERAL jsonb_each_text(i.values) e
+	WHERE c.attributes -> e.key ->> 'type' = 'attachment'
+	UNION
+	SELECT e.value
+	FROM public.stock s
+	JOIN public.item i  ON i.id = s.item
+	JOIN public.class c ON c.id = i.class
+	CROSS JOIN LATERAL jsonb_each_text(s.values) e
+	WHERE c.attributes -> e.key ->> 'type' = 'attachment'`
 
-// expiredSessions removes every tenant's expired sessions: those that sat
+// hashUsed tells whether the file with hash $1 is in use: as a photo,
+// or as any value of an item or stock row (a text value that happens to be
+// the hash keeps the file too, which errs on the safe side). The check
+// before a removal, under the file's lock.
+const hashUsed = `SELECT
+	EXISTS (SELECT 1 FROM public.item i
+	        WHERE i.photo = $1 OR EXISTS (SELECT 1 FROM jsonb_each_text(i.values) e WHERE e.value = $1))
+	OR EXISTS (SELECT 1 FROM public.stock s
+	           WHERE s.photo = $1 OR EXISTS (SELECT 1 FROM jsonb_each_text(s.values) e WHERE e.value = $1))`
+
+// expiredSessions removes the expired sessions: those that sat
 // unused for longer than their max_idle.
 const expiredSessions = `DELETE FROM public.session
 	WHERE max_idle IS NOT NULL AND last_used <= now() - max_idle`
@@ -48,18 +63,16 @@ type GCResult struct {
 	Sessions int64 // expired sessions
 }
 
-// GC removes files that no attachment references, in every tenant's
-// directory:
+// GC removes files that nothing references:
 //
-//   - files on disk whose hash no attachment of the tenant has: their
-//     attachments were deleted, or an upload's database insert failed;
-//   - abandoned uploads in the tenant's tmp directory;
-//   - and, in the database, every tenant's expired sessions.
+//   - files on disk whose hash no photo or attachment value has: what had them was deleted or given another file, or an upload's
+//     database change failed;
+//   - abandoned uploads in the tmp directory;
+//   - and, in the database, the expired sessions.
 //
 // Files younger than MinAge are left alone, so uploads in progress are safe.
-// Each removal takes the file's advisory lock (as uploads do) and re-checks
-// that the file is still unreferenced. A directory that belongs to no
-// tenant is reported and left alone.
+// Each removal takes the file's advisory lock (as uploads do) and checks
+// again that the file is still unreferenced.
 func GC(ctx context.Context, o GCOptions) (GCResult, error) {
 	cfg := o.ConnConfig.Copy()
 	cfg.RuntimeParams["search_path"] = "public"
@@ -81,65 +94,54 @@ func GC(ctx context.Context, o GCOptions) (GCResult, error) {
 	if err != nil {
 		return result, fmt.Errorf("expired sessions: %w", err)
 	}
-	hosts, err := o.Store.Hosts()
-	if err != nil {
+	if err := gcFiles(ctx, conn, o, &result); err != nil {
 		return result, err
-	}
-	for _, host := range hosts {
-		var tenant string
-		err := conn.QueryRow(ctx, "SELECT id::text FROM public.tenant WHERE host = $1", host).Scan(&tenant)
-		if errors.Is(err, pgx.ErrNoRows) {
-			o.Logger.Warn("a directory of no tenant, left alone", "directory", host)
-			continue
-		}
-		if err != nil {
-			return result, err
-		}
-		store, err := o.Store.Tenant(host)
-		if err != nil {
-			return result, err
-		}
-		if err := gcTenant(ctx, conn, o, tenant, host, store, &result); err != nil {
-			return result, err
-		}
 	}
 	return result, nil
 }
 
-// gcTenant removes the unreferenced files of one tenant.
-func gcTenant(ctx context.Context, conn *pgx.Conn, o GCOptions, tenant, host string, store *Store, result *GCResult) error {
+// gcFiles removes the unreferenced files.
+func gcFiles(ctx context.Context, conn *pgx.Conn, o GCOptions, result *GCResult) error {
+	store := o.Store
 	cutoff := time.Now().Add(-o.MinAge)
 	remove := func(hash string, size int64) error {
 		if o.DryRun {
-			o.Logger.Info("would remove file", "tenant", host, "sha256", hash, "size", size)
+			o.Logger.Info("would remove file", "sha256", hash, "size", size)
 		} else {
-			removed, err := removeUnreferenced(ctx, conn, store, tenant, hash)
+			removed, err := removeUnreferenced(ctx, conn, store, hash)
 			if err != nil || !removed {
 				return err
 			}
-			o.Logger.Debug("removed file", "tenant", host, "sha256", hash, "size", size)
+			o.Logger.Debug("removed file", "sha256", hash, "size", size)
 		}
 		result.Files++
 		result.Bytes += size
 		return nil
 	}
 
-	// Files on disk that no attachment has.
+	// Files on disk that nothing has.
+	rows, err := conn.Query(ctx, hashesUsed)
+	if err != nil {
+		return err
+	}
+	hashes, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return err
+	}
+	used := make(map[string]bool, len(hashes))
+	for _, h := range hashes {
+		used[h] = true
+	}
 	type candidate struct {
 		hash string
 		size int64
 	}
 	var unreferenced []candidate
-	err := store.Walk(func(hash string, modTime time.Time) error {
+	err = store.Walk(func(hash string, modTime time.Time) error {
 		if modTime.After(cutoff) {
 			return nil
 		}
-		var referenced bool
-		if err := conn.QueryRow(ctx,
-			hashUsed, tenant, hash).Scan(&referenced); err != nil {
-			return err
-		}
-		if !referenced {
+		if !used[hash] {
 			p, _ := store.path(hash)
 			info, err := os.Stat(p)
 			if err != nil {
@@ -178,10 +180,9 @@ func gcTenant(ctx context.Context, conn *pgx.Conn, o GCOptions, tenant, host str
 	})
 }
 
-// removeUnreferenced deletes a file of a tenant under its advisory lock, if
-// no attachment of the tenant has its hash. It reports whether the file was
-// removed.
-func removeUnreferenced(ctx context.Context, conn *pgx.Conn, store *Store, tenant, hash string) (bool, error) {
+// removeUnreferenced deletes a file under its advisory lock, if nothing
+// uses it. It reports whether the file was removed.
+func removeUnreferenced(ctx context.Context, conn *pgx.Conn, store *Store, hash string) (bool, error) {
 	removed := false
 	err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(attachment.file_lock_key($1))", hash); err != nil {
@@ -189,7 +190,7 @@ func removeUnreferenced(ctx context.Context, conn *pgx.Conn, store *Store, tenan
 		}
 		var referenced bool
 		if err := tx.QueryRow(ctx,
-			hashUsed, tenant, hash).Scan(&referenced); err != nil {
+			hashUsed, hash).Scan(&referenced); err != nil {
 			return err
 		}
 		if referenced {

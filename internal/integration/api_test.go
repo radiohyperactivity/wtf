@@ -2,13 +2,10 @@ package integration
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/url"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -62,101 +59,98 @@ func TestAPIRoleIsRestricted(t *testing.T) {
 	}
 
 	// Without a session, the API functions refuse to work, even for the API role.
-	_, err := e.api.Exec(context.Background(), "SELECT item.list(ROW(NULL, $1, NULL)::public.request)", testHost)
+	_, err := e.api.Exec(context.Background(), "SELECT item.list(ROW(NULL, NULL)::public.request)")
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "28000" {
 		t.Errorf("item.list without a session: got %v, want 28000", err)
 	}
-	_, err = e.api.Exec(context.Background(), "SELECT item.list(ROW('guessed', $1, NULL)::public.request)", testHost)
+	_, err = e.api.Exec(context.Background(), "SELECT item.list(ROW('guessed', NULL)::public.request)")
 	if !errors.As(err, &pgErr) || pgErr.Code != "28000" {
 		t.Errorf("item.list with a made-up token: got %v, want 28000", err)
 	}
 }
 
-func TestUnitsAndDefaults(t *testing.T) {
+func TestAttributesThroughTheAPI(t *testing.T) {
 	e := setup(t)
 	e.reset(t)
 
-	class := e.expect(t, 201, "POST", "/classes", obj("name", "Tools"))
-	classID := str(t, class.body, "id")
-	if loc := class.header.Get("Location"); loc != "/api/v1/classes/"+classID {
-		t.Errorf("Location = %q", loc)
+	tools := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Tools")).body, "id")
+	add := func(name string, def map[string]any, query string) response {
+		return e.expect(t, 200, "POST", "/classes/"+tools+"/attributes"+query, obj("name", name, "definition", def))
 	}
-	mm := e.unit(t, "Metric length", "mm")
-	attr := e.expect(t, 201, "POST", "/attributes", obj("name", "Length", "datatype", "decimal", "unit", mm)).body
-	attrID := str(t, attr, "id")
-	// Units are ids outside the unit families.
-	if str(t, attr, "unit") != mm || get(t, attr, "unit_lock") != false {
-		t.Errorf("attribute: %v", attr)
+	add("Supply voltage", obj("scope", "item", "type", "decimal", "unit", "V", "default", 18), "")
+	add("Colour", obj("scope", "item", "type", "choice", "choices", []string{"Red", "Blue"}), "")
+	dry := add("Lot", obj("scope", "stock", "type", "text"), "?dry_run=true").body
+	if get(t, dry, "dry_run") != true || len(get(t, dry, "class", "attributes").([]any)) != 3 {
+		t.Fatalf("dry run: %v", dry)
 	}
-
-	c := e.expect(t, 200, "PUT", "/classes/"+classID+"/attributes/"+attrID, obj("default", 0.025)).body
-	if v, u := num(t, c, "attributes", 0, "default_display", "value"), str(t, c, "attributes", 0, "default_display", "unit"); v != 2.5 || u != e.unit(t, "Metric length", "cm") {
-		t.Errorf("default 0.025 m displays as %v %s, want 2.5 cm", v, u)
+	if n := len(get(t, e.expect(t, 200, "GET", "/classes/"+tools, nil).body, "attributes").([]any)); n != 2 {
+		t.Fatalf("after the dry run: %d attributes", n)
 	}
 
-	drill := e.expect(t, 201, "POST", "/items",
-		obj("class", classID, "name", "Drill", "values", obj(attrID, 0.0012))).body
-	if v, u := num(t, drill, "values", 0, "display", "value"), str(t, drill, "values", 0, "display", "unit"); v != 1.2 || u != mm {
-		t.Errorf("0.0012 m displays as %v %s, want 1.2 mm", v, u)
-	}
-	if get(t, drill, "values", 0, "is_default") != false {
-		t.Error("an own value is marked as default")
+	drill := e.expect(t, 201, "POST", "/items", obj("class", tools, "name", "Drill", "values", obj("Colour", "Red"))).body
+	id := str(t, drill, "id")
+	if num(t, drill, "values", "Supply voltage") != 18 {
+		t.Fatalf("default: %v", get(t, drill, "values"))
 	}
 
-	saw := e.expect(t, 201, "POST", "/items", obj("class", classID, "name", "Saw")).body
-	sawID := str(t, saw, "id")
-	if get(t, saw, "values", 0, "is_default") != true || num(t, saw, "values", 0, "value") != 0.025 {
-		t.Errorf("item without a value should show the default: %v", get(t, saw, "values"))
+	// A name with a space, in the path.
+	path := "/classes/" + tools + "/attributes/" + url.PathEscape("Supply voltage")
+	r := e.expect(t, 200, "PATCH", path, obj("default", 24)).body
+	if num(t, r, "items") != 1 {
+		t.Fatalf("default changed: %v", r)
 	}
-
-	// Defaults are fallbacks: changing the default changes the item.
-	e.expect(t, 200, "PUT", "/classes/"+classID+"/attributes/"+attrID, obj("default", 0.5))
-	saw = e.expect(t, 200, "GET", "/items/"+sawID, nil).body
-	if v, u := num(t, saw, "values", 0, "display", "value"), e.symbol(t, str(t, saw, "values", 0, "display", "unit")); v != 50 || u != "cm" {
-		t.Errorf("after changing the default: %v %s, want 50 cm", v, u)
+	if num(t, e.expect(t, 200, "GET", "/items/"+id, nil).body, "values", "Supply voltage") != 24 {
+		t.Fatal("the item didn't follow the default")
 	}
-
-	// Zero is shown in the attribute's unit.
-	drill = e.expect(t, 200, "PUT", "/items/"+str(t, drill, "id")+"/values/"+attrID, obj("value", 0)).body
-	if u := e.symbol(t, str(t, drill, "values", 0, "display", "unit")); u != "mm" {
-		t.Errorf("zero displays in %s, want mm", u)
+	e.expect(t, 200, "POST", path+"/rename", obj("name", "Voltage"))
+	e.expect(t, 200, "PATCH", "/items/"+id, obj("values", obj("Voltage", 12, "Colour", nil)))
+	item := e.expect(t, 200, "GET", "/items/"+id, nil).body
+	if num(t, item, "values", "Voltage") != 12 || get(t, item, "values", "Colour") != nil {
+		t.Fatalf("patched values: %v", get(t, item, "values"))
 	}
+	e.expect(t, 422, "PATCH", "/items/"+id, obj("values", obj("Voltage", "high")))
+	e.expect(t, 400, "POST", "/classes/"+tools+"/attributes", obj("name", "Name", "definition", obj("scope", "item", "type", "text")))
 
-	// With the unit locked, every number is shown in it.
-	e.expect(t, 200, "PATCH", "/attributes/"+attrID, obj("unit_lock", true))
-	saw = e.expect(t, 200, "GET", "/items/"+sawID, nil).body
-	if v, u := num(t, saw, "values", 0, "display", "value"), e.symbol(t, str(t, saw, "values", 0, "display", "unit")); v != 500 || u != "mm" {
-		t.Errorf("locked to mm: %v %s, want 500 mm", v, u)
-	}
+	choices := "/classes/" + tools + "/attributes/Colour/choices"
+	e.expect(t, 200, "POST", choices, obj("choice", "Green"))
+	e.expect(t, 200, "POST", choices+"/Green/rename", obj("choice", "Lime"))
+	e.expect(t, 200, "DELETE", choices+"/Lime", nil)
+	e.expect(t, 200, "DELETE", "/classes/"+tools+"/attributes/Colour", nil)
 
-	// The same for stock: an item counted in grams, locked.
-	parts := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Parts")).body, "id")
-	solder := e.expect(t, 201, "POST", "/items", obj("class", parts, "name", "Solder",
-		"unit", e.unit(t, "Metric weight", "g"), "unit_lock", true)).body
-	shelf := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Shelf")).body, "id")
-	row := e.expect(t, 201, "POST", "/stock", obj("item", str(t, solder, "id"), "location", shelf, "amount", 2.5)).body
-	if v, u := num(t, row, "display", "value"), e.symbol(t, str(t, row, "display", "unit")); v != 2500 || u != "g" {
-		t.Errorf("2.5 kg of solder locked to g: %v %s", v, u)
+	// Model files round trip.
+	file := e.expect(t, 200, "GET", "/classes/"+tools+"/model", nil).body
+	report := e.expect(t, 200, "POST", "/model/import?dry_run=true", file).body
+	if num(t, report, "classes", "existing") != 1 || get(t, report, "dry_run") != true {
+		t.Fatalf("import report: %v", report)
 	}
 }
 
-func TestWholeNumbers(t *testing.T) {
+func TestListsAndPaging(t *testing.T) {
 	e := setup(t)
 	e.reset(t)
 
-	r := e.expect(t, 422, "POST", "/attributes",
-		obj("name", "Bad count", "datatype", "decimal", "unit", e.unit(t, "Pieces", "pcs")))
-	if str(t, r.body, "type") != "/problems/rule-violation" {
-		t.Errorf("type = %v", get(t, r.body, "type"))
+	parts := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Parts")).body, "id")
+	e.expect(t, 200, "POST", "/classes/"+parts+"/attributes", obj("name", "Size", "definition", obj("scope", "item", "type", "integer")))
+	for _, n := range []int{1, 2, 3, 4, 5} {
+		e.expect(t, 201, "POST", "/items", obj("class", parts, "name", "Part "+string(rune('0'+n)), "values", obj("Size", n)))
 	}
-
-	classID := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Parts")).body, "id")
-	itemID := str(t, e.expect(t, 201, "POST", "/items", obj("class", classID, "name", "Screw")).body, "id")
-	locID := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Drawer")).body, "id")
-
-	e.expect(t, 422, "POST", "/stock", obj("item", itemID, "location", locID, "amount", 2.5))
-	e.expect(t, 201, "POST", "/stock", obj("item", itemID, "location", locID, "amount", 3))
+	page := e.expect(t, 200, "GET", "/items?limit=2", nil).body
+	if get(t, page, "more") != true || len(get(t, page, "rows").([]any)) != 2 {
+		t.Fatalf("first page: %v", page)
+	}
+	page = e.expect(t, 200, "GET", "/items?limit=2&after="+str(t, page, "next"), nil).body
+	if str(t, page, "rows", 0, "name") != "Part 3" {
+		t.Fatalf("second page: %v", page)
+	}
+	where := url.QueryEscape(`[{"attribute": "Size", "op": ">=", "value": 4}]`)
+	page = e.expect(t, 200, "GET", "/items?where="+where, nil).body
+	if len(get(t, page, "rows").([]any)) != 2 || get(t, page, "more") != false {
+		t.Fatalf("filtered: %v", page)
+	}
+	if n := len(get(t, e.expect(t, 200, "GET", "/items?search=art%204", nil).body, "rows").([]any)); n != 1 {
+		t.Fatalf("search: %d rows", n)
+	}
 }
 
 func TestStock(t *testing.T) {
@@ -183,30 +177,35 @@ func TestStock(t *testing.T) {
 	}
 
 	// A move never merges, also where there is a row of the item already;
-	// merging is its own action (TestMerge).
+	// merging is its own action.
 	moved = e.expect(t, 200, "POST", "/stock/"+source+"/move", obj("location", attic, "amount", 2)).body
 	if str(t, moved, "id") == atticRow || num(t, moved, "amount") != 2 {
 		t.Fatalf("second split: %v", moved)
 	}
-	e.expect(t, 200, "POST", "/stock/"+str(t, moved, "id")+"/merge", obj("into", atticRow, "amount", nil))
+	e.expect(t, 200, "POST", "/stock/"+str(t, moved, "id")+"/merge", obj("into", atticRow))
 
-	// Moving more than there is.
+	// Moving more than there is, and a part of a piece.
 	e.expect(t, 400, "POST", "/stock/"+atticRow+"/move", obj("location", garage, "amount", 11))
+	e.expect(t, 422, "POST", "/stock", obj("item", itemID, "location", garage, "amount", 1.5))
 
 	// An uncounted row in the garage.
-	e.expect(t, 201, "POST", "/stock", obj("item", itemID, "location", garage))
+	e.expect(t, 201, "POST", "/stock", obj("item", itemID, "location", garage, "serial", "SN-1"))
 
 	list := e.expect(t, 200, "GET", "/items?search=scr", nil).body
-	if num(t, list, "total") != 1 || num(t, list, "rows", 0, "stock", "total") != 10 || get(t, list, "rows", 0, "stock", "uncounted") != true {
-		t.Errorf("item_list stock total: %v", get(t, list, "rows", 0, "stock"))
+	if len(get(t, list, "rows").([]any)) != 1 || num(t, list, "rows", 0, "stock", "total") != 10 ||
+		get(t, list, "rows", 0, "stock", "uncounted") != true {
+		t.Errorf("item list stock total: %v", get(t, list, "rows", 0, "stock"))
 	}
 	// The shelf's row (in the garage) and the garage's own; the attic's.
-	if n := num(t, e.expect(t, 200, "GET", "/stock?location="+garage, nil).body, "total"); n != 2 {
+	if n := len(get(t, e.expect(t, 200, "GET", "/stock?location="+garage, nil).body, "rows").([]any)); n != 2 {
 		t.Errorf("stock in the garage (and below): %v rows, want 2", n)
+	}
+	if n := len(get(t, e.expect(t, 200, "GET", "/stock?search=sn-1", nil).body, "rows").([]any)); n != 1 {
+		t.Errorf("stock by serial: %v rows, want 1", n)
 	}
 	item := e.expect(t, 200, "GET", "/items/"+itemID, nil).body
 	if n := len(get(t, item, "stock").([]any)); n != 3 {
-		t.Errorf("item_get has %d stock rows, want 3", n)
+		t.Errorf("item get has %d stock rows, want 3", n)
 	}
 }
 
@@ -232,6 +231,11 @@ func TestTreeVersions(t *testing.T) {
 	if r.header.Get("ETag") == etag {
 		t.Error("the ETag did not change after a rename")
 	}
+	etag = r.header.Get("ETag")
+	e.expect(t, 200, "POST", "/classes/"+parent+"/attributes", obj("name", "Brand", "definition", obj("scope", "item", "type", "text")))
+	if e.expect(t, 200, "GET", "/classes", nil).header.Get("ETag") == etag {
+		t.Error("the ETag did not change after a new attribute")
+	}
 }
 
 func TestPatch(t *testing.T) {
@@ -254,227 +258,6 @@ func TestPatch(t *testing.T) {
 	e.expect(t, 400, "PATCH", "/classes/"+b, obj("colour", "red"))
 }
 
-func TestUnitChange(t *testing.T) {
-	e := setup(t)
-	e.reset(t)
-
-	attr := str(t, e.expect(t, 201, "POST", "/attributes",
-		obj("name", "Length", "datatype", "decimal", "unit", e.unit(t, "Metric length", "mm"))).body, "id")
-	// Another unit of the same quantity, in another family too.
-	e.expect(t, 200, "PATCH", "/attributes/"+attr, obj("unit", e.unit(t, "Metric length", "cm")))
-	inch := e.unit(t, "Imperial length", "in")
-	if u := str(t, e.expect(t, 200, "PATCH", "/attributes/"+attr, obj("unit", inch)).body, "unit"); u != inch {
-		t.Errorf("unit after the change: %s", u)
-	}
-	e.expect(t, 422, "PATCH", "/attributes/"+attr, obj("unit", e.unit(t, "Metric weight", "g")))
-	e.expect(t, 422, "PATCH", "/attributes/"+attr, obj("unit", nil))
-	e.expect(t, 400, "PATCH", "/attributes/"+attr, obj("unit", "in"))
-	// Unit lock needs a unit.
-	e.expect(t, 422, "POST", "/attributes", obj("name", "Colour", "datatype", "text", "unit_lock", true))
-}
-
-func TestUnitFamilies(t *testing.T) {
-	e := setup(t)
-
-	// The bootstrap set: global units.
-	families := get(t, e.expect(t, 200, "GET", "/unit-families", nil).body, "families").([]any)
-	byName := map[string]any{}
-	for _, f := range families {
-		byName[str(t, f, "name")] = f
-	}
-	binary := byName["Binary bytes"]
-	if binary == nil || str(t, binary, "quantity", "name") != "Bytes" || get(t, binary, "global") != true ||
-		get(t, binary, "available") != true || get(t, binary, "choice") != nil {
-		t.Fatalf("Binary bytes: %v", binary)
-	}
-	var symbols []string
-	for _, u := range get(t, binary, "units").([]any) {
-		symbols = append(symbols, str(t, u, "symbol"))
-	}
-	if strings.Join(symbols, " ") != "B KiB MiB GiB TiB PiB" {
-		t.Errorf("binary bytes, smallest first: %v", symbols)
-	}
-	// B is in both byte families, with the same conversion.
-	if e.unit(t, "Decimal bytes", "B") == e.unit(t, "Binary bytes", "B") {
-		t.Error("each family has its own B")
-	}
-	if byName["Bits"] == nil || str(t, byName["Bits"], "quantity", "name") != "Bits" {
-		t.Errorf("bits are a quantity of their own: %v", byName["Bits"])
-	}
-
-	length := str(t, byName["Metric length"], "quantity", "id")
-	q := e.expect(t, 200, "GET", "/quantities/"+length, nil).body
-	// Families by name.
-	if n := len(get(t, q, "families").([]any)); n != 2 || str(t, q, "families", 0, "name") != "Imperial length" {
-		t.Errorf("Length families: %v", get(t, q, "families"))
-	}
-	units := e.expect(t, 200, "GET", "/units?quantity="+length, nil).body.([]any)
-	if len(units) != 10 || str(t, units[0], "symbol") != "mil" {
-		t.Errorf("length units: %d, first %v", len(units), units[0])
-	}
-	mm := e.expect(t, 200, "GET", "/units/"+e.unit(t, "Metric length", "mm"), nil).body
-	if str(t, mm, "family", "name") != "Metric length" || num(t, mm, "base_factor") != 0.001 || get(t, mm, "global") != true {
-		t.Errorf("mm: %v", mm)
-	}
-	const unknown = "00000000-0000-0000-0000-000000000001"
-	e.expect(t, 404, "GET", "/units/"+unknown, nil)
-	e.expect(t, 400, "GET", "/units/1", nil)
-	e.expect(t, 400, "GET", "/units/mm", nil)
-	e.expect(t, 404, "GET", "/unit-families?quantity="+unknown, nil)
-
-	// Within a quantity, a symbol means one unit.
-	_, err := e.dba.Exec(context.Background(),
-		"INSERT INTO unit (family, name, symbol, base_factor) VALUES ($1, 'bit', 'B', 0.125)",
-		str(t, binary, "id"))
-	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
-		t.Errorf("a second meaning of B: %v", err)
-	}
-}
-
-func TestUnitImport(t *testing.T) {
-	e := setup(t)
-	e.reset(t)
-	// What this test adds is the tenant's own, and goes again, so other tests
-	// see only the global bootstrap set.
-	t.Cleanup(func() { e.dropTenantUnits(t) })
-	count := func(report any, kind, which string) int {
-		return len(get(t, report, kind, which).([]any))
-	}
-
-	// The bootstrap set as a file is what the database starts with.
-	seed, err := os.ReadFile("../../seed/units.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := e.expect(t, 200, "POST", "/model/import", string(seed)).body
-	if get(t, r, "applied") != true || count(r, "quantities", "added")+count(r, "families", "added")+count(r, "units", "added") != 0 ||
-		count(r, "quantities", "existing") != 16 || count(r, "families", "existing") != 25 || count(r, "units", "existing") != 96 ||
-		len(get(t, r, "conflicts").([]any)) != 0 {
-		t.Fatalf("seed/units.json differs from the bootstrap set: %v", r)
-	}
-
-	file := func(quantities ...any) map[string]any {
-		return obj("format", "wtf-model", "version", 1, "quantities", quantities)
-	}
-	u := func(symbol, name, factor string) map[string]any {
-		return obj("symbol", symbol, "name", name, "factor", factor)
-	}
-	pressure := obj("name", "Pressure", "base_unit", obj("symbol", "Pa", "name", "pascal"),
-		"meta", obj("source", "anything in meta is ignored", "more", []any{1, 2}),
-		"families", []any{
-			obj("name", "Pascals", "units", []any{u("Pa", "pascal", "1"), u("kPa", "kilopascal", "1000"), u("MPa", "megapascal", "1000000")}),
-			obj("name", "Bar", "units", []any{u("mbar", "millibar", "100"), u("bar", "bar", "100000")}),
-		})
-	yards := obj("name", "length", "base_unit", obj("symbol", "m", "name", "metre"), // an existing quantity, any case
-		"families", []any{obj("name", "Imperial length", "units", []any{u("yd", "yard", "0.9144"), u("in", "inch", "0.0254")})})
-
-	// A dry run tells, and keeps nothing.
-	r = e.expect(t, 200, "POST", "/model/import?dry_run=true", file(pressure, yards)).body
-	if get(t, r, "applied") != false || get(t, r, "dry_run") != true ||
-		count(r, "quantities", "added") != 1 || count(r, "families", "added") != 2 || count(r, "units", "added") != 6 ||
-		count(r, "quantities", "existing") != 1 || count(r, "families", "existing") != 1 || count(r, "units", "existing") != 1 {
-		t.Errorf("dry run: %v", r)
-	}
-	for _, q := range e.expect(t, 200, "GET", "/quantities", nil).body.([]any) {
-		if str(t, q, "name") == "Pressure" {
-			t.Fatal("a dry run added Pressure")
-		}
-	}
-
-	r = e.expect(t, 200, "POST", "/model/import", file(pressure, yards)).body
-	if get(t, r, "applied") != true || count(r, "units", "added") != 6 {
-		t.Fatalf("import: %v", r)
-	}
-	// Imported units are the tenant's own, also in a global family.
-	for _, id := range []string{e.unit(t, "Pascals", "kPa"), e.unit(t, "Imperial length", "yd")} {
-		if get(t, e.expect(t, 200, "GET", "/units/"+id, nil).body, "global") != false {
-			t.Errorf("unit %s should be the tenant's own", id)
-		}
-	}
-	var q any
-	for _, x := range e.expect(t, 200, "GET", "/quantities", nil).body.([]any) {
-		if str(t, x, "name") == "Pressure" {
-			q = x
-		}
-	}
-	if q == nil || e.symbol(t, str(t, q, "base_unit")) != "Pa" || str(t, q, "datatype") != "decimal" {
-		t.Errorf("Pressure: %v", q)
-	}
-	// Importing it again changes nothing.
-	r = e.expect(t, 200, "POST", "/model/import", file(pressure, yards)).body
-	if get(t, r, "applied") != true || count(r, "units", "added") != 0 || count(r, "units", "existing") != 7 {
-		t.Errorf("again: %v", r)
-	}
-
-	// Conflicts: reported all together, and nothing is kept.
-	torque := obj("name", "Torque", "base_unit", obj("symbol", "N·m", "name", "newton metre"),
-		"families", []any{obj("name", "Newton metres", "units", []any{u("N·m", "newton metre", "1")})})
-	r = e.expect(t, 200, "POST", "/model/import", file(
-		torque,
-		obj("name", "Length", "base_unit", obj("symbol", "mm", "name", "millimetre")), // another base
-		obj("name", "Distance", "base_unit", obj("symbol", "m", "name", "metre"),
-			"families", []any{obj("name", "Metric length")}), // a family of another quantity
-		obj("name", "Bytes", "base_unit", obj("symbol", "B", "name", "byte"),
-			"families", []any{
-				obj("name", "Imperial length"),
-				obj("name", "Decimal bytes", "units", []any{u("kB", "kilobyte", "1024")}), // another factor
-				obj("name", "Odd bytes", "units", []any{u("KiB", "kibibyte", "1000")}),    // KiB means 1024 elsewhere
-			}),
-	)).body
-	conflicts := get(t, r, "conflicts").([]any)
-	// Distance, a new quantity, also lacks its base unit m among its units.
-	if get(t, r, "applied") != false || len(conflicts) != 6 {
-		t.Fatalf("want 6 conflicts, not applied: %v", r)
-	}
-	for i, want := range []string{"Length", "Metric length", "Distance", "Imperial length", "kB", "KiB"} {
-		if !strings.Contains(str(t, conflicts[i], "where"), want) {
-			t.Errorf("conflict %d: %v, want it about %s", i, conflicts[i], want)
-		}
-	}
-	for _, x := range e.expect(t, 200, "GET", "/quantities", nil).body.([]any) {
-		if n := str(t, x, "name"); n == "Torque" || n == "Distance" {
-			t.Errorf("%s was kept although the import had conflicts", n)
-		}
-	}
-
-	// Files that aren't unit files are refused, saying why.
-	for _, bad := range []struct {
-		body any
-		want string
-	}{
-		{obj("format", "something", "version", 1, "quantities", []any{}), "not a WtF model file"},
-		{obj("format", "wtf-model", "version", 2, "quantities", []any{}), "newer"},
-		{obj("format", "wtf-model", "version", 1, "quantities", []any{}, "colour", "red"), `unknown key "colour"`},
-		{file(obj("name", "Speed")), `needs "base_unit"`},
-		{file(obj("name", "Speed", "base_unit", obj("symbol", "m/s", "name", "metre per second"),
-			"families", []any{obj("name", "Metric speed", "units", []any{u("m/s", "metre per second", "3.6")})})), "base unit"},
-		{file(obj("name", "Speed", "base_unit", obj("symbol", "m/s", "name", "metre per second"),
-			"families", []any{obj("name", "Metric speed", "units", []any{u("km/h", "kilometre per hour", "fast")})})), "decimal"},
-		{file(obj("name", "Speed", "datatype", "date", "base_unit", obj("symbol", "m/s", "name", "metre per second"))), "datatype"},
-	} {
-		r := e.expect(t, 400, "POST", "/model/import", bad.body).body
-		if !strings.Contains(str(t, r, "detail"), bad.want) {
-			t.Errorf("%v: %v, want %q", bad.body, r, bad.want)
-		}
-	}
-
-	// The CLI: a dry run, the import, and the new units in use at once.
-	c := e.cli(t)
-	path := filepath.Join(t.TempDir(), "torque.json")
-	data, _ := json.Marshal(file(torque))
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	contains(t, c.ok("unit", "list", "--quantity", "Length"), "mm") // fills the CLI's unit cache
-	contains(t, c.ok("model", "import", path, "--dry-run"), "Would add:", "quantity Torque", "unit Torque › Newton metres › N·m")
-	contains(t, c.ok("model", "import", path), "Added:", "quantity Torque")
-	contains(t, c.ok("model", "import", path), "Nothing new.", "Already there: 1 quantity, 1 unit family, 1 unit.")
-	contains(t, c.ok("attribute", "add", "Tightening torque", "--unit", "N·m"), "N·m (Newton metres)")
-	_, stderr := c.run(1, "", "model", "import", path+".missing")
-	contains(t, stderr, "torque.json.missing")
-}
-
 func TestErrors(t *testing.T) {
 	e := setup(t)
 	e.reset(t)
@@ -495,14 +278,13 @@ func TestErrors(t *testing.T) {
 		{"bad UUID in path", "GET", "/items/nope", nil, 400, "/problems/invalid-input"},
 		{"bad UUID in query", "GET", "/items?class=nope", nil, 400, "/problems/invalid-input"},
 		{"malformed JSON", "POST", "/classes", "{name:", 400, "/problems/invalid-input"},
-		{"invalid datatype", "POST", "/attributes", obj("name", "X", "datatype", "colour"), 400, "/problems/invalid-input"},
 		{"missing required field", "POST", "/classes", obj(), 400, "/problems/invalid-input"},
 		{"reference to a missing object", "POST", "/classes", obj("name", "X", "parent", missing), 422, "/problems/invalid-reference"},
 		{"delete while in use", "DELETE", "/locations/" + garage, nil, 409, "/problems/in-use"},
 		{"cycle", "PATCH", "/locations/" + garage, obj("parent", shelf), 422, "/problems/rule-violation"},
 		{"bad paging", "GET", "/items?limit=0", nil, 400, "/problems/invalid-input"},
 		{"body too large", "POST", "/classes", `{"name":"` + strings.Repeat("x", 2<<20) + `"}`, 413, "/problems/body-too-large"},
-		{"wrong method", "PUT", "/quantities", nil, 405, "/problems/method-not-allowed"},
+		{"wrong method", "PUT", "/me", nil, 405, "/problems/method-not-allowed"},
 		{"unknown route", "GET", "/nothing", nil, 404, "/problems/not-found"},
 	}
 	for _, tt := range tests {
@@ -516,151 +298,6 @@ func TestErrors(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestSearch(t *testing.T) {
-	e := setup(t)
-	e.reset(t)
-
-	resistors := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Resistors")).body, "id")
-	smd := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "SMD", "parent", resistors)).body, "id")
-	tools := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Tools")).body, "id")
-
-	pkg := str(t, e.expect(t, 201, "POST", "/attributes", obj("name", "Package", "datatype", "choice")).body, "id")
-	e.expect(t, 201, "POST", "/attributes/"+pkg+"/options", obj("name", "0805"))
-	e.expect(t, 201, "POST", "/attributes/"+pkg+"/options", obj("name", "0603"))
-	part := str(t, e.expect(t, 201, "POST", "/attributes", obj("name", "Part number", "datatype", "text")).body, "id")
-	e.expect(t, 200, "PUT", "/classes/"+smd+"/attributes/"+pkg, obj("default", "0805"))
-	e.expect(t, 200, "PUT", "/classes/"+resistors+"/attributes/"+part, nil)
-
-	e.expect(t, 201, "POST", "/items", obj("class", smd, "name", "10k")) // Package from the default
-	r4k7 := str(t, e.expect(t, 201, "POST", "/items", obj("class", smd, "name", "4k7")).body, "id")
-	e.expect(t, 200, "PUT", "/items/"+r4k7+"/values/"+pkg, obj("value", "0603"))
-	e.expect(t, 201, "POST", "/items", obj("class", resistors, "name", "100R", "values", obj(part, "PN-1234")))
-	e.expect(t, 201, "POST", "/items", obj("class", tools, "name", "Drill"))
-
-	tests := []struct {
-		query string
-		want  []string
-	}{
-		{"search=0805", []string{"10k"}},                    // class default
-		{"search=0603", []string{"4k7"}},                    // own value overrides the default
-		{"search=resistor+0805", []string{"10k"}},           // words match in different places
-		{"search=smd", []string{"4k7", "10k"}},              // class name
-		{"search=resistor", []string{"4k7", "10k", "100R"}}, // ancestor class
-		{"search=pn-12", []string{"100R"}},                  // text value, substring
-		{"search=++DRILL++", []string{"Drill"}},             // case and extra spaces
-		{"search=drill+0805", nil},                          // all words must match
-		{"search=resistor&class=" + smd, []string{"4k7", "10k"}},
-		{"class=" + tools, []string{"Drill"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.query, func(t *testing.T) {
-			r := e.expect(t, 200, "GET", "/items?"+tt.query, nil)
-			var got []string
-			for _, row := range get(t, r.body, "rows").([]any) {
-				got = append(got, str(t, row, "name"))
-			}
-			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
-				t.Errorf("got %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestSearchWhere(t *testing.T) {
-	e := setup(t)
-	e.reset(t)
-
-	resistors := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Resistors")).body, "id")
-	attribute := func(name, datatype string, more ...any) string {
-		return str(t, e.expect(t, 201, "POST", "/attributes",
-			obj(append([]any{"name", name, "datatype", datatype}, more...)...)).body, "id")
-	}
-	ohms := attribute("Resistance", "decimal", "unit", e.unit(t, "Resistance", "Ω"))
-	pkg := attribute("Package", "choice")
-	e.expect(t, 201, "POST", "/attributes/"+pkg+"/options", obj("name", "0805"))
-	e.expect(t, 201, "POST", "/attributes/"+pkg+"/options", obj("name", "0603"))
-	notes := attribute("Notes", "text")
-	leadFree := attribute("Lead-free", "boolean")
-	bought := attribute("Purchased", "date")
-	e.expect(t, 200, "PUT", "/classes/"+resistors+"/attributes/"+ohms, nil)
-	e.expect(t, 200, "PUT", "/classes/"+resistors+"/attributes/"+pkg, obj("default", "0805"))
-	e.expect(t, 200, "PUT", "/classes/"+resistors+"/attributes/"+notes, nil)
-	e.expect(t, 200, "PUT", "/classes/"+resistors+"/attributes/"+leadFree, nil)
-	e.expect(t, 200, "PUT", "/classes/"+resistors+"/attributes/"+bought, obj("scope", "stock"))
-	shelf := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Shelf")).body, "id")
-
-	item := func(name string, values map[string]any) string {
-		return str(t, e.expect(t, 201, "POST", "/items",
-			obj("class", resistors, "name", name, "values", values)).body, "id")
-	}
-	r10k := item("10k", obj(ohms, 10000))
-	r4k7 := item("4k7", obj(ohms, 4700, pkg, "0603"))
-	item("47k", obj(ohms, 47000, notes, "Metal film"))
-	item("100R", obj(ohms, 100, leadFree, true))
-	e.expect(t, 201, "POST", "/stock", obj("item", r10k, "location", shelf, "amount", 5, "values", obj(bought, "2026-01-10")))
-	e.expect(t, 201, "POST", "/stock", obj("item", r10k, "location", shelf, "amount", 5, "values", obj(bought, "2025-05-01")))
-	e.expect(t, 201, "POST", "/stock", obj("item", r4k7, "location", shelf, "amount", 5))
-
-	where := func(filters ...map[string]any) string {
-		b, err := json.Marshal(append([]map[string]any{}, filters...))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return "where=" + url.QueryEscape(string(b))
-	}
-	f := func(attribute, op string, value any) map[string]any {
-		return obj("attribute", attribute, "op", op, "value", value)
-	}
-	tests := []struct {
-		name  string
-		query string
-		want  []string
-	}{
-		{"greater or equal", where(f(ohms, ">=", 32000)), []string{"47k"}},
-		{"less than", where(f(ohms, "<", 4700)), []string{"100R"}},
-		{"exact number", where(f(ohms, "=", 4700)), []string{"4k7"}},
-		{"range, inclusive", where(f(ohms, "between", []any{1000, 10000})), []string{"4k7", "10k"}},
-		{"choice by name, defaults included", where(f(pkg, "=", "0805")), []string{"10k", "47k", "100R"}},
-		{"any of several options", where(f(pkg, "in", []any{"0603", "0805"})), []string{"4k7", "10k", "47k", "100R"}},
-		{"text contains, ignoring case", where(f(notes, "contains", "METAL")), []string{"47k"}},
-		{"text exactly", where(f(notes, "=", "metal film")), []string{"47k"}},
-		{"yes", where(f(leadFree, "=", true)), []string{"100R"}},
-		{"per unit: any stock row", where(f(bought, ">=", "2026-01-01")), []string{"10k"}},
-		{"per unit: no rows match", where(f(bought, "<", "2025-01-01")), nil},
-		{"all filters must match", where(f(ohms, ">", 1000), f(pkg, "=", "0805")), []string{"10k", "47k"}},
-		{"with search words", "search=4&" + where(f(ohms, ">", 1000)), []string{"4k7", "47k"}},
-		{"no filters", where(), []string{"4k7", "10k", "47k", "100R"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			r := e.expect(t, 200, "GET", "/items?"+tt.query, nil)
-			var got []string
-			for _, row := range get(t, r.body, "rows").([]any) {
-				got = append(got, str(t, row, "name"))
-			}
-			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
-				t.Errorf("got %v, want %v", got, tt.want)
-			}
-		})
-	}
-
-	for _, bad := range []string{
-		"where=" + url.QueryEscape("{"),                             // not JSON
-		"where=" + url.QueryEscape(`{"attribute": "x"}`),            // not a list
-		where(f(ohms, "contains", 1)),                               // not for numbers
-		where(f(ohms, ">", "1k")),                                   // numbers are numbers, in the base unit
-		where(f(ohms, "between", []any{1})),                         // a range needs two ends
-		where(f(pkg, "=", "1206")),                                  // no such option
-		where(f(bought, ">", "2026-02-30")),                         // no such date
-		where(f(leadFree, "=", "yes")),                              // true or false
-		where(obj("attribute", ohms, "op", ">")),                    // no value
-		where(obj("attribute", "not-an-id", "op", "=", "value", 1)), // no attribute id
-	} {
-		e.expect(t, 400, "GET", "/items?"+bad, nil)
-	}
-	e.expect(t, 404, "GET", "/items?"+where(f("00000000-0000-0000-0000-000000000000", "=", 1)), nil)
 }
 
 func TestCodes(t *testing.T) {
@@ -702,101 +339,9 @@ func TestCodes(t *testing.T) {
 	}
 	list := e.expect(t, 200, "GET", "/items", nil).body
 	if str(t, list, "rows", 0, "code") != str(t, item, "code") {
-		t.Errorf("item_list code: %v", get(t, list, "rows", 0))
+		t.Errorf("item list code: %v", get(t, list, "rows", 0))
 	}
 
 	e.expect(t, 404, "GET", "/codes/ZZZZZZ", nil)
 	e.expect(t, 400, "GET", "/codes/1IL0", nil) // I and L are excluded letters
-}
-
-func TestUnitValuesAndRequired(t *testing.T) {
-	e := setup(t)
-	e.reset(t)
-
-	tools := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Power tools")).body, "id")
-	voltage := str(t, e.expect(t, 201, "POST", "/attributes",
-		obj("name", "Voltage", "datatype", "decimal", "unit", e.unit(t, "Voltage", "V"))).body, "id")
-	serial := str(t, e.expect(t, 201, "POST", "/attributes", obj("name", "Serial number", "datatype", "text")).body, "id")
-	bought := str(t, e.expect(t, 201, "POST", "/attributes", obj("name", "Purchase date", "datatype", "date")).body, "id")
-	condition := str(t, e.expect(t, 201, "POST", "/attributes", obj("name", "Condition", "datatype", "choice")).body, "id")
-	e.expect(t, 201, "POST", "/attributes/"+condition+"/options", obj("name", "Good"))
-	e.expect(t, 201, "POST", "/attributes/"+condition+"/options", obj("name", "Worn"))
-
-	base := "/classes/" + tools + "/attributes/"
-	e.expect(t, 200, "PUT", base+voltage, obj("required", true))
-	e.expect(t, 200, "PUT", base+serial, obj("scope", "stock", "required", true))
-	e.expect(t, 200, "PUT", base+bought, obj("scope", "stock"))
-	c := e.expect(t, 200, "PUT", base+condition, obj("scope", "stock", "default", "Good")).body
-	for _, a := range get(t, c, "attributes").([]any) {
-		if str(t, a, "attribute", "id") == serial && (get(t, a, "scope") != "stock" || get(t, a, "required") != true) {
-			t.Errorf("serial number assignment: %v", a)
-		}
-	}
-
-	// Required per-kind value on create.
-	e.expect(t, 422, "POST", "/items", obj("class", tools, "name", "Drill"))
-	drill := e.expect(t, 201, "POST", "/items", obj("class", tools, "name", "Drill", "values", obj(voltage, 18))).body
-	drillID := str(t, drill, "id")
-	if n := len(get(t, drill, "missing").([]any)); n != 0 {
-		t.Errorf("missing: %v", get(t, drill, "missing"))
-	}
-
-	shelf := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Shelf")).body, "id")
-	van := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Van")).body, "id")
-	site := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Site")).body, "id")
-
-	// Required per-unit value on create.
-	e.expect(t, 422, "POST", "/stock", obj("item", drillID, "location", shelf, "amount", 4))
-	row := e.expect(t, 201, "POST", "/stock", obj("item", drillID, "location", shelf, "amount", 4,
-		"values", obj(serial, "BATCH-7", bought, "2026-10-01"))).body
-	rowID := str(t, row, "id")
-	defaults := map[string]any{}
-	for _, v := range get(t, row, "values").([]any) {
-		defaults[str(t, v, "attribute", "name")] = get(t, v, "is_default")
-	}
-	if defaults["Serial number"] != false || defaults["Condition"] != true {
-		t.Errorf("stock values: %v", get(t, row, "values"))
-	}
-
-	// Values go where their scope says.
-	e.expect(t, 422, "PUT", "/items/"+drillID+"/values/"+serial, obj("value", "X"))
-	e.expect(t, 422, "PUT", "/stock/"+rowID+"/values/"+voltage, obj("value", 12))
-	e.expect(t, 422, "DELETE", "/stock/"+rowID+"/values/"+serial, nil) // required
-	e.expect(t, 200, "PUT", "/stock/"+rowID+"/values/"+condition, obj("value", "Worn"))
-
-	// Split copies the values; merging requires identical values.
-	split := e.expect(t, 200, "POST", "/stock/"+rowID+"/move", obj("location", van, "amount", 1)).body
-	if str(t, split, "id") == rowID || len(get(t, split, "values").([]any)) != 3 {
-		t.Fatalf("split: %v", split)
-	}
-	merged := e.expect(t, 200, "POST", "/stock/"+rowID+"/merge", obj("into", str(t, split, "id"), "amount", 1)).body
-	if str(t, merged, "id") != str(t, split, "id") || num(t, merged, "amount") != 2 {
-		t.Errorf("merge into the identical row: %v", merged)
-	}
-	differing := str(t, e.expect(t, 201, "POST", "/stock", obj("item", drillID, "location", site, "amount", 1,
-		"values", obj(serial, "OTHER"))).body, "id")
-	refusal := e.expect(t, 422, "POST", "/stock/"+rowID+"/merge", obj("into", differing, "amount", 1))
-	if d := str(t, refusal.body, "detail"); !strings.Contains(d, "have different values for") || !strings.Contains(d, "Serial number") {
-		t.Errorf("rows with different values must not merge: %v", refusal.body)
-	}
-
-	// Search finds per-unit values; item_get shows them on its stock rows.
-	list := e.expect(t, 200, "GET", "/items?search=batch-7", nil).body
-	if num(t, list, "total") != 1 || get(t, list, "rows", 0, "incomplete") != false {
-		t.Errorf("search by serial number: %v", list)
-	}
-	item := e.expect(t, 200, "GET", "/items/"+drillID, nil).body
-	if len(get(t, item, "stock", 0, "values").([]any)) != 3 {
-		t.Errorf("item_get stock row values: %v", get(t, item, "stock", 0))
-	}
-
-	// A requirement added later doesn't block anything; it's reported.
-	e.expect(t, 200, "PUT", base+bought, obj("scope", "stock", "required", true))
-	other := e.expect(t, 200, "GET", "/items?search=drill", nil).body
-	if get(t, other, "rows", 0, "incomplete") != true {
-		t.Errorf("item with a stock row lacking a newly required value should be incomplete: %v", get(t, other, "rows", 0))
-	}
-
-	// The scope can't change while values exist.
-	e.expect(t, 422, "PUT", base+serial, obj("scope", "item", "required", true))
 }
