@@ -1,54 +1,35 @@
-# Attachments
+# Files
 
-The SQL is in [`db/repeatable/13_attachment.sql`](../db/repeatable/13_attachment.sql), and the table is in [`db/migrations/0001_schema.sql`](../db/migrations/0001_schema.sql). The file handling is in [`internal/files`](../internal/files/), and the upload and download handlers are in [`internal/serve/attachments.go`](../internal/serve/attachments.go).
+The SQL is in [`db/repeatable/13_attachment.sql`](../db/repeatable/13_attachment.sql). The file handling is in [`internal/files`](../internal/files/), and the upload and download handlers are in [`internal/serve/attachments.go`](../internal/serve/attachments.go).
 
-Files (photos, datasheets, manuals, receipts, …) can be attached to items, stock rows, locations and classes. Any file type is accepted.
+An item or a stock row has files in two ways:
+
+- **a photo**, in its `photo` column, which must be an image;
+- **the file of an attachment attribute** of its class ([attribute.md](attribute.md)), as that value: a datasheet, a manual, a receipt. Only the attachments a class defines can be uploaded, one file each, of the media types the attribute lists, if it lists any.
+
+Locations and classes have no files.
 
 ## The model
 
-- **One table, `attachment`, for all four kinds of object.** A row is one attachment: `id`, its object (exactly one of `item`, `stock`, `location` and `class`), `media_type` (the MIME type), `hash` (the hex SHA-256 of the content), `size` (in bytes) and `title`.The title is given at upload, and defaults to the uploaded file's name. Nothing is shared between objects.
-- **An attachment is only reached through its object:** `/items/{id}/attachments/{attachment}`, and so on. The same id under another object is not found.
-- **A photo:** items, stock rows, locations and classes each have a `photo` column, naming one of their own attachments (a foreign key on the object and the attachment) that must be an image (`image/*`, a rule). Deleting that attachment clears the photo.
-- **Content on disk:** the contents live in `wtfd`'s files directory (`--files-directory`), in a directory per tenant named after its host, named by their hash: `<directory>/<host>/ab/abcdef…` ([TENANTS.md](../TENANTS.md)). A stored file never changes. The same content is stored once per tenant, however many attachments have it, on whatever objects. A tenant's directory appears with its first upload.
-- **Deleting** an attachment removes it for good ([deleting.md](deleting.md)). `wtfd gc` removes its file once no attachment of the tenant has its hash (see [WTFD.md](../WTFD.md)).
-- **Deleting an object deletes its attachments** with it.
+- **A file is its hash:** the photo and an attachment's value are the hex SHA-256 of the file's content, and nothing more. Its size is read from the file. Its media type is found from its first bytes, at upload and when serving, not taken from the client: sniffing tells images and PDF well, while Word and Excel files come out as ZIP archives, and CSV as plain text.
+- **Content on disk:** the contents live in `wtfd`'s files directory (`--files-directory`), named by their hash: `<directory>/ab/abcdef…`. A stored file never changes, and the same content is stored once, however many items and stock rows have it.
+- **Removing** a file is a patch: `{"photo": null}`, or `{"values": {"Manual": null}}`. `wtfd gc` removes a file once nothing has its hash any more (see [WTFD.md](../WTFD.md)), and deleting an item or stock row leaves its files to `gc` too.
 
 ## Functions
 
-Every function takes the kind of object (`p_kind`: `item`, `stock`, `location` or `class`) and the object's id.
-
-- **`attachment.lock(p_hash)`** and **`attachment.create(p_kind, p_owner, p_hash, p_media_type, p_size, p_title, p_photo)`** are used by the upload handler, in one transaction: lock the hash, put the file in place, record the attachment. `wtfd gc` takes the same lock (`attachment.file_lock_key`) before removing a file, so a running upload never loses its file. The handler checks the session (`account.me`) before it stores anything. With `p_photo`, the attachment becomes the object's photo.
-- **`attachment.get(p_kind, p_owner, p_attachment)`** returns `{id, title, media_type, size, hash}`.
-- **`attachment.patch(p_kind, p_owner, p_attachment, p_patch)`** changes the `title`.
-- **`attachment.delete(p_kind, p_owner, p_attachment)`** deletes it.
-- **The photo** is set with the object's own patch: `{"photo": "<attachment id>"}`, or `null` for none (`item.patch`, `stock.patch`, `location.patch`, `class.patch`).
-- **Roles:** every account can read attachments. Those of items and stock rows can be changed by users, those of locations and classes only by admins.
-
-## Where attachments appear
-
-- **`item.get`:** the item's `photo` and attachments, and those of each of its stock rows.
-- **`stock.get`, `location.get`, `class.get`:** the object's `photo` and attachments.
-- **`item.list`:** each item's `photo`.
-- **Stock rows and item summaries** everywhere (`stock.list`, the `item` inside a stock row, `code.resolve`, …): the stock row's `photo`, and the item's `photo` in its summary.
-- **`class.list`, `location.list`:** each tree node's `photo`. Any change to a class's or location's attachments gives its tree a new version, so a cached tree never shows an old title.
-- Attachments are listed with the photo first, then by title.
-
-## Stock rows
-
-When `stock.move` splits a row, the new row gets copies of the attachments: new rows with new ids, the same files on disk. The copy of the photo becomes its photo. When `stock.merge` merges a whole row into another, its attachments move to that row, which keeps its own photo.
+- **`attachment.lock(p_hash)`** and **`attachment.set(p_kind, p_owner, p_attribute, p_hash, p_media_type)`** are used by the upload handler, in one transaction: lock the hash, put the file in place, set the photo (`p_attribute` null) or the attribute's value. `wtfd gc` takes the same lock (`attachment.file_lock_key`) before removing a file, so a running upload never loses its file. The handler checks the session (`account.me`) before it stores anything. `p_kind` is `item` or `stock`; a file already there is replaced. Users may upload.
+- **`attachment.get(p_kind, p_owner, p_attribute)`** returns `{hash, name}` of a photo (`p_attribute` null) or an attachment value, for the download handler; `name` is the attribute's, or "Photo".
 
 ## Uploading and downloading
 
-The routes are under the object: `/items/{id}`, `/stock/{id}`, `/locations/{id}` or `/classes/{id}`.
+The routes are under the item or stock row: `/items/{id}` or `/stock/{id}`.
 
-- **Upload:** `POST …/attachments`, with a `multipart/form-data` body:
-  - a `file` part (required): its `Content-Type` is kept, and the type is detected when it's missing or `application/octet-stream`;
-  - an optional `title` part (default: the file's name);
-  - an optional `photo` part (`true`/`false`): make it the object's photo. A file that isn't an image is then refused (422), and nothing is attached.
-
-  The size limit is `--max-attachment-size` (100 MiB by default). `Location` points at the new attachment.
-- **Read, rename, delete:** `GET`, `PATCH` (`{title}`) and `DELETE` on `…/attachments/{attachment}`.
-- **Download:** `GET …/attachments/{attachment}/content`.
-  - **Name:** the title, plus an extension for the type when the title doesn't already end in one that fits. "Datasheet" as `application/pdf` downloads as `Datasheet.pdf`; "manual.pdf" stays as it is.
+- **Upload:** `PUT …/photo`, or `PUT …/files/{attribute}`, with a `multipart/form-data` body of one `file` part. It answers the item or stock row. The size limit is `--max-attachment-size` (100 MiB by default). A photo that isn't an image is refused (400); a file of a type the attribute doesn't take is refused (422).
+- **Download:** `GET …/photo`, or `GET …/files/{attribute}`.
+  - **Name:** the attribute's name ("Photo" for the photo), with an extension for the type: a manual as `application/pdf` downloads as `Manual.pdf`.
   - **Inline or not:** images (except SVG), PDF and plain text are sent `inline`; everything else as a download (`Content-Disposition: attachment`). Downloads also carry `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox`, so an uploaded HTML file can't run as a page on the API's hostname.
   - **Caching:** the `ETag` is the content hash, the content never changes, and `Range` requests work.
+
+## Stock rows
+
+When `stock.move` splits a row, the new row has the same photo and attachment values: the same files on disk. When `stock.merge` finds that two rows' photos or files differ, the client says which to keep, as for any other difference ([location.md](location.md)).

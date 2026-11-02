@@ -4,12 +4,12 @@ The SQL is in [`db/repeatable/20_account.sql`](../db/repeatable/20_account.sql),
 
 ## Logging in and sessions
 
-- **`account.login(p_request, p_email, p_password, p_client, p_max_idle)`** logs in to the tenant of the request's host (TENANTS.md) and starts a session for the client `p_client` (a device's name, such as "WtF on Pixel 9", or null), which may sit unused for `p_max_idle` before it expires (null: until logging out).
+- **`account.login(p_request, p_email, p_password, p_client, p_max_idle)`** logs in, and starts a session for the client `p_client` (a device's name, such as "WtF on Pixel 9", or null), which may sit unused for `p_max_idle` before it expires (null: until logging out).
   - **On success** it returns `{ok: true, token, account}`.
-  - **On failure** it returns `{ok: false, reason}`, where `reason` is `invalid` (unknown email or wrong password) or `locked`. It returns these rather than raising an error, so the count of failed logins is committed. An unknown host is a 404.
+  - **On failure** it returns `{ok: false, reason}`, where `reason` is `invalid` (unknown email or wrong password) or `locked`. It returns these rather than raising an error, so the count of failed logins is committed.
   - **Lockout:** after 5 failed logins, only one attempt per minute is accepted until a login succeeds.
   - `wtfd` answers 200, 401 or 429 (with `Retry-After`), and logs each login with its client and address.
-- **`util.session(p_request, p_role)`**, at the start of every other function, finds the session by its token's hash in the tenant of the host, checks the role, renews the session at most once a minute (with the address it was used from), and returns the session, its tenant, its account and the role.
+- **`util.session(p_request, p_role)`**, at the start of every other function, finds the session by its token's hash, checks the role, renews the session at most once a minute (with the address it was used from), and returns the session, its account and the role.
 - **`account.logout()`** ends the session the call is made with.
 - **`account.me()`** returns the account the call is made with.
 - **`account.password_change(p_current, p_new, p_end_other_sessions)`** changes one's own password, which needs the current one. `p_end_other_sessions` says whether the account's other sessions end too; it has no default.
@@ -24,8 +24,8 @@ Tokens are 32 random bytes, base64url-encoded; the database stores only their SH
 `util.session` checks the account's role: it must be at least the function's, in the order `viewer`, `user`, `admin` ([ACCOUNTS.md](../ACCOUNTS.md) has the table).
 
 - **Viewer:** reading.
-- **User:** also items and stock rows, with their values and attachments.
-- **Admin:** also locations, classes, attributes, options, units for the tenant, model files and the accounts.
+- **User:** also items and stock rows, with their values and files.
+- **Admin:** also locations, classes and their attributes, model files and the accounts.
 - One's own account and sessions (`account.me`, `account.password_change`, `account.logout`, `account.session_…`) need only a login.
 - **Not allowed:** 42501, which `wtfd` turns into a 403.
 
@@ -35,13 +35,13 @@ These are for admins.
 
 - **`account.list()`** returns the accounts, by email address; **`account.get(p_account)`** one account.
 - **`account.create(p_email, p_password, p_role)`**:
-  - the email is unique among the tenant's accounts, ignoring letter case;
+  - the email is stored in lower case, and is unique;
   - a password needs at least 8 characters and at most 72 bytes (bcrypt, cost 12);
   - without a password (null), the account can't log in until one is set;
   - the role is required.
 - **`account.patch(p_account, p_patch)`** takes the keys `email`, `password` (null removes it) and `role`. With `password` comes `end_sessions` (true or false, and only with a password): whether the account's sessions end.
   - An admin's own password is changed with `account.password_change`, which needs the current one.
-  - You can't change your own role (400), so a tenant always has an admin.
+  - You can't change your own role (400), so there is always an admin.
 - **`account.delete(p_account)`** deletes an account, with its sessions. Its email can be used again. You can't delete your own account (400).
 
-The first account of a tenant is created with `wtfd tenant create`; `wtfd account create` adds another, and `wtfd account password` sets a lost password (see [WTFD.md](../WTFD.md)).
+The first account is created with `wtfd account create`, which adds others too, and `wtfd account password` sets a lost password (see [WTFD.md](../WTFD.md)).

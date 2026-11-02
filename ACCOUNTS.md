@@ -1,18 +1,18 @@
 # Accounts and authentication – design
 
-Status: **implemented** (migrations `0001_schema.sql` and `0004_roles.sql`, [api/account.md](api/account.md), `wtfd account`).
+Status: **implemented** ([`0001_schema.sql`](db/migrations/0001_schema.sql), [api/account.md](api/account.md), `wtfd account`).
 
 ## Concepts
 
-- One installation holds many inventories, called **tenants** ([TENANTS.md](TENANTS.md)), each with its classes, attributes, items, locations, stock, attachments and accounts. Global units are shared; each tenant can import its own.
-- An **account** is a user of one tenant. The email address is the user name, unique case-insensitively among the tenant's accounts. The same email in two tenants means two unrelated accounts.
+- One database is one installation of WtF, with its classes, items, locations, stock and accounts.
+- An **account** is a user. The email address is the user name, stored in lower case, and unique.
 - Every account has a **role**, one of `viewer`, `user` and `admin`. Each role can do what the ones before it can. Users keep the inventory; admins set it up:
 
   | | viewer | user | admin |
   |---|---|---|---|
-  | See items, stock, locations, classes, attributes, units and attachments; search; label codes | ✓ | ✓ | ✓ |
-  | Add, change and delete items and stock rows, with their values and attachments | | ✓ | ✓ |
-  | Set up locations (with compartment grids), classes (with their attributes), attributes and options, and units for the tenant, with their attachments | | | ✓ |
+  | See items, stock, locations and classes with their attributes and files; search; label codes | ✓ | ✓ | ✓ |
+  | Add, change and delete items and stock rows, with their values and files | | ✓ | ✓ |
+  | Set up locations (with compartment grids) and classes, with their attributes | | | ✓ |
   | Import and export model files | | | ✓ |
   | Accounts | | | ✓ |
 
@@ -21,8 +21,8 @@ Status: **implemented** (migrations `0001_schema.sql` and `0004_roles.sql`, [api
 ## Schema
 
 - **`account`** (`user` is a reserved word in SQL):
-  - `id` and `tenant`;
-  - `email`, unique case-insensitively among the tenant's live accounts;
+  - `id`;
+  - `email`, in lower case, unique;
   - `password_hash` (`NULL` = can't log in, e.g. until a future reset link is used);
   - `role`, of the enum `role` (`viewer`, `user`, `admin`, in that order);
   - `failed_logins` and `last_failed_login`, for the lockout;
@@ -31,15 +31,15 @@ Status: **implemented** (migrations `0001_schema.sql` and `0004_roles.sql`, [api
 
 ## Enforcement in the database
 
-1. **Per request,** `wtfd` makes one call: the API function, with the request (token, host label, client address) as its first argument, in one statement.
-2. **Every API function** starts with `util.session(p_request, 'viewer' | 'user' | 'admin')`. It hashes the token and finds the session in the tenant of the request's host; checks that it hasn't sat unused for longer than its `max_idle`, that the account is live, and that its role is at least the one named; and renews it (`last_used` and the address, at most once a minute, to avoid a write on every request). It returns the session, its tenant, its account and the role, and every function then works in that tenant (TENANTS.md, "Isolation").
+1. **Per request,** `wtfd` makes one call: the API function, with the request (token, client address) as its first argument, in one statement.
+2. **Every API function** starts with `util.session(p_request, 'viewer' | 'user' | 'admin')`. It hashes the token and finds the session; checks that it hasn't sat unused for longer than its `max_idle`, and that its role is at least the one named; and renews it (`last_used` and the address, at most once a minute, to avoid a write on every request). It returns the session, its account and the role.
 3. **Defence in depth:** someone with the `wtf_api` password but no valid token can't act as any user. Without a session, the API functions refuse to work.
 
 ## API
 
 | Method & path | Function | Who |
 |---------------|----------|-----|
-| `POST /api/v1/login` `{email, password, client, max_idle}` | `account.login` → `{token, account}`, in the tenant of the request's host, a session for that client that may sit unused for `max_idle` seconds (null: until logging out); `wtfd` sends the token as the session cookie | anonymous |
+| `POST /api/v1/login` `{email, password, client, max_idle}` | `account.login` → `{token, account}`, a session for that client that may sit unused for `max_idle` seconds (null: until logging out); `wtfd` sends the token as the session cookie | anonymous |
 | `POST /logout` | `account.logout` (ends the current session) | logged in |
 | `GET /me` | `account.me` → the account with its role | logged in |
 | `PUT /me/password` `{current, new, end_other_sessions}` | `account.password_change`: with `end_other_sessions`, the account's other sessions end | logged in |
@@ -69,7 +69,7 @@ Status: **implemented** (migrations `0001_schema.sql` and `0004_roles.sql`, [api
 
 Run by the operator as the DBA role:
 
-- **`wtfd tenant create --host smith --email anna@example.com`** creates a tenant and its first account, an admin, and **`wtfd account create --host smith --email … [--role viewer|user|admin]`** another account in it, an admin unless `--role` says otherwise. Both print a generated password once.
+- **`wtfd account create --email anna@example.com [--role viewer|user|admin]`** creates an account, such as the first, an admin unless `--role` says otherwise. It prints a generated password once.
 - **`wtfd account password --email anna@example.com`** gives an account a new generated password, when it is lost. It also lifts a lockout and ends the account's sessions.
 
 ## TLS
@@ -81,5 +81,5 @@ Passwords travel from the client to `wtfd`, and from `wtfd` to PostgreSQL, becau
 - **Naming:** the table is `account` (`user` is a reserved word in SQL). The term "member" is not used.
 - **Roles, not privileges** (2026-10-30, your decision): the four privileges (`data`, `model`, `account`, `history`, each `none`, `read_only` or `read_write`) became one role, to keep it simple for those who only keep the inventory (users) and those who set it up (admins); viewers look. Model exports are for admins, since they couldn't import them again. Migration `0004_roles.sql` made accounts that could write the model or the accounts admins, those that could write the data users, and the rest viewers. Locations moved from the data to the setup: users put stock in them, admins make them.
 - **"Log out everywhere":** left out at first, as changing your own password revoked all other sessions. Since the refactor of November 2026, a user sees their sessions and ends them (`/me/sessions`), and a new password asks whether the others end.
-- **Tenants:** dropped once, and brought back, with accounts per tenant, in [TENANTS.md](TENANTS.md).
+- **Tenants:** dropped once, brought back, and dropped again on 2 November 2026: one database is one installation ([2026-11-02-attributes-in-json.md](2026-11-02-attributes-in-json.md), decisions 36–42).
 - **Deleting an account removes it** (2026-11-01): it was only marked deleted while history referred to it; with history gone, the row goes with its sessions ([2026-11-01-dropping-deleted-and-history.md](2026-11-01-dropping-deleted-and-history.md), decision 12). To shut someone out without deleting them, remove the password.

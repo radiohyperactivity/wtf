@@ -8,6 +8,7 @@ package integration
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -393,4 +394,21 @@ func TestFilesAndModels(t *testing.T) {
 			t.Fatalf("resolve: %v", r)
 		}
 	})
+}
+
+// The example model file imports, and exports again as it was.
+func TestSeedModel(t *testing.T) {
+	at := newAccessors(t, "seedmodel")
+	file, err := os.ReadFile("../../seed/models/mcu.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := at.admin.must(t, "model.import", string(file), nil, false)
+	if num(t, r, "classes", "added") != 5 || num(t, r, "attributes", "added") != 12 {
+		t.Fatalf("import: %v", r)
+	}
+	r = at.admin.must(t, "model.import", string(file), nil, true)
+	if num(t, r, "classes", "existing") != 5 || num(t, r, "attributes", "added") != 0 {
+		t.Fatalf("import again: %v", r)
+	}
 }

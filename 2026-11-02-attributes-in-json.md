@@ -1,6 +1,6 @@
 # Attributes in JSON – plan
 
-**Status: being rewritten (2026-11-02); decisions 1–49 settled.** The schema, the accessors and `wtfd` were written for decisions 1–35 before tenants were dropped (decisions 36–42), and now change for those too. The CLI's commands are decisions 44–48.
+**Status: done (2026-11-02): steps 1–7, decisions 1–49.** The code is `ca7477e`; the documents, the apps plan and the performance figures followed. The apps themselves are next, as their plan says.
 
 ## How we work
 
@@ -285,3 +285,4 @@ On `main`, before the apps, in the same order as the refactor; each step kept wo
 - **2026-11-02:** topics A–H and the indexes settled (decisions 21–35); the plan written.
 - **2026-11-02:** the schema, the accessors and `wtfd` written for decisions 1–35, with tests of the new accessors (all pass); then tenants dropped (decisions 36–42), to be done in the same rewrite; the CLI's commands proposed.
 - **2026-11-02:** the CLI's commands settled (decisions 43–48), with the names of the fixed fields reserved and a patch that changes values.
+- **2026-11-02 (night):** step 6, the documents: API.md, `api/*.md`, SCHEMA.md, WTFD.md, CLI.md (decisions 70–76), the README, ACCOUNTS.md, TODO.md, `seed/model-format.md` (version 2) and `seed/models/mcu.json`, which a test now imports; TENANTS.md and `seed/units.md` gone. Step 7: the apps plan has the plan's changes. The performance test ran on 1,000 to 1,000,000 items (PERFORMANCE.md): pages, single reads and writes take 1–15 ms at every size; what few items pass, and class changes that rewrite many rows, cost what they read or write. SCHEMA.html (the ER diagram) is from before the refactor of 31 October, and still isn't redrawn; APP.md describes the apps, and changes with them.

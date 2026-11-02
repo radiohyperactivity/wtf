@@ -359,7 +359,7 @@ Built for API revision 9: the class and location tree nodes include their `photo
 
 ### Tenants
 
-Built with the server's tenants ([TENANTS.md](TENANTS.md)), API revision 11.
+Built with the server's tenants (TENANTS.md, removed with them on 2 November 2026), API revision 11.
 
 56. **One server address per inventory, as before.** The hostname in it picks the tenant, so the login screen, Me and everything else stay as they are; nothing tells users that there are other tenants (your decision). An IP address alone picks no tenant: on a home network, use a name such as `http://bbj.192.168.1.10.nip.io:8080`.
 57. **Unit ids are strings** (UUIDs), and quantities and families say whether they are available, the default, and the inventory's own choice.

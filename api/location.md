@@ -2,22 +2,44 @@
 
 The SQL is in [`db/repeatable/40_location.sql`](../db/repeatable/40_location.sql) and, for stock rows, [`db/repeatable/41_stock.sql`](../db/repeatable/41_stock.sql).
 
+## Locations
+
+`location.list(p_known_version)` is the location tree, flat, which `wtfd` nests (`GET /locations`, with `ETag` and `If-None-Match`); its version is `meta.location_version`. `location.get` is a location with its code and path. `location.create` and `location.patch` take `name`, `parent` and `container`; a move below itself is refused.
+
 ## Stock rows
 
-A stock row is an item at a location, with an `amount` (in the base unit of the item's unit; null: not counted) and the values of its class's attributes with scope `stock`. `stock.create(p_item, p_location, p_amount, p_values)` makes one; `stock.patch` corrects its item, location, amount or photo.
+A stock row is an item at a location, with:
 
-`stock.move(p_stock, p_location, p_amount)` moves a row, or part of it, to another location; `p_amount` null moves the whole row, otherwise the row must be counted. A whole row changes location and keeps its code; a part is split off into a new row at the destination, with a code of its own, copies of the values and of the attachments, and the copy of the photo as its photo. A move never merges into another row. It returns the row at the destination.
+- **`amount`**, in the item's unit (whole for pieces); null: present, but not counted; 0: none left, but this is where they belong;
+- **`reference`** and **`serial`**, optional texts (an order number, a serial number); neither is unique;
+- **`photo`**, the hash of its photo's file, or null;
+- **`values`** and **`defaulted`**, for its item's class's attributes with scope `stock` ([attribute.md](attribute.md)).
 
-`stock.merge(p_stock, p_into, p_amount)` adds `p_amount` of a row (null: all of it) to another row, `p_into`, which may be at another location; it is the user's own action, not a side effect of moving.
+`stock.create(p_item, p_location, p_amount, p_reference, p_serial, p_values)` makes one; `stock.patch` changes its item, location, amount, reference, serial, photo (null only) and values, in one transaction.
 
-- **Both rows** must be of the same item and counted, and not the same row, and have exactly the same values; otherwise it is refused (422, naming the attributes that differ), as nothing about a row may be lost by merging.
-- **All of it:** the row is deleted, and its label then answers 410 ([code.md](code.md)); its attachments move to `p_into`, which keeps its own photo.
-- **Part of it:** the row keeps the rest, and its attachments.
+`stock.list(p_item, p_location, p_search, p_limit, p_after)` (`GET /stock`) is a page of stock rows by item name, paged by key as `item.list` is: of an item, in a location or below it, or with `p_search`, words that must each occur in the reference or the serial.
+
+## Moving and merging
+
+`stock.move(p_stock, p_location, p_amount)` moves a row, or part of it, to another location; `p_amount` null moves the whole row, otherwise the row must be counted. A whole row changes location and keeps its code; a part is split off into a new row at the destination, with a code of its own and everything else the row has: its reference, serial, photo and values. A move never merges into another row. It returns the row at the destination.
+
+`stock.merge(p_stock, p_into, p_amount, p_resolve)` adds `p_amount` of a row (null: all of it) to another row, `p_into`, which may be at another location; it is the user's own action, not a side effect of moving.
+
+- **Both rows** must be of the same item and counted, and not the same row.
+- **Where they differ** (their reference, serial, photo, or a value), `p_resolve` says which row's to keep, for each difference:
+
+  ```json
+  {"reference": "into", "serial": "from", "photo": "into", "values": {"Colour": "from"}}
+  ```
+
+  `from` is `p_stock`'s, `into` is `p_into`'s. Without a resolution for every difference, the merge is refused (422, naming the differences), so that the client can ask the user. `p_into` takes what is resolved `from`.
+- **All of it:** the row is deleted, and its label then answers 410 ([code.md](code.md)).
+- **Part of it:** the row keeps the rest, as it was.
 - It returns `p_into`.
 
 ## Deleting a subtree
 
-Deleting removes a location for good; see [deleting.md](deleting.md). `location.delete` deletes one location, which must have no sublocations or stock (409 otherwise, saying which). `location.delete_tree(p_location, p_force, p_dry_run)` (`DELETE /locations/{id}?recursive=true`) deletes a location and every live location below it in one action, deepest first:
+Deleting removes a location for good; see [deleting.md](deleting.md). `location.delete` deletes one location, which must have no sublocations or stock (409 otherwise, saying which). `location.delete_tree(p_location, p_force, p_dry_run)` (`DELETE /locations/{id}?recursive=true`) deletes a location and every location below it in one action:
 
 - **Stock blocks it:** if there is stock in any of them, nothing is deleted (23001, 409), and the message names the locations and their stock row counts (`Garage/Box (2 stock rows)`).
 - **`p_force`** (`force=true`) deletes those stock rows too. The items themselves stay.
@@ -26,7 +48,7 @@ Deleting removes a location for good; see [deleting.md](deleting.md). `location.
 
 ## Containers
 
-A location created or patched with `container: true` holds only other locations: no stock row can be at it, including by `stock.move` or by patching a stock row's location, and `location.patch` refuses to make a location with stock a container (23514, 422). `location.create` takes the flag, `location.patch` the key `container`, and `location.get` and the tree's nodes include it.
+A location created or patched with `container: true` holds only other locations: no stock row can be at it, including by `stock.move` or by patching a stock row's location, and `location.patch` refuses to make a location with stock a container (23514, 422). Putting stock in a location locks the location row for sharing, so that it can't become a container meanwhile.
 
 ## Grids of compartments
 

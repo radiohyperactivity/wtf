@@ -7,7 +7,8 @@ go build -o wtf ./cmd/wtf
 wtf login --server http://localhost:8080 --email anna@example.com
 wtf location add Garage
 wtf location add "Shelf 2" --parent Garage
-wtf item add "Cordless drill" --class Tools --value "Voltage=18V"
+wtf class attribute add Tools Voltage --type decimal --unit V
+wtf item add "Cordless drill" --class Tools --voltage 18
 wtf stock add "Cordless drill" "Garage/Shelf 2" 1
 wtf find drill
 wtf item add            # asks for everything, with Tab completion
@@ -31,15 +32,12 @@ wtf item add            # asks for everything, with Tab completion
   - **Login:** `wtf login` prompts without echo, or reads `WTF_PASSWORD` in scripts.
   - **Other prompts:** `wtf password` and `wtf account add|set --password` prompt the same way.
   - **Scripts:** when stdin is not a terminal, prompts read a line from stdin, so passwords can be piped in. Passwords are never taken as command-line arguments.
-- **Units:**
-  - **Input:** numbers may carry a unit symbol (`12mm`, `2.5 m`, `10kohm`, `-40 °C`). `wtf` converts them to the base unit with the unit's factor and offset from the API, exactly in decimal, and checks that the unit measures the right quantity.
-  - **Plain numbers:** a number without a unit is in the attribute's or item's unit (with `--unit mm`, `12` is 12 mm).
-  - **Other units:** any unit of the same quantity is accepted, also from another family (`1in` for a metric length). A symbol is looked up in the unit's own family first.
-  - **Output:** numbers are shown in their display unit (`1.2 cm`, `10 kΩ`): scaled within the unit's family, or always in the unit itself with Unit lock (`--unit-lock`).
+- **Attribute values are flags of their own** (decision 70): `--colour Blue` sets "Colour", `--no-colour` removes it, and `--default colour` puts it back to the class's default. Letter case is ignored and a hyphen stands for a space (`--supply-voltage 3.3` is "Supply voltage"). An attribute named like one of the command's own flags is set with `--value NAME=VALUE`.
+- **Units are labels:** an attribute's or item's unit says what its numbers are in. A number may carry it (`12 mm` for a length in mm), but nothing converts: another unit is refused.
 - **Dates:** `YYYY-MM-DD`, `today`, `yesterday`, `tomorrow`, or relative to today: `+3` or `+3d` (days), `-2w` (weeks), `+1m` (months), `-1y` (years). A month step stops at the end of a shorter month (31 January `+1m` is 28 February).
 - **Interactive prompts:** on a terminal, `wtf` asks for whatever a command is missing, with Tab completion and a picker (see below).
 - **Shell completion:** `wtf completion bash|zsh|powershell` prints the code for Tab completion of commands, flags and objects.
-- **Long lists** go through a pager on a terminal and come out whole when piped.
+- **Long lists** show their first page, and say when more follow; `--all` shows every row, through a pager on a terminal.
 
 ### References
 
@@ -49,11 +47,10 @@ wtf item add            # asks for everything, with Tab completion
 | class | id or path: `Screws`, `Hardware/Screws` |
 | item | id, label code (of the item or of one of its stock rows), or exact name (any case) |
 | stock row | id, label code, `ITEM@LOCATION` (`"Drill@Garage/Shelf 2"`), or an item that has exactly one stock row |
-| attribute, unit family, quantity | id or name |
-| option | `<attribute> <option name>`, or the option's id alone |
-| unit | id, symbol or name; a symbol that several families share names its family: `B (Binary bytes)` |
+| attribute | its name, after its class: `wtf class attribute set Screws Length …`; letter case is ignored and a hyphen stands for a space |
+| choice | its text, after its class and attribute |
+| item or stock row, for files | a label code (of either), `ITEM@LOCATION` for a stock row, or an item's name |
 | account | id or email |
-| attachment | id (`wtf attachment list TYPE REF` shows them) |
 
 ### Commands
 
@@ -64,16 +61,14 @@ wtf item add            # asks for everything, with Tab completion
 | `wtf profile list` / `use <name>` / `delete <name>` | (local configuration) |
 | `wtf find <words…> [--class C] [--where CONDITION]…` | `GET /items?search=&where=`, plus each item's stock locations |
 | `wtf code <code>` | `/codes/{code}` |
-| `wtf item list [--class C] [--search S] [--where CONDITION]…` / `get` / `add <name> --class C [--unit U [--unit-lock]] [--value A=V]… [--edit]` / `set` / `edit` / `delete` | `/items` |
-| `wtf item value-set <item> <attribute> <value…>` / `value-delete <item> <attribute>` | `/items/{id}/values/{attribute}` |
-| `wtf stock list [--item I] [--location L]` / `get` / `add <item> <location> [amount] [--value A=V]…` / `move <stock> <location> [amount]` / `merge <stock> <into> [amount]` / `set [--amount A\|none] [--location L] [--item I]` / `edit` / `delete` | `/stock` |
-| `wtf stock value-set` / `value-delete` | `/stock/{id}/values/{attribute}` |
+| `wtf item list [--class C] [--search S] [--where CONDITION]… [--limit N] [--all]` / `get` / `add <name> --class C [--unit U] [--<attribute> VALUE]… [--edit]` / `set [--name N] [--class C] [--unit U \| --no-unit] [--no-photo] [--<attribute> VALUE] [--no-<attribute>] [--default ATTRIBUTE]…` / `edit` / `delete` | `/items` |
+| `wtf stock list [--item I] [--location L] [--search S] [--limit N] [--all]` / `get` / `add <item> <location> [amount] [--reference R] [--serial S] [--<attribute> VALUE]…` / `move <stock> <location> [amount]` / `merge <stock> <into> [amount] [--keep FIELD=from\|into]…` / `set [--amount A\|none] [--location L] [--item I] [--reference R \| --no-reference] [--serial S \| --no-serial] [--no-photo] [--<attribute> VALUE] …` / `edit` / `delete` | `/stock` |
 | `wtf location tree` / `get` / `add <name or path> [--parent P] [--create-parents] [--container \| --grid COLUMNSxROWS] [--edit]` / `set [--name N] [--parent P\|none] [--container yes\|no]` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` | `/locations` |
-| `wtf class tree` / `get` / `add` / `set` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` / `assign <class> <attribute> [--default V] [--per-unit] [--required]` / `unassign` | `/classes`, `/classes/{id}/attributes/{attribute}` |
-| `wtf attribute list` / `get` / `add <name> [--type T] [--unit U [--unit-lock]] [--edit]` (with a unit, the type follows from it) / `set` / `edit` / `delete` | `/attributes` |
-| `wtf option list <attribute>` / `get` / `add <attribute> <name>…` / `set --name N` / `delete` | `/attributes/{id}` (its options), `/attributes/{id}/options`, `/options/{id}` |
-| `wtf attachment list <type> <ref>` / `add <type> <ref> <file> [--title T] [--photo]` / `get <type> <ref> <id>` / `download <type> <ref> <id> [-o FILE\|-]` / `set <type> <ref> <id> --title T` / `photo <type> <ref> <id\|none>` / `delete <type> <ref> <id>` | attachments |
-| `wtf quantity list` / `get` / `available <q> on\|off\|default`, `wtf unit-family list [--quantity Q]` / `get` / `available <f> on\|off\|default`, `wtf unit list [--quantity Q] [--family F]` / `get` / `import <file> [--dry-run]` | units: global and the tenant's own, and which are available |
+| `wtf class tree` / `get` / `add` / `set` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` | `/classes` |
+| `wtf class attribute add <class> <name> --type T [--stock] [--unit U] [--required] [--default V] [--choices A,B,C] [--media TYPES] [--order N] [--dry-run]` / `set <class> <attribute> [--required yes\|no] [--default V \| --no-default] [--unit U \| --no-unit] [--media TYPES \| --no-media] [--order N] [--dry-run]` / `rename <class> <attribute> <new name> [--dry-run]` / `remove <class> <attribute> [--dry-run] [--yes]` | `/classes/{id}/attributes` |
+| `wtf class choice add <class> <attribute> <choice>…` / `rename <class> <attribute> <choice> <new>` / `remove <class> <attribute> <choice>`, each `[--dry-run]` | `/classes/{id}/attributes/{attribute}/choices` |
+| `wtf file put <item or stock row> <attribute\|photo> <file>` / `get <item or stock row> <attribute\|photo> [file\|-] [--force]` | `/items/{id}/photo`, `/items/{id}/files/{attribute}`, and the same for `/stock` |
+| `wtf model import <file> [--parent CLASS] [--dry-run]` / `export <class> [-o FILE] [--force]` | `/model/import`, `/classes/{id}/model` |
 | `wtf account list` / `get` / `add <email> [--password] [--role R] [--edit]` / `set [--email E] [--password\|--no-password [--log-out\|--keep-sessions]] [--role R]` / `edit` / `delete` | `/accounts` |
 
 ## Interactive use
@@ -83,15 +78,15 @@ wtf item add            # asks for everything, with Tab completion
 When stdin and stderr are a terminal, `wtf` asks for missing arguments instead of failing: `wtf item add` asks for the name, the class, and then the attribute values. Elsewhere (scripts, pipes) a missing argument is a usage error, as before.
 
 - **What is asked:**
-  - missing required arguments and flags (`--class` of `item add`, `--type` of `attribute add`, …);
+  - missing required arguments and flags (`--class` of `item add`, `--type` of `class attribute add`, …);
   - required attribute values that have no value or default, even when the command line was otherwise complete.
 - **What is offered:** once `wtf` has asked for something, the session counts as interactive, and optional data is offered too. Enter skips it.
   - `item add`: the unit, then every attribute of the class, required ones first, with defaults shown as `Colour [red]`.
-  - `stock add`: the amount (Enter: uncounted) and the attributes with values on each stock row.
-  - `stock move`: the amount (Enter: all of it).
-  - `attribute add`: a unit for integer and decimal attributes.
-- **Stock for a new item:** after `item add` (not with `--edit`), `wtf` asks once `Add stock for M3? [y/N]` on every terminal, also when the command line was complete. Yes asks for a location, a quantity and the per-unit values, and adds that one stock row.
-- **Bad values:** a value that doesn't parse (`3kg` for a length) is reported, and the prompt asks again.
+  - `stock add`: the amount (Enter: uncounted) and the class's stock attributes.
+  - `stock move`, `stock merge`: the amount (Enter: all of it).
+  - Files are uploaded with `wtf file put`, and never asked for.
+- **Stock for a new item:** after `item add` (not with `--edit`), `wtf` asks once `Add stock for M3? [y/N]` on every terminal, also when the command line was complete. Yes asks for a location, an amount and the stock attributes' values, and adds that one stock row.
+- **Bad values:** a value that doesn't parse (`3 kg` for a length in mm) is reported, and the prompt asks again.
 - **Cancelling:** Ctrl-C, or Ctrl-D on an empty line, cancels the command without changing anything (exit code 130).
 
 | Key | In a prompt |
@@ -102,7 +97,7 @@ When stdin and stderr are a terminal, `wtf` asks for missing arguments instead o
 | Backspace, Delete, Ctrl-U, Ctrl-K, Ctrl-W | delete back, forward, to the start, to the end, a word |
 | Enter | accept |
 
-The picker lists the candidates under the prompt: whole paths for locations and classes, option names, units after a number (`12` → `12mm`, `12cm`, …), and so on. Typing filters the list (by substring, ignoring case), ↑ ↓ PgUp PgDn move, Enter picks, Esc returns to the prompt.
+The picker lists the candidates under the prompt: whole paths for locations and classes, a choice's choices, yes and no, and so on. Typing filters the list (by substring, ignoring case), ↑ ↓ PgUp PgDn move, Enter picks, Esc returns to the prompt.
 
 ### Shell completion
 
@@ -112,21 +107,20 @@ source <(wtf completion zsh)                                # ~/.zshrc, after co
 wtf completion powershell | Out-String | Invoke-Expression  # $PROFILE
 ```
 
-Tab then completes commands, verbs, flags, and objects from the server, such as locations (`Garage/` → `Garage/Shelf 1`, `Garage/Shelf 2`), items, stock as `ITEM@LOCATION`, attributes, options, values (`--value Colour=` → `red`, `blue`), units, profiles and file names.
+Tab then completes commands, verbs, flags, and objects from the server, such as locations (`Garage/` → `Garage/Shelf 1`, `Garage/Shelf 2`), items, stock as `ITEM@LOCATION`, a class's attributes and choices, the files of an item (`photo` and its attachment attributes), profiles and file names.
 
 ### Lists
 
-`find`, `item list` and `stock list` show every row:
+`find`, `item list` and `stock list` show one page (`--limit`, 100 by default), and say on stderr when more rows follow. With `--all` they show every row:
 - **On a terminal:** through a pager that fetches pages only as needed. Space shows the next screen, Enter the next line, and q quits.
 - **Piped:** all rows at once.
-- **With `--limit` or `--offset`:** exactly one page, with a hint for the next `--offset`.
 
-`--json` prints all rows in one envelope, unless `--limit` or `--offset` asks for one page.
+`--json` prints the API's page, or with `--all` every row in one answer, `{rows, more: false}`. Lists have no total (decision 74).
 
 ## Tests
 
 - **Unit tests:**
-  - `internal/cli` covers code normalisation, number, unit and date parsing, path lookup and completion, flag parsing, shell word splitting and quoting, and the config file.
+  - `internal/cli` covers code normalisation, number and date parsing, attribute flags and conditions, path lookup and completion, flag parsing, shell word splitting and quoting, and the config file.
   - `internal/prompt` covers key decoding, line editing, Tab and the picker, with scripted keys.
 - **Integration tests:** they run the client against the real API handler and the test database. See README.md, "Tests".
   - `TestCLI` works as the first account and as a second, read-only account.
@@ -333,7 +327,7 @@ These follow your answers: all attributes offered, a picker on Tab Tab, bash, zs
 
 ### Tenants
 
-Built with the server's tenants ([TENANTS.md](TENANTS.md)), API revision 11.
+Built with the server's tenants (TENANTS.md, removed with them on 2 November 2026), API revision 11.
 
 52. **A profile is still one server address,** and the hostname in it picks the tenant: `wtf login https://smith.wtf.example`. Nothing else changes for logging in.
 53. **Unit ids are strings** (UUIDs). `--unit` still takes a symbol, a name, `"B (Binary bytes)"`, or an id.
@@ -366,3 +360,15 @@ Built with the refactored API ([API.md](API.md), API revision 1 again; 2026-10-3
 67. **Deleting asks first on a terminal:** `Delete stock 1A7K? This can't be undone. [y/N]`, unless `--yes`. Without a terminal it doesn't ask, so scripts delete as before; a single delete is refused while anything is in or uses what it deletes. A recursive delete still needs `--yes` in a script.
 68. **`wtf stock merge <stock> <into> [amount]`** adds a stock row, or part of it, to another row of the same item with the same values; all of it deletes the row. `wtf stock move` never merges.
 69. **`wtf code`** of a deleted thing's label says that it has been deleted (410), where a code never handed out isn't found.
+
+### Attributes in JSON, and no tenants (2 November 2026)
+
+[2026-11-02-attributes-in-json.md](2026-11-02-attributes-in-json.md), decisions 43–48:
+
+70. **An attribute is a flag of its own** in `item add`, `item set`, `stock add` and `stock set`: `--colour Blue` sets it, `--no-colour` removes it, and `--default colour` (as often as needed) puts it back to the class's default. Letter case is ignored and a hyphen stands for a space; a flag that matches two attributes is refused, saying which. Flags the command doesn't define are taken as attributes before the command's own are parsed, so an attribute named like one of them (`--json`, `--yes`, `--edit`, …) is set with `--value NAME=VALUE`. The database refuses attribute names of the fixed fields (`name`, `class`, `unit`, `photo`, `amount`, `reference`, `serial`, …), so those never clash.
+71. **`wtf class attribute add|set|rename|remove` and `wtf class choice add|rename|remove`** change a class's attributes, on the class that defines them. Each takes `--dry-run`, and says what it wrote ("Rewrote 1,204 items."); `remove` asks first on a terminal. A noun can be two words: `class attribute` is a noun of its own beside `class`. The groups `attribute`, `option`, `attachment`, `quantity`, `units` and `unit-family` are gone, with `class assign` and `unassign`, `item value-set` and `value-delete`.
+72. **Units are labels:** `--unit mm` on an attribute or item says what its numbers are in, and a number may carry it (`--length "12 mm"`); nothing converts, so another unit is refused.
+73. **`wtf file put|get <item or stock row> <attribute|photo> FILE`** uploads and downloads files. A label code says which of the two it is, `ITEM@LOCATION` is a stock row, and anything else an item. Without a file name, `get` names the download as the server does (`Manual.pdf`); `-` writes it to stdout. A photo or a file is removed with `set --no-photo` or `--no-<attribute>`.
+74. **Lists show one page** and say when more follow; `--all` follows the pages to the end (the API pages by key, with no total). `--offset` is gone.
+75. **`wtf stock merge`** asks, on a terminal, which row's value to keep for each difference (reference, serial, photo, a value), and takes `--keep FIELD=from|into` in scripts; without a terminal, a difference that `--keep` doesn't settle is an error that lists them all.
+76. **Profiles have the server's address only** (decision 41 of the plan): there are no tenants to pick by hostname.

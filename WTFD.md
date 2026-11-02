@@ -10,7 +10,7 @@ wtfd <action> [flags]
 |----------|----------------------------------------------------------------------|----------|
 | `schema` | Create or upgrade the database schema, and bring function grants up to date | implemented |
 | `serve`  | Run the REST API                                                     | implemented |
-| `gc`     | Remove attachment files that nothing references any more             | implemented |
+| `gc`     | Remove files that nothing references any more, and expired sessions | implemented |
 | `account`| Create an account, or set a lost password (`create`, `password`)     | implemented |
 
 ## Configuration
@@ -56,23 +56,21 @@ cmd/wtfd/main.go               action dispatch, configuration
 internal/config/               flags + environment variables
 internal/schema/               the schema action (migration runner)
 internal/serve/                the serve action (REST API)
-internal/files/                attachment file store and the gc action
-internal/admin/                the tenant, account and unit actions
+internal/files/                file store and the gc action
+internal/admin/                the account action
 openapi/openapi.json           OpenAPI description, embedded and served at /api/v1/openapi
 db/embed.go                    //go:embed migrations/*.sql repeatable/*.sql
 db/migrations/0001_schema.sql  versioned migrations
-db/migrations/0002_units.sql
 db/repeatable/10_error.sql     repeatable scripts, one per function schema:
-db/repeatable/11_util.sql        error, util, tenant, account, unit, class,
-db/repeatable/…                  attribute, item, location, stock, attachment,
-                                 model, meta, code
+db/repeatable/11_util.sql        error, util, attachment, account, class,
+db/repeatable/…                  location, stock, item, model, meta, code
 .gitattributes                 *.sql text eol=lf
 README.md, SCHEMA.md, API.md, … documentation
 ```
 
 `go:embed` can only embed files in or below the package's directory, so the SQL lives in a `db` package with an `embed.go`.
 
-The SQL moves out of the Markdown files. `SCHEMA.md`, `API.md` and `seed/units.md` keep their explanations and link to the `.sql` files, so there is a single source of truth.
+The SQL is in the `.sql` files only. `SCHEMA.md` and `API.md` keep their explanations and link to the files, so there is a single source of truth.
 
 ## Migrations
 
@@ -80,19 +78,19 @@ There are two kinds of SQL scripts.
 
 ### Versioned migrations (`db/migrations/`)
 
-- **What:** everything that holds data: types, domains, tables, indexes, constraints, and the bootstrap units.
+- **What:** everything that holds data: types, domains, tables, indexes, constraints, and the meta row.
 - **Naming:** `NNNN_description.sql`. The number is the version. Versions start at 1 and have no gaps, so a missing or misnumbered file is detected.
 - **Applied once:** each migration runs exactly once, in version order, each in its own transaction. DDL in PostgreSQL is transactional, so a failing migration leaves nothing half-done.
 - **Immutable once applied:** its SHA-256 checksum is recorded, and a changed file is refused. A change to an applied migration goes into a new migration.
-- **Initial setup:** `0001_schema.sql` (from `SCHEMA.md`) and `0002_units.sql` (from `seed/units.md`) create today's schema. A fresh database and an existing one are handled by the same mechanism.
+- **Initial setup:** `0001_schema.sql` creates today's schema. A fresh database and an existing one are handled by the same mechanism.
 
 ### Repeatable scripts (`db/repeatable/`)
 
-- **What:** every function: the rules (trigger functions, with their `CREATE TRIGGER`), the helpers, and the functions the API calls. Each script makes one schema, named after what its functions belong to (`item`, `class`, `unit`, …; `error` for the errors raised on purpose, `util` for what belongs to nothing in particular). These schemas hold only functions, so they can be thrown away and recreated at any time. Nothing that holds data may use one of their functions: a constraint that needs one calls it through a function in a migration.
+- **What:** every function: the helpers and the functions the API calls. There are no triggers. Each script makes one schema, named after what its functions belong to (`item`, `class`, …; `error` for the errors raised on purpose, `util` for what belongs to nothing in particular). These schemas hold only functions, so they can be thrown away and recreated at any time. Nothing that holds data may use one of their functions: a constraint that needs one calls it through a function in a migration.
 - **Naming:** `NN_description.sql`, applied in file-name order (`error` and `util` first, as everything uses them; a SQL function's body must only name what already exists).
 - **Rebuilt as a whole:** if any repeatable script was added, changed or removed, or if any migration was applied in this run, all repeatables are rebuilt in one transaction:
   1. check that dropping the function schemas would take nothing but functions, triggers and views: no table in them, and nothing outside them (a default, a constraint, an index) that uses one of their functions; otherwise refuse, naming what is in the way
-  2. `DROP SCHEMA … CASCADE` for every function schema (every schema the DBA role owns but `public`, `extensions` and `wtfd`), which takes their triggers along
+  2. `DROP SCHEMA … CASCADE` for every function schema (every schema the DBA role owns but `public`, `extensions` and `wtfd`)
   3. run all repeatable scripts in order
   4. record their checksums
   5. refresh the grants (below), and log the API functions per schema, so a change in the list shows
@@ -158,12 +156,11 @@ Example output:
 
 ```text
 $ WTFD_DBA_DATABASE_PASSWORD=… wtfd schema
-schema: database wtf at version 0, binary has version 2
+schema: database wtf at version 0, binary has version 1
 schema: applied 0001_schema.sql
-schema: applied 0002_units.sql
-schema: rebuilt 5 repeatable scripts (73 functions)
-schema: granted EXECUTE on 41 functions to wtf_api
-schema: up to date at version 2
+schema: rebuilt 11 repeatable scripts (130 functions)
+schema: granted EXECUTE on 50 functions to wtf_api
+schema: up to date at version 1
 ```
 
 ## The `serve` action
@@ -193,8 +190,8 @@ In addition to the database flags in [Configuration](#configuration):
 | `--listen`                         | `WTFD_LISTEN`                        | `127.0.0.1:8080` | Address and port to listen on |
 | `--api-database-max-connections`   | `WTFD_API_DATABASE_MAX_CONNECTIONS`  | `10`             | Size of the connection pool. Keep it below the role's `CONNECTION LIMIT` (50 in the README). |
 | `--max-request-body-size`          | `WTFD_MAX_REQUEST_BODY_SIZE`         | `1048576`        | Largest accepted request body, in bytes (1 MiB). Larger bodies get 413. |
-| `--files-directory`                | `WTFD_FILES_DIRECTORY`               | (required)       | Where attachment contents are stored (see [api/attachment.md](api/attachment.md)). |
-| `--max-attachment-size`            | `WTFD_MAX_ATTACHMENT_SIZE`           | `104857600`      | Largest accepted attachment, in bytes (100 MiB). Uploads and downloads get 15 minutes instead of the normal timeouts. |
+| `--files-directory`                | `WTFD_FILES_DIRECTORY`               | (required)       | Where the files of photos and attachment attributes are stored (see [api/attachment.md](api/attachment.md)). |
+| `--max-attachment-size`            | `WTFD_MAX_ATTACHMENT_SIZE`           | `104857600`      | Largest accepted file, in bytes (100 MiB). Uploads and downloads get 15 minutes instead of the normal timeouts. |
 | `--web-root`                       | `WTFD_WEB_ROOT`                      | (none)           | Directory of the web app, a Flutter web build; served outside `/api` (see "The web app"). It must contain `index.html`. |
 | `--trusted-proxies`                | `WTFD_TRUSTED_PROXIES`               | (none)           | The reverse proxies, as addresses or networks separated by commas (`127.0.0.1, 10.0.0.0/8`), whose `X-Forwarded-For` is believed for the client's address. Without it, the address is the connection's. |
 | `--verbose`                        | –                                    | off              | Debug logging |
@@ -215,7 +212,7 @@ The password comes from `WTFD_API_DATABASE_PASSWORD`.
 
 ### Requests and responses
 
-- **One statement per request:** `wtfd` calls the route's function with the request (session token, host label, client address) as its first argument, in the same statement ([API.md](API.md)). It holds no transaction open and sets nothing on the connection.
+- **One statement per request:** `wtfd` calls the route's function with the request (session token, client address) as its first argument, in the same statement ([API.md](API.md)). It holds no transaction open and sets nothing on the connection.
 - **Bodies** are JSON objects with the field names shown below. Every field a create or a call takes is required (null where none is meant); unknown fields are rejected (400), just like in PATCH. Bodies larger than `--max-request-body-size` are rejected with 413.
 - **IDs in the path** must be UUIDs; anything else is a 400.
 - **Success responses** are `application/json`, the function's result unchanged:
@@ -226,10 +223,12 @@ The password comes from `WTFD_API_DATABASE_PASSWORD`.
   | `POST` (create) | 201 Created, with a `Location` header pointing at the new object |
   | `POST /stock/{id}/move`, `POST /stock/{id}/merge` | 200 |
   | `DELETE` of an object | 204 No Content |
-  | `DELETE` of a class attribute or value | 200 with the updated class or item |
+  | `DELETE` of a class attribute or choice | 200 with the change (`{class, items, stock, dry_run}`) |
+  | `PUT` of a photo or a file | 200 with the item or stock row |
 
-- **Versions:** `GET /classes`, `GET /locations` and `GET /unit-families` send their version as a strong `ETag` (`"17"`). A request with `If-None-Match: "17"` gets `304 Not Modified` when nothing has changed. Responses carry `Cache-Control: no-cache`, so clients always revalidate. They answer `{version, tree}` (the trees, which the database gives as flat lists and `wtfd` nests, each node with its `children`) and `{version, families}`.
-- **Paged lists:** `GET /items` and `GET /stock` take `limit` and `offset` as query parameters and return the paging envelope from [API.md](API.md).
+- **Versions:** `GET /classes` and `GET /locations` send their version as a strong `ETag` (`"17"`). A request with `If-None-Match: "17"` gets `304 Not Modified` when nothing has changed. Responses carry `Cache-Control: no-cache`, so clients always revalidate. They answer `{version, tree}`: the tree, which the database gives as a flat list and `wtfd` nests, each node with its `children`.
+- **Paged lists:** `GET /items` and `GET /stock` take `limit` and `after` as query parameters and answer `{rows, more, next}` ([API.md](API.md)).
+- **Names in the path:** an attribute or a choice in a path is its name, URL-encoded (`/classes/{id}/attributes/Supply%20voltage`).
 - **Query flags** (`force`, `dry_run`, `recursive`) are `true` or `false`; absent is false.
 
 ### Errors (RFC 9457)
@@ -259,11 +258,11 @@ When the database knows what to do about an error, a `hint` says so, e.g. what t
 | `22023` invalid parameter, malformed JSON or body, bad UUID or query parameter | `/problems/invalid-input` | 400 |
 | `22P02`, `22003`, `22008` (bad text, out of range, bad date) | `/problems/invalid-input` | 400 |
 | `23502` a required field is null | `/problems/invalid-input` | 400 |
-| `23514` integrity rule (check constraint or trigger) | `/problems/rule-violation` | 422 |
+| `23514` integrity rule (a check constraint, or a rule an accessor checks) | `/problems/rule-violation` | 422 |
 | `23505` duplicate | `/problems/unique-violation` | 409 |
 | `23001` / `23503` on `DELETE`: still in use | `/problems/in-use` | 409 |
 | `23001` / `23503` otherwise: a referenced object doesn't exist | `/problems/invalid-reference` | 422 |
-| `55000` not possible in this state (a unit that is turned off) | `/problems/wrong-state` ("Not possible in this state") | 409 |
+| `55000` not possible in this state (an item moved just as it was written; trying again works) | `/problems/wrong-state` ("Not possible in this state") | 409 |
 | `WT001` a label code whose item, stock row or location has been deleted | `/problems/gone` | 410 |
 | `57014` statement timeout | `/problems/timeout` | 503 |
 | method not allowed on a route | `/problems/method-not-allowed` | 405 |
@@ -274,7 +273,7 @@ When the database knows what to do about an error, a `hint` says so, e.g. what t
 
 - **Paths:** the API is served under `/api/v1/`. The routes below are relative to it (`GET /items` is `GET /api/v1/items`), except `GET /api/health`.
 - **Within a version the API only grows:** new routes, new optional fields, and new fields in answers. Nothing is renamed, removed or changes meaning, and clients ignore fields they don't know. Every addition increases the **revision**, which every answer of `/api/v1` carries as `API-Revision`, now 1. A client knows the revision it was built for, and warns when a server's is older.
-- **One exception, the refactor of November 2026:** `/api/v1` changed in place, with the database's names (`amount`, `scope`, `media_type`, `decimal`), units by id, and required fields required, and then without "mark as deleted", restore and history, and with merging stock as its own route ([2026-11-01-dropping-deleted-and-history.md](2026-11-01-dropping-deleted-and-history.md)); its revision started again at 1. Every client was rebuilt with it, while all of them were still in development, so a second version served beside the first would have had no one to serve. A client built before it misreads the answers rather than saying it is too old, which only happens to a copy not updated.
+- **One exception, the refactor of November 2026:** `/api/v1` changed in place, with the database's names (`amount`, `scope`, `media_type`, `decimal`), units by id, and required fields required, then without "mark as deleted", restore and history, and with merging stock as its own route ([2026-11-01-dropping-deleted-and-history.md](2026-11-01-dropping-deleted-and-history.md)), and then with attributes in JSON, labels for units, files as attributes, paging by key, and no tenants ([2026-11-02-attributes-in-json.md](2026-11-02-attributes-in-json.md)); its revision started again at 1. Every client was rebuilt with it, while all of them were still in development, so a second version served beside the first would have had no one to serve. A client built before it misreads the answers rather than saying it is too old, which only happens to a copy not updated.
 - **A breaking change becomes a new version,** `/api/v2/`, served next to `/api/v1/` for a while. Its revisions start again at 1. A version on its way out gets the standard `Deprecation` and `Sunset` headers on its answers (`apiSunset` in `internal/serve/api.go`).
 - **Versions this server doesn't serve:** any request to them gets `/problems/unsupported-api-version`, with the list of versions it does serve (`supported`). The client can then say which side to update. A 404 without `API-Revision` at all comes from a server older than the versioned API.
 
@@ -314,24 +313,7 @@ Every route calls one function ([API.md](API.md) has them all); a body's fields 
 |---------------|----------|--------------|
 | `GET /api/health` | `SELECT 1` | – (200, or 503 if the database is unreachable) |
 | `GET /openapi` | – | – (the embedded OpenAPI description, JSON or YAML) |
-| `GET /quantities` | `unit.quantity_list` | |
-| `GET /quantities/{id}` | `unit.quantity_get` | |
-| `PATCH /quantities/{id}` | `unit.quantity_patch` | `{available}` |
-| `GET /unit-families` | `unit.family_list` | `?quantity=`; `If-None-Match` |
-| `GET /unit-families/{id}` | `unit.family_get` | |
-| `PATCH /unit-families/{id}` | `unit.family_patch` | `{available}` |
-| `GET /units` | `unit.list` | `?quantity=&family=` |
-| `GET /units/{id}` | `unit.get` | |
 | `POST /model/import` | `model.import` | a model file ([seed/model-format.md](seed/model-format.md)); `?parent=&dry_run=true` |
-| `GET /attributes` | `attribute.list` | |
-| `POST /attributes` | `attribute.create` | `{name, datatype, unit, unit_lock}` |
-| `GET /attributes/{id}` | `attribute.get` | (with its options) |
-| `PATCH /attributes/{id}` | `attribute.patch` | patch object |
-| `DELETE /attributes/{id}` | `attribute.delete` | |
-| `POST /attributes/{id}/options` | `attribute.option_create` | `{name}` |
-| `GET /options/{id}` | `attribute.option_get` | |
-| `PATCH /options/{id}` | `attribute.option_patch` | patch object |
-| `DELETE /options/{id}` | `attribute.option_delete` | |
 | `GET /classes` | `class.list` | `If-None-Match` |
 | `POST /classes` | `class.create` | `{name, parent, container}` |
 | `GET /classes/{id}` | `class.get` | |
@@ -339,36 +321,36 @@ Every route calls one function ([API.md](API.md) has them all); a body's fields 
 | `DELETE /classes/{id}` | `class.delete`, or with `?recursive=true` `class.delete_tree` | `force`; recursive answers 200 with what was deleted |
 | `GET /classes/{id}/model` | `model.export` | the class with everything below it, as a model file |
 | `GET /classes/{id}/deletion` | `class.delete_tree` with `p_dry_run` | `force`; what a recursive delete would delete |
-| `PUT /classes/{id}/attributes/{attribute}` | `class.assign` | `{default, scope, required}` |
-| `DELETE /classes/{id}/attributes/{attribute}` | `class.unassign` | |
-| `GET /items` | `item.list` | `?class=&search=&where=&limit=&offset=` (`where`: JSON, see [api/item.md](api/item.md)) |
-| `POST /items` | `item.create` | `{class, name, unit, unit_lock, values}` |
+| `POST /classes/{id}/attributes` | `class.attribute_add` | `{name, definition}`; `?dry_run=true` |
+| `PATCH /classes/{id}/attributes/{attribute}` | `class.attribute_change` | patch object; `?dry_run=true` |
+| `POST /classes/{id}/attributes/{attribute}/rename` | `class.attribute_rename` | `{name}`; `?dry_run=true` |
+| `DELETE /classes/{id}/attributes/{attribute}` | `class.attribute_remove` | `?dry_run=true` |
+| `POST /classes/{id}/attributes/{attribute}/choices` | `class.choice_add` | `{choice}`; `?dry_run=true` |
+| `POST /classes/{id}/attributes/{attribute}/choices/{choice}/rename` | `class.choice_rename` | `{choice}`; `?dry_run=true` |
+| `DELETE /classes/{id}/attributes/{attribute}/choices/{choice}` | `class.choice_remove` | `?dry_run=true` |
+| `GET /items` | `item.list` | `?class=&search=&where=&limit=&after=` (`where`: JSON, see [api/item.md](api/item.md)) |
+| `POST /items` | `item.create` | `{class, name, unit, values}` |
 | `GET /items/{id}` | `item.get` | |
 | `PATCH /items/{id}` | `item.patch` | patch object |
 | `DELETE /items/{id}` | `item.delete` | |
-| `PUT /items/{id}/values/{attribute}` | `item.value_set` | `{value}` |
-| `DELETE /items/{id}/values/{attribute}` | `item.value_delete` | |
+| `GET /items/{id}/photo`, `GET /items/{id}/files/{attribute}` | `attachment.get` + files directory | `If-None-Match`, `Range` |
+| `PUT /items/{id}/photo`, `PUT /items/{id}/files/{attribute}` | `attachment.lock`, `attachment.set` | multipart: `file` |
 | `GET /locations` | `location.list` | `If-None-Match` |
 | `POST /locations` | `location.create` | `{name, parent, container, grid}`, `grid` being `{columns, rows, confirm?}` or null |
 | `GET /locations/{id}` | `location.get` | |
 | `PATCH /locations/{id}` | `location.patch` | patch object |
 | `DELETE /locations/{id}` | `location.delete`, or with `?recursive=true` `location.delete_tree` | `force`; recursive answers 200 with what was deleted |
 | `GET /locations/{id}/deletion` | `location.delete_tree` with `p_dry_run` | `force`; what a recursive delete would delete |
-| `GET /stock` | `stock.list` | `?item=&location=&limit=&offset=` |
-| `POST /stock` | `stock.create` | `{item, location, amount, values}` |
+| `GET /stock` | `stock.list` | `?item=&location=&search=&limit=&after=` |
+| `POST /stock` | `stock.create` | `{item, location, amount, reference, serial, values}` |
 | `GET /stock/{id}` | `stock.get` | |
 | `PATCH /stock/{id}` | `stock.patch` | patch object |
 | `DELETE /stock/{id}` | `stock.delete` | |
-| `PUT /stock/{id}/values/{attribute}` | `stock.value_set` | `{value}` |
-| `DELETE /stock/{id}/values/{attribute}` | `stock.value_delete` | |
+| `GET /stock/{id}/photo`, `GET /stock/{id}/files/{attribute}` | `attachment.get` + files directory | `If-None-Match`, `Range` |
+| `PUT /stock/{id}/photo`, `PUT /stock/{id}/files/{attribute}` | `attachment.lock`, `attachment.set` | multipart: `file` |
 | `POST /stock/{id}/move` | `stock.move` | `{location, amount}` (`amount` null: all of it); never merges |
-| `POST /stock/{id}/merge` | `stock.merge` | `{into, amount}` (`amount` null: all of it, and the row is deleted) |
+| `POST /stock/{id}/merge` | `stock.merge` | `{into, amount, resolve}` (`amount` null: all of it, and the row is deleted; `resolve` says which row's to keep where they differ) |
 | `GET /codes/{code}` | `code.resolve` | – (code: Crockford Base32; case and hyphens ignored); 410 for a deleted thing's code |
-| `POST /items/{id}/attachments` (also `/stock/…`, `/locations/…`, `/classes/…`) | `attachment.lock`, `attachment.create` | multipart: `file`, `title?`, `photo?` |
-| `GET /items/{id}/attachments/{attachment}` (also `/stock/…`, `/locations/…`, `/classes/…`) | `attachment.get` | |
-| `PATCH …/attachments/{attachment}` | `attachment.patch` | `{title}` |
-| `DELETE …/attachments/{attachment}` | `attachment.delete` | |
-| `GET …/attachments/{attachment}/content` | `attachment.get` + files directory | `If-None-Match`, `Range` |
 | `POST /login` | `account.login` | `{email, password, client, max_idle}`; no session needed; sets the session cookie |
 | `POST /logout` | `account.logout` | |
 | `GET /me` | `account.me` | |
@@ -396,62 +378,32 @@ Every route calls one function ([API.md](API.md) has them all); a body's fields 
 - **HTTP server timeouts:** 10 s to read the request header, 30 s to read the whole request, 60 s to write the response, and 120 s for idle keep-alive connections.
 - **Database:** each call is limited by the role's `statement_timeout` (30 s in the README).
 
-## Tenants
-
-One installation holds many inventories, called tenants ([TENANTS.md](TENANTS.md)). The first label of a request's hostname picks one: `wtfd` lower-cases the `Host` header, drops the port, and looks up the label before the first dot (`bob` for `Bob.wtf.example:8443`). A hostname that picks no tenant gets 404, for the API and the web app alike, except `GET /api/health`, which answers on any hostname. A session belongs to its tenant: its cookie at another tenant's hostname gets 401.
-
-## The `tenant` action
-
-The operator creates, lists and renames tenants as the DBA role:
-
-```sh
-wtfd tenant create --host bob --email anna@example.com
-wtfd tenant list
-wtfd tenant rename --host bob --new-host robert --files-directory /var/lib/wtf/files
-```
-
-`create` makes the tenant and its first account, an admin, and prints the account's generated password once. `host` is a DNS label that starts with a letter: `a`–`z`, `0`–`9` and `-`, at most 63 characters. `rename` changes the host and moves the tenant's directory in the files directory along with it. Deleting a tenant isn't built yet.
-
 ## The `account` action
 
-The operator creates an account in a tenant, and recovers a lost password, as the DBA role:
+The operator creates the first account, and recovers a lost password, as the DBA role:
 
 ```sh
-wtfd account create --host bob --email anna@example.com [--role viewer|user|admin]
-wtfd account password --host bob --email anna@example.com
+wtfd account create --email anna@example.com [--role viewer|user|admin]
+wtfd account password --email anna@example.com
 ```
 
 `create` makes an account, an admin unless `--role` says viewer or user. `password` gives an existing account a new password, lifts a lockout and ends its sessions. Both print the generated password once; the account should change it after logging in (`PUT /me/password`). Further accounts are made through the API (`POST /accounts`). See [ACCOUNTS.md](ACCOUNTS.md).
 
-## The `unit` action
-
-Global units, which every tenant sees, are the operator's (TENANTS.md, decisions 14–17). Tenants import their own through the API.
-
-```sh
-wtfd unit import --global more-units.json [--dry-run]
-wtfd unit standard --family "Imperial length" --available false
-wtfd unit standard --quantity Temperature --available true
-```
-
-`import` adds the units of a model file of only quantities ([seed/model-format.md](seed/model-format.md)) that aren't there yet, as `POST /model/import` does, and prints the same report; a name some tenant already has for its own is a conflict. `standard` sets whether a global quantity or family is available to tenants that haven't chosen themselves.
-
 ## The `gc` action
 
-`wtfd gc` removes attachment files that nothing references any more: their attachments, or the objects they were on, were deleted. An upload whose database insert failed leaves a file nothing knows about. It also removes the sessions that have expired (unused for longer than their `max_idle`), in one statement, and reports how many.
+`wtfd gc` removes files that nothing references any more: the items or stock rows they were on were deleted or given another file, or an upload's database change failed and left a file nothing knows about. It also removes the sessions that have expired (unused for longer than their `max_idle`), in one statement, and reports how many.
 
 ```sh
 wtfd gc --files-directory /var/lib/wtf/files --dry-run   # report only
 wtfd gc --files-directory /var/lib/wtf/files
 ```
 
-It connects as the DBA role and goes through every tenant's directory (`<files directory>/<host>/`), removing two kinds of file:
+It connects as the DBA role, reads the hashes in use once (the photos of items and stock rows, and the values of their attachment attributes), and removes two kinds of file:
 
-- files whose hash no attachment of that tenant (of any kind of object; found through the attachments' owners, by an index on `attachment (hash)`) has: their attachments were deleted, or an upload's database insert failed;
-- abandoned uploads in the tenant's `tmp` directory.
+- files whose hash nothing has;
+- abandoned uploads in the `tmp` directory.
 
-A directory that belongs to no tenant is reported and left alone.
-
-Files younger than `--min-age` (env `WTFD_GC_MIN_AGE`, default `1h`) are never removed, so uploads in progress are safe. Each removal takes the file's advisory lock (`attachment.file_lock_key`), the same one an upload holds while it puts the file in place and records it, and re-checks that nothing references the file. `--dry-run` reports what would be removed, and `--verbose` logs every removed file. Run it from cron or a systemd timer, e.g. nightly.
+Files younger than `--min-age` (env `WTFD_GC_MIN_AGE`, default `1h`) are never removed, so uploads in progress are safe. Each removal takes the file's advisory lock (`attachment.file_lock_key`), the same one an upload holds while it puts the file in place and records it, and checks again that nothing references the file. `--dry-run` reports what would be removed, and `--verbose` logs every removed file. Run it from cron or a systemd timer, e.g. nightly.
 
 ## Open questions
 

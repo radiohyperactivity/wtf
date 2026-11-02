@@ -4,9 +4,8 @@ Deleting removes a row for good; there is no restore. A backup is the way back f
 
 ## What goes with it, and what stands in the way
 
-The foreign keys of [`db/migrations/0001_schema.sql`](../db/migrations/0001_schema.sql) decide:
+An item's and a stock row's values and files are in their own rows, so they go with them. The foreign keys of [`db/migrations/0001_schema.sql`](../db/migrations/0001_schema.sql) decide the rest:
 
-- **What belongs to a thing alone goes with it** (`ON DELETE CASCADE`): an item's values and attachments, a stock row's values and attachments, a class's assignments and attachments, a location's attachments, an attribute's options, an account's sessions.
 - **What others still use can't be deleted** (`RESTRICT`), and the delete function says what is in the way first (23001, 409, `/problems/in-use`):
 
   | Function | Refused while |
@@ -14,11 +13,10 @@ The foreign keys of [`db/migrations/0001_schema.sql`](../db/migrations/0001_sche
   | `item.delete` | the item has stock rows |
   | `location.delete` | locations or stock rows are in it |
   | `class.delete` | classes or items are in it |
-  | `attribute.delete` | classes have it, or items or stock rows have values for it |
-  | `attribute.option_delete` | it is a class's default, or items or stock rows have it as their value |
-  | `stock.delete`, `attachment.delete`, `account.delete` | — (you can't delete your own account) |
+  | `stock.delete`, `account.delete` | — (you can't delete your own account) |
 
-- **A photo's attachment** can be deleted: the photo's key (`ON DELETE SET NULL (photo)`) leaves the object without a photo.
+- **An account's sessions** go with it (`ON DELETE CASCADE`).
+- **An attribute or a choice** is removed with a change of its class ([attribute.md](attribute.md)): an attribute's values go with it, and a choice is refused while a row has it.
 
 ## Deleting a subtree
 
@@ -32,11 +30,11 @@ See [class.md](class.md) and [location.md](location.md) for what the answer hold
 
 ## Labels of deleted things
 
-A deleted item's, location's or stock row's label code answers **410 Gone** (`/problems/gone`): every code up to the tenant's last one was given to something, so a code that nothing has belonged to something deleted. A code never handed out is 404. See [code.md](code.md).
+A deleted item's, location's or stock row's label code answers **410 Gone** (`/problems/gone`): every code up to the last one handed out was given to something, so a code that nothing has belonged to something deleted. A code never handed out is 404. See [code.md](code.md).
 
 ## Files
 
-A deleted attachment's file stays on disk until `wtfd gc` finds that no attachment of the tenant has its hash any more, and removes it ([WTFD.md](../WTFD.md)).
+A deleted item's or stock row's files stay on disk until `wtfd gc` finds that nothing has them any more, and removes them ([WTFD.md](../WTFD.md)).
 
 ## Decisions
 

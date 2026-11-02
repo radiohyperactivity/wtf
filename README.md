@@ -4,11 +4,11 @@ Keeping your stuff organised.
 
 | Document                     | Contents                                                     |
 |------------------------------|--------------------------------------------------------------|
-| [SCHEMA.md](SCHEMA.md)       | Tables, types, integrity rules and triggers                   |
-| [SCHEMA.html](SCHEMA.html)   | Entity-relationship diagram                                   |
-| [seed/units.md](seed/units.md) | The global units: quantities, unit families and units       |
-| [seed/model-format.md](seed/model-format.md) | Model files: units, attributes and classes for one use, such as [MCUs](seed/models/mcu.json); importing and exporting |
+| [SCHEMA.md](SCHEMA.md)       | Tables, types, indexes, and what the database enforces        |
+| [seed/model-format.md](seed/model-format.md) | Model files: classes with their attributes for one use, such as [MCUs](seed/models/mcu.json); importing and exporting |
 | [API.md](API.md)             | The PL/pgSQL functions all data access goes through           |
+| [WTFD.md](WTFD.md)           | `wtfd`, the server: its actions, routes and configuration     |
+| [PERFORMANCE.md](PERFORMANCE.md) | How fast it is, measured                                  |
 | [CLI.md](CLI.md)             | `wtf`, the command-line client                                |
 | [TODO.md](TODO.md)           | Things to come back to later                                  |
 
@@ -181,24 +181,24 @@ By default it listens on `127.0.0.1:8080`, for a reverse proxy on the same machi
 
 **TLS is recommended but not required:** passwords travel to `wtfd` and on to PostgreSQL, which hashes them. Whether to use HTTPS at the proxy and `hostssl` / `--database-sslmode require` for the database connection is the administrator's decision.
 
-### 8. Create the first tenant
+### 8. Create the first account
 
-One installation holds many inventories, called tenants ([TENANTS.md](TENANTS.md)). The first label of the hostname a request comes to picks the tenant: `smith` for `smith.wtf.example`. Point a wildcard DNS name (`*.wtf.example`) at the server, and use a wildcard certificate at the proxy, and a new tenant needs nothing but this:
+One database is one installation of WtF: one inventory. Another inventory is another database, with its own `wtfd`.
 
 ```sh
 export WTFD_DBA_DATABASE_PASSWORD='…'
-./wtfd tenant create --host smith --email anna@example.com
+./wtfd account create --email anna@example.com
 ```
 
-This creates the tenant and its first account, and prints the account's password once. On a home network without DNS names, [nip.io](https://nip.io) names reach the server by its address with the tenant in front: `http://smith.192.168.1.10.nip.io:8080`. An IP address alone picks no tenant, and gets 404. Log in and change it, with `wtf login` and `wtf password` (see [CLI.md](CLI.md)), or by hand. The session comes back as the cookie `wtf_session`, which curl keeps in a file:
+This creates the first account, an admin, and prints its password once. Log in and change it, with `wtf login` and `wtf password` (see [CLI.md](CLI.md)), or by hand. The session comes back as the cookie `wtf_session`, which curl keeps in a file:
 
 ```sh
-curl -s -c cookies -H 'Host: smith.wtf.example' -H 'Content-Type: application/json' \
+curl -s -c cookies -H 'Content-Type: application/json' \
      -d '{"email": "anna@example.com", "password": "…"}' http://127.0.0.1:8080/api/v1/login
-curl -s -b cookies -H 'Host: smith.wtf.example' http://127.0.0.1:8080/api/v1/me
+curl -s -b cookies http://127.0.0.1:8080/api/v1/me
 ```
 
-The first account is an admin and can create more accounts (`POST /accounts`). A lost password is replaced with `./wtfd account password --host smith --email …`. See [ACCOUNTS.md](ACCOUNTS.md).
+The first account can create more accounts (`POST /accounts`). A lost password is replaced with `./wtfd account password --email …`. See [ACCOUNTS.md](ACCOUNTS.md).
 
 ### 9. Check
 
@@ -206,7 +206,7 @@ Connected as `wtf_api`:
 
 ```sql
 SELECT schema_version();          -- works: an API function that needs no login
-SELECT quantity_list();           -- ERROR: Not logged in (API functions need a session)
+SELECT class.list(ROW(NULL, NULL)::public.request);  -- ERROR: Not logged in (API functions need a session)
 SELECT * FROM item;               -- ERROR: permission denied for table item
 SELECT util.item_json(NULL);      -- ERROR: permission denied for schema util
 CREATE TABLE test (id int);       -- ERROR: permission denied for schema public
@@ -337,14 +337,13 @@ go test ./internal/integration/ -v
 
 `WTFD_TEST_DATABASE_PORT` and `WTFD_TEST_DATABASE_SSLMODE` are optional. The roles default to `wtf_dba` and `wtf_api` and can be overridden with `WTFD_DBA_DATABASE_USER` and `WTFD_API_DATABASE_USER`.
 
-Each run first empties the test database, then brings its schema up to date with the same code as `wtfd schema`. It creates the first account, `admin@test.local`, and logs it in. Each test then empties the user data, leaving the quantities, unit families, units and accounts.
+Each run first empties the test database, then brings its schema up to date with the same code as `wtfd schema`. It creates the first account, `admin@test.local`, and logs it in. Each test then empties the data, leaving the accounts.
 
-The performance test (`TestPerformance`, in `performance_test.go`) runs only when asked. It loads a tenant of each size given, times the common reads and writes, and can write its tables to a Markdown file. [PERFORMANCE.md](PERFORMANCE.md) has the results so far.
+The performance test (`TestPerformance`, in `performance_test.go`) runs only when asked. It loads data of each size given, times the common reads and writes and the changes of a class's attributes, and can write its tables to a Markdown file. [PERFORMANCE.md](PERFORMANCE.md) has the results so far.
 
 ```sh
 export WTFD_TEST_PERF=1000,10000,50000          # the item counts, smallest first
 export WTFD_TEST_PERF_REPORT=perf.md            # optional
-export WTFD_TEST_PERF_NEIGHBOUR=200000          # optional: another tenant of that size, kept for the run
 go test ./internal/integration/ -run TestPerformance -v -timeout 120m
 ```
 
