@@ -10,7 +10,7 @@ What there is to build, what each part needs, and on which systems it can be bui
 | The Windows app | Flutter | Windows | a folder with `wtf-app.exe` and its libraries |
 | The Linux app | Flutter | Linux | a folder, packed as a `.deb` |
 | The macOS app | Flutter | macOS | `WtF.app` |
-| The iOS app | Flutter | macOS | for the simulator, so far |
+| The iOS app | Flutter | macOS | `Runner.app`, for the simulator or, signed for development, for devices |
 | The Android app | Flutter | Windows, Linux or macOS | an `.apk` |
 
 ## Tools
@@ -60,6 +60,7 @@ go build -tags webapp ./cmd/wtfd
 | `scripts/build.sh` | builds the web app, then `wtf` and `wtfd` (with the web app) for Linux, Windows and macOS, amd64 and arm64, into `dist/<os>-<arch>/`; `NO_WEB_APP=1` leaves the web app out |
 | `scripts/release.sh` | runs `build.sh`, and packs each system's `wtf`, `wtfd`, `LICENSE` and a README (`scripts/release-readme.txt`) into `dist/release/`: `.zip` for Windows, `.tar.gz` for Linux and macOS, with the programs executable |
 | `scripts/test.sh` | what CI checks: `gofmt`, `go vet` for every system, and the tests |
+| `scripts/ios-signing-setup.sh`, `scripts/ios-device.sh` | sign the iOS app for devices over SSH, build it, and install it; see [iOS](#ios) |
 
 The version in a release's names is the app's, from `app/pubspec.yaml`.
 
@@ -120,7 +121,7 @@ Into `app/build/macos/Build/Products/Release/WtF.app`, for Apple silicon and Int
 
 ### iOS
 
-Needs Xcode. So far only for the simulator:
+Needs Xcode. For the simulator:
 
 ```sh
 flutter build ios --simulator --debug
@@ -128,7 +129,25 @@ xcrun simctl install booted build/ios/iphonesimulator/Runner.app
 xcrun simctl launch booted io.bbj.wtf
 ```
 
-A build for real iPhones and iPads, and TestFlight, need an Apple Developer Program membership and signing, which are still to come.
+For real iPhones and iPads, the app is signed for development with the team in the Xcode project (`DEVELOPMENT_TEAM`, an Apple Developer Program membership), and Xcode's automatic signing. To set a Mac up:
+
+1. Sign Xcode in to the membership's Apple Account (Settings, Accounts).
+2. Connect the device with a cable once, trust the Mac on it, and turn on Developer Mode on it (Settings, Privacy & Security).
+3. Open `app/ios/Runner.xcworkspace`, and in the Runner target's Signing & Capabilities let Xcode make the certificate and the profile; it registers the device as well. If it says the account already has a certificate whose key isn't on this Mac, revoke it there and it makes a new one.
+4. Run `scripts/ios-signing-setup.sh` in Terminal on the Mac, once (and again when Xcode makes a new certificate, about once a year).
+
+Then, also over SSH:
+
+```sh
+scripts/ios-device.sh                 # a release build, into build/ios/iphoneos/Runner.app
+scripts/ios-device.sh <device>        # and install it on the device
+```
+
+The device is its identifier or name from `xcrun devicectl list devices`. Once paired by cable, Xcode also reaches it over Wi-Fi, without the cable, when it is awake and on the same network as the Mac: `xcrun devicectl list devices` shows it as connected, and `xcrun devicectl device info details --device <device>` gives its transport as `localNetwork` rather than `wired`. Xcode 27 manages devices in DeviceHub (`/Applications/Xcode.app/Contents/Applications/DeviceHub.app`), which also shows the simulator; there is no Devices and Simulators window any more. The script installs the app and doesn't start it. A debug build on a device only starts from the debugger, hence the release build.
+
+Over SSH, the login keychain stays locked even when it is unlocked on the Mac's screen, and codesign fails with `errSecInternalComponent`. So `ios-signing-setup.sh` moves the certificate and its key to a keychain of their own, `wtf-signing`, with a random password kept in `~/.config/wtf/signing-keychain-password`, and `ios-device.sh` unlocks it before building. That keychain is locked again after a restart; a build from Xcode before any `ios-device.sh` asks for its password, the one in that file.
+
+TestFlight and the App Store are still to come.
 
 ## Tests
 
