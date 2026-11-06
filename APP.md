@@ -99,11 +99,11 @@ Flutter has standard size classes, measured in logical pixels, which are indepen
 
 | Width | Typical device | Navigation | Content |
 |-------|----------------|------------|---------|
-| under 600 | phone | bar at the bottom: Items, Locations, Admin (admins only), Me | one screen at a time |
+| under 600 | phone | bar at the bottom: Items, Locations, Admin (admins only), Account | one screen at a time |
 | 600–840 | small tablet, phone sideways | rail on the left | list and details side by side where it fits |
 | over 840 | tablet, desktop, browser | rail on the left | list and details side by side, the tree always visible |
 
-- **Look:** Material 3, Google's current design system, which Flutter has built in. Light and dark follow the system setting, unless you choose one on the Me screen (decision 6).
+- **Look:** Material 3, Google's current design system, which Flutter has built in. Light and dark follow the system setting, unless you choose one on the Account screen (decisions 6 and 86).
 - **Desktop and web:** keyboard shortcuts, such as `/` to search and `Ctrl+N` for a new item. Mouse hover and right-click menus come where they help.
 
 ## Packages
@@ -452,3 +452,4 @@ Built for the API as the plan of 2 November 2026 left it ([2026-11-02-attributes
     - **Installing, not starting:** the script installs the app; you start it.
     - **Over Wi-Fi:** once paired by cable, the phone is reached over the network, so later installs need no cable.
     - **Not yet:** TestFlight and the App Store.
+86. **Me is called Account** (your choice): in the bar and the rail, and as the screen's title. What it shows is as before (your account, the server, your role, the appearance, your password, your sessions); the line with your email address is labelled Email rather than Account, as that is now the screen's name. Its address in the web app stays `/me`, as does the API's `GET /me`. The decisions above that say "Me" mean this screen.

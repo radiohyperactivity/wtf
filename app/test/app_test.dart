@@ -140,8 +140,8 @@ void main() {
     expect(storage.server, 'http://wtf.test:8080');
     expect(storage.token, 'tok');
 
-    // Me: the account, and its sessions, this one marked.
-    await tester.tap(find.text('Me'));
+    // Account: the account, and its sessions, this one marked.
+    await tester.tap(find.text('Account'));
     await tester.pumpAndSettle();
     expect(find.text('anna@example.com'), findsOneWidget);
     expect(find.text('WtF on Windows (this one)'), findsOneWidget);
@@ -244,13 +244,16 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.widget<CheckboxListTile>(logOut).value, isTrue);
 
-    // Your own password is changed under Me.
+    // Your own password is changed under Account.
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     await open(tester, '/accounts/a1');
     await tester.tap(find.byTooltip('Edit'));
     await tester.pumpAndSettle();
-    expect(find.text('Your own password is changed under Me.'), findsOneWidget);
+    expect(
+      find.text('Your own password is changed under Account.'),
+      findsOneWidget,
+    );
     expect(find.text('Set'), findsNothing);
   });
 
@@ -623,7 +626,7 @@ void main() {
         tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode!;
     expect(mode(), ThemeMode.system);
 
-    await tester.tap(find.text('Me'));
+    await tester.tap(find.text('Account'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Light'));
     await tester.pumpAndSettle();

@@ -34,7 +34,7 @@ const _admin = _Destination(
   Icons.admin_panel_settings_outlined,
   Icons.admin_panel_settings,
 );
-const _me = _Destination('/me', 'Me', Icons.person_outline, Icons.person);
+const _me = _Destination('/me', 'Account', Icons.person_outline, Icons.person);
 
 /// The screens under Admin: setting up classes and accounts.
 final _underAdmin = RegExp(r'^/(classes|accounts)(/|$)');

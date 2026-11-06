@@ -130,7 +130,7 @@ enum _PasswordChange { keep, set, remove }
 /// `wtf account edit`: email, role, and the password (keep, set or
 /// remove), and whether the account is logged out everywhere with it. A
 /// new account is a viewer unless another role is chosen; your own role
-/// can't be changed, and your own password is changed under Me. Returns
+/// can't be changed, and your own password is changed under Account. Returns
 /// the account, or null when cancelled.
 Future<Account?> showAccountDialog(BuildContext context, {Account? current}) {
   final session = context.read<Session>();
@@ -230,7 +230,7 @@ Future<Account?> showAccountDialog(BuildContext context, {Account? current}) {
                     ),
                     const SizedBox(height: 8),
                     if (own)
-                      const Text('Your own password is changed under Me.')
+                      const Text('Your own password is changed under Account.')
                     else if (current != null)
                       SegmentedButton<_PasswordChange>(
                         segments: const [

@@ -18,14 +18,14 @@ class MeScreen extends StatelessWidget {
     final me = session.me;
     if (me == null) return const SizedBox.shrink(); // logging out
     return Scaffold(
-      appBar: AppBar(title: const Text('Me')),
+      appBar: AppBar(title: const Text('Account')),
       body: Readable(
         child: ListView(
           children: [
             ListTile(
               leading: const Icon(Icons.email_outlined),
               title: Text(me.email),
-              subtitle: const Text('Account'),
+              subtitle: const Text('Email'),
             ),
             if (session.server case final server?)
               ListTile(

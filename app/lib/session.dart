@@ -230,7 +230,7 @@ class Session extends ChangeNotifier {
       await client?.logout();
     } on ApiProblem {
       // The session ends on the server once it has sat unused long enough,
-      // or can be ended from another device (Me → Sessions).
+      // or can be ended from another device (Account → Sessions).
     }
     client?.close();
     _client = null;
