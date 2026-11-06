@@ -2,21 +2,18 @@ import 'dart:convert';
 import 'dart:io' show HandshakeException;
 
 import 'package:flutter/gestures.dart' show kSecondaryButton;
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide FileImage;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/testing.dart';
-import 'package:wtf/api/models.dart';
 import 'package:wtf/app.dart';
-import 'package:wtf/screens/attribute_screens.dart';
 import 'package:wtf/screens/model_import.dart';
 import 'package:wtf/screens/search_screen.dart';
 import 'package:wtf/session.dart';
 import 'package:wtf/theme.dart';
-import 'package:wtf/widgets/attachments.dart';
+import 'package:wtf/widgets/files.dart';
 import 'package:wtf/widgets/link.dart';
-import 'package:wtf/widgets/pickers.dart';
 
 import 'fake_server.dart';
 
@@ -36,6 +33,12 @@ Future<void> startApp(WidgetTester tester, FakeServer fake) async {
   await tester.pumpAndSettle();
 }
 
+/// Opens the app's screen at [path], on top of the one shown.
+Future<void> open(WidgetTester tester, String path) async {
+  GoRouter.of(tester.element(find.byType(Scaffold).first)).push(path);
+  await tester.pumpAndSettle();
+}
+
 /// Types into the search field and waits for the results.
 /// Searches from the Items form, going back to it from results first.
 Future<void> search(WidgetTester tester, String text) async {
@@ -48,7 +51,34 @@ Future<void> search(WidgetTester tester, String text) async {
   await tester.pumpAndSettle();
 }
 
+/// Opens the item [name] found by searching for it.
+Future<void> openItem(WidgetTester tester, String name) async {
+  await search(tester, name);
+  await tester.tap(find.text(name));
+  await tester.pumpAndSettle();
+}
+
 Finder field(String label) => find.widgetWithText(TextFormField, label);
+
+/// Opens the menu of the screen's app bar and picks [entry].
+Future<void> menu(WidgetTester tester, String entry) async {
+  await tester.tap(
+    find.descendant(
+      of: find.byType(AppBar),
+      matching: find.byType(PopupMenuButton<String>),
+    ),
+  );
+  await tester.pumpAndSettle();
+  await tester.tap(find.text(entry));
+  await tester.pumpAndSettle();
+}
+
+/// The topmost button with [text]: a confirmation's, over a dialog's.
+Finder button(String text) => find.widgetWithText(FilledButton, text).last;
+
+void clearMessages(WidgetTester tester) => tester
+    .state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger))
+    .clearSnackBars();
 
 void main() {
   testWidgets('not reaching the server says why, at the login', (tester) async {
@@ -75,8 +105,8 @@ void main() {
     );
   });
 
-  testWidgets('log in, see the account, log out', (tester) async {
-    setSize(tester, 400, 800);
+  testWidgets('log in for a while, see the sessions, log out', (tester) async {
+    setSize(tester, 400, 1200);
     final fake = FakeServer();
     final storage = MemoryStorage();
     final session = Session(storage: storage, httpClient: fake.client);
@@ -93,8 +123,16 @@ void main() {
     await tester.enterText(field('Server'), 'http://wtf.test:8080');
     await tester.enterText(field('Email'), 'anna@example.com');
     await tester.enterText(field('Password'), 'secret');
+    // How long the session may sit unused: 30 days unless chosen.
+    expect(find.text('30 days'), findsOneWidget);
+    await tester.tap(find.text('30 days'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('A week').last);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Log in'));
     await tester.pumpAndSettle();
+    expect(fake.login!['max_idle'], 7 * 24 * 3600);
+    expect(fake.login!['client'], startsWith('WtF on '));
 
     // The search screen, with the bottom bar of a narrow screen.
     expect(find.byType(NavigationBar), findsOneWidget);
@@ -102,18 +140,50 @@ void main() {
     expect(storage.server, 'http://wtf.test:8080');
     expect(storage.token, 'tok');
 
+    // Me: the account, and its sessions, this one marked.
     await tester.tap(find.text('Me'));
     await tester.pumpAndSettle();
     expect(find.text('anna@example.com'), findsOneWidget);
-    await tester.ensureVisible(find.text('Log out'));
+    expect(find.text('WtF on Windows (this one)'), findsOneWidget);
+    expect(find.text('WtF on Android'), findsOneWidget);
+    expect(find.textContaining('from 10.0.0.7'), findsOneWidget);
+    expect(find.textContaining('until logged out'), findsOneWidget);
+    await tester.tap(find.text('Log out everywhere else'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Log out'));
+    await tester.tap(button('Log out'));
+    await tester.pumpAndSettle();
+    expect(fake.changes.last, 'POST /api/v1/me/sessions/logout-others');
+    expect(find.text('Logged out 1 other session.'), findsOneWidget);
+    expect(find.text('WtF on Android'), findsNothing);
+
+    // A new password: the other devices are logged out, unless unticked.
+    clearMessages(tester);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Change password'));
+    await tester.tap(find.text('Change password'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('Current password'), 'secret');
+    await tester.enterText(field('New password'), 'new secret');
+    await tester.enterText(field('New password again'), 'new secret');
+    expect(find.text('Log out my other devices'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Change'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      'PUT /api/v1/me/password '
+      '{"current":"secret","new":"new secret","end_other_sessions":true}',
+    );
+
+    clearMessages(tester);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.widgetWithText(FilledButton, 'Log out'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Log out'));
     await tester.pumpAndSettle();
     expect(find.text('Log in'), findsOneWidget);
     expect(storage.token, isNull);
   });
 
-  testWidgets('Admin holds classes, attributes, units and accounts', (
+  testWidgets('Admin holds classes and accounts, and model files', (
     tester,
   ) async {
     setSize(tester, 400, 800);
@@ -122,19 +192,15 @@ void main() {
     expect(find.byType(NavigationDestination), findsNWidgets(4));
     await tester.tap(find.text('Admin'));
     await tester.pumpAndSettle();
-    for (final entry in [
-      'Classes',
-      'Attributes',
-      'Units',
-      'Import',
-      'Export',
-      'Accounts',
-    ]) {
+    for (final entry in ['Classes', 'Import', 'Export', 'Accounts']) {
       expect(find.widgetWithText(ListTile, entry), findsOneWidget);
     }
-    await tester.tap(find.text('Attributes'));
+    // Attributes are in their class, and units are labels.
+    expect(find.widgetWithText(ListTile, 'Attributes'), findsNothing);
+    expect(find.widgetWithText(ListTile, 'Units'), findsNothing);
+    await tester.tap(find.text('Accounts'));
     await tester.pumpAndSettle();
-    expect(find.text('Voltage'), findsOneWidget);
+    expect(find.text('bob@example.com'), findsOneWidget);
     // Still under Admin.
     expect(
       tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex,
@@ -142,18 +208,62 @@ void main() {
     );
   });
 
+  testWidgets('a new password for an account: log it out everywhere?', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    await startApp(tester, fake);
+    await open(tester, '/accounts/a2');
+    await tester.tap(find.byTooltip('Edit'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Set'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'New password'),
+      'long enough',
+    );
+    // Asked, and not suggested for a new password.
+    final logOut = find.widgetWithText(
+      CheckboxListTile,
+      'Log the user out everywhere',
+    );
+    expect(tester.widget<CheckboxListTile>(logOut).value, isFalse);
+    await tester.tap(logOut);
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      'PATCH /api/v1/accounts/a2 {"password":"long enough","end_sessions":true}',
+    );
+
+    // Suggested when the password is removed.
+    await tester.tap(find.byTooltip('Edit'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Remove'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<CheckboxListTile>(logOut).value, isTrue);
+
+    // Your own password is changed under Me.
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    await open(tester, '/accounts/a1');
+    await tester.tap(find.byTooltip('Edit'));
+    await tester.pumpAndSettle();
+    expect(find.text('Your own password is changed under Me.'), findsOneWidget);
+    expect(find.text('Set'), findsNothing);
+  });
+
   testWidgets('a dropdown takes letters and arrows, as a select box', (
     tester,
   ) async {
     setSize(tester, 1000);
     await startApp(tester, FakeServer());
-    await tester.tap(find.text('Admin'));
+    await open(tester, '/classes/c-drills');
+    await tester.tap(find.widgetWithText(TextButton, 'Add').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Attributes'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('New attribute'));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).last, 'Clock');
+    expect(find.text('New attribute of Drills'), findsOneWidget);
+    await tester.enterText(field('Name'), 'Clock');
     await tester.sendKeyEvent(LogicalKeyboardKey.tab);
     await tester.pumpAndSettle();
     String type() => tester
@@ -169,26 +279,29 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    await press([LogicalKeyboardKey.keyF]);
-    expect(type(), 'float');
+    // By the names shown: "integer" is an integer, typed with I.
+    await press([LogicalKeyboardKey.keyI]);
+    expect(type(), 'integer');
     // The arrows pick the next and previous type, and stay in the field.
     await press([LogicalKeyboardKey.arrowDown]);
-    expect(type(), 'date');
+    expect(type(), 'decimal');
     await press([LogicalKeyboardKey.arrowUp, LogicalKeyboardKey.arrowUp]);
-    expect(type(), 'integer');
-    expect(find.text('Clock'), findsOneWidget); // no menu, still the dialog
-    // Letters typed together find more than their first.
-    await press([LogicalKeyboardKey.arrowUp]);
     expect(type(), 'text');
-    await press([LogicalKeyboardKey.keyU, LogicalKeyboardKey.keyR]);
+    expect(find.text('Clock'), findsOneWidget); // no menu, still the dialog
+    await press([LogicalKeyboardKey.keyL]);
     expect(type(), 'url');
-    // The same letter again goes on to the next type with it.
-    await press([LogicalKeyboardKey.arrowUp]);
-    await press([LogicalKeyboardKey.keyT, LogicalKeyboardKey.keyT]);
-    expect(type(), 'text'); // only one starts with t
-    await press([LogicalKeyboardKey.arrowDown]);
-    await press([LogicalKeyboardKey.keyC]);
-    expect(type(), 'choice');
+    // Letters typed together are one name; an arrow starts afresh.
+    await press([LogicalKeyboardKey.keyF]);
+    expect(type(), 'url');
+    await press([LogicalKeyboardKey.arrowDown, LogicalKeyboardKey.keyF]);
+    expect(type(), 'attachment');
+    // A number has a unit, a file its types, and neither a default.
+    expect(field('File types'), findsOneWidget);
+    expect(field('Default'), findsNothing);
+    await press([LogicalKeyboardKey.arrowUp, LogicalKeyboardKey.keyN]);
+    expect(type(), 'decimal');
+    expect(field('Unit'), findsOneWidget);
+    expect(field('Default'), findsOneWidget);
   });
 
   testWidgets('a picker field opens on a letter, searching for it', (
@@ -225,143 +338,24 @@ void main() {
     expect(find.text('Only items of this class'), findsOneWidget);
   });
 
-  testWidgets('units by quantity, then by family', (tester) async {
-    setSize(tester, 400, 800);
-    final fake = FakeServer();
-    const length = {'id': 'q-length', 'name': 'Length', 'datatype': 'float'};
-    Map<String, dynamic> family(
-      String id,
-      String name,
-      List<List<Object>> units,
-    ) => {
-      'id': id,
-      'name': name,
-      'quantity': length,
-      'units': [
-        for (final [uid, unitName, symbol, factor] in units)
-          {
-            'id': uid,
-            'name': unitName,
-            'symbol': symbol,
-            'family': {'id': id, 'name': name},
-            'quantity': length,
-            'base_factor': factor,
-            'base_offset': 0,
-          },
-      ],
-    };
-    fake.families.insertAll(0, [
-      family('f-metric', 'Metric length', [
-        ['u-mm', 'millimetre', 'mm', 0.001],
-        ['u-m', 'metre', 'm', 1],
-      ]),
-      family('f-imperial', 'Imperial length', [
-        ['u-in', 'inch', 'in', 0.0254],
-      ]),
-    ]);
-    await startApp(tester, fake);
-    await tester.tap(find.text('Admin'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Units'));
-    await tester.pumpAndSettle();
-
-    // Quantities first, naming their families.
-    expect(find.text('Length'), findsOneWidget);
-    expect(find.text('Metric length · Imperial length'), findsOneWidget);
-    expect(find.text('Voltage'), findsWidgets);
-    expect(find.text('millimetre'), findsNothing);
-    // An arrow says a quantity opens, left of its switch.
-    final arrow = find.descendant(
-      of: find.ancestor(
-        of: find.text('Length'),
-        matching: find.byType(ListTile),
-      ),
-      matching: find.byIcon(Icons.expand_more),
-    );
-    expect(arrow, findsOneWidget);
-    expect(
-      tester.getCenter(arrow).dx,
-      lessThan(tester.getCenter(find.text('Length')).dx),
-    );
-
-    await tester.tap(find.text('Length'));
-    await tester.pumpAndSettle();
-    expect(find.text('mm, m'), findsOneWidget);
-    await tester.tap(find.text('Metric length'));
-    await tester.pumpAndSettle();
-    expect(find.text('millimetre'), findsOneWidget);
-    expect(find.text('base unit'), findsOneWidget);
-
-    // A filter opens what matches.
-    await tester.enterText(find.byType(TextField), 'inch');
-    await tester.pumpAndSettle();
-    expect(find.widgetWithText(ListTile, 'inch'), findsOneWidget);
-    // Under Length, and as Length's only family in its subtitle.
-    expect(find.text('Imperial length'), findsNWidgets(2));
-    expect(find.text('Metric length'), findsNothing);
-    expect(find.text('Voltage'), findsNothing);
-
-    // A family turned off: its switch, then a way back to the default.
-    Finder switchOf(String name) => find.descendant(
-      of: find.ancestor(
-        of: find.text(name).last,
-        matching: find.byType(ListTile),
-      ),
-      matching: find.byType(Switch),
-    );
-    expect(tester.widget<Switch>(switchOf('Imperial length')).value, isTrue);
-    await tester.tap(switchOf('Imperial length'));
-    await tester.pumpAndSettle();
-    expect(
-      fake.changes.last,
-      'PATCH /api/v1/unit-families/f-imperial {"available":false}',
-    );
-    expect(tester.widget<Switch>(switchOf('Imperial length')).value, isFalse);
-    await tester.tap(find.byTooltip('Back to the default (on)'));
-    await tester.pumpAndSettle();
-    expect(
-      fake.changes.last,
-      'PATCH /api/v1/unit-families/f-imperial {"available":null}',
-    );
-    expect(tester.widget<Switch>(switchOf('Imperial length')).value, isTrue);
-
-    // Switched back on, it is the default again: no way back is offered.
-    await tester.tap(switchOf('Imperial length'));
-    await tester.pumpAndSettle();
-    await tester.tap(switchOf('Imperial length'));
-    await tester.pumpAndSettle();
-    expect(tester.widget<Switch>(switchOf('Imperial length')).value, isTrue);
-    expect(find.byTooltip('Back to the default (on)'), findsNothing);
-
-    // A unit of a family that is off can't be chosen.
-    await tester.tap(switchOf('Imperial length'));
-    await tester.pumpAndSettle();
-    final inches = find.text('in').evaluate().length; // on the screen behind
-    pickUnit(tester.element(find.byType(UnitsScreen)));
-    await tester.pumpAndSettle();
-    expect(find.text('Choose a unit'), findsOneWidget);
-    expect(find.text('mm'), findsOneWidget);
-    expect(find.text('in'), findsNWidgets(inches));
-  });
-
   testWidgets('import a model file: a preview first, then the model', (
     tester,
   ) async {
     setSize(tester, 1000);
     final fake = FakeServer();
     const file =
-        '{"format": "wtf-model", "version": 1, '
+        '{"format": "wtf-model", "version": 2, '
         '"meta": {"name": "Microcontrollers"}, "classes": [{"name": "MCU"}]}';
     pickModelFile = () async => (name: 'mcu.json', text: file);
     addTearDown(() => pickModelFile = () async => null);
     await startApp(tester, fake);
-    // Importing is under Manage, and nowhere else; so are the classes.
+    // Importing is under Admin, and nowhere else; so are the classes.
     await tester.tap(find.text('Admin'));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(ListTile, 'Classes'));
     await tester.pumpAndSettle();
     expect(find.byIcon(Icons.upload_file), findsNothing);
-    // The class tree belongs to Manage, and Back goes there.
+    // The class tree belongs to Admin, and Back goes there.
     expect(
       tester.widget<NavigationRail>(find.byType(NavigationRail)).selectedIndex,
       2,
@@ -378,15 +372,17 @@ void main() {
       find.text('Its classes go at the top of the class tree.'),
       findsOneWidget,
     );
-    expect(find.textContaining('MCU: Clock, MCU: Voltage'), findsOneWidget);
+    expect(find.textContaining('2 attributes'), findsOneWidget);
     expect(
-      find.textContaining('1 thing in the file is there already'),
+      find.text(
+        '1 attribute in the file is there already, and is used as it is.',
+      ),
       findsOneWidget,
     );
     await tester.tap(find.widgetWithText(FilledButton, 'Import'));
     await tester.pumpAndSettle();
     expect(fake.changes.last, 'POST /api/v1/model/import $file');
-    expect(find.text('Imported 1 class and 1 attribute.'), findsOneWidget);
+    expect(find.text('Imported 1 class and 2 attributes.'), findsOneWidget);
 
     // Below a class: Change… chooses it, and the dry run is done again.
     await tester.tap(find.widgetWithText(ListTile, 'Import'));
@@ -430,151 +426,27 @@ void main() {
     expect(saved.single.$1, 'Drills.json');
     expect(
       saved.single.$2,
-      startsWith('{\n  "format": "wtf-model",\n  "version": 1,\n  "meta": {'),
+      startsWith('{\n  "format": "wtf-model",\n  "version": 2,\n  "meta": {'),
     );
     expect(saved.single.$2, endsWith('}\n'));
 
-    GoRouter.of(tester.element(find.byType(Scaffold).first))
-        .push('/classes/c-drills');
-    await tester.pumpAndSettle();
-    await tester.tap(find.byType(PopupMenuButton<String>).last);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Export as a model file…'));
-    await tester.pumpAndSettle();
+    await open(tester, '/classes/c-drills');
+    await menu(tester, 'Export as a model file…');
     expect(saved.map((s) => s.$1), ['Drills.json', 'Drills.json']);
-  });
-
-  testWidgets('import units from a model file: a preview, then the units', (
-    tester,
-  ) async {
-    setSize(tester, 400, 800);
-    final fake = FakeServer();
-    String file = '';
-    pickModelFile = () async => (name: 'pressure.json', text: file);
-    addTearDown(() => pickModelFile = () async => null);
-    await startApp(tester, fake);
-    await tester.tap(find.text('Admin'));
-    await tester.pumpAndSettle();
-    final import = find.widgetWithText(ListTile, 'Import');
-
-    // Conflicts: shown, and nothing to press but Close.
-    file = jsonEncode({
-      'format': 'wtf-model',
-      'version': 1,
-      'quantities': [
-        {
-          'name': 'Voltage',
-          'base_unit': {'symbol': 'mV', 'name': 'millivolt'},
-        },
-      ],
-    });
-    await tester.tap(import);
-    await tester.pumpAndSettle();
-    expect(find.text('Import pressure.json'), findsOneWidget);
-    expect(find.textContaining('Nothing can be imported'), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, 'Import'), findsNothing);
-    await tester.tap(find.text('Close'));
-    await tester.pumpAndSettle();
-    expect(fake.unitImports.single.$2, isTrue); // only the dry run
-
-    // A file that adds: the preview names it all, and Import imports it.
-    file =
-        '{"format": "wtf-model", "version": 1, "meta": {"name": "Pressure"}, "quantities": [{'
-        '"name": "Pressure", "base_unit": {"symbol": "Pa", "name": "pascal"}, '
-        '"families": [{"name": "Pascals", "units": ['
-        '{"symbol": "Pa", "name": "pascal", "factor": "1"}, '
-        '{"symbol": "kPa", "name": "kilopascal", "factor": "1000"}]}]}, {'
-        '"name": "Voltage", "base_unit": {"symbol": "V", "name": "volt"}, '
-        '"families": [{"name": "Voltage", "units": ['
-        '{"symbol": "V", "name": "volt", "factor": "1"}]}]}]}';
-    await tester.tap(import);
-    await tester.pumpAndSettle();
-    expect(find.text('Import Pressure (pressure.json)'), findsOneWidget);
-    expect(find.textContaining('Its classes go'), findsNothing); // it has none
-    expect(find.text('Change…'), findsNothing);
-    expect(find.textContaining('Pressure › Pascals'), findsWidgets);
-    expect(
-      find.textContaining('Pressure › Pascals › Pa, Pressure › Pascals › kPa'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('there already'), findsOneWidget);
-    await tester.tap(find.widgetWithText(FilledButton, 'Import'));
-    await tester.pumpAndSettle();
-    // The file goes as it was chosen, factors as written.
-    expect(fake.unitImports.last, (file, false));
-    expect(find.text('Imported 2 units.'), findsOneWidget);
-    // The Units screen shows the new quantity, and has no Import of its own.
-    await tester.tap(find.text('Units'));
-    await tester.pumpAndSettle();
-    expect(find.text('Pressure'), findsOneWidget);
-    expect(find.text('Import'), findsNothing);
-  });
-
-  testWidgets('an item without a photo shows its class\'s, or a parent\'s', (
-    tester,
-  ) async {
-    final fake = FakeServer();
-    // Drills has none, its parent Tools has one; the items have none.
-    fake.classes.firstWhere((c) => c['id'] == 'c-tools')['photo'] = {
-      'id': 'att-tools',
-      'title': 'Tools',
-      'type': 'image/png',
-      'size': 3,
-      'hash': 'ab',
-    };
-    setSize(tester, 1200);
-    await startApp(tester, fake);
-    await search(tester, 'drill');
-    expect(find.byType(Thumbnail), findsOneWidget); // in the results table
-    await tester.tap(find.text('Cordless drill'));
-    await tester.pumpAndSettle();
-    expect(find.byType(ObjectPhoto), findsOneWidget);
-    // It is the class's: the item's own attachments don't list it.
-    expect(
-      find.descendant(
-        of: find.byType(AttachmentList),
-        matching: find.byType(Thumbnail),
-      ),
-      findsNothing,
-    );
   });
 
   testWidgets('the item photo: beside the details, or above the stock', (
     tester,
   ) async {
     final fake = FakeServer();
-    fake.itemAttachments['i-drill'] = [
-      {
-        'id': 'att-1',
-        'title': 'Front',
-        'type': 'image/png',
-        'size': 3,
-        'hash': 'ab',
-      },
-      {
-        'id': 'att-2',
-        'title': 'Manual',
-        'type': 'application/pdf',
-        'size': 2048,
-        'hash': 'cd',
-      },
-    ];
-    fake.items.first['photo'] = 'att-1';
-    final place = fake.stock.firstWhere((s) => s['item'] == 'i-drill');
-    fake.locations.firstWhere((l) => l['id'] == place['location'])['photo'] = {
-      'id': 'att-place',
-      'title': 'Shelf',
-      'type': 'image/png',
-      'size': 3,
-      'hash': 'ef',
-    };
+    fake.items.first['photo'] = 'hash-front';
 
     // Wide: small photos in the results table, the photo right of the
     // details, which include the values without a header of their own.
     setSize(tester, 1200);
     await startApp(tester, fake);
     await search(tester, 'drill');
-    expect(find.byType(Thumbnail), findsOneWidget);
+    expect(find.byType(FileImage), findsOneWidget);
     await tester.tap(find.text('Cordless drill'));
     await tester.pumpAndSettle();
     expect(find.text('Values'), findsNothing);
@@ -583,43 +455,20 @@ void main() {
     expect(photo.left, greaterThan(code.right));
     expect(photo.top, lessThan(tester.getRect(find.text('Voltage')).bottom));
 
-    // One list of attachments: the image with its small version, named as
-    // the item photo, and the file with its type's icon.
-    final list = find.byType(AttachmentList);
-    expect(
-      find.descendant(of: list, matching: find.byType(Thumbnail)),
-      findsOneWidget,
-    );
-    expect(
+    // Images are decoded for the size they're shown at: the photo at most
+    // as wide as its box, here 240 by 320. Its address changes with its
+    // content.
+    final image = tester.widget<Image>(
       find.descendant(
-        of: find.widgetWithText(ListTile, 'Manual'),
-        matching: find.byIcon(Icons.picture_as_pdf_outlined),
+        of: find.byType(ObjectPhoto),
+        matching: find.byType(Image),
       ),
-      findsOneWidget,
     );
-    expect(find.text('Item photo · image/png · 3 B'), findsOneWidget);
-
-    // Images are decoded for the size they're shown at: a small one at
-    // twice its size (to crop sharply), the photo at most as wide as its
-    // box, here 240 by 320.
-    ResizeImage decoded(Finder of) =>
-        tester
-                .widget<Image>(
-                  find.descendant(of: of, matching: find.byType(Image)),
-                )
-                .image
-            as ResizeImage;
-    final small = decoded(find.byType(Thumbnail).first);
-    expect((small.width, small.height), (96, 96));
-    final big = decoded(find.byType(ObjectPhoto));
+    final big = image.image as ResizeImage;
     expect((big.width, big.height), (240, 320));
-
-    // A stock row is shown as its place, with the location's photo.
     expect(
-      find.byWidgetPredicate(
-        (w) => w is Thumbnail && w.attachment.id == 'att-place',
-      ),
-      findsOneWidget,
+      (big.imageProvider as NetworkImage).url,
+      'http://wtf.test:8080/api/v1/items/i-drill/photo?v=hash-front',
     );
 
     // Narrow: the photo as wide as the screen, under the values and above
@@ -631,217 +480,96 @@ void main() {
       narrow.top,
       greaterThan(tester.getRect(find.text('Voltage')).bottom),
     );
-    // The section heading, not the item's "Stock: counted".
-    expect(
-      narrow.bottom,
-      lessThan(tester.getRect(find.text('Stock').last).top),
-    );
+    expect(narrow.bottom, lessThan(tester.getRect(find.text('Stock')).top));
     expect(narrow.width, 400 - 32);
-
-    // On the location, the stock row has its item's photo; a row's own
-    // photo comes first, there and on the item.
-    Thumbnail? thumbnail(String id) => tester
-        .widgetList<Thumbnail>(find.byType(Thumbnail))
-        .where((t) => t.attachment.id == id)
-        .firstOrNull;
-    final location = fake.locations.firstWhere(
-      (l) => l['id'] == place['location'],
-    );
-    final router = GoRouter.of(tester.element(find.byType(ObjectPhoto)));
-    router.push('/locations/${location['code']}');
-    await tester.pumpAndSettle();
-    expect(thumbnail('att-1'), isNotNull);
-    expect(thumbnail('att-1')!.attachment.owner, '/items/i-drill');
-
-    place['photo'] = {
-      'id': 'att-row',
-      'title': 'Label',
-      'type': 'image/png',
-      'size': 3,
-      'hash': '12',
-    };
-    await tester.pageBack();
-    await tester.pumpAndSettle();
-    router.push('/locations/${location['code']}');
-    await tester.pumpAndSettle();
-    expect(thumbnail('att-row'), isNotNull);
-    expect(thumbnail('att-1'), isNull);
-    await tester.pageBack();
-    await tester.pumpAndSettle();
-    await tester.drag(find.byType(Scrollable).first, const Offset(0, 400));
-    await tester.pumpAndSettle(); // pull to refresh the item
-    expect(thumbnail('att-row'), isNotNull);
-    expect(thumbnail('att-place'), isNull);
   });
 
-  testWidgets('an attachment: change its title, then delete it', (
-    tester,
-  ) async {
-    setSize(tester, 700);
+  testWidgets('a photo: choose one, then remove it', (tester) async {
+    setSize(tester, 1000);
     final fake = FakeServer();
-    fake.itemAttachments['i-drill'] = [
-      {
-        'id': 'att-1',
-        'title': 'Manual',
-        'type': 'application/pdf',
-        'size': 2048,
-        'hash': 'ab',
-      },
-    ];
+    pickUploadFile = ({bool image = false}) async =>
+        image ? ('front.png', () async => [1, 2, 3]) : null;
+    addTearDown(() => pickUploadFile = ({bool image = false}) async => null);
     await startApp(tester, fake);
-    await search(tester, 'drill');
-    await tester.tap(find.text('Cordless drill'));
-    await tester.pumpAndSettle();
-    expect(find.text('Manual'), findsOneWidget);
-    expect(find.text('application/pdf · 2.0 KiB'), findsOneWidget);
+    await openItem(tester, 'Cordless drill');
+    expect(find.byType(ObjectPhoto), findsNothing);
 
-    await tester.tap(find.byTooltip('Attachment'));
-    await tester.pumpAndSettle();
-    expect(find.text('Make it the item photo'), findsNothing); // not an image
-    await tester.tap(find.text('Title…'));
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      find.widgetWithText(TextField, 'Manual'),
-      'Datasheet',
-    );
-    await tester.tap(find.text('Save'));
-    await tester.pumpAndSettle();
-    expect(
-      fake.changes.last,
-      'PATCH /api/v1/items/i-drill/attachments/att-1 {"title":"Datasheet"}',
-    );
-    expect(find.text('Datasheet'), findsOneWidget);
-
-    await tester.tap(find.byTooltip('Attachment'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Delete…'));
-    await tester.pumpAndSettle();
-    expect(find.text("It can't be restored."), findsOneWidget);
-    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
-    await tester.pumpAndSettle();
-    expect(fake.changes.last, 'DELETE /api/v1/items/i-drill/attachments/att-1');
-    expect(find.text('Datasheet'), findsNothing);
-  });
-
-  testWidgets('attach a file, open it, and restore a deleted one', (
-    tester,
-  ) async {
-    setSize(tester, 700);
-    final fake = FakeServer();
-    pickAttachmentFiles = () async => [
-      ('front.png', () async => [1, 2, 3]),
-    ];
-    addTearDown(() => pickAttachmentFiles = () async => []);
-    await startApp(tester, fake);
-    await search(tester, 'drill');
-    await tester.tap(find.text('Cordless drill'));
-    await tester.pumpAndSettle();
-
-    // One file: a title, and for an image, "make it the photo".
-    await tester.tap(find.text('Add files'));
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      find.widgetWithText(TextField, 'front.png'),
-      'Front',
-    );
-    await tester.tap(find.text('Make it the item photo'));
-    await tester.tap(find.widgetWithText(FilledButton, 'Attach'));
+    await menu(tester, 'Photo…');
+    await tester.tap(find.text('Choose a photo'));
     await tester.pumpAndSettle();
     final upload = fake.changes.last;
-    expect(upload, startsWith('POST /api/v1/items/i-drill/attachments'));
+    expect(upload, startsWith('PUT /api/v1/items/i-drill/photo'));
     expect(upload, contains('filename="front.png"'));
     expect(upload.toLowerCase(), contains('content-type: image/png'));
-    expect(upload, contains('name="title"'));
-    final a = fake.itemAttachments['i-drill']!.single;
-    expect(a['title'], 'Front');
-    expect(fake.items.first['photo'], a['id']);
-    expect(find.text('Attached front.png.'), findsOneWidget);
+    expect(find.byType(ObjectPhoto), findsOneWidget);
 
-    // A file opens on its own screen; a deleted one can be restored there.
-    a
-      ..['type'] = 'application/pdf'
-      ..['title'] = 'Manual'
-      ..['deleted'] = true;
-    fake.items.first.remove('photo');
-    await tester.tap(find.byTooltip('Edit')); // any change reloads the item
-    await tester.pageBack();
+    clearMessages(tester);
     await tester.pumpAndSettle();
-    await search(tester, 'drill');
-    await tester.tap(find.text('Cordless drill'));
+    await menu(tester, 'Photo…');
+    expect(find.text('Another photo'), findsOneWidget);
+    await tester.tap(find.text('Remove the photo'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Manual'));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('This attachment is deleted'), findsOneWidget);
-    await tester.tap(find.widgetWithText(FilledButton, 'Restore'));
-    await tester.pumpAndSettle();
-    expect(
-      fake.changes.last,
-      'POST /api/v1/items/i-drill/attachments/${a['id']}/restore {}',
-    );
-    expect(find.textContaining('This attachment is deleted'), findsNothing);
-    expect(find.text('3 B'), findsOneWidget);
+    expect(fake.changes.last, 'PATCH /api/v1/items/i-drill {"photo":null}');
+    expect(find.byType(ObjectPhoto), findsNothing);
+  });
 
-    // Download, named as the server names it.
+  testWidgets('a file attribute: upload, open, save, remove', (tester) async {
+    setSize(tester, 700);
+    final fake = FakeServer();
+    pickUploadFile = ({bool image = false}) async =>
+        ('drill.pdf', () async => [1, 2, 3]);
+    addTearDown(() => pickUploadFile = ({bool image = false}) async => null);
     final saved = <(String, List<int>)>[];
     saveDownloadedFile = (name, bytes) async => saved.add((name, bytes));
     addTearDown(() => saveDownloadedFile = (name, bytes) async {});
-    // The message about the upload is gone by now.
-    tester
-        .state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger))
-        .clearSnackBars();
-    await tester.pumpAndSettle();
-    // A PDF opens, so Download is beside the title.
-    await tester.tap(find.byTooltip('Download'));
-    await tester.pumpAndSettle();
-    expect(saved, hasLength(1));
-    expect(saved.single.$1, 'Manual.pdf');
-    expect(saved.single.$2, [1, 2, 3]);
-
-    // Open: with the device's own app, from a file named for its type.
-    final opened = <(String, List<int>)>[];
-    openDownloadedFile = (a, name, bytes) async {
-      opened.add((name, bytes));
+    final opened = <(String, String)>[];
+    openDownloadedFile = (f, name, type, bytes) async {
+      opened.add((name, type));
       return true;
     };
-    addTearDown(() => openDownloadedFile = (a, name, bytes) async => false);
-    await tester.tap(find.widgetWithText(FloatingActionButton, 'Open'));
-    await tester.pumpAndSettle();
-    expect(opened, hasLength(1));
-    expect(opened.single.$1, 'Manual.pdf');
-    expect(opened.single.$2, [1, 2, 3]);
+    addTearDown(
+      () => openDownloadedFile = (f, name, type, bytes) async => false,
+    );
+    await startApp(tester, fake);
+    await openItem(tester, 'Cordless drill');
 
-    // The menu of a file offers both.
-    await tester.pageBack();
+    // Under Files, with the types it takes; a tap uploads one.
+    expect(find.text('Files'), findsOneWidget);
+    expect(find.text('No file. Takes application/pdf'), findsOneWidget);
+    await tester.tap(find.text('Datasheet'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Attachment'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Download…'));
-    await tester.pumpAndSettle();
-    expect(saved, hasLength(2));
-    await tester.tap(find.byTooltip('Attachment'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Open'));
-    await tester.pumpAndSettle();
-    expect(opened, hasLength(2));
+    expect(
+      fake.changes.last,
+      startsWith('PUT /api/v1/items/i-drill/files/Datasheet'),
+    );
+    expect(fake.changes.last, contains('filename="drill.pdf"'));
+    expect(find.text('Tap to open'), findsOneWidget);
 
-    // A type nothing should run from here is Download only.
-    a['type'] = 'application/x-msdownload';
-    await tester.tap(find.byTooltip('Edit')); // any change reloads the item
-    await tester.pageBack();
+    // A tap opens it, named as the server names it, with its type.
+    clearMessages(tester);
+    await tester.tap(find.text('Datasheet'));
     await tester.pumpAndSettle();
-    await search(tester, 'drill');
-    await tester.tap(find.text('Cordless drill'));
+    expect(opened, [('Datasheet.pdf', 'application/pdf')]);
+
+    await tester.tap(find.byTooltip('Datasheet'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Attachment'));
+    await tester.tap(find.text('Save…'));
     await tester.pumpAndSettle();
-    expect(find.text('Download…'), findsOneWidget);
-    expect(find.text('Open'), findsNothing);
-    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    expect(saved.single.$1, 'Datasheet.pdf');
+    expect(saved.single.$2, [1, 2, 3]);
+
+    // Removing it is a change of its value.
+    await tester.tap(find.byTooltip('Datasheet'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Manual'));
+    await tester.tap(find.text('Remove…'));
     await tester.pumpAndSettle();
-    expect(find.widgetWithText(FloatingActionButton, 'Download'), findsOne);
-    expect(find.widgetWithText(FloatingActionButton, 'Open'), findsNothing);
+    await tester.tap(button('Remove'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      'PATCH /api/v1/items/i-drill {"values":{"Datasheet":null}}',
+    );
+    expect(find.text('No file. Takes application/pdf'), findsOneWidget);
   });
 
   test('file icons: by sub-type, else by major type, else a file', () {
@@ -862,32 +590,25 @@ void main() {
     expect(typeIcon('application/x-unknown'), Icons.insert_drive_file_outlined);
   });
 
-  test('Open: what each app offers, and the file it opens', () {
-    Attachment file(String title, String type) =>
-        Attachment(id: 'x', owner: '/items/i', title: title, type: type);
-    // The web app: what the browser shows itself.
-    expect(canOpen(file('a', 'application/pdf'), web: true), isTrue);
-    expect(canOpen(file('a', 'image/png'), web: true), isTrue);
-    expect(canOpen(file('a', 'image/svg+xml'), web: true), isFalse);
-    expect(canOpen(file('a', 'application/zip'), web: true), isFalse);
-    // The native apps: documents too, nothing that runs.
-    expect(canOpen(file('a', 'application/zip'), web: false), isTrue);
-    expect(canOpen(file('a', 'text/html'), web: false), isFalse);
-    expect(canOpen(file('a', 'image/svg+xml'), web: false), isFalse);
-    expect(canOpen(file('a', 'application/msword'), web: false), isFalse);
-    expect(canOpen(file('a', 'application/x-msdownload'), web: false), isFalse);
+  test('opening: what the native apps open, and the file they open', () {
+    // Documents too, nothing that runs.
+    expect(canOpenType('application/pdf'), isTrue);
+    expect(canOpenType('application/zip'), isTrue);
+    expect(canOpenType('text/html'), isFalse);
+    expect(canOpenType('image/svg+xml'), isFalse);
+    expect(canOpenType('application/msword'), isFalse);
+    expect(canOpenType('application/x-msdownload'), isFalse);
 
     // Always the type's extension, and nothing a shell would act on.
-    expect(openFileName(file('Datasheet', 'application/pdf')), 'Datasheet.pdf');
-    expect(openFileName(file('manual.PDF', 'application/pdf')), 'manual.pdf');
-    expect(openFileName(file('photo.jpeg', 'image/jpeg')), 'photo.jpg');
-    expect(openFileName(file('setup.exe', 'image/png')), 'setup.exe.png');
+    expect(openFileName('Datasheet.pdf', 'application/pdf'), 'Datasheet.pdf');
+    expect(openFileName('Photo.jpeg', 'image/jpeg'), 'Photo.jpg');
+    expect(openFileName('setup.exe', 'image/png'), 'setup.png');
     expect(
-      openFileName(file('Tools & "parts"/2.pdf', 'application/pdf')),
+      openFileName('Tools & "parts"/2.pdf', 'application/pdf'),
       'Tools _ _parts__2.pdf',
     );
-    expect(openFileName(file('...', 'text/plain')), 'attachment.txt');
-    expect(openFileName(file('Kühlschrank', 'text/plain')), 'Kühlschrank.txt');
+    expect(openFileName('...', 'text/plain'), 'file.txt');
+    expect(openFileName('Kühlschrank', 'text/plain'), 'Kühlschrank.txt');
   });
 
   testWidgets('the appearance is kept on the device', (tester) async {
@@ -984,10 +705,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('18 V'), findsOneWidget);
     expect(find.text('Tools/Drills'), findsOneWidget);
+    // A value that follows the class's default says so.
+    expect(find.text('Red  (default)'), findsOneWidget);
+    expect(find.text('pieces'), findsOneWidget);
 
     await tester.tap(find.text('Garage/Shelf 1'));
     await tester.pumpAndSettle();
-    expect(find.text('Quantity'), findsOneWidget);
+    expect(find.text('Amount'), findsOneWidget);
 
     await tester.tap(find.text('Move'));
     await tester.pumpAndSettle();
@@ -1007,17 +731,63 @@ void main() {
     );
     await tester.tap(find.text('Garage/Shelf 2'));
     await tester.pumpAndSettle();
-    await tester.enterText(field('Quantity'), '1');
+    // Pieces are whole.
+    await tester.enterText(field('Amount'), '1.5');
+    await tester.tap(find.widgetWithText(FilledButton, 'Move'));
+    await tester.pumpAndSettle();
+    expect(find.text('"1.5" is not an integer'), findsOneWidget);
+    await tester.enterText(field('Amount'), '1');
     await tester.tap(find.widgetWithText(FilledButton, 'Move'));
     await tester.pumpAndSettle();
 
     expect(
       fake.changes.last,
-      endsWith('/move {"location":"l-shelf2","quantity":1}'),
+      endsWith('/move {"location":"l-shelf2","amount":1}'),
     );
     // The row at the destination.
     expect(find.text('Garage/Shelf 2'), findsOneWidget);
     expect(find.text('1'), findsOneWidget);
+  });
+
+  testWidgets('merge a row into another: say which values to keep', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    fake.stock.add({
+      'id': 's-2',
+      'code': '1C01',
+      'item': 'i-drill',
+      'location': 'l-shelf2',
+      'amount': 3,
+      'reference': 'PO-7',
+      'serial': null,
+      'photo': null,
+      'values': <String, Object?>{'Bought': '2026-01-05'},
+      'defaulted': <String>[],
+    });
+    await startApp(tester, fake);
+    await open(tester, '/stock/1C00');
+    await menu(tester, 'Merge into…');
+    // The only other counted row; where they differ, which to keep.
+    expect(find.text('1C01  Garage/Shelf 2'), findsOneWidget);
+    expect(find.text('The rows differ. Which to keep?'), findsOneWidget);
+    expect(find.text('1C00: none'), findsNWidgets(2));
+    expect(find.text('1C01: PO-7'), findsOneWidget);
+    expect(find.text('1C01: 2026-01-05'), findsOneWidget);
+    await tester.tap(find.text('1C00: none').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Merge'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      'POST /api/v1/stock/s-1/merge {"into":"s-2","amount":null,'
+      '"resolve":{"reference":"from","values":{"Bought":"into"}}}',
+    );
+    // On to the row merged into; the other's label is gone.
+    expect(find.text('5'), findsOneWidget);
+    expect(fake.stock.single['reference'], isNull);
+    expect(fake.gone, contains('1C00'));
   });
 
   testWidgets('search by attributes; results as a table, and back', (
@@ -1033,33 +803,46 @@ void main() {
     expect(find.byType(FoundItemsScreen), findsNothing);
     await tester.enterText(find.byType(TextField).first, '');
 
-    // A class brings its attributes.
+    // A class brings its attributes, those of stock rows too; files are
+    // found by their item.
     await tester.tap(find.text('Any class'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Tools/Drills'));
     await tester.pumpAndSettle();
     expect(field('Voltage'), findsOneWidget);
+    expect(field('Bought (stock)'), findsOneWidget);
+    expect(find.text('Datasheet'), findsNothing);
 
-    // A condition that doesn't parse stays on the form.
+    // A number in another unit is refused: nothing converts.
     await tester.enterText(field('Voltage'), '>= 3 kg');
     await tester.tap(find.widgetWithText(FilledButton, 'Search'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('unknown unit "kg"'), findsOneWidget);
+    expect(find.textContaining('nothing converts'), findsOneWidget);
     expect(find.byType(FoundItemsScreen), findsNothing);
 
-    // In any unit of the quantity: 12000 mV is 12 V.
-    await tester.enterText(field('Voltage'), '>= 12000mV');
+    // Filters name the attribute, and choices by their text.
+    await tester.enterText(field('Voltage'), '>= 12 V');
+    await tester.tap(find.widgetWithText(FilterChip, 'Red'));
     await tester.tap(find.widgetWithText(FilledButton, 'Search'));
     await tester.pumpAndSettle();
-    expect(fake.lastWhere, '[{"attribute":"a-volt","op":">=","value":12}]');
-    expect(find.text('1 item found'), findsOneWidget);
+    expect(
+      fake.lastWhere,
+      '[{"attribute":"Colour","op":"in","value":["Red"]},'
+      '{"attribute":"Voltage","op":">=","value":12}]',
+    );
+    expect(find.text('Found items'), findsOneWidget);
     // A table, with a column for each attribute the items show.
     expect(find.text('Where'), findsOneWidget);
     expect(find.text('Voltage'), findsOneWidget);
+    expect(find.text('Colour'), findsOneWidget);
     expect(find.text('Cordless drill'), findsOneWidget);
     expect(find.text('18 V'), findsOneWidget);
     expect(find.text('Garage/Shelf 1'), findsOneWidget);
-    // A long value can't make its row tall: cells end after three lines.
+    // A default is shown as one; a long value can't make its row tall.
+    expect(
+      tester.widget<Text>(find.text('Red')).style?.fontStyle,
+      FontStyle.italic,
+    );
     expect(tester.widget<Text>(find.text('18 V')).maxLines, 3);
     expect(tester.widget<Text>(find.text('Garage/Shelf 1')).maxLines, 3);
 
@@ -1068,18 +851,51 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       tester.widget<TextFormField>(field('Voltage')).controller!.text,
-      '>= 12000mV',
+      '>= 12 V',
     );
     expect(find.text('Tools/Drills'), findsOneWidget);
 
     await tester.enterText(field('Voltage'), '20..24');
     await tester.tap(find.widgetWithText(FilledButton, 'Search'));
     await tester.pumpAndSettle();
-    expect(
-      fake.lastWhere,
-      '[{"attribute":"a-volt","op":"between","value":[20,24]}]',
-    );
+    expect(fake.lastWhere, contains('"op":"between","value":[20,24]'));
     expect(find.text('Nothing found.'), findsOneWidget);
+  });
+
+  testWidgets('results come a page at a time, by key', (tester) async {
+    setSize(tester, 700, 900);
+    final fake = FakeServer();
+    for (var n = 0; n < 45; n++) {
+      fake.items.add({
+        'id': 'i-d${n.toString().padLeft(2, '0')}',
+        'code': '2${n.toString().padLeft(3, '0')}',
+        'name': 'Drill ${n.toString().padLeft(2, '0')}',
+        'class': 'c-drills',
+        'unit': null,
+        'photo': null,
+        'values': <String, Object?>{'Voltage': 12},
+        'defaulted': <String>[],
+      });
+    }
+    await startApp(tester, fake);
+    await search(tester, 'drill');
+    expect(fake.itemPages, [null]);
+    // The first page: Cordless drill, then Drill 00 … Drill 18.
+    await tester.fling(
+      find.byType(Scrollable).first,
+      const Offset(0, -20000),
+      5000,
+    );
+    await tester.pumpAndSettle();
+    expect(fake.itemPages.take(2), [null, 'i-d18']);
+    await tester.fling(
+      find.byType(Scrollable).first,
+      const Offset(0, -20000),
+      5000,
+    );
+    await tester.pumpAndSettle();
+    expect(fake.itemPages, [null, 'i-d18', 'i-d38']);
+    expect(find.text('Drill 44'), findsOneWidget);
   });
 
   testWidgets('a URL value is a link: open it, or copy it from its menu', (
@@ -1088,7 +904,7 @@ void main() {
     setSize(tester, 400);
     final fake = FakeServer();
     const url = 'https://example.com/drill.pdf';
-    (fake.items.first['values'] as Map)['a-manual'] = url;
+    (fake.items.first['values'] as Map)['Manual'] = url;
     final opened = <Uri>[];
     final before = openLink;
     openLink = (u) async {
@@ -1113,9 +929,7 @@ void main() {
       ),
     );
     await startApp(tester, fake);
-    await search(tester, 'drill');
-    await tester.tap(find.text('Cordless drill'));
-    await tester.pumpAndSettle();
+    await openItem(tester, 'Cordless drill');
 
     // A tap opens it.
     await tester.tap(find.text(url));
@@ -1133,7 +947,7 @@ void main() {
 
     // A right click too; and in the table, a tap on the link opens it rather
     // than the item.
-    setSize(tester, 1200);
+    setSize(tester, 1500);
     await tester.pageBack();
     await tester.pumpAndSettle();
     await search(tester, 'drill');
@@ -1153,49 +967,142 @@ void main() {
     setSize(tester, 1000);
     final fake = FakeServer();
     await startApp(tester, fake);
-    final router = GoRouter.of(tester.element(find.byType(Scaffold).first));
-    router.push('/classes/c-drills');
+    await open(tester, '/classes/c-drills');
+    expect(find.text('Item attributes'), findsOneWidget);
+    expect(find.text('Stock attributes'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Add'), findsWidgets);
+    // An inherited one says where it comes from, and has no menu here.
+    expect(find.textContaining('from Tools'), findsOneWidget);
+    expect(find.byTooltip('Colour'), findsNothing);
+    expect(find.byTooltip('Voltage'), findsOneWidget);
+
+    // Tools has no stock attributes: no empty section for them.
+    await tester.pageBack();
     await tester.pumpAndSettle();
-    // No empty section for the stock rows' attributes.
+    await open(tester, '/classes/c-tools');
     expect(find.text('Item attributes'), findsOneWidget);
     expect(find.text('Stock attributes'), findsNothing);
-    expect(find.text('Attributes'), findsNothing);
-    expect(find.widgetWithText(TextButton, 'Assign'), findsOneWidget);
 
-    fake.voltagePerUnit = true;
+    // A class without attributes: only the heading that holds Add.
+    fake.own['c-tools']!.clear();
     await tester.pageBack();
     await tester.pumpAndSettle();
-    router.push('/classes/c-drills');
-    await tester.pumpAndSettle();
-    expect(find.text('Item attributes'), findsNothing);
-    expect(find.text('Stock attributes'), findsOneWidget);
-    expect(find.widgetWithText(TextButton, 'Assign'), findsOneWidget);
-
-    // A class without attributes: only the heading that holds Assign.
-    await tester.pageBack();
-    await tester.pumpAndSettle();
-    router.push('/classes/c-tools');
-    await tester.pumpAndSettle();
+    await open(tester, '/classes/c-tools');
     expect(find.text('Attributes'), findsOneWidget);
     expect(find.text('Item attributes'), findsNothing);
-    expect(find.text('Stock attributes'), findsNothing);
   });
 
-  testWidgets('assigning an attribute asks for its default, not its name', (
+  testWidgets('add an attribute: what it rewrites first, then for real', (
     tester,
   ) async {
     setSize(tester, 1000);
-    await startApp(tester, FakeServer());
-    GoRouter.of(tester.element(find.byType(Scaffold).first))
-        .push('/classes/c-drills');
+    final fake = FakeServer();
+    await startApp(tester, fake);
+    await open(tester, '/classes/c-drills');
+    await tester.tap(find.widgetWithText(TextButton, 'Add').first);
     await tester.pumpAndSettle();
+
+    // Not the name of a field every item has.
+    await tester.enterText(field('Name'), 'Serial');
+    await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('"Serial" is a field of every item or stock row'),
+      findsOne,
+    );
+    expect(fake.changes, isEmpty);
+
+    // Required, with a default: the dry run says what it gives it to.
+    await tester.enterText(field('Name'), 'Brand');
+    await tester.tap(find.text('Required'));
+    await tester.enterText(field('Default'), 'unknown');
+    await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+    await tester.pumpAndSettle();
+    const body =
+        '{"name":"Brand","definition":{"scope":"item","type":"text",'
+        '"required":true,"default":"unknown"}}';
+    expect(fake.changes, [
+      'POST /api/v1/classes/c-drills/attributes?dry_run=true $body',
+    ]);
+    expect(find.text('Add Brand to Drills?'), findsOneWidget);
+    expect(find.text('This rewrites 1 item.'), findsOneWidget);
+    expect(fake.own['c-drills']!.containsKey('Brand'), isFalse);
+    await tester.tap(button('Add'));
+    await tester.pumpAndSettle();
+    expect(fake.changes.last, 'POST /api/v1/classes/c-drills/attributes $body');
+    expect(find.text('Brand *'), findsOneWidget);
+    expect((fake.items.first['values'] as Map)['Brand'], 'unknown');
+
+    // A change of one: its type and where its values live stay.
     await tester.tap(find.text('Voltage *'));
     await tester.pumpAndSettle();
     expect(find.text('Voltage in Drills'), findsOneWidget);
-    expect(field('Default value *'), findsNothing);
-    expect(field('Default value'), findsOneWidget);
-    expect(field('Voltage'), findsNothing);
-    expect(find.textContaining('Empty: no default'), findsOneWidget);
+    expect(find.text('number, on the item.'), findsOneWidget);
+    expect(find.byType(DropdownButtonFormField<String>), findsNothing);
+    await tester.enterText(field('Default'), '12');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      'PATCH /api/v1/classes/c-drills/attributes/Voltage?dry_run=true {"default":12}',
+    );
+    expect(find.text('No item or stock row changes.'), findsOneWidget);
+    await tester.tap(button('Save'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      'PATCH /api/v1/classes/c-drills/attributes/Voltage {"default":12}',
+    );
+    expect(find.textContaining('default 12 V'), findsOneWidget);
+
+    // Renamed, from its menu: every value of it is rewritten.
+    await tester.tap(find.byTooltip('Brand'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rename…'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextFormField, 'Brand'), 'Make');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    expect(find.text('Rename Brand to Make?'), findsOneWidget);
+    await tester.tap(button('Rename'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      'POST /api/v1/classes/c-drills/attributes/Brand/rename {"name":"Make"}',
+    );
+    expect(find.text('Make *'), findsOneWidget);
+  });
+
+  testWidgets('choices: one in use is refused, one that isn\'t goes', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    await startApp(tester, fake);
+    await open(tester, '/classes/c-tools');
+    await tester.tap(find.byTooltip('Colour'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Choices…'));
+    await tester.pumpAndSettle();
+    expect(find.text('Choices of Colour'), findsOneWidget);
+
+    // The drill is red: refused, as the dry run says at once.
+    await tester.tap(find.byTooltip('Remove').first);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('1 item has "Red"'), findsOneWidget);
+    expect(find.text('Remove Red?'), findsNothing);
+
+    await tester.tap(find.byTooltip('Remove').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Remove Blue?'), findsOneWidget);
+    await tester.tap(button('Remove'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      'DELETE /api/v1/classes/c-tools/attributes/Colour/choices/Blue',
+    );
+    expect(find.widgetWithText(ListTile, 'Blue'), findsNothing);
+    expect(find.widgetWithText(ListTile, 'Green'), findsOneWidget);
   });
 
   testWidgets('a table wider than the screen says so', (tester) async {
@@ -1229,20 +1136,29 @@ void main() {
     expect(fade(), 0);
   });
 
-  testWidgets('a label code finds its object', (tester) async {
+  testWidgets('a label code finds its object, or says it is deleted', (
+    tester,
+  ) async {
     setSize(tester, 1000);
-    await startApp(tester, FakeServer());
+    final fake = FakeServer()..gone.add('1Z00');
+    await startApp(tester, fake);
     await search(tester, '1a-01'); // case and hyphens don't matter
     expect(find.text('Label code: Location 1A01'), findsOneWidget);
     await tester.tap(find.text('Garage/Shelf 1'));
     await tester.pumpAndSettle();
     expect(find.text('Stock here'), findsOneWidget);
     expect(find.text('Cordless drill'), findsOneWidget);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await search(tester, '1z00');
+    expect(
+      find.text("This label's item, stock row or location has been deleted"),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('add an item with a value in other units, without stock', (
-    tester,
-  ) async {
+  testWidgets('add an item with a value, without stock', (tester) async {
     setSize(tester, 1000);
     final fake = FakeServer();
     await startApp(tester, fake);
@@ -1258,27 +1174,24 @@ void main() {
     await tester.tap(find.text('Tools/Drills'));
     await tester.pumpAndSettle();
 
-    // A required value, checked with the units of its quantity.
+    // A required value, in its unit: another one is refused.
     expect(field('Voltage *'), findsOneWidget);
+    expect(find.text('Datasheet'), findsNothing); // uploaded afterwards
     await tester.enterText(field('Name'), 'Impact driver');
-    await tester.enterText(field('Voltage *'), '3 kg');
+    await tester.enterText(field('Voltage *'), '18 mV');
     await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('unknown unit "kg"'), findsOneWidget);
+    expect(find.textContaining('nothing converts'), findsOneWidget);
     expect(fake.changes, isEmpty);
 
-    // A plain number is in the unit picked next to the field: the
-    // attribute's own (V) until another of its family is chosen.
-    await tester.tap(find.text('V'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('mV').last);
-    await tester.pumpAndSettle();
-    await tester.enterText(field('Voltage *'), '18000');
+    // With the unit's own label, or without, it is the same.
+    await tester.enterText(field('Voltage *'), '18 V');
     await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
     expect(
       fake.changes.single,
-      'POST /api/v1/items {"class":"c-drills","name":"Impact driver","values":{"a-volt":18}}',
+      'POST /api/v1/items {"class":"c-drills","name":"Impact driver",'
+      '"unit":null,"values":{"Voltage":18}}',
     );
 
     // Asked once, as in the CLI.
@@ -1287,9 +1200,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Impact driver'), findsWidgets);
     expect(find.text('No stock.'), findsOneWidget);
+    // The default it was given.
+    expect(find.text('Red  (default)'), findsOneWidget);
   });
 
-  testWidgets('add an item, then its stock', (tester) async {
+  testWidgets('add an item counted in metres, then its stock', (tester) async {
     setSize(tester, 1000);
     final fake = FakeServer();
     await startApp(tester, fake);
@@ -1299,10 +1214,12 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Tools/Drills'));
     await tester.pumpAndSettle();
-    await tester.enterText(field('Name'), 'Hammer drill');
+    await tester.enterText(field('Name'), 'Drill cable');
+    await tester.enterText(field('Unit of its stock'), 'm');
     await tester.enterText(field('Voltage *'), '230');
     await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
+    expect(fake.changes.single, contains('"unit":"m"'));
     await tester.tap(find.text('Add stock'));
     await tester.pumpAndSettle();
 
@@ -1310,26 +1227,30 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Garage/Shelf 2'));
     await tester.pumpAndSettle();
+    await tester.enterText(field('Amount'), '2.5 m');
+    await tester.enterText(field('Reference'), 'PO-1');
+    await tester.enterText(field('Serial number'), 'SN-9');
+    await tester.enterText(field('Bought'), '2026-11-01');
     await tester.tap(find.widgetWithText(FilledButton, 'Add'));
     await tester.pumpAndSettle();
 
-    // Uncounted (empty quantity); then the item's screen shows it.
-    expect(fake.changes.last, contains('"location":"l-shelf2"}'));
-    expect(find.text('Hammer drill'), findsWidgets);
-    expect(find.text('uncounted'), findsOneWidget);
+    expect(
+      fake.changes.last,
+      endsWith(
+        '{"item":"i-new0","location":"l-shelf2","amount":2.5,'
+        '"reference":"PO-1","serial":"SN-9","values":{"Bought":"2026-11-01"}}',
+      ),
+    );
+    // Then the item's screen shows it.
+    expect(find.text('Drill cable'), findsWidgets);
+    expect(find.text('2.5 m'), findsOneWidget);
+    expect(find.textContaining('ref PO-1 · serial SN-9'), findsOneWidget);
+    expect(find.text('2026-11-01'), findsOneWidget);
   });
 
   testWidgets('the location tree, and a box with compartments', (tester) async {
     setSize(tester, 1000);
     final fake = FakeServer();
-    final shelf = fake.locations.firstWhere((l) => l['name'] == 'Shelf 1');
-    shelf['photo'] = {
-      'id': 'att-shelf',
-      'title': 'Shelf',
-      'type': 'image/png',
-      'size': 3,
-      'hash': 'ab',
-    };
     await startApp(tester, fake);
 
     await tester.tap(find.text('Locations'));
@@ -1339,12 +1260,6 @@ void main() {
     await tester.tap(find.byTooltip('Expand'));
     await tester.pumpAndSettle();
     expect(find.text('Shelf 1'), findsOneWidget);
-
-    // The tree shows a location's photo small, and its icon, framed the
-    // same, when it has none.
-    expect(find.byType(Thumbnail), findsOneWidget);
-    final photo = tester.widget<Thumbnail>(find.byType(Thumbnail));
-    expect(photo.attachment.owner, '/locations/${shelf['id']}');
     expect(
       find.descendant(
         of: find.byType(PhotoOrIcon),
@@ -1367,7 +1282,8 @@ void main() {
 
     expect(
       fake.changes.single,
-      'POST /api/v1/locations {"name":"Box","grid":{"columns":2,"rows":3}}',
+      'POST /api/v1/locations {"name":"Box","parent":null,"container":false,'
+      '"grid":{"columns":2,"rows":3}}',
     );
     expect(find.text('Container'), findsOneWidget);
     expect(find.text('B3'), findsOneWidget);
@@ -1375,20 +1291,15 @@ void main() {
     expect(find.text('Box/', skipOffstage: false), findsOneWidget);
   });
 
-  testWidgets('edit an item: rename it, change a value, then clear it', (
-    tester,
-  ) async {
+  testWidgets('edit an item: fields and values in one change', (tester) async {
     setSize(tester, 1000);
     final fake = FakeServer();
     await startApp(tester, fake);
-    await search(tester, 'drill');
-    await tester.tap(find.text('Cordless drill'));
-    await tester.pumpAndSettle();
+    await openItem(tester, 'Cordless drill');
 
     await tester.tap(find.byTooltip('Edit'));
     await tester.pumpAndSettle();
-    // The current value as shown: the number in the field, its unit in the
-    // menu. It reads back unchanged.
+    // The number in the field, its unit after it. It reads back unchanged.
     expect(
       tester.widget<TextFormField>(field('Voltage *')).controller!.text,
       '18',
@@ -1406,39 +1317,36 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(field('Name'), 'Old drill');
     await tester.enterText(field('Voltage *'), '14.4');
+    final colour = find.descendant(
+      of: find.byType(DropdownMenuFormField<String>),
+      matching: find.byType(TextField),
+    );
+    // It follows the class's default, and says so.
+    expect(find.text("The class's default"), findsOneWidget);
+    await tester.enterText(colour, 'Blue');
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
     expect(fake.changes, [
-      'PATCH /api/v1/items/i-drill {"name":"Old drill"}',
-      'PUT /api/v1/items/i-drill/values/a-volt {"value":14.4}',
+      'PATCH /api/v1/items/i-drill '
+          '{"values":{"Colour":"Blue","Voltage":14.4},"name":"Old drill"}',
     ]);
     expect(find.text('14.4 V'), findsOneWidget);
+    expect(find.text('Blue'), findsOneWidget);
 
-    // A value shown in another unit of the family opens in that unit.
+    // Back to the default: it follows the class's default again.
     await tester.tap(find.byTooltip('Edit'));
     await tester.pumpAndSettle();
-    await tester.enterText(field('Voltage *'), '0.5');
+    await tester.tap(find.byTooltip('Back to the default (Red)'));
+    await tester.pumpAndSettle();
+    expect(find.text("The class's default"), findsOneWidget);
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
     expect(
       fake.changes.last,
-      'PUT /api/v1/items/i-drill/values/a-volt {"value":0.5}',
+      'PATCH /api/v1/items/i-drill {"default":["Colour"]}',
     );
-    expect(find.text('500 mV'), findsOneWidget);
-    await tester.tap(find.byTooltip('Edit'));
-    await tester.pumpAndSettle();
-    expect(
-      tester.widget<TextFormField>(field('Voltage *')).controller!.text,
-      '500',
-    );
-    expect(
-      find.descendant(of: field('Voltage *'), matching: find.text('mV')),
-      findsOneWidget,
-    );
-    await tester.tap(find.text('Save'));
-    await tester.pumpAndSettle();
-    expect(fake.changes, hasLength(3));
-    expect(find.text('No changes.'), findsOneWidget);
+    expect(find.text('Red  (default)'), findsOneWidget);
 
     // A required value without a default can't be cleared.
     await tester.tap(find.byTooltip('Edit'));
@@ -1447,7 +1355,7 @@ void main() {
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
     expect(find.text('Required'), findsOneWidget);
-    expect(fake.changes, hasLength(3));
+    expect(fake.changes, hasLength(2));
   });
 
   testWidgets('delete a location with stock in it only when told to', (
@@ -1460,13 +1368,11 @@ void main() {
     await tester.tap(find.text('Garage'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(PopupMenuButton<String>));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Delete…'));
-    await tester.pumpAndSettle();
+    await menu(tester, 'Delete…');
     expect(find.text('Delete location Garage?'), findsOneWidget);
     expect(find.text('And the 2 locations below it:'), findsOneWidget);
     expect(find.text('1 stock row is in them:'), findsOneWidget);
+    expect(find.text("This can't be undone."), findsOneWidget);
     // Delete stays disabled until the stock may go too.
     final delete = find.widgetWithText(FilledButton, 'Delete');
     expect(tester.widget<FilledButton>(delete).onPressed, isNull);
@@ -1479,9 +1385,27 @@ void main() {
       fake.changes.single,
       'DELETE /api/v1/locations/l-garage?recursive=true&force=true',
     );
-    // Marked deleted, not removed (api/deleting.md).
-    expect(fake.locations.every((l) => l['deleted'] == true), isTrue);
-    expect(fake.stock.every((s) => s['deleted'] == true), isTrue);
+    expect(fake.locations, isEmpty);
+    expect(fake.stock, isEmpty);
+  });
+
+  testWidgets('deleting asks first, as it can\'t be undone', (tester) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    await startApp(tester, fake);
+    await open(tester, '/stock/1C00');
+    await menu(tester, 'Delete…');
+    expect(find.text('Delete this stock row?'), findsOneWidget);
+    expect(find.textContaining("This can't be undone."), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pumpAndSettle();
+    expect(fake.changes.single, 'DELETE /api/v1/stock/s-1');
+    // Its label now says what became of it.
+    await open(tester, '/stock/1C00');
+    expect(
+      find.text("This label's item, stock row or location has been deleted."),
+      findsOneWidget,
+    );
   });
 
   testWidgets('viewers get no buttons that would be refused', (tester) async {
@@ -1489,13 +1413,11 @@ void main() {
     await startApp(tester, FakeServer(role: 'viewer'));
     expect(find.text('New item'), findsNothing);
     expect(find.text('Admin'), findsNothing);
-    await search(tester, 'drill');
-    await tester.tap(find.text('Cordless drill'));
-    await tester.pumpAndSettle();
+    await openItem(tester, 'Cordless drill');
     expect(find.text('Add stock'), findsNothing);
     expect(find.byTooltip('Edit'), findsNothing);
-    // The history of items is for everyone.
-    expect(find.byTooltip('History'), findsOneWidget);
+    // A file attribute without a file isn't listed for them.
+    expect(find.text('Datasheet'), findsNothing);
   });
 
   testWidgets('users keep items and stock; admins set up the rest', (
@@ -1509,19 +1431,16 @@ void main() {
       findsNothing,
     );
     expect(find.text('New item'), findsOneWidget);
-    await search(tester, 'drill');
-    await tester.tap(find.text('Cordless drill'));
-    await tester.pumpAndSettle();
+    await openItem(tester, 'Cordless drill');
     expect(find.text('Add stock'), findsOneWidget);
     expect(find.byTooltip('Edit'), findsOneWidget);
 
-    // Locations: no new ones, no changing them, no history; stock, yes.
+    // Locations: no new ones, no changing them; stock, yes.
     await tester.tap(
       find.descendant(of: rail, matching: find.text('Locations')),
     );
     await tester.pumpAndSettle();
     expect(find.text('New location'), findsNothing);
-    expect(find.byTooltip('History'), findsNothing);
 
     // Admin screens, even by URL, lead to Items.
     for (final path in ['/admin', '/classes/c-drills', '/accounts']) {

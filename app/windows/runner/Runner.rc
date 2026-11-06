@@ -92,9 +92,9 @@ BEGIN
             VALUE "CompanyName", "io.bbj" "\0"
             VALUE "FileDescription", "WtF" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "wtf" "\0"
+            VALUE "InternalName", "wtf-app" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 Bård Bjerke Johannessen" "\0"
-            VALUE "OriginalFilename", "wtf.exe" "\0"
+            VALUE "OriginalFilename", "wtf-app.exe" "\0"
             VALUE "ProductName", "WtF" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END

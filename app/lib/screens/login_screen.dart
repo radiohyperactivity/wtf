@@ -19,6 +19,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _server = TextEditingController();
   final _email = TextEditingController();
   final _password = TextEditingController();
+  Duration? _idle = defaultIdle;
   bool _busy = false;
   String? _error;
 
@@ -49,6 +50,7 @@ class _LoginScreenState extends State<LoginScreen> {
         _email.text.trim(),
         _password.text,
         server: session.isWeb ? null : serverFromInput(_server.text),
+        maxIdle: _idle,
       );
       // The router moves on to the app.
     } catch (e) {
@@ -135,6 +137,19 @@ class _LoginScreenState extends State<LoginScreen> {
                       onFieldSubmitted: (_) => _submit(),
                       validator: (v) =>
                           (v ?? '').isEmpty ? 'Enter your password' : null,
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<Duration?>(
+                      initialValue: _idle,
+                      decoration: const InputDecoration(
+                        labelText: 'Stay logged in while unused for',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: [
+                        for (final (label, idle) in idleChoices)
+                          DropdownMenuItem(value: idle, child: Text(label)),
+                      ],
+                      onChanged: (v) => setState(() => _idle = v),
                     ),
                     if (_error != null) ...[
                       const SizedBox(height: 16),

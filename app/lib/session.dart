@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api/client.dart';
 import 'api/models.dart';
+import 'client_name.dart' if (dart.library.js_interop) 'client_name_web.dart';
 
 /// Where the native apps keep the server address and the session token, and
 /// every app (the web app too) the appearance.
@@ -99,6 +100,19 @@ class MemoryStorage implements SessionStorage {
   Future<void> writeToken(String? token) async => this.token = token;
 }
 
+/// How long a session may sit unused before it ends, as the login offers
+/// it; null: until logging out.
+const idleChoices = <(String, Duration?)>[
+  ('A day', Duration(days: 1)),
+  ('A week', Duration(days: 7)),
+  ('30 days', Duration(days: 30)),
+  ('A year', Duration(days: 365)),
+  ('Until I log out', null),
+];
+
+/// What the login offers first: 30 days.
+const defaultIdle = Duration(days: 30);
+
 /// The colour the app's theme is built from, light and dark: teal, the
 /// first one, or the logo's orange.
 enum AppColour {
@@ -181,12 +195,23 @@ class Session extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Logs in. [server] is needed in the native apps only.
-  Future<void> login(String email, String password, {Uri? server}) async {
+  /// Logs in, for a session that ends after [maxIdle] unused (null: when
+  /// logging out). [server] is needed in the native apps only.
+  Future<void> login(
+    String email,
+    String password, {
+    Uri? server,
+    Duration? maxIdle = defaultIdle,
+  }) async {
     server = isWeb ? webOrigin! : server!;
     final client = _newClient(server, null);
     try {
-      me = await client.login(email, password);
+      me = await client.login(
+        email,
+        password,
+        client: clientName(),
+        maxIdle: maxIdle,
+      );
     } catch (_) {
       client.close();
       rethrow;
@@ -204,7 +229,8 @@ class Session extends ChangeNotifier {
     try {
       await client?.logout();
     } on ApiProblem {
-      // the session ends on the server after 30 days anyway
+      // The session ends on the server once it has sat unused long enough,
+      // or can be ended from another device (Me → Sessions).
     }
     client?.close();
     _client = null;
@@ -225,14 +251,13 @@ class Session extends ChangeNotifier {
 
   // What the account's role allows (ACCOUNTS.md); the server checks it
   // anyway, the app only hides what would be refused. Every account sees
-  // everything but the accounts, and the history of items and stock rows.
+  // everything but the accounts.
 
-  /// Users and admins: items and stock rows, with their values and
-  /// attachments.
+  /// Users and admins: items and stock rows, with their values and files.
   bool get canWriteItems => me?.role.atLeast(Role.user) ?? false;
 
-  /// Admins: locations, classes, attributes, units, model files, accounts,
-  /// and the rest of the history.
+  /// Admins: locations, classes with their attributes, model files and
+  /// accounts.
   bool get isAdmin => me?.role == Role.admin;
 
   ApiClient _newClient(Uri server, String? token) {

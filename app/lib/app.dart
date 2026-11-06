@@ -7,9 +7,7 @@ import 'package:provider/provider.dart';
 import 'api/client.dart';
 import 'screens/account_screens.dart';
 import 'screens/admin_screen.dart';
-import 'screens/attribute_screens.dart';
 import 'screens/class_screen.dart';
-import 'screens/history_screen.dart';
 import 'screens/item_form.dart';
 import 'screens/item_screen.dart';
 import 'screens/location_screen.dart';
@@ -23,7 +21,6 @@ import 'screens/stock_screen.dart';
 import 'screens/tree_screen.dart';
 import 'session.dart';
 import 'theme.dart';
-import 'widgets/attachments.dart';
 
 class WtfApp extends StatefulWidget {
   const WtfApp({super.key, required this.session});
@@ -108,19 +105,6 @@ GoRouter buildRouter(Session session) => GoRouter(
           },
         ),
         GoRoute(path: '/me', builder: (context, state) => const MeScreen()),
-        // An attachment, reached from history: /attachment/items/{owner
-        // id}/{id}, and so on for stock, locations and classes.
-        GoRoute(
-          path: '/attachment/:kind/:owner/:id',
-          builder: (context, state) {
-            final p = state.pathParameters;
-            return AttachmentScreen(
-              key: ValueKey(state.uri.toString()),
-              ownerPath: '/${p['kind']}/${p['owner']}',
-              id: p['id']!,
-            );
-          },
-        ),
         GoRoute(
           path: '/admin',
           builder: (context, state) => const AdminScreen(),
@@ -216,15 +200,6 @@ GoRouter buildRouter(Session session) => GoRouter(
         ),
 
         GoRoute(
-          path: '/attributes',
-          builder: (context, state) => const AttributesScreen(),
-        ),
-        GoRoute(
-          path: '/attributes/:id',
-          builder: (context, state) =>
-              AttributeScreen(id: state.pathParameters['id']!),
-        ),
-        GoRoute(
           path: '/accounts',
           builder: (context, state) => const AccountsScreen(),
         ),
@@ -232,26 +207,6 @@ GoRouter buildRouter(Session session) => GoRouter(
           path: '/accounts/:id',
           builder: (context, state) =>
               AccountScreen(id: state.pathParameters['id']!),
-        ),
-        GoRoute(
-          path: '/units',
-          builder: (context, state) => const UnitsScreen(),
-        ),
-
-        GoRoute(
-          path: '/history/:kind',
-          builder: (context, state) => HistoryScreen(
-            kind: state.pathParameters['kind']!,
-            title: state.uri.queryParameters['title'],
-          ),
-        ),
-        GoRoute(
-          path: '/history/:kind/:id',
-          builder: (context, state) => HistoryScreen(
-            kind: state.pathParameters['kind']!,
-            id: state.pathParameters['id']!,
-            title: state.uri.queryParameters['title'],
-          ),
         ),
       ],
     ),

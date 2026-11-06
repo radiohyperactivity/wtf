@@ -36,12 +36,8 @@ class AccountsScreen extends StatelessWidget {
             children: [
               for (final a in accounts)
                 ListTile(
-                  leading: Icon(
-                    a.deleted
-                        ? Icons.person_off_outlined
-                        : Icons.person_outline,
-                  ),
-                  title: Text(a.deleted ? '${a.email} (deleted)' : a.email),
+                  leading: const Icon(Icons.person_outline),
+                  title: Text(a.email),
                   subtitle: Text(
                     [
                       a.role.label,
@@ -82,43 +78,34 @@ class AccountScreen extends StatelessWidget {
             title: Text(a.email),
             actions: [
               IconButton(
-                icon: const Icon(Icons.history),
-                tooltip: 'History',
-                onPressed: () => context.push(
-                  '/history/accounts/${a.id}?title=${Uri.encodeComponent(a.email)}',
-                ),
+                icon: const Icon(Icons.edit_outlined),
+                tooltip: 'Edit',
+                onPressed: () async {
+                  if (await showAccountDialog(context, current: a) != null) {
+                    reload();
+                  }
+                },
               ),
-              if (!a.deleted) ...[
-                IconButton(
-                  icon: const Icon(Icons.edit_outlined),
-                  tooltip: 'Edit',
-                  onPressed: () async {
-                    if (await showAccountDialog(context, current: a) != null) {
-                      reload();
+              if (!own)
+                PopupMenuButton<String>(
+                  onSelected: (_) async {
+                    final ok = await confirmDelete(
+                      context,
+                      'account ${a.email}',
+                      note: 'It is logged out everywhere, and its email can be used again.',
+                    );
+                    if (!ok || !context.mounted) return;
+                    try {
+                      await client.deleteAccount(a.id);
+                      if (context.mounted) leave(context, '/accounts');
+                    } catch (e) {
+                      if (context.mounted) showError(context, e);
                     }
                   },
+                  itemBuilder: (context) => const [
+                    PopupMenuItem(value: 'delete', child: Text('Delete…')),
+                  ],
                 ),
-                if (!own)
-                  PopupMenuButton<String>(
-                    onSelected: (_) async {
-                      final ok = await confirm(
-                        context,
-                        title: 'Delete account ${a.email}?',
-                        message: "It can't log in any more. History keeps referring to it, and its email can be used again.",
-                      );
-                      if (!ok || !context.mounted) return;
-                      try {
-                        await client.deleteAccount(a.id);
-                        if (context.mounted) leave(context, '/accounts');
-                      } catch (e) {
-                        if (context.mounted) showError(context, e);
-                      }
-                    },
-                    itemBuilder: (context) => const [
-                      PopupMenuItem(value: 'delete', child: Text('Delete…')),
-                    ],
-                  ),
-              ],
             ],
           ),
           body: Readable(
@@ -128,7 +115,6 @@ class AccountScreen extends StatelessWidget {
                 Field('Email', a.email, note: own ? '(you)' : null),
                 Field('Role', a.role.label),
                 Field('Password', a.hasPassword ? 'set' : "none: can't log in"),
-                if (a.deleted) const Field('Deleted', 'yes'),
               ],
             ),
           ),
@@ -142,8 +128,10 @@ enum _PasswordChange { keep, set, remove }
 
 /// Creates an account, or changes [current], like `wtf account add` and
 /// `wtf account edit`: email, role, and the password (keep, set or
-/// remove). A new account is a viewer unless another role is chosen; your
-/// own role can't be changed. Returns the account, or null when cancelled.
+/// remove), and whether the account is logged out everywhere with it. A
+/// new account is a viewer unless another role is chosen; your own role
+/// can't be changed, and your own password is changed under Me. Returns
+/// the account, or null when cancelled.
 Future<Account?> showAccountDialog(BuildContext context, {Account? current}) {
   final session = context.read<Session>();
   final client = session.client;
@@ -152,6 +140,8 @@ Future<Account?> showAccountDialog(BuildContext context, {Account? current}) {
   var role = current?.role ?? Role.viewer;
   final own = current != null && current.id == session.me?.id;
   var change = current == null ? _PasswordChange.set : _PasswordChange.keep;
+  // Suggested when the password is removed; asked about when it is set.
+  bool? endSessions;
   String? error;
   return showDialog<Account>(
     context: context,
@@ -186,6 +176,9 @@ Future<Account?> showAccountDialog(BuildContext context, {Account? current}) {
                   if (role != current.role) 'role': role.json,
                   if (change == _PasswordChange.set) 'password': password.text,
                   if (change == _PasswordChange.remove) 'password': null,
+                  if (change != _PasswordChange.keep)
+                    'end_sessions':
+                        endSessions ?? change == _PasswordChange.remove,
                 });
               }
               if (context.mounted) Navigator.pop(context, saved);
@@ -236,7 +229,9 @@ Future<Account?> showAccountDialog(BuildContext context, {Account? current}) {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    if (current != null)
+                    if (own)
+                      const Text('Your own password is changed under Me.')
+                    else if (current != null)
                       SegmentedButton<_PasswordChange>(
                         segments: const [
                           ButtonSegment(
@@ -265,9 +260,7 @@ Future<Account?> showAccountDialog(BuildContext context, {Account? current}) {
                           labelText: current == null
                               ? 'Password'
                               : 'New password',
-                          helperText: current == null
-                              ? 'At least 8 characters.'
-                              : 'At least 8 characters. It ends the account\'s sessions.',
+                          helperText: 'At least 8 characters.',
                         ),
                       ),
                     if (change == _PasswordChange.remove)
@@ -276,6 +269,13 @@ Future<Account?> showAccountDialog(BuildContext context, {Account? current}) {
                         child: Text(
                           "Without a password the account can't log in.",
                         ),
+                      ),
+                    if (current != null && change != _PasswordChange.keep)
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: endSessions ?? change == _PasswordChange.remove,
+                        onChanged: (v) => setState(() => endSessions = v),
+                        title: const Text('Log the user out everywhere'),
                       ),
                     if (error != null) ...[
                       const SizedBox(height: 12),

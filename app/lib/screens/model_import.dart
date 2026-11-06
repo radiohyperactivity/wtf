@@ -1,5 +1,5 @@
-// Model files (seed/model-format.md): units, attributes and classes set up
-// for one use, for admins. Importing one, from Admin; exporting a class with
+// Model files (seed/model-format.md): classes with their attributes, set
+// up for one use, for admins. Importing one, from Admin; exporting a class with
 // everything below it, from Admin or the class's menu.
 
 import 'dart:convert';
@@ -10,9 +10,9 @@ import 'package:provider/provider.dart';
 
 import '../api/client.dart';
 import '../api/models.dart';
-import '../api/units.dart';
+import '../api/input.dart';
 import '../session.dart';
-import '../widgets/attachments.dart' show saveDownloadedFile;
+import '../widgets/files.dart' show saveDownloadedFile;
 import '../widgets/common.dart';
 import '../widgets/pickers.dart';
 
@@ -40,11 +40,11 @@ typedef ImportBelow = ({String? id, String path});
 
 const ImportBelow _top = (id: null, path: '');
 
-/// Imports a model file, like `wtf model import`, from Manage → Import: a
-/// dry run first, which shows what would be added, how much is there
-/// already and any conflicts; then, when asked, the import. A file with
-/// classes puts them at the top of the class tree, or below a class chosen
-/// in the preview. True when something was imported.
+/// Imports a model file, like `wtf model import`, from Admin → Import: a
+/// dry run first, which shows what would be added and how much is there
+/// already, or why it can't be imported; then, when asked, the import. A
+/// file with classes puts them at the top of the class tree, or below a
+/// class chosen in the preview. True when something was imported.
 Future<bool> importModelFile(BuildContext context) async {
   final client = context.read<Session>().client;
   final ModelFile? file;
@@ -92,22 +92,7 @@ Future<bool> importModelFile(BuildContext context) async {
   if (below == null || !context.mounted) return false;
   try {
     final done = await client.importModel(text, parent: below.id);
-    if (!context.mounted) return done.applied;
-    if (!done.applied) {
-      // Something changed since the dry run.
-      await showDialog<void>(
-        context: context,
-        builder: (context) => ModelImportDialog(
-          title: title,
-          file: text,
-          hasClasses: hasClasses,
-          report: done,
-          below: below,
-        ),
-      );
-      return false;
-    }
-    showMessage(context, 'Imported ${_imported(done)}.');
+    if (context.mounted) showMessage(context, 'Imported ${_imported(done)}.');
     return true;
   } catch (e) {
     if (context.mounted) showError(context, e);
@@ -118,19 +103,11 @@ Future<bool> importModelFile(BuildContext context) async {
 /// What an import added, briefly: "2 classes and 3 attributes".
 String _imported(ModelImport r) {
   final parts = [
-    if (r.classes.isNotEmpty) _count(r.classes.length, 'class', 'classes'),
-    if (r.attributes.isNotEmpty) _count(r.attributes.length, 'attribute'),
-    if (r.units.isNotEmpty) _count(r.units.length, 'unit'),
-    if (r.classes.isEmpty && r.attributes.isEmpty && r.units.isEmpty)
-      'what was new',
+    if (r.classesAdded > 0) count(r.classesAdded, 'class', 'classes'),
+    if (r.attributesAdded > 0) count(r.attributesAdded, 'attribute'),
   ];
-  return parts.length == 1
-      ? parts.single
-      : '${parts.sublist(0, parts.length - 1).join(', ')} and ${parts.last}';
+  return parts.isEmpty ? 'nothing new' : parts.join(' and ');
 }
-
-String _count(int n, String one, [String? many]) =>
-    '$n ${n == 1 ? one : (many ?? '${one}s')}';
 
 /// Admin → Export: asks which class, then exports it as [exportModelFile]
 /// does.
@@ -167,11 +144,11 @@ Future<void> exportModelFile(
   }
 }
 
-/// What a model import would add (or the conflicts that stop it), with
-/// Import when there is something to import and nothing in the way. For a
-/// file with classes it says where they go, and Change… chooses another
-/// class: the dry run is then done again, since what is there already
-/// depends on it. Pops with where the classes go when Import is pressed.
+/// What a model import would add, with Import when there is something to
+/// import. For a file with classes it says where they go, and Change…
+/// chooses another class: the dry run is then done again, since what is
+/// there already depends on it, and may be refused there. Pops with where
+/// the classes go when Import is pressed.
 class ModelImportDialog extends StatefulWidget {
   const ModelImportDialog({
     super.key,
@@ -252,8 +229,8 @@ class _ModelImportDialogState extends State<ModelImportDialog> {
         ),
       ),
     );
-    final blocked = r.conflicts.isNotEmpty;
-    final offered = !blocked && !r.nothingNew && !r.applied;
+    final offered = !r.nothingNew;
+    final one = r.classesExisting + r.attributesExisting == 1;
     return AlertDialog(
       title: Text('Import ${widget.title}'),
       content: SizedBox(
@@ -273,49 +250,37 @@ class _ModelImportDialogState extends State<ModelImportDialog> {
                             : 'Its classes go below ${_below.path}.',
                       ),
                     ),
-                    if (!r.applied)
-                      TextButton(
-                        onPressed: _busy ? null : _change,
-                        child: const Text('Change…'),
-                      ),
+                    TextButton(
+                      onPressed: _busy ? null : _change,
+                      child: const Text('Change…'),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 8),
               ],
               if (_busy) const LinearProgressIndicator(),
-              if (blocked) ...[
-                Text(
-                  'Nothing can be imported until these are fixed in the file:',
-                  style: TextStyle(color: theme.colorScheme.error),
-                ),
-                for (final (where, message) in r.conflicts)
-                  line(where, message),
-                const SizedBox(height: 16),
-              ],
               if (r.nothingNew)
                 const Text('Everything in this file is there already.')
               else ...[
-                Text(blocked ? 'It would add:' : 'This adds:'),
-                if (r.quantities.isNotEmpty)
-                  line('Quantities', r.quantities.join(', ')),
-                if (r.families.isNotEmpty)
-                  line('Unit families', r.families.join(', ')),
-                if (r.units.isNotEmpty) line('Units', r.units.join(', ')),
-                if (r.attributes.isNotEmpty)
-                  line('Attributes', r.attributes.join(', ')),
-                if (r.options.isNotEmpty) line('Options', r.options.join(', ')),
-                if (r.classes.isNotEmpty) line('Classes', r.classes.join(', ')),
-                if (r.assignments.isNotEmpty)
-                  line('Assignments', r.assignments.join(', ')),
+                const Text('This adds:'),
+                if (r.classesAdded > 0)
+                  line('Classes', count(r.classesAdded, 'class', 'classes')),
+                if (r.attributesAdded > 0)
+                  line('Attributes', count(r.attributesAdded, 'attribute')),
+                if (r.items > 0 || r.stock > 0)
+                  line(
+                    'Defaults',
+                    'given to ${[if (r.items > 0) count(r.items, 'item'), if (r.stock > 0) count(r.stock, 'stock row')].join(' and ')} '
+                        'already there',
+                  ),
               ],
-              if (r.existing > 0 && !r.nothingNew)
+              if (r.classesExisting + r.attributesExisting > 0 && !r.nothingNew)
                 Padding(
                   padding: const EdgeInsets.only(top: 12),
                   child: Text(
-                    '${_count(r.existing, 'thing')} in the file '
-                    '${r.existing == 1 ? 'is' : 'are'} there already, and '
-                    '${r.existing == 1 ? 'is' : 'are'} used as '
-                    '${r.existing == 1 ? 'it is' : 'they are'}.',
+                    '${[if (r.classesExisting > 0) count(r.classesExisting, 'class', 'classes'), if (r.attributesExisting > 0) count(r.attributesExisting, 'attribute')].join(' and ')} '
+                    'in the file ${one ? 'is' : 'are'} there already, and '
+                    '${one ? 'is' : 'are'} used as ${one ? 'it is' : 'they are'}.',
                     style: theme.textTheme.bodySmall,
                   ),
                 ),

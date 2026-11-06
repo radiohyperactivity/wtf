@@ -3,8 +3,8 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../api/client.dart';
+import '../api/input.dart';
 import '../api/models.dart';
-import '../api/units.dart';
 import '../session.dart';
 import '../widgets/common.dart';
 import '../widgets/pickers.dart';
@@ -13,7 +13,8 @@ import '../widgets/value_fields.dart';
 
 /// Adds a stock row (of [itemId] and at [locationId], when given), or edits
 /// the row with [code]. Like `wtf stock add` and `wtf stock edit`: item,
-/// location, quantity (empty: uncounted), then the per-unit values.
+/// location, amount (empty: uncounted), reference and serial, then the
+/// values of the class's stock attributes.
 class StockFormScreen extends StatelessWidget {
   const StockFormScreen({
     super.key,
@@ -84,11 +85,18 @@ class _StockForm extends StatefulWidget {
 
 class _StockFormState extends State<_StockForm> {
   final _form = GlobalKey<FormState>();
-  final _quantity = MeasureController();
+  late final _amount = TextEditingController(
+    text: widget.stock?.amount == null
+        ? ''
+        : formatNumber(widget.stock!.amount!),
+  );
+  late final _reference = TextEditingController(
+    text: widget.stock?.reference ?? '',
+  );
+  late final _serial = TextEditingController(text: widget.stock?.serial ?? '');
   late ItemDetail? _item = widget.item;
   late String? _locationId =
       widget.stock?.location ?? _usable(widget.locationId);
-  UnitChoice? _units;
   List<ValueInput> _inputs = [];
   bool _loading = false;
   Object? _loadError;
@@ -104,24 +112,21 @@ class _StockFormState extends State<_StockForm> {
   @override
   void initState() {
     super.initState();
-    final stock = widget.stock;
-    if (stock != null && stock.quantity != null) {
-      // The quantity as shown, which reads back the same ("1.2 m").
-      _quantity.text = stock.quantityText;
-    }
     if (_item != null) _loadItem();
   }
 
   @override
   void dispose() {
-    _quantity.dispose();
+    _amount.dispose();
+    _reference.dispose();
+    _serial.dispose();
     for (final i in _inputs) {
       i.dispose();
     }
     super.dispose();
   }
 
-  /// The units of the item's quantity and the inputs of its per-unit values.
+  /// The inputs of the stock attributes of the item's class.
   Future<void> _loadItem() async {
     final item = _item!;
     setState(() {
@@ -129,31 +134,17 @@ class _StockFormState extends State<_StockForm> {
       _loadError = null;
     });
     try {
-      final unit = item.unit;
-      final units = unit == null ? null : await _client.unitChoice(unit);
       final cls = await _client.cls(item.cls.id);
-      final current = widget.stock == null
-          ? <String, String>{}
-          : ownValues(widget.stock!.values);
-      final inputs = await loadValueInputs(
-        _client,
-        cls.attributes,
-        perUnit: true,
-        current: current,
+      final stock = widget.stock;
+      final inputs = valueInputs(
+        cls,
+        stock: true,
+        values: stock?.values ?? const {},
+        defaulted: stock?.defaulted ?? const {},
       );
       if (!mounted || item != _item) return;
       final old = _inputs;
-      setState(() {
-        _units = units;
-        final stock = widget.stock;
-        if (stock?.quantity != null && item.id == stock!.item.id) {
-          // The number in the field and its unit in the menu: "1.2", "m".
-          _quantity.show(stock.quantityText, units);
-        } else {
-          _quantity.plainIn = null; // the new item's own unit
-        }
-        _inputs = inputs;
-      });
+      setState(() => _inputs = inputs);
       // The old fields are still drawn once more.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         for (final i in old) {
@@ -190,12 +181,8 @@ class _StockFormState extends State<_StockForm> {
     if (id != null) setState(() => _locationId = id);
   }
 
-  /// Whether [quantity] (null: uncounted) is the [old] one, whatever unit it
-  /// was typed in.
-  static bool _sameQuantity(Decimal? quantity, num? old) =>
-      quantity == null || old == null
-      ? quantity == null && old == null
-      : Rational.tryParse(quantity.text) == Rational.fromNum(old);
+  static String? _text(TextEditingController c) =>
+      c.text.trim().isEmpty ? null : c.text.trim();
 
   Future<void> _save() async {
     if (_busy || _loading) return;
@@ -211,17 +198,18 @@ class _StockFormState extends State<_StockForm> {
     if (!_form.currentState!.validate()) return;
     setState(() => _busy = true);
     try {
-      final quantity = QuantityField.parse(_quantity, _units);
+      final amount = AmountField.parse(_amount, item.unit);
+      final reference = _text(_reference);
+      final serial = _text(_serial);
       final stock = widget.stock;
       if (stock == null) {
         final created = await _client.createStock(
           itemId: item.id,
           locationId: location,
-          quantity: quantity,
-          values: {
-            for (final i in _inputs)
-              if (i.text.isNotEmpty) i.attribute.id: i.parse(),
-          },
+          amount: amount,
+          reference: reference,
+          serial: serial,
+          values: newValues(_inputs),
         );
         if (mounted) {
           showMessage(
@@ -237,27 +225,17 @@ class _StockFormState extends State<_StockForm> {
         }
         return;
       }
-      final saved = <String>[];
-      final changes = <String, Object?>{
-        if (location != stock.location) 'location': location,
-        if (!_sameQuantity(quantity, stock.quantity)) 'quantity': quantity,
-      };
-      if (changes.isNotEmpty) {
-        await _client.patchStock(stock.id, changes);
-        saved.addAll(changes.keys);
-      }
-      final all = await saveValues(
-        _inputs,
-        set: (a, v) => _client.setStockValue(stock.id, a, v),
-        remove: (a) => _client.deleteStockValue(stock.id, a),
-        savedBefore: saved,
-      );
+      final changes = valueChanges(_inputs)
+        ..addAll({
+          if (location != stock.location) 'location': location,
+          if (!sameNumber(amount, stock.amount)) 'amount': amount,
+          if (reference != stock.reference) 'reference': reference,
+          if (serial != stock.serial) 'serial': serial,
+        });
+      if (changes.isNotEmpty) await _client.patchStock(stock.id, changes);
       if (mounted) {
-        showMessage(
-          context,
-          all.isEmpty ? 'No changes.' : 'Saved: ${all.join(', ')}.',
-        );
-        context.pop(all.isNotEmpty);
+        showMessage(context, changes.isEmpty ? 'No changes.' : 'Saved.');
+        context.pop(changes.isNotEmpty);
       }
     } catch (e) {
       if (mounted) showError(context, e);
@@ -343,9 +321,27 @@ class _StockFormState extends State<_StockForm> {
                   ),
                 ),
               ),
+              if (item != null) ...[
+                const SizedBox(height: 16),
+                AmountField(controller: _amount, unit: item.unit),
+              ],
               const SizedBox(height: 16),
-              if (item != null && !_loading)
-                QuantityField(controller: _quantity, units: _units),
+              TextFormField(
+                controller: _reference,
+                decoration: const InputDecoration(
+                  labelText: 'Reference',
+                  helperText: 'An order number, a receipt …',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _serial,
+                decoration: const InputDecoration(
+                  labelText: 'Serial number',
+                  border: OutlineInputBorder(),
+                ),
+              ),
               if (_loadError != null) ...[
                 const SizedBox(height: 16),
                 Text(
@@ -363,10 +359,10 @@ class _StockFormState extends State<_StockForm> {
                   child: LinearProgressIndicator(),
                 ),
               if (_inputs.isNotEmpty) ...[
-                const SectionTitle('Per-unit values'),
+                const SectionTitle('Stock values'),
                 for (final i in _inputs)
                   Padding(
-                    key: ValueKey(i.attribute.id),
+                    key: ValueKey(i.attribute.name),
                     padding: const EdgeInsets.only(top: 12),
                     child: ValueField(i),
                   ),

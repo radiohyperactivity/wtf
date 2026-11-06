@@ -3,27 +3,65 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../api/client.dart';
+import '../api/input.dart';
 import '../api/models.dart';
-import '../api/units.dart';
 import '../session.dart';
-import '../widgets/attachments.dart';
 import '../widgets/common.dart';
-import '../widgets/restore.dart';
+import '../widgets/files.dart';
 
-/// The values of an item or a stock row; class defaults are marked.
-List<Widget> valueFields(List<Value> values) => [
-  for (final v in values)
-    Field(
-      v.attribute.name,
-      v.text,
-      note: v.isDefault ? '(default)' : null,
-      link: v.attribute.datatype == 'url',
-    ),
+/// The values of an item or a stock row ([stock]), in its class's order;
+/// those that follow the class's default are marked. Files are listed apart
+/// ([fileTiles]).
+List<Widget> valueFields(
+  ClassDetail cls,
+  Values values,
+  Set<String> defaulted, {
+  required bool stock,
+}) => [
+  for (final a in cls.scoped(stock: stock))
+    if (!a.isFile && values[a.name] != null)
+      Field(
+        a.name,
+        formatValue(a, values[a.name]),
+        note: defaulted.contains(a.name) ? '(default)' : null,
+        link: a.type == 'url',
+      ),
 ];
 
-/// An item, like `wtf item get`: class, values, stock rows with their
-/// locations, attachments. The code may also be one of its stock rows' (as in
-/// the CLI's references).
+/// The files of an item's or a stock row's attachment attributes, at
+/// [owner]: those it has, and with [onChanged] the others too, to upload.
+/// Removing one is a patch, which [patch] sends.
+List<Widget> fileTiles(
+  ClassDetail cls,
+  String owner,
+  Values values, {
+  required bool stock,
+  VoidCallback? onChanged,
+  required Future<void> Function(Json changes) patch,
+}) => [
+  for (final a in cls.scoped(stock: stock))
+    if (a.isFile && (values[a.name] != null || onChanged != null))
+      FileValueTile(
+        owner: owner,
+        attribute: a,
+        hash: values[a.name] as String?,
+        onChanged: onChanged,
+        remove: () => patch({
+          'values': {a.name: null},
+        }),
+      ),
+];
+
+/// A stock row's reference and serial, when it has them: "ref PO-12 ·
+/// serial 4711".
+String stockMarks(Stock s) => [
+  if (s.reference case final r?) 'ref $r',
+  if (s.serial case final n?) 'serial $n',
+].join(' · ');
+
+/// An item, like `wtf item get`: class, values, files, stock rows with
+/// their locations. The code may also be one of its stock rows' (as in the
+/// CLI's references).
 class ItemScreen extends StatelessWidget {
   const ItemScreen({super.key, required this.code});
 
@@ -33,7 +71,7 @@ class ItemScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final session = context.watch<Session>();
     final client = session.client;
-    return Loader<(ItemDetail, Map<String, String>, Tree, Tree)>(
+    return Loader<(ItemDetail, ClassDetail, Tree)>(
       key: ValueKey(code),
       title: 'Item $code',
       refreshOn: client.treeChanges,
@@ -42,32 +80,32 @@ class ItemScreen extends StatelessWidget {
         final ItemDetail item = switch (target) {
           CodeItem(:final item) => item,
           CodeStock(:final stock) => await client.item(stock.item.id),
+          CodeGone() => throw const InputError(
+            "This label's item, stock row or location has been deleted.",
+          ),
           _ => throw InputError('There is no item with the code $code.'),
         };
         return (
           item,
-          await client.locationPaths(item.stock.map((s) => s.location)),
-          // Cached already, for the paths.
+          await client.cls(item.cls.id),
           await client.tree(TreeKind.locations),
-          // For the class's photo, when the item has none of its own.
-          await client.tree(TreeKind.classes),
         );
       },
       builder: (context, data, reload) {
-        final (item, paths, locations, classes) = data;
+        final (item, cls, locations) = data;
+        final owner = '/items/${item.id}';
         Future<void> open(String path) async {
           await context.push(path);
           reload();
         }
 
-        // A deleted item can only be looked at, and restored.
-        final write = session.canWriteItems && !item.deleted;
+        final write = session.canWriteItems;
 
         Future<void> delete() async {
-          final ok = await confirm(
+          final ok = await confirmDelete(
             context,
-            title: 'Delete item ${item.name}?',
-            message: item.stock.isEmpty ? null : 'It still has stock, which must be deleted or moved away first.',
+            item.name,
+            note: item.stock.isEmpty ? null : 'It still has stock, which must be deleted or moved away first.',
           );
           if (!ok || !context.mounted) return;
           try {
@@ -81,17 +119,19 @@ class ItemScreen extends StatelessWidget {
           }
         }
 
+        final files = fileTiles(
+          cls,
+          owner,
+          item.values,
+          stock: false,
+          onChanged: write ? reload : null,
+          patch: (changes) => client.patchItem(item.id, changes),
+        );
+
         return Scaffold(
           appBar: AppBar(
             title: Text(item.name),
             actions: [
-              IconButton(
-                icon: const Icon(Icons.history),
-                tooltip: 'History',
-                onPressed: () => context.push(
-                  '/history/items/${item.id}?title=${Uri.encodeComponent(item.name)}',
-                ),
-              ),
               if (write) ...[
                 IconButton(
                   icon: const Icon(Icons.edit_outlined),
@@ -104,10 +144,24 @@ class ItemScreen extends StatelessWidget {
                   },
                 ),
                 PopupMenuButton<String>(
-                  onSelected: (action) {
-                    if (action == 'delete') delete();
+                  onSelected: (action) async {
+                    switch (action) {
+                      case 'photo':
+                        if (await editPhoto(
+                          context,
+                          owner: owner,
+                          hasPhoto: item.photo != null,
+                          remove: () =>
+                              client.patchItem(item.id, {'photo': null}),
+                        )) {
+                          reload();
+                        }
+                      case 'delete':
+                        delete();
+                    }
                   },
                   itemBuilder: (context) => const [
+                    PopupMenuItem(value: 'photo', child: Text('Photo…')),
                     PopupMenuItem(value: 'delete', child: Text('Delete…')),
                   ],
                 ),
@@ -127,39 +181,33 @@ class ItemScreen extends StatelessWidget {
               child: ListView(
                 padding: const EdgeInsets.only(bottom: 88),
                 children: [
-                  if (item.deleted)
-                    DeletedBanner(
-                      kind: RestoreKind.item,
-                      id: item.id,
-                      label: item.name,
-                      canRestore: session.canWriteItems,
-                      onRestored: reload,
-                    ),
                   // The class's values are details like the code and class.
                   WithPhoto(
-                    // Its own, else its class's (or a parent class's).
-                    photo: item.photo ?? classes.photoOf(item.cls.id),
+                    photo: item.photo,
                     children: [
                       const SizedBox(height: 8),
                       Field('Code', item.code),
                       Field(
                         'Class',
-                        item.cls.pathText,
+                        item.classPath,
                         // The class screens are for admins.
                         onTap: session.isAdmin
                             ? () => open('/classes/${item.cls.id}')
                             : null,
                       ),
-                      Field(
-                        'Stock',
-                        item.unit == null
-                            ? 'counted'
-                            : 'measured in ${unitLabel(item.unit!, lock: item.unitLock)}',
+                      Field('Counted in', item.unit ?? 'pieces'),
+                      ...valueFields(
+                        cls,
+                        item.values,
+                        item.defaulted,
+                        stock: false,
                       ),
-                      ...valueFields(item.values),
-                      MissingNote(item.missing.map((m) => m.name).toList()),
                     ],
                   ),
+                  if (files.isNotEmpty) ...[
+                    const SectionTitle('Files'),
+                    ...files,
+                  ],
                   SectionTitle(
                     'Stock',
                     trailing: write
@@ -173,37 +221,30 @@ class ItemScreen extends StatelessWidget {
                   if (item.stock.isEmpty) const EmptyNote('No stock.'),
                   for (final s in item.stock) ...[
                     ListTile(
-                      // The row's own photo, else its location's.
-                      leading: PhotoOrIcon(
-                        s.photo ?? locations[s.location]?.photo,
-                        icon: Icons.place_outlined,
+                      leading: PhotoOrIcon(s.photo, icon: Icons.place_outlined),
+                      title: Text(locations.pathOf(s.location)),
+                      subtitle: Text(
+                        [
+                          s.code,
+                          stockMarks(s),
+                        ].where((t) => t.isNotEmpty).join('  ·  '),
                       ),
-                      title: Text(paths[s.location] ?? s.location),
-                      subtitle: Text(s.code),
                       trailing: Text(
-                        s.quantityText,
+                        s.amountText,
                         style: Theme.of(context).textTheme.titleSmall,
                       ),
                       onTap: () => open('/stock/${s.code}'),
                     ),
-                    if (s.values.isNotEmpty || s.missing.isNotEmpty)
+                    if (valueFields(cls, s.values, s.defaulted, stock: true)
+                        case final fields when fields.isNotEmpty)
                       Padding(
                         padding: const EdgeInsets.only(left: 56),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            ...valueFields(s.values),
-                            MissingNote(s.missing.map((m) => m.name).toList()),
-                          ],
+                          children: fields,
                         ),
                       ),
                   ],
-                  AttachmentList(
-                    item.attachments,
-                    ownerPath: '/items/${item.id}',
-                    photo: item.photo,
-                    onChanged: write ? reload : null,
-                  ),
                 ],
               ),
             ),

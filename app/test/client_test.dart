@@ -14,7 +14,6 @@ const account = {
   'email': 'bbj@bbj.io',
   'has_password': true,
   'role': 'user',
-  'deleted': false,
 };
 
 http.Response json(
@@ -62,6 +61,8 @@ void main() {
     expect(jsonDecode(seen.first.body), {
       'email': 'bbj@bbj.io',
       'password': 'secret',
+      'client': null,
+      'max_idle': null,
     });
     expect(seen.first.headers['Cookie'], isNull);
 
@@ -236,7 +237,12 @@ void main() {
             'name': 'Box',
             'parent': null,
           }, status: 201),
-          _ => json({'id': 'c1', 'name': 'Tools', 'attributes': []}),
+          _ => json({
+            'class': {'id': 'c1', 'name': 'Tools', 'attributes': []},
+            'items': 0,
+            'stock': 0,
+            'dry_run': false,
+          }),
         };
       }),
     );
@@ -251,10 +257,11 @@ void main() {
     expect(changes, [TreeKind.locations]);
     expect((await client.tree(TreeKind.locations)).all.single.name, 'Box 1');
 
-    // Assigning an attribute leaves the class tree alone.
+    // A change of a class's attributes leaves the class tree alone; an
+    // attribute's name goes in the path as it is.
     seen.clear();
-    await client.unassignAttribute('c1', 'a1');
-    expect(seen, ['DELETE /api/v1/classes/c1/attributes/a1']);
+    await client.removeAttribute('c1', 'Supply voltage');
+    expect(seen, ['DELETE /api/v1/classes/c1/attributes/Supply%20voltage']);
     await pumpEventQueue();
     expect(changes, [TreeKind.locations]);
   });
@@ -298,49 +305,46 @@ void main() {
     expect(downloadName(null), isNull);
   });
 
-  test('the calls are in openapi.yaml', () {
+  test('the calls are in openapi.json', () {
     // The spec's paths and their methods, with parameters as {}.
-    final spec = <String, Set<String>>{};
-    String? current;
-    for (final line in File('../openapi/openapi.yaml').readAsLinesSync()) {
-      final path = RegExp(r'^  (/\S*):$').firstMatch(line);
-      if (path != null) {
-        current = path[1]!.replaceAll(RegExp(r'\{[^}]+\}'), '{}');
-        spec[current] = {};
-      } else if (line.startsWith('components:')) {
-        current = null;
-      } else if (current != null) {
-        final method = RegExp(r'^    (get|post|put|patch|delete):')
-            .firstMatch(line);
-        if (method != null) spec[current]!.add(method[1]!.toUpperCase());
-      }
-    }
+    final paths =
+        (jsonDecode(File('../openapi/openapi.json').readAsStringSync())
+                as Map)['paths']
+            as Map<String, dynamic>;
+    final spec = <String, Set<String>>{
+      for (final MapEntry(:key, :value) in paths.entries)
+        key.replaceAll(RegExp(r'\{[^}]+\}'), '{}'): {
+          for (final m in (value as Map).keys) m.toUpperCase(),
+        },
+    };
 
     // The client's calls, with interpolations ($id) as {}.
     final source = File('lib/api/client.dart').readAsStringSync();
+    String route(String path) =>
+        path.replaceAll(RegExp(r'\$\{[^}]+\}|\$\w+'), '{}');
     final calls = <(String, String)>{
       for (final m in RegExp(
-        r"_call\(\s*'([A-Z]+)',\s*'([^']+)'",
+        r"(?:_call|_change)\(\s*'([A-Z]+)',\s*'([^']+)'",
       ).allMatches(source))
-        (m[1]!, m[2]!.replaceAll(RegExp(r'\$\{[^}]+\}|\$\w+'), '{}')),
+        (m[1]!, route(m[2]!)),
       // The trees, through TreeKind.
       for (final kind in TreeKind.values) ('GET', kind.path),
+      // Files: up through _upload, down by a FileRef's path.
+      for (final kind in ['items', 'stock'])
+        for (final method in ['GET', 'PUT']) ...[
+          (method, '/$kind/{}/photo'),
+          (method, '/$kind/{}/files/{}'),
+        ],
     };
-    expect(calls.length, greaterThan(30));
+    expect(calls.length, greaterThan(40));
     for (final (method, path) in calls) {
-      // History: /{kind}/{id}/history for each kind the client allows; an
-      // attachment's owner ({}/attachments/…): each kind with attachments.
-      final paths = path == '/{}/{}/history'
-          ? ApiClient.historyKinds.map((k) => '/$k/{}/history')
-          : path.startsWith('{}/')
-          ? [
-              for (final k in ['items', 'stock', 'locations', 'classes'])
-                '/$k/{}${path.substring(2)}',
-            ]
-          : [path];
-      for (final p in paths) {
-        expect(spec[p], contains(method), reason: '$method $p');
-      }
+      expect(spec[path], contains(method), reason: '$method $path');
     }
+    // And the files' routes are where the client sends them.
+    expect(
+      FileRef(owner: '/stock/s1', attribute: 'Data sheet', hash: 'h').path,
+      '/stock/s1/files/Data%20sheet',
+    );
+    expect(FileRef(owner: '/items/i1', hash: 'h').path, '/items/i1/photo');
   });
 }

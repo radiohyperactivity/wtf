@@ -4,36 +4,29 @@ import 'package:provider/provider.dart';
 
 import '../api/client.dart';
 import '../api/models.dart';
-import '../api/units.dart';
+import '../api/input.dart';
 import '../session.dart';
-import '../widgets/attachments.dart';
+import '../widgets/files.dart';
 import '../widgets/common.dart';
-import '../widgets/restore.dart';
+import 'item_screen.dart' show stockMarks;
 import 'node_delete.dart';
 
 /// Stock rows shown on a location screen at most; more are counted.
 const _stockShown = 1000;
 
 class _LocationData {
-  const _LocationData(
-    this.location,
-    this.tree,
-    this.classes,
-    this.stock,
-    this.stockTotal,
-  );
+  const _LocationData(this.location, this.tree, this.stock, this.more);
 
   final Location location;
   final Tree tree;
-
-  /// For the photos of items without one of their own.
-  final Tree classes;
   final List<Stock> stock;
-  final int stockTotal;
+
+  /// Whether there are more stock rows than are shown.
+  final bool more;
 }
 
 /// A location, like `wtf location get`: its path, what's inside it, the
-/// stock at it and below it, and its photos.
+/// stock at it and below it.
 class LocationScreen extends StatelessWidget {
   const LocationScreen({super.key, required this.code});
 
@@ -49,17 +42,21 @@ class LocationScreen extends StatelessWidget {
       refreshOn: client.treeChanges.where((k) => k == TreeKind.locations),
       load: () async {
         final target = await client.code(code);
+        if (target is CodeGone) {
+          throw const InputError(
+            "This label's item, stock row or location has been deleted.",
+          );
+        }
         if (target is! CodeLocation) {
           throw InputError('There is no location with the code $code.');
         }
         final l = await client.location(target.location.id);
         final tree = await client.tree(TreeKind.locations);
-        final classes = await client.tree(TreeKind.classes);
         final page = await client.stockList(
           locationId: l.id,
           limit: _stockShown,
         );
-        return _LocationData(l, tree, classes, page.rows, page.total);
+        return _LocationData(l, tree, page.rows, page.more);
       },
       builder: (context, data, reload) {
         final l = data.location;
@@ -78,22 +75,13 @@ class LocationScreen extends StatelessWidget {
           reload();
         }
 
-        // Admins set up locations, users put stock in them. A deleted one
-        // can only be looked at, and restored.
-        final write = session.isAdmin && !l.deleted;
+        // Admins set up locations, users put stock in them.
+        final write = session.isAdmin;
 
         return Scaffold(
           appBar: AppBar(
             title: Text(l.name),
             actions: [
-              if (session.isAdmin)
-                IconButton(
-                  icon: const Icon(Icons.history),
-                  tooltip: 'History',
-                  onPressed: () => context.push(
-                    '/history/locations/${l.id}?title=${Uri.encodeComponent(l.pathText)}',
-                  ),
-                ),
               if (write)
                 PopupMenuButton<String>(
                   onSelected: (action) async {
@@ -128,8 +116,7 @@ class LocationScreen extends StatelessWidget {
                 ),
             ],
           ),
-          floatingActionButton:
-              session.canWriteItems && !l.container && !l.deleted
+          floatingActionButton: session.canWriteItems && !l.container
               ? FloatingActionButton.extended(
                   onPressed: () => open('/stock/new?location=${l.id}'),
                   icon: const Icon(Icons.add),
@@ -142,16 +129,8 @@ class LocationScreen extends StatelessWidget {
               child: ListView(
                 padding: const EdgeInsets.only(bottom: 88),
                 children: [
-                  if (l.deleted)
-                    DeletedBanner(
-                      kind: RestoreKind.location,
-                      id: l.id,
-                      label: l.name,
-                      canRestore: session.isAdmin,
-                      onRestored: reload,
-                    ),
-                  WithPhoto(
-                    photo: l.photo,
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
@@ -160,7 +139,6 @@ class LocationScreen extends StatelessWidget {
                             for (final p in l.path)
                               (
                                 p.name,
-                                // Deleted ones above it aren't in the tree.
                                 p.id == l.id || tree[p.id]?.code == null
                                     ? null
                                     : '/locations/${tree[p.id]!.code}',
@@ -194,7 +172,7 @@ class LocationScreen extends StatelessWidget {
                     ListTile(
                       dense: true,
                       leading: PhotoOrIcon(
-                        c.photo,
+                        null,
                         icon: c.container
                             ? Icons.folder_outlined
                             : Icons.place_outlined,
@@ -209,7 +187,6 @@ class LocationScreen extends StatelessWidget {
                     for (final s in here)
                       _StockRow(
                         stock: s,
-                        classes: data.classes,
                         place: null,
                         onTap: () => open('/stock/${s.code}'),
                       ),
@@ -219,21 +196,14 @@ class LocationScreen extends StatelessWidget {
                     for (final s in below)
                       _StockRow(
                         stock: s,
-                        classes: data.classes,
                         place: relative(s.location),
                         onTap: () => open('/stock/${s.code}'),
                       ),
                   ],
-                  if (data.stockTotal > data.stock.length)
-                    EmptyNote(
-                      '… and ${data.stockTotal - data.stock.length} more stock rows.',
+                  if (data.more)
+                    const EmptyNote(
+                      '… and more stock rows than are shown here.',
                     ),
-                  AttachmentList(
-                    l.attachments,
-                    ownerPath: '/locations/${l.id}',
-                    photo: l.photo,
-                    onChanged: write ? reload : null,
-                  ),
                 ],
               ),
             ),
@@ -247,13 +217,11 @@ class LocationScreen extends StatelessWidget {
 class _StockRow extends StatelessWidget {
   const _StockRow({
     required this.stock,
-    required this.classes,
     required this.place,
     required this.onTap,
   });
 
   final Stock stock;
-  final Tree classes;
   final String? place;
   final VoidCallback onTap;
 
@@ -261,14 +229,20 @@ class _StockRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListTile(
       dense: true,
-      // The row's own photo, else its item's, else its class's.
+      // The row's own photo, else its item's.
       leading: PhotoOrIcon(
-        stock.photo ?? stock.item.photo ?? classes.photoOf(stock.item.classId),
+        stock.photo ?? stock.item.photo,
         icon: Icons.inventory_2_outlined,
       ),
       title: Text(stock.item.name),
-      subtitle: Text([stock.code, ?place].join('  ·  ')),
-      trailing: Text(stock.quantityText),
+      subtitle: Text(
+        [
+          stock.code,
+          ?place,
+          stockMarks(stock),
+        ].where((t) => t.isNotEmpty).join('  ·  '),
+      ),
+      trailing: Text(stock.amountText),
       onTap: onTap,
     );
   }

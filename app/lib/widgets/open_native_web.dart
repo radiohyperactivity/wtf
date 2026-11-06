@@ -8,4 +8,4 @@ Future<bool> openNative(
   String name,
   String type,
   Uint8List bytes,
-) => throw UnsupportedError('The web app opens attachments by their address');
+) => throw UnsupportedError('The web app opens files by their address');

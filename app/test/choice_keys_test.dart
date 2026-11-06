@@ -8,16 +8,13 @@ void main() {
     tester,
   ) async {
     final input = ValueInput(
-      attribute: Attribute(
-        id: 'a',
+      attribute: const Attribute(
         name: 'Package',
-        datatype: 'choice',
-        options: [
-          for (final n in ['DIP', 'SOIC', 'SSOP', 'QFN'])
-            NamedRef.fromJson({'id': n, 'name': n}),
-        ],
+        scope: 'item',
+        type: 'choice',
+        choices: ['DIP', 'SOIC', 'SSOP', 'QFN'],
+        defaultValue: 'DIP',
       ),
-      defaultText: 'DIP',
     );
     addTearDown(input.dispose);
     await tester.pumpWidget(
@@ -39,7 +36,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(input.text, 'SOIC');
 
-    // The empty entry clears it, so the default applies.
+    // The empty entry clears it, so the default is given.
     await tester.enterText(field, '');
     await tester.pumpAndSettle();
     expect(find.text('— (DIP)'), findsOneWidget);

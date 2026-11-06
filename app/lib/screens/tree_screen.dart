@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import '../api/client.dart';
 import '../api/models.dart';
 import '../session.dart';
-import '../widgets/attachments.dart';
+import '../widgets/files.dart';
 import '../widgets/common.dart';
 import '../widgets/pickers.dart';
 
@@ -69,17 +69,6 @@ class _TreeScreenState extends State<TreeScreen> {
           appBar: AppBar(
             title: Text(title),
             actions: [
-              // What was added at the top, moved there or away, deleted or
-              // restored: how a deleted top-level node is found.
-              if (session.isAdmin)
-                IconButton(
-                  icon: const Icon(Icons.history),
-                  tooltip: 'History',
-                  onPressed: () => context.push(
-                    '/history/${_locations ? 'locations' : 'classes'}'
-                    '?title=${Uri.encodeComponent('the top-level ${_locations ? 'locations' : 'classes'}')}',
-                  ),
-                ),
               IconButton(
                 icon: const Icon(Icons.unfold_more),
                 tooltip: 'Expand all',
@@ -218,7 +207,7 @@ class _NodeRow extends StatelessWidget {
                     : null,
               ),
               PhotoOrIcon(
-                node.photo,
+                null,
                 size: 36,
                 icon: node.container
                     ? Icons.folder_outlined

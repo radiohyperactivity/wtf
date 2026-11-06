@@ -7,7 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../api/client.dart';
-import '../api/units.dart';
+import '../api/input.dart';
 import '../session.dart';
 import 'link.dart';
 
@@ -85,6 +85,15 @@ Future<bool> confirm(
   );
   return ok ?? false;
 }
+
+/// Asks before deleting [what] ("Delete Drill?"), saying that it can't be
+/// undone, after [note] if given; true when confirmed.
+Future<bool> confirmDelete(BuildContext context, String what, {String? note}) =>
+    confirm(
+      context,
+      title: 'Delete $what?',
+      message: [?note, "This can't be undone."].join('\n\n'),
+    );
 
 /// Loads data for a screen, and shows a spinner, the error with "Try again",
 /// or what [builder] makes of the data. [builder] gets a function that
@@ -369,34 +378,6 @@ class PathLinks extends StatelessWidget {
                 ),
         ],
       ],
-    );
-  }
-}
-
-/// A "Missing required: …" warning.
-class MissingNote extends StatelessWidget {
-  const MissingNote(this.names, {super.key});
-
-  final List<String> names;
-
-  @override
-  Widget build(BuildContext context) {
-    if (names.isEmpty) return const SizedBox.shrink();
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      child: Row(
-        children: [
-          Icon(Icons.warning_amber, color: scheme.error, size: 20),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              'Missing required: ${names.join(', ')}',
-              style: TextStyle(color: scheme.error),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

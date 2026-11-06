@@ -7,13 +7,13 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
+import 'input.dart';
 import 'models.dart';
-import 'units.dart';
 
 /// The API version and revision this app was built for.
 const apiPath = '/api/v1';
 const apiVersion = 1;
-const apiRevision = 13;
+const apiRevision = 1;
 
 const sessionCookie = 'wtf_session';
 
@@ -74,20 +74,16 @@ class ApiProblem implements Exception {
   static const unsupportedVersion = '/problems/unsupported-api-version';
   static const unauthenticated = '/problems/unauthenticated';
 
-  /// Something is deleted, or a restore of something that isn't (409).
-  static const deleted = '/problems/deleted';
+  /// A label code whose item, stock row or location has been deleted (410).
+  static const gone = '/problems/gone';
 
   final String type;
   final String title;
   final int status;
   final String detail;
 
-  /// What to do about it, when the server knows (revision 2).
+  /// What to do about it, when the server knows.
   final String hint;
-
-  /// A restore refused because the object is in something deleted; the
-  /// app then offers to restore that too, or to put it somewhere else.
-  bool get intoDeleted => type == deleted && hint.contains('with_parents');
 
   /// The API versions the server serves, in an unsupported-api-version problem.
   final List<int> supported;
@@ -169,17 +165,6 @@ String encodeBody(Object? body) {
   );
 }
 
-final _unitNumber = RegExp(
-  r'"(base_factor|base_offset)"\s*:\s*(-?[0-9][0-9.eE+-]*)',
-);
-
-/// Decodes an answer. Unit factors and offsets are kept as the text the
-/// server wrote, because some have more digits than a double holds (°F:
-/// 0.55555555555555555556), and conversions must be as exact as the CLI's.
-Object? decodeBody(String text) => jsonDecode(
-  text.replaceAllMapped(_unitNumber, (m) => '"${m[1]}":"${m[2]}"'),
-);
-
 /// The class tree or the location tree.
 enum TreeKind {
   classes('/classes'),
@@ -189,6 +174,14 @@ enum TreeKind {
 
   final String path;
 }
+
+/// A downloaded file: the name the server gives it (the attribute's, or
+/// "Photo", with an extension for its type), its type and its content.
+typedef Download = ({String name, String type, Uint8List bytes});
+
+/// A path segment: an attribute's or a choice's name, which may have
+/// spaces, slashes and the like.
+String _segment(String s) => Uri.encodeComponent(s);
 
 class ApiClient {
   /// [server] is the server's origin, such as https://wtf.example.com.
@@ -216,12 +209,10 @@ class ApiClient {
   final http.Client _http;
   final bool _ownsHttp;
 
-  // Data that rarely changes, kept for the session: the trees (revalidated
-  // with their ETag on every use), and the unit families with their units.
-  // A tree this client changes is fetched again at once (see _wrote); units
-  // only change by an import (see importModel).
+  // The trees, kept for the session and revalidated with their ETag on
+  // every use. A tree this client changes is fetched again at once (see
+  // _wrote).
   final Map<TreeKind, Tree> _trees = {};
-  Future<List<UnitFamily>>? _families;
   final _treeChanges = StreamController<TreeKind>.broadcast();
 
   /// A tree this client has changed, once its new version is in the cache;
@@ -234,12 +225,24 @@ class ApiClient {
 
   // --- Session ---
 
-  /// POST /login.
-  Future<Me> login(String email, String password) async {
+  /// POST /login. [client] is what this app calls itself in the list of
+  /// sessions ("WtF on Pixel 9"); the session may sit unused for [maxIdle]
+  /// before it ends (null: until logging out).
+  Future<Me> login(
+    String email,
+    String password, {
+    String? client,
+    Duration? maxIdle,
+  }) async {
     final json = await _call(
       'POST',
       '/login',
-      body: {'email': email, 'password': password},
+      body: {
+        'email': email,
+        'password': password,
+        'client': client,
+        'max_idle': maxIdle?.inSeconds,
+      },
     ) as Json;
     return Me.fromJson(json['account'] as Json);
   }
@@ -250,12 +253,38 @@ class ApiClient {
   /// POST /logout: ends the session.
   Future<void> logout() => _call('POST', '/logout');
 
-  /// PUT /me/password: changes the own password (and ends other sessions).
-  Future<void> changePassword(String current, String newPassword) => _call(
+  /// PUT /me/password: changes the own password; with [endOtherSessions],
+  /// the account's other sessions end.
+  Future<void> changePassword(
+    String current,
+    String newPassword, {
+    required bool endOtherSessions,
+  }) => _call(
     'PUT',
     '/me/password',
-    body: {'current': current, 'new': newPassword},
+    body: {
+      'current': current,
+      'new': newPassword,
+      'end_other_sessions': endOtherSessions,
+    },
   );
+
+  /// The account's sessions, most recently used first.
+  Future<List<SessionInfo>> sessions() async =>
+      (await _call('GET', '/me/sessions') as List)
+          .cast<Json>()
+          .map(SessionInfo.fromJson)
+          .toList();
+
+  /// Ends one of the account's sessions; the current one is a logout.
+  Future<void> endSession(String id) =>
+      _call('DELETE', '/me/sessions/${_segment(id)}');
+
+  /// Ends every session of the account but this one; how many ended.
+  Future<int> endOtherSessions() async {
+    final json = await _call('POST', '/me/sessions/logout-others') as Json;
+    return json['ended'] as int? ?? 0;
+  }
 
   // --- Trees ---
 
@@ -271,22 +300,20 @@ class ApiClient {
     if (resp.statusCode == 304 && cached != null) return cached;
     final json = jsonDecode(resp.body) as Json;
     if (json['unchanged'] == true && cached != null) return cached;
-    return _trees[kind] = Tree.fromJson(
-      json,
-      kind.path,
-      etag: resp.headers['etag'],
-    );
+    return _trees[kind] = Tree.fromJson(json, etag: resp.headers['etag']);
   }
 
   // --- Label codes ---
 
-  /// What a label code belongs to; null when no such code exists.
+  /// What a label code belongs to: [CodeGone] when it was deleted; null
+  /// when no such code was ever handed out.
   Future<CodeTarget?> code(String code) async {
     final normal = normalizeCode(code);
     if (normal == null) return null;
     try {
       return CodeTarget.fromJson(await _call('GET', '/codes/$normal') as Json);
     } on ApiProblem catch (e) {
+      if (e.status == 410) return CodeGone(normal);
       if (e.status == 404 || e.status == 400) return null;
       rethrow;
     }
@@ -294,15 +321,16 @@ class ApiClient {
 
   // --- Items ---
 
-  /// GET /items: items whose name, class path, text or choice values contain
-  /// every word of [search].
-  /// [where]: attribute filters as JSON, as [encodeWhere] writes them.
+  /// GET /items: items whose name, class path, text, url or choice values
+  /// contain every word of [search], in [classId] or below. [where]:
+  /// attribute filters as JSON, as [encodeWhere] writes them. [after] is
+  /// the `next` of the page before.
   Future<ResultPage<ItemListed>> items({
     String? search,
     String? classId,
     String? where,
     int limit = 50,
-    int offset = 0,
+    String? after,
   }) async {
     final json = await _call(
       'GET',
@@ -312,7 +340,7 @@ class ApiClient {
         'class': ?classId,
         if (where != null && where != '[]') 'where': where,
         'limit': '$limit',
-        'offset': '$offset',
+        'after': ?after,
       },
     );
     return ResultPage.fromJson(json as Json, ItemListed.fromJson);
@@ -325,64 +353,42 @@ class ApiClient {
   Future<ItemDetail> item(String id) async =>
       ItemDetail.fromJson(await _call('GET', '/items/$id') as Json);
 
-  /// [values] are keyed by attribute id, in the API's types (see [parseValue]).
+  /// [unit] is what its stock is counted in (null: pieces); [values] are by
+  /// attribute name, in the API's types (see parseValue). The attributes
+  /// not given get their defaults.
   Future<ItemDetail> createItem({
     required String classId,
     required String name,
-    String? unitId,
-    bool unitLock = false,
-    Map<String, Object?> values = const {},
+    String? unit,
+    Values values = const {},
   }) async => ItemDetail.fromJson(
     await _call(
       'POST',
       '/items',
-      body: {
-        'class': classId,
-        'name': name,
-        'unit': ?unitId,
-        if (unitLock) 'unit_lock': true,
-        if (values.isNotEmpty) 'values': values,
-      },
+      body: {'class': classId, 'name': name, 'unit': unit, 'values': values},
     ) as Json,
   );
 
-  /// PATCH /items/{id} with any of name, class, unit and unit_lock.
-  Future<ItemDetail> patchItem(String id, Map<String, Object?> changes) async =>
+  /// PATCH /items/{id}: any of name, class, unit (null: pieces), photo
+  /// (null only), values (by name, null removing one) and default (names
+  /// to give their default), in one transaction.
+  Future<ItemDetail> patchItem(String id, Json changes) async =>
       ItemDetail.fromJson(
         await _call('PATCH', '/items/$id', body: changes) as Json,
       );
 
   Future<void> deleteItem(String id) => _call('DELETE', '/items/$id');
 
-  /// Restores a deleted item with the stock deleted together with it.
-  /// [options]: name, class (another class), with_parents.
-  Future<ItemDetail> restoreItem(String id, [Json options = const {}]) async =>
-      ItemDetail.fromJson(
-        await _call('POST', '/items/$id/restore', body: options) as Json,
-      );
-
-  Future<ItemDetail> setItemValue(
-    String id,
-    String attributeId,
-    Object? value,
-  ) async => ItemDetail.fromJson(
-    await _call('PUT', '/items/$id/values/$attributeId', body: {'value': value})
-        as Json,
-  );
-
-  Future<ItemDetail> deleteItemValue(String id, String attributeId) async =>
-      ItemDetail.fromJson(
-        await _call('DELETE', '/items/$id/values/$attributeId') as Json,
-      );
-
   // --- Stock ---
 
-  /// GET /stock: rows of one item, or at a location and everything below it.
+  /// GET /stock: rows of one item, at a location and everything below it,
+  /// or with [search] in their reference or serial; by item name.
   Future<ResultPage<Stock>> stockList({
     String? itemId,
     String? locationId,
+    String? search,
     int limit = 100,
-    int offset = 0,
+    String? after,
   }) async {
     final json = await _call(
       'GET',
@@ -390,8 +396,9 @@ class ApiClient {
       query: {
         'item': ?itemId,
         'location': ?locationId,
+        if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
         'limit': '$limit',
-        'offset': '$offset',
+        'after': ?after,
       },
     );
     return ResultPage.fromJson(json as Json, Stock.fromJson);
@@ -400,12 +407,15 @@ class ApiClient {
   Future<Stock> stock(String id) async =>
       Stock.fromJson(await _call('GET', '/stock/$id') as Json);
 
-  /// [quantity] null is uncounted; [values] are the per-unit values.
+  /// [amount] null is uncounted; [values] are those of its stock
+  /// attributes, by name.
   Future<Stock> createStock({
     required String itemId,
     required String locationId,
-    Decimal? quantity,
-    Map<String, Object?> values = const {},
+    Decimal? amount,
+    String? reference,
+    String? serial,
+    Values values = const {},
   }) async => Stock.fromJson(
     await _call(
       'POST',
@@ -413,50 +423,103 @@ class ApiClient {
       body: {
         'item': itemId,
         'location': locationId,
-        'quantity': ?quantity,
-        if (values.isNotEmpty) 'values': values,
+        'amount': amount,
+        'reference': reference,
+        'serial': serial,
+        'values': values,
       },
     ) as Json,
   );
 
-  /// PATCH /stock/{id} with any of item, location and quantity (null: uncounted).
-  Future<Stock> patchStock(String id, Map<String, Object?> changes) async =>
+  /// PATCH /stock/{id}: any of item, location, amount (null: uncounted),
+  /// reference, serial, photo (null only), values and default.
+  Future<Stock> patchStock(String id, Json changes) async =>
       Stock.fromJson(await _call('PATCH', '/stock/$id', body: changes) as Json);
 
-  /// Moves all of a row, or [quantity] of it, to another location.
+  /// Moves all of a row, or [amount] of it, to another location; the row
+  /// at the destination.
   Future<Stock> moveStock(
     String id,
     String locationId, {
-    Decimal? quantity,
+    Decimal? amount,
   }) async => Stock.fromJson(
     await _call(
       'POST',
       '/stock/$id/move',
-      body: {'location': locationId, 'quantity': ?quantity},
+      body: {'location': locationId, 'amount': amount},
+    ) as Json,
+  );
+
+  /// Adds all of a row, or [amount] of it, to the row [into]; [resolve]
+  /// says, for each difference between them, which row's to keep: {
+  /// "reference": "from" | "into", "serial": …, "photo": …, "values":
+  /// {name: …}}. Answers [into].
+  Future<Stock> mergeStock(
+    String id,
+    String into, {
+    Decimal? amount,
+    Json? resolve,
+  }) async => Stock.fromJson(
+    await _call(
+      'POST',
+      '/stock/$id/merge',
+      body: {'into': into, 'amount': amount, 'resolve': resolve},
     ) as Json,
   );
 
   Future<void> deleteStock(String id) => _call('DELETE', '/stock/$id');
 
-  /// Restores a deleted stock row. [options]: location, with_parents.
-  Future<Stock> restoreStock(String id, [Json options = const {}]) async =>
-      Stock.fromJson(
-        await _call('POST', '/stock/$id/restore', body: options) as Json,
-      );
+  // --- Files ---
 
-  Future<Stock> setStockValue(
-    String id,
-    String attributeId,
-    Object? value,
-  ) async => Stock.fromJson(
-    await _call('PUT', '/stock/$id/values/$attributeId', body: {'value': value})
-        as Json,
-  );
+  /// Uploads the photo of the item or stock row at [owner] (/items/{id} or
+  /// /stock/{id}); it must be an image.
+  Future<void> uploadPhoto(
+    String owner, {
+    required String name,
+    required List<int> bytes,
+  }) => _upload('$owner/photo', name, bytes);
 
-  Future<Stock> deleteStockValue(String id, String attributeId) async =>
-      Stock.fromJson(
-        await _call('DELETE', '/stock/$id/values/$attributeId') as Json,
-      );
+  /// Uploads the file of the attachment attribute [attribute] of the item
+  /// or stock row at [owner]; refused when the attribute doesn't take its
+  /// type.
+  Future<void> uploadFile(
+    String owner,
+    String attribute, {
+    required String name,
+    required List<int> bytes,
+  }) => _upload('$owner/files/${_segment(attribute)}', name, bytes);
+
+  Future<void> _upload(String path, String name, List<int> bytes) async {
+    final req = http.MultipartRequest('PUT', server.resolve('$apiPath$path'))
+      ..headers['Accept'] = 'application/json';
+    final type = mediaTypeOf(name);
+    req.files.add(
+      http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: name,
+        contentType: type == null ? null : MediaType.parse(type),
+      ),
+    );
+    await _send(req);
+  }
+
+  /// A file's content, with the name and type the server gives it.
+  Future<Download> download(FileRef f) async {
+    final req = http.Request('GET', fileUrl(f))..headers['Accept'] = '*/*';
+    final resp = await _send(req);
+    return (
+      name: downloadName(resp.headers['content-disposition']) ?? f.title,
+      type: (resp.headers['content-type'] ?? '').split(';').first.trim(),
+      bytes: resp.bodyBytes,
+    );
+  }
+
+  /// Where a file's content is. The hash makes a new file a new address, so
+  /// that no cache shows the old one. Native apps send [authHeaders] with it.
+  Uri fileUrl(FileRef f) => server
+      .resolve('$apiPath${f.path}')
+      .replace(queryParameters: {'v': f.hash});
 
   // --- Locations ---
 
@@ -478,25 +541,24 @@ class ApiClient {
       '/locations',
       body: {
         'name': name,
-        'parent': ?parentId,
-        if (container) 'container': true,
-        if (grid != null)
-          'grid': {
-            'columns': grid.$1,
-            'rows': grid.$2,
-            if (confirm) 'confirm': true,
-          },
+        'parent': parentId,
+        'container': container,
+        'grid': grid == null
+            ? null
+            : {
+                'columns': grid.$1,
+                'rows': grid.$2,
+                if (confirm) 'confirm': true,
+              },
       },
     ) as Json,
   );
 
   /// PATCH /locations/{id} with any of name, parent (null: a root) and container.
-  Future<Location> patchLocation(
-    String id,
-    Map<String, Object?> changes,
-  ) async => Location.fromJson(
-    await _call('PATCH', '/locations/$id', body: changes) as Json,
-  );
+  Future<Location> patchLocation(String id, Json changes) async =>
+      Location.fromJson(
+        await _call('PATCH', '/locations/$id', body: changes) as Json,
+      );
 
   /// What deleting the location and everything below it would delete.
   Future<Deletion> locationDeletion(String id, {bool force = false}) async =>
@@ -518,32 +580,11 @@ class ApiClient {
     query: {if (recursive) 'recursive': 'true', if (force) 'force': 'true'},
   );
 
-  /// The paths of locations, by id: from the tree, or fetched for deleted
-  /// ones, which aren't in it.
+  /// The paths of locations, by id, from the tree.
   Future<Map<String, String>> locationPaths(Iterable<String> ids) async {
     final locations = await tree(TreeKind.locations);
-    final paths = <String, String>{};
-    await Future.wait([
-      for (final id in ids.toSet())
-        if (locations[id] case final n?)
-          Future.sync(() => paths[id] = n.path)
-        else
-          location(id).then(
-            (l) => paths[id] = l.pathText,
-            onError: (Object _) => paths[id] = 'a location',
-          ),
-    ]);
-    return paths;
+    return {for (final id in ids) id: locations.pathOf(id)};
   }
-
-  /// Restores a deleted location with what was deleted together with it.
-  /// [options]: name, parent (another one; null: at the top), with_parents.
-  Future<Location> restoreLocation(
-    String id, [
-    Json options = const {},
-  ]) async => Location.fromJson(
-    await _call('POST', '/locations/$id/restore', body: options) as Json,
-  );
 
   // --- Classes ---
 
@@ -558,21 +599,15 @@ class ApiClient {
     await _call(
       'POST',
       '/classes',
-      body: {
-        'name': name,
-        'parent': ?parentId,
-        if (container) 'container': true,
-      },
+      body: {'name': name, 'parent': parentId, 'container': container},
     ) as Json,
   );
 
   /// PATCH /classes/{id} with any of name, parent (null: a root) and container.
-  Future<ClassDetail> patchClass(
-    String id,
-    Map<String, Object?> changes,
-  ) async => ClassDetail.fromJson(
-    await _call('PATCH', '/classes/$id', body: changes) as Json,
-  );
+  Future<ClassDetail> patchClass(String id, Json changes) async =>
+      ClassDetail.fromJson(
+        await _call('PATCH', '/classes/$id', body: changes) as Json,
+      );
 
   /// What deleting the class and everything below it would delete.
   Future<Deletion> classDeletion(String id, {bool force = false}) async =>
@@ -594,75 +629,120 @@ class ApiClient {
     query: {if (recursive) 'recursive': 'true', if (force) 'force': 'true'},
   );
 
-  /// Restores a deleted class with what was deleted together with it.
-  /// [options]: name, parent (another one; null: at the top), with_parents.
-  Future<ClassDetail> restoreClass(
-    String id, [
-    Json options = const {},
-  ]) async => ClassDetail.fromJson(
-    await _call('POST', '/classes/$id/restore', body: options) as Json,
-  );
+  // --- A class's attributes ---
+  //
+  // Each change is on the class that defines the attribute, and rewrites
+  // what it must below it. With dryRun it only tells how many items and
+  // stock rows it would rewrite, or is refused as the change would be.
 
-  /// Assigns an attribute to a class, replacing an assignment: options left
-  /// out are reset, as in the CLI.
-  Future<ClassDetail> assignAttribute(
-    String classId,
-    String attributeId, {
-    Object? defaultValue,
-    bool perUnit = false,
-    bool required = false,
-  }) async => ClassDetail.fromJson(
+  Future<ClassChange> _change(
+    String method,
+    String path, {
+    Object? body,
+    required bool dryRun,
+  }) async => ClassChange.fromJson(
     await _call(
-      'PUT',
-      '/classes/$classId/attributes/$attributeId',
-      body: {
-        'default': defaultValue,
-        'per_unit': perUnit,
-        'required': required,
-      },
+      method,
+      path,
+      query: {if (dryRun) 'dry_run': 'true'},
+      body: body,
     ) as Json,
   );
 
-  Future<ClassDetail> unassignAttribute(
+  /// Adds an attribute, with the definition [a] gives: its scope, type,
+  /// required, unit, default, choices, media types and order.
+  Future<ClassChange> addAttribute(
     String classId,
-    String attributeId,
-  ) async => ClassDetail.fromJson(
-    await _call('DELETE', '/classes/$classId/attributes/$attributeId') as Json,
+    Attribute a, {
+    bool dryRun = false,
+  }) => _change(
+    'POST',
+    '/classes/$classId/attributes',
+    body: {'name': a.name, 'definition': a.definition},
+    dryRun: dryRun,
   );
 
-  // --- Attributes and units ---
+  /// Changes any of required, default, unit, order and media of an
+  /// attribute the class defines (null removes a default, a unit or the
+  /// media types).
+  Future<ClassChange> changeAttribute(
+    String classId,
+    String name,
+    Json changes, {
+    bool dryRun = false,
+  }) => _change(
+    'PATCH',
+    '/classes/$classId/attributes/${_segment(name)}',
+    body: changes,
+    dryRun: dryRun,
+  );
 
-  Future<List<Attribute>> attributes() async =>
-      (await _call('GET', '/attributes') as List)
-          .cast<Json>()
-          .map(Attribute.fromJson)
-          .toList();
+  Future<ClassChange> renameAttribute(
+    String classId,
+    String name,
+    String newName, {
+    bool dryRun = false,
+  }) => _change(
+    'POST',
+    '/classes/$classId/attributes/${_segment(name)}/rename',
+    body: {'name': newName},
+    dryRun: dryRun,
+  );
 
-  /// One attribute, with the options of a choice attribute.
-  Future<Attribute> attribute(String id) async =>
-      Attribute.fromJson(await _call('GET', '/attributes/$id') as Json);
+  /// Removes an attribute, with its values.
+  Future<ClassChange> removeAttribute(
+    String classId,
+    String name, {
+    bool dryRun = false,
+  }) => _change(
+    'DELETE',
+    '/classes/$classId/attributes/${_segment(name)}',
+    dryRun: dryRun,
+  );
 
-  /// All unit families with their units (smallest first), by quantity.
-  Future<List<UnitFamily>> unitFamilies() =>
-      _families ??= _call('GET', '/unit-families')
-          .then(
-            (json) =>
-                (json as List).cast<Json>().map(UnitFamily.fromJson).toList(),
-          )
-          // A failed lookup isn't kept, so that the next use tries again.
-          .catchError((Object e) {
-            _families = null;
-            throw e;
-          });
+  Future<ClassChange> addChoice(
+    String classId,
+    String name,
+    String choice, {
+    bool dryRun = false,
+  }) => _change(
+    'POST',
+    '/classes/$classId/attributes/${_segment(name)}/choices',
+    body: {'choice': choice},
+    dryRun: dryRun,
+  );
 
-  /// All units, by family.
-  Future<List<Unit>> units() async => [
-    for (final f in await unitFamilies()) ...f.units,
-  ];
+  Future<ClassChange> renameChoice(
+    String classId,
+    String name,
+    String choice,
+    String newChoice, {
+    bool dryRun = false,
+  }) => _change(
+    'POST',
+    '/classes/$classId/attributes/${_segment(name)}/choices/${_segment(choice)}/rename',
+    body: {'choice': newChoice},
+    dryRun: dryRun,
+  );
+
+  /// Removes a choice; refused while a value has it, or while it is the
+  /// default or the last one.
+  Future<ClassChange> removeChoice(
+    String classId,
+    String name,
+    String choice, {
+    bool dryRun = false,
+  }) => _change(
+    'DELETE',
+    '/classes/$classId/attributes/${_segment(name)}/choices/${_segment(choice)}',
+    dryRun: dryRun,
+  );
+
+  // --- Model files ---
 
   /// POST /model/import: imports a model file (seed/model-format.md), sent
-  /// as it is so that no factor loses digits; its classes go below class
-  /// [parent] or at the top. With [dryRun], only tells.
+  /// as it is; its classes go below class [parent] or at the top. With
+  /// [dryRun], only tells.
   Future<ModelImport> importModel(
     String file, {
     String? parent,
@@ -675,10 +755,7 @@ class ApiClient {
       body: RawJson(file),
     ) as Json;
     final report = ModelImport.fromJson(json);
-    if (report.applied) {
-      _families = null; // fetched again with the new units
-      await _wrote('/classes'); // the new classes
-    }
+    if (!report.dryRun) await _wrote('/classes'); // the new classes
     return report;
   }
 
@@ -689,119 +766,6 @@ class ApiClient {
     final file = jsonDecode(utf8.decode(resp.bodyBytes));
     return '${const JsonEncoder.withIndent('  ').convert(file)}\n';
   }
-
-  /// Turns a quantity on or off for choosing units (null: back to its
-  /// default). Refused (409) while attributes or items use its units.
-  Future<Quantity> setQuantityAvailable(String id, bool? available) async {
-    final json = await _call(
-      'PATCH',
-      '/quantities/$id',
-      body: {'available': available},
-    );
-    _families = null; // their availability follows the quantity's
-    return Quantity.fromJson(json as Json);
-  }
-
-  /// Turns a unit family on or off for choosing units (null: back to its
-  /// default). Refused (409) while attributes or items use its units.
-  Future<UnitFamily> setFamilyAvailable(String id, bool? available) async {
-    final json = await _call(
-      'PATCH',
-      '/unit-families/$id',
-      body: {'available': available},
-    );
-    _families = null;
-    return UnitFamily.fromJson(json as Json);
-  }
-
-  /// What numbers in [unit] may be typed in, for [parseMeasure].
-  Future<UnitChoice> unitChoice(Unit unit) async {
-    final families = await unitFamilies();
-    return UnitChoice(
-      unit: unit,
-      familyUnits: [
-        for (final f in families)
-          if (f.id == unit.familyId) ...f.units,
-      ],
-      // Units of families that are turned off are refused, except the
-      // unit's own family, which it is already shown in.
-      quantityUnits: [
-        for (final f in families)
-          if (f.quantity.id == unit.quantity.id &&
-              (f.available || f.id == unit.familyId))
-            ...f.units,
-      ],
-    );
-  }
-
-  /// Creates an attribute; numbers may have a unit (of a quantity with the
-  /// same datatype), shown always in that unit with [unitLock].
-  Future<Attribute> createAttribute({
-    required String name,
-    required String datatype,
-    String? unitId,
-    bool unitLock = false,
-  }) async => Attribute.fromJson(
-    await _call(
-      'POST',
-      '/attributes',
-      body: {
-        'name': name,
-        'datatype': datatype,
-        'unit': ?unitId,
-        if (unitLock) 'unit_lock': true,
-      },
-    ) as Json,
-  );
-
-  /// PATCH /attributes/{id} with any of name, datatype, unit and unit_lock.
-  Future<Attribute> patchAttribute(
-    String id,
-    Map<String, Object?> changes,
-  ) async => Attribute.fromJson(
-    await _call('PATCH', '/attributes/$id', body: changes) as Json,
-  );
-
-  Future<void> deleteAttribute(String id) => _call('DELETE', '/attributes/$id');
-
-  /// Restores a deleted attribute. [options]: name.
-  Future<Attribute> restoreAttribute(
-    String id, [
-    Json options = const {},
-  ]) async => Attribute.fromJson(
-    await _call('POST', '/attributes/$id/restore', body: options) as Json,
-  );
-
-  Future<NamedRef> addOption(String attributeId, String name) async =>
-      NamedRef.fromJson(
-        await _call(
-          'POST',
-          '/attributes/$attributeId/options',
-          body: {'name': name},
-        ) as Json,
-      );
-
-  Future<NamedRef> renameOption(String id, String name) async =>
-      NamedRef.fromJson(
-        await _call('PATCH', '/options/$id', body: {'name': name}) as Json,
-      );
-
-  Future<void> deleteOption(String id) => _call('DELETE', '/options/$id');
-
-  /// One option, also a deleted one: {id, attribute, name, deleted}.
-  Future<Json> option(String id) async =>
-      await _call('GET', '/options/$id') as Json;
-
-  /// Restores a deleted option; its attribute must not be deleted.
-  Future<void> restoreOption(String id) =>
-      _call('POST', '/options/$id/restore', body: const {});
-
-  /// The quantities, with their base units.
-  Future<List<Quantity>> quantities() async =>
-      (await _call('GET', '/quantities') as List)
-          .cast<Json>()
-          .map(Quantity.fromJson)
-          .toList();
 
   // --- Accounts ---
 
@@ -823,135 +787,19 @@ class ApiClient {
     await _call(
       'POST',
       '/accounts',
-      body: {'email': email, 'password': ?password, 'role': role.json},
+      body: {'email': email, 'password': password, 'role': role.json},
     ) as Json,
   );
 
-  /// PATCH /accounts/{id} with any of email, password (null: none) and
-  /// role.
-  Future<Account> patchAccount(String id, Map<String, Object?> changes) async =>
+  /// PATCH /accounts/{id} with any of email, password (null: none), role
+  /// and, with a password, end_sessions.
+  Future<Account> patchAccount(String id, Json changes) async =>
       Account.fromJson(
         await _call('PATCH', '/accounts/$id', body: changes) as Json,
       );
 
-  /// Marks the account deleted; history keeps referring to it.
+  /// Deletes the account, with its sessions.
   Future<void> deleteAccount(String id) => _call('DELETE', '/accounts/$id');
-
-  // --- History ---
-
-  /// The kinds of objects with a history.
-  static const historyKinds = {
-    'items',
-    'stock',
-    'locations',
-    'classes',
-    'attributes',
-    'accounts',
-  };
-
-  /// The kinds whose list has a history of its own: the top level of a tree,
-  /// or all attributes (added, deleted, restored).
-  static const listHistoryKinds = {'locations', 'classes', 'attributes'};
-
-  /// GET /{kind}/{id}/history, newest first; with no id, GET
-  /// /{kind}/history, the history of the list.
-  Future<ResultPage<HistoryEntry>> history(
-    String kind,
-    String? id, {
-    int limit = 100,
-    int offset = 0,
-  }) async {
-    if (!(id == null ? listHistoryKinds : historyKinds).contains(kind)) {
-      throw InputError('There is no history of "$kind".');
-    }
-    final json = await _call(
-      'GET',
-      id == null ? '/$kind/history' : '/$kind/$id/history',
-      query: {'limit': '$limit', 'offset': '$offset'},
-    );
-    return ResultPage.fromJson(json as Json, HistoryEntry.fromJson);
-  }
-
-  // --- Attachments ---
-
-  /// Changes an attachment's title.
-  Future<Attachment> patchAttachment(Attachment a, String title) async =>
-      Attachment.fromJson(
-        await _call('PATCH', a.path, body: {'title': title}) as Json,
-        a.owner,
-      );
-
-  /// Deletes an attachment, for good.
-  Future<void> deleteAttachment(Attachment a) => _call('DELETE', a.path);
-
-  /// The attachment [id] of the object at [ownerPath], also when it is
-  /// deleted.
-  Future<Attachment> attachment(String ownerPath, String id) async =>
-      Attachment.fromJson(
-        await _call('GET', '$ownerPath/attachments/$id') as Json,
-        ownerPath,
-      );
-
-  /// Uploads a file to the object at [ownerPath]: [name] is its file name,
-  /// and the title unless [title] is given. With [photo] it becomes the
-  /// object's photo (images only). The type comes from the name's extension
-  /// when it's a known one; otherwise the server detects it.
-  Future<Attachment> uploadAttachment(
-    String ownerPath, {
-    required String name,
-    required List<int> bytes,
-    String? title,
-    bool photo = false,
-  }) async {
-    final req =
-        http.MultipartRequest(
-            'POST',
-            server.resolve('$apiPath$ownerPath/attachments'),
-          )
-          ..headers['Accept'] = 'application/json'
-          ..fields['photo'] = '$photo';
-    if (title != null && title.trim().isNotEmpty) {
-      req.fields['title'] = title.trim();
-    }
-    final type = mediaTypeOf(name);
-    req.files.add(
-      http.MultipartFile.fromBytes(
-        'file',
-        bytes,
-        filename: name,
-        contentType: type == null ? null : MediaType.parse(type),
-      ),
-    );
-    final resp = await _send(req);
-    return Attachment.fromJson(decodeBody(resp.body) as Json, ownerPath);
-  }
-
-  /// An attachment's content, with the file name the server gives it (its
-  /// title, with an extension for its type).
-  Future<(String, Uint8List)> downloadAttachment(Attachment a) async {
-    final req = http.Request('GET', server.resolve('$apiPath${a.path}/content'))
-      ..headers['Accept'] = '*/*';
-    final resp = await _send(req);
-    return (
-      downloadName(resp.headers['content-disposition']) ?? a.title,
-      resp.bodyBytes,
-    );
-  }
-
-  /// Restores a deleted attachment, as an ordinary one.
-  Future<Attachment> restoreAttachment(Attachment a) async =>
-      Attachment.fromJson(
-        await _call('POST', '${a.path}/restore', body: const {}) as Json,
-        a.owner,
-      );
-
-  /// Makes one of an object's own image attachments its photo; null for none.
-  Future<void> setPhoto(String ownerPath, String? attachmentId) =>
-      _call('PATCH', ownerPath, body: {'photo': attachmentId});
-
-  /// Where an attachment's content is. Native apps send [authHeaders] with it.
-  Uri attachmentUrl(Attachment a) =>
-      server.resolve('$apiPath${a.path}/content');
 
   /// The session cookie for requests made outside this client, such as
   /// images; empty on the web, where the browser sends it.
@@ -975,26 +823,22 @@ class ApiClient {
     final resp = await _request(method, path, query: query, body: body);
     if (method != 'GET') await _wrote(path);
     if (resp.body.isEmpty) return null;
-    return decodeBody(resp.body);
+    return jsonDecode(resp.body);
   }
 
   /// Refreshes the cached tree a successful change at [path] has changed,
-  /// before the change is reported done. A restore may bring back classes
-  /// and locations too (with_parents), so it refreshes both.
+  /// before the change is reported done.
   Future<void> _wrote(String path) async {
     final m = _treeWrite.firstMatch(path);
-    final kinds = path.endsWith('/restore')
-        ? TreeKind.values
-        : [if (m != null) TreeKind.values.byName(m[1]!)];
-    for (final kind in kinds) {
-      try {
-        await tree(kind);
-      } catch (_) {
-        // The change itself succeeded; the tree is fetched on its next use.
-        _trees.remove(kind);
-      }
-      if (!_treeChanges.isClosed) _treeChanges.add(kind);
+    if (m == null) return;
+    final kind = TreeKind.values.byName(m[1]!);
+    try {
+      await tree(kind);
+    } catch (_) {
+      // The change itself succeeded; the tree is fetched on its next use.
+      _trees.remove(kind);
     }
+    if (!_treeChanges.isClosed) _treeChanges.add(kind);
   }
 
   Future<http.Response> _request(

@@ -10,15 +10,15 @@ It was planned to cover what you do every day. While building it, it grew to cov
 
 | In the first version | Later |
 |----------------------|-------|
-| Log in and out, change your password | |
+| Log in and out, change your password, your sessions | |
 | Search, and browse the location and class trees | Label scanning |
-| Look at an item: values, stock and where it is, photos | |
+| Look at an item: values, files, stock and where it is, its photo | |
 | Add items (with their values), stock and locations (also with a compartment grid) | |
-| Move stock, and edit and delete items and stock rows | |
-| Manage classes (with their attributes), locations, attributes and their options, and accounts | |
-| History, and the units | |
-| Titles of attachments, the item photo (class photo, …), removing attachments | |
-| Uploading and downloading files, taking photos (phones), restoring attachments | |
+| Move and merge stock, and edit and delete items and stock rows | |
+| Manage classes with their attributes, locations, and accounts | |
+| Photos of items and stock rows, and the files of attachment attributes: upload, open, save, remove | |
+
+Since the plan of 2 November 2026 ([2026-11-02-attributes-in-json.md](2026-11-02-attributes-in-json.md)), attributes are part of their class, units are labels, and there is no history, restore or attachment of its own any more; decisions 72–82 describe the app since then.
 
 **Platforms, in this order:**
 1. **Web and Windows:** on your PC, where everything is installed.
@@ -51,7 +51,7 @@ app/
 
 A small hand-written Dart client, the counterpart of the CLI's Go client (`internal/client`):
 
-- **One method per API call:** for example `items.get(code)` or `stock.move(id, location, quantity)`, returning Dart classes such as `Item` and `Stock`.
+- **One method per API call:** for example `item(id)` or `moveStock(id, location, amount:)`, returning Dart classes such as `ItemDetail` and `Stock` (`app/lib/api/client.dart`, `models.dart`).
 - **Server address:**
   - The **web app** uses its own address, because `wtfd` serves it, so there's nothing to enter.
   - The **native apps** ask for the server address at login and remember it, like `wtf login --server`.
@@ -63,7 +63,7 @@ A small hand-written Dart client, the counterpart of the CLI's Go client (`inter
   - **Wrong version or no versions:** "unsupported API version" and "no `/api/v1` at all" become clear messages: "update the app" or "update the server".
   - **Web updates:** the web app also compares Flutter's `version.json` with its own version, and reloads itself after an update, at a safe moment, never in the middle of a form.
 - **Errors:** the API's problem details become readable messages on screen.
-- **A test keeps it honest:** it reads `openapi/openapi.yaml` and checks that every path the client uses exists there, like the server's route test.
+- **A test keeps it honest:** it reads `openapi/openapi.json` and checks that every path the client uses exists there, like the server's route test.
 
 ## Screens and URLs
 
@@ -75,27 +75,23 @@ Every screen has a URL. In the web app it shows in the address bar, and it works
 | `/` | Items: the search form (words, a class, and its attributes), like `wtf find`. The start screen. |
 | `/found?search=&class=&where=` | The items found, and where they are. Opened by the form, on top of it. |
 | `/locations` | The location tree. Containers are marked, and grids show their compartments. |
-| `/locations/1A7K` | A location: its path, what's below it, the stock at it and further in, and its photos. Edit, add a location inside, delete (with everything below it). |
+| `/locations/1A7K` | A location: its path, what's below it, and the stock at it and further in. Edit, add a location inside, delete (with everything below it). |
 | `/locations/new?parent=…` | Add a location, optionally with a compartment grid (`8 × 5`). |
 | `/locations/1A7K/edit` | Edit a location: name, parent, container. |
 | `/classes` | The class tree. |
-| `/classes/<id>` | A class: its attributes (assign, change, remove), the classes below it and its items. Edit, add a class below, delete. |
+| `/classes/<id>` | A class: its attributes (add, change, rename, remove, and a choice's choices, each previewed by a dry run), the classes below it and its items. Edit, add a class below, export, delete. |
 | `/classes/new?parent=…`, `/classes/<id>/edit` | Add or edit a class: name, parent, container. |
-| `/items/1B2C` | An item: its details and values, its photo, stock rows with their locations, attachments. A stock row's code shows its item too, as in the CLI. |
-| `/items/new?class=…` | Add an item: class, name, then its attributes (required ones first). Afterwards it offers to add stock, like the CLI. |
-| `/items/1B2C/edit` | Edit an item: name, class, unit and Unit lock, values. |
-| `/stock/1C3D` | A stock row: quantity, location, per-unit values; move it (all or part), edit or delete it. |
-| `/stock/new?item=…&location=…` | Add stock: item, location, quantity, per-unit values. |
-| `/stock/1C3D/edit` | Edit a stock row: location, quantity, per-unit values. |
-| `/history/<kind>/<id>` | The history of an item, stock row, location, class, attribute or account, in words, by day (decision 23). |
-| `/history/<kind>` | The history of the top level of the locations or classes, or of the list of attributes: what was added, moved to or from the top level, deleted or restored. The History button on the tree and on Attributes opens it. |
-| `/me` | Your account: email, role, appearance (light, dark or as the system), change password, log out. |
-| `/admin` | For admins: links to classes, attributes, units and accounts; importing and exporting model files (decision 69). |
-| `/attributes`, `/attributes/<id>` | The attributes; one attribute with its options (add, rename, delete). |
+| `/items/1B2C` | An item: its details and values, its photo, its files, stock rows with their locations. A stock row's code shows its item too, as in the CLI. |
+| `/items/new?class=…` | Add an item: class, name, the unit of its stock, then its attributes in the class's order. Afterwards it offers to add stock, like the CLI. |
+| `/items/1B2C/edit` | Edit an item: name, class, the unit of its stock, values. |
+| `/stock/1C3D` | A stock row: amount, location, reference, serial, its values and files; move it (all or part), merge it into another row, edit or delete it. |
+| `/stock/new?item=…&location=…` | Add stock: item, location, amount, reference, serial, the values of the stock attributes. |
+| `/stock/1C3D/edit` | Edit a stock row: location, amount, reference, serial, values. |
+| `/me` | Your account: email, role, appearance (light, dark or as the system), your sessions, change password, log out. |
+| `/admin` | For admins: links to classes and accounts; importing and exporting model files (decision 69). |
 | `/accounts`, `/accounts/<id>` | The accounts: email, role, password (keep, set or remove). |
-| `/units` | The units by quantity and family, for reference; Import adds more from a model file. |
 
-**Choosing things:** wherever a location or class must be chosen, a picker with search and the tree replaces the CLI's typing with Tab. Units work as in the CLI: you can type `12mm` or `2.5 m` into a number field, and the app converts and checks it as you type, with the same rules as the CLI (decision 1).
+**Choosing things:** wherever a location or class must be chosen, a picker with search and the tree replaces the CLI's typing with Tab. A number is typed as it is, or with the label of its unit (`12` or `12 mm`), and checked as you type, with the same rules as the CLI (decision 74).
 
 ## Layout: one design for every screen size
 
@@ -133,7 +129,7 @@ Testing uses `flutter_test`, which is built into Flutter.
 
 ## Decisions
 
-1. **Numbers with units are converted by each client, for now.** The API keeps taking numbers in the base unit of the quantity, as before. Each client turns `12mm` into `0.012` itself and checks it while you type, so mistakes are caught at once. The CLI does this today (`internal/cli/units.go`), and the apps get the same rules in Dart. Doing it on the server was tried, and set aside because prompts and forms could then only report mistakes when saving.
+1. *Gone with the units (decision 74).* **Numbers with units are converted by each client, for now.** The API keeps taking numbers in the base unit of the quantity, as before. Each client turns `12mm` into `0.012` itself and checks it while you type, so mistakes are caught at once. The CLI does this today (`internal/cli/units.go`), and the apps get the same rules in Dart. Doing it on the server was tried, and set aside because prompts and forms could then only report mistakes when saving.
 2. **No `--dev-origin` for now.** Development uses the Windows app, which needs nothing on the server, and the web app is tested through `--web-root`. The switch can come later if web development without hot reload becomes a nuisance.
 3. **The start screen is search.**
 4. **The name under the icon is "WtF",** and in full "Where to Find". It was "Where the Fxxx" until it was renamed before the first App Store review, so the stores have nothing to object to.
@@ -171,7 +167,7 @@ These are decisions I made without you, recorded for review. You asked me to cop
 
 10. **Deleting always asks first.** That differs from the CLI's decision 14, where single deletes don't ask. A tap goes astray more easily than a typed command.
     - **Locations and classes:** deleting one shows the server's preview of everything below it, like `delete --recursive`. If stock or items are in them, Delete only becomes possible once "Delete that stock too" (`--force`) is ticked. Everything happens in one transaction on the server.
-11. **Forms save at the end, as the CLI's edit forms do.**
+11. **Forms save at the end, as the CLI's edit forms do.** *Since decision 73, in one request.*
     - **What is sent:** only what changed, in several requests if needed (the item, then each value).
     - **When a request fails:** the message lists what was already saved ("Already saved: name").
     - **Values:** clearing one removes it, so the class default applies again. A required value without a default can't be cleared.
@@ -217,7 +213,7 @@ These are decisions I made without you, recorded for review. You asked me to cop
 
 ### History and deleted things
 
-Added after review, with the deletion design ([api/deleting.md](api/deleting.md)).
+Added after review, with the deletion design ([api/deleting.md](api/deleting.md)). *Gone with the plan of 1 November 2026: there is no history, nothing is marked deleted, and nothing is restored (decision 80).*
 
 23. **History in words** (agreed with you before building).
     - **One card per action:** the entries of one transaction, with the time and who did it, under a heading per day ("Today", "Yesterday", "Mon 26 Oct 2026").
@@ -236,7 +232,7 @@ Added after review, with the deletion design ([api/deleting.md](api/deleting.md)
 
 ### Unit families, and no tenants
 
-Built for API revision 3, with the server's change to units (CLI.md decision 48).
+Built for API revision 3, with the server's change to units (CLI.md decision 48). *Decisions 25–27 are gone with the units (decision 74).*
 
 25. **A unit menu next to every number field** (your design). The field takes a number, and the menu next to it offers the units of the attribute's or item's family, starting at its own unit: for a length in mm, nm … km.
     - **A plain number** is in the unit picked in the menu.
@@ -268,7 +264,7 @@ Built for API revision 4, with `where` on `GET /items` and `--where` in the CLI 
 
 ### Importing units
 
-Built for API revision 5, with unit files and `POST /units/import`. Unit files are part of model files now, and the Units screen imports those (decision 61).
+*Gone with the units (decision 74).* Built for API revision 5, with unit files and `POST /units/import`. Unit files are part of model files now, and the Units screen imports those (decision 61).
 
 33. **Import on the Units screen,** for accounts with the model write privilege, like `wtf unit import`.
     - **Choosing the file** uses the `file_picker` package, a new dependency. It works on the web, Windows, Android and iOS, and the Windows and web builds succeed with it. If you'd rather not depend on it, pasting the JSON into a text box would do instead.
@@ -279,7 +275,7 @@ Built for API revision 5, with unit files and `POST /units/import`. Unit files a
 
 ### Attachments, redone
 
-Built for API revision 7, with the new attachment model ([api/attachment.md](api/attachment.md)).
+Built for API revision 7, with the new attachment model ([api/attachment.md](api/attachment.md)). *Decisions 34–38 are replaced by photos and attachment attributes (decision 75).*
 34. **Titles and photos.** An attachment shows its title, and files their type and size. Each attachment's menu has:
     - **Title…** to rename it;
     - **Make it the item photo** or **No longer the item photo** for images (class photo, location photo, stock row photo for the others), which sets the object's photo (its list entry says "Item photo", …);
@@ -308,7 +304,7 @@ Built for API revision 8: attachments are marked deleted again, and restored ([a
 
 ### Photos in the trees, and framed icons
 
-Built for API revision 9: the class and location tree nodes include their `photo` ([api/attachment.md](api/attachment.md)). Revision 10 adds the stock row's `photo` to stock lists and the item's `photo` to item summaries, such as the item of a stock row.
+*Classes and locations have no photos since decision 75; the framed icons stay.* Built for API revision 9: the class and location tree nodes include their `photo` ([api/attachment.md](api/attachment.md)). Revision 10 adds the stock row's `photo` to stock lists and the item's `photo` to item summaries, such as the item of a stock row.
 
 45. **A photo or a framed icon** at the start of every list entry for an object: the object's small photo, or, when it has none, its icon in a frame the same size. That covers attachments (the paperclip), items (narrow list, wide table, a class's items), an item's stock rows (the row's own photo, else its location's), a location's stock (the row's own photo, else its item's), what's inside a location, the classes below a class, and both trees. The frame is the same thin border as the photos', so entries with and without a photo look alike and their names line up.
 46. **The trees use a smaller size,** 36 pixels instead of 48, so they stay compact. Their rows are 48 pixels high instead of 44.
@@ -359,7 +355,7 @@ Built for API revision 9: the class and location tree nodes include their `photo
 
 ### Tenants
 
-Built with the server's tenants (TENANTS.md, removed with them on 2 November 2026), API revision 11.
+*Gone with the tenants (decision 82).* Built with the server's tenants (TENANTS.md, removed with them on 2 November 2026), API revision 11.
 
 56. **One server address per inventory, as before.** The hostname in it picks the tenant, so the login screen, Me and everything else stay as they are; nothing tells users that there are other tenants (your decision). An IP address alone picks no tenant: on a home network, use a name such as `http://bbj.192.168.1.10.nip.io:8080`.
 57. **Unit ids are strings** (UUIDs), and quantities and families say whether they are available, the default, and the inventory's own choice.
@@ -378,6 +374,8 @@ Built with the server's tenants (TENANTS.md, removed with them on 2 November 202
 64. **Fields that open a picker take keys too** (your find, on the Items screen's Class): a class, a location, a parent, an item or a unit is chosen in a picker with a search, not in a dropdown, since there can be many and classes and locations are trees. Typing in such a field opens its picker with what was typed already in the search, and the down arrow opens it; Enter and space open it as before. Enter in the picker takes the first match.
 
 ### Photos
+
+*Gone with the class photos (decision 75).*
 
 65. **An item without a photo of its own shows its class's** (your choice), or the nearest parent class's that has one, wherever items show a photo: the item screen, search results, a class's items, and a location's stock (after the row's own photo and the item's), as stock rows show their location's. The item's attachments still list only its own, and only its own can be made its photo. The app takes the class photos from the class tree it keeps anyway.
 
@@ -415,3 +413,36 @@ Built with the server's tenants (TENANTS.md, removed with them on 2 November 202
     - **It's called `wtf-app`,** leaving `wtf` for the command-line tool. Its version is the app's (`pubspec.yaml`); the system libraries it needs are worked out by `dpkg-shlibdeps`.
     - **Installing** is `sudo apt install ./wtf-app_<version>_amd64.deb`; updates are a newer `.deb` installed the same way, as there's no package repository.
     - **Later** (TODO.md): a Flatpak, or instructions for building it yourself.
+
+### Attributes in JSON, sessions, and no tenants
+
+Built for the API as the plan of 2 November 2026 left it ([2026-11-02-attributes-in-json.md](2026-11-02-attributes-in-json.md); the reminders are in [2026-10-31-changes-to-the-apps.md](2026-10-31-changes-to-the-apps.md)), with the plan of 1 November 2026 ([2026-11-01-dropping-deleted-and-history.md](2026-11-01-dropping-deleted-and-history.md)). The API's revision started again at 1.
+
+72. **A class's attributes are on its screen,** under Item attributes and Stock attributes, its own and those it inherits. Admin → Attributes and its screens are gone.
+    - **Adding one** asks for its name, its type, whether its values are on the item or on each stock row, a unit (numbers), the choices (a choice: one per line, or separated by commas), the file types it takes (a file: `application/pdf, image/*`, empty for any), a default, and whether it is required. Types are shown in words: text, integer, number, date, yes or no, link, choice, file.
+    - **Changing one** it defines (a tap, or Edit… in its menu) changes required, the unit, the default, the file types and its order. Its type and where its values live are shown, not offered: they never change. Its menu also has **Rename…**, **Choices…** (a choice: add, rename and remove them) and **Remove…**.
+    - **An inherited one** says which class it comes from; a tap opens that class, where it is changed.
+    - **Every change says what it does first:** the app sends it as a dry run, shows what it would rewrite ("This rewrites 1,204 items.", or "No item or stock row changes."), and sends it for real only when you agree. A refusal (a choice still in use, a required attribute without a default while items lack it) is shown at once, from the dry run.
+    - **Names** can't be those of the fields every item or stock row has (`name`, `class`, `unit`, `photo`, `amount`, `reference`, `serial`, …); the form says so before anything is sent.
+73. **Values are by name, and an item or a stock row is saved in one request:** its fields and its changed values together, `null` removing a value.
+    - **A value that follows the class's default** says so: "(default)" after it on the item, and "The class's default" under its field in the form.
+    - **Back to the default:** a button in the field, when the attribute has a default and the value doesn't follow it, gives the value its default back and makes it follow the default again.
+    - **Moving an item to another class** says which of its values that class has no attribute for; saving removes them, as the server would otherwise refuse the move.
+74. **Units are labels.** An attribute's unit shows after its numbers, in fields too; a number is typed without it, or with it (`12 mm`), and another label is refused, as nothing converts. An item's "Unit of its stock" is a text field ("m"; empty: pieces, counted one by one, whose amounts are whole). The unit menu next to number fields, the unit picker, Unit lock and Admin → Units are gone, and so are decisions 1, 25–27, 33 and 57–59.
+75. **Files are photos and attachment attributes.**
+    - **An item and a stock row have a photo:** **Photo…** in their menu chooses an image (or takes one, on a phone), another one, or removes it. It shows as before (decisions 39, 40 and 48). Its address carries the file's hash, so a new photo is never shown from an old copy.
+    - **An attachment attribute** is listed under Files on its item or stock row: with a file, a tap opens it, and its menu has Open, Save…, Replace… and Remove…; without one, a tap uploads one, and it says which types it takes. Viewers see only the files there are. Files aren't part of the forms: they are uploaded on the item's or stock row's screen.
+    - **Opening:** the web app opens the file's address in a new tab, as before. The native apps learn a file's type only from the download; they open the types of decision 54 with the device's app, and save anything else instead. The file is named as the server names it, after the attribute ("Datasheet.pdf").
+    - **What is gone:** attachments of their own, their titles, the attachment screen, and the photos of classes and locations (decisions 34–38, 41, 45 in part, and 65).
+76. **Stock rows have a reference and a serial number,** in the stock form, on the stock row's screen, and after the code in lists of stock rows ("ref PO-12 · serial 4711"). Amounts are called amounts.
+77. **Merging is an action of its own:** **Merge into…** in a counted stock row's menu, as a move never merges. It lists the item's other counted rows, takes an amount (empty: all of it), and, where the two rows differ (reference, serial, photo, or a value), shows both rows' values side by side, to pick which to keep for each; the other row's is picked to start with. The app finds the differences as the server does, so the merge is sent once, with what to keep.
+78. **Lists come a page at a time, by key,** and give no count: the results' title is "Found items", and the next page is asked for with the last one's key as the list scrolls. A class shows its first 100 items, and "More…" opens the search for its class; a location its first 1000 stock rows, and says when there are more.
+79. **Sessions.**
+    - **Logging in** asks how long to stay logged in while unused: a day, a week, 30 days (the default), a year, or until you log out. The app tells the server what it is: "WtF on DESKTOP-PC (Windows)", "WtF on Android" where the device's name tells nothing, "WtF in a browser".
+    - **Me lists your sessions,** most recently used first: what each is, when and from where it was last used, when it was logged in, and when it ends unless used. Each can be logged out, this one too, and **Log out everywhere else** ends all the others.
+    - **A new password** logs your other devices out, unless you untick "Log out my other devices". An admin setting or removing someone's password chooses "Log the user out everywhere", ticked to start with when the password is removed. An admin's own password is changed under Me.
+80. **Deleting removes, and says so first:** every delete asks, with "This can't be undone." A deleted thing's label code (410) says "This label's item, stock row or location has been deleted", in search and on the screens for codes; a code never handed out finds nothing, as before. History, restoring and the deleted banners are gone (decisions 23, 24 and 37).
+81. **A model import's preview** says how many classes and attributes it adds, how many are there already, and how many items and stock rows already there get a default. A file that can't be imported is refused by the dry run, with the server's reason.
+82. **No tenants:** a server is one installation, and nothing in the app knows about tenants.
+83. **Tests:** 55 in all. Unit tests: what people type (numbers with their unit's label, values by type, conditions, dates, codes, grids), the client (cookies, error messages, a changed tree, the calls against `openapi/openapi.json`) and a choice field. Widget tests run the whole app against a pretend `wtfd` (`test/fake_server.dart`): logging in for a while, sessions and passwords, Admin, a class's attributes with their dry runs, choices, values by name with Back to the default, a photo and a file attribute, reference and serial, moving and merging, paging by key, search with filters by name, a deleted thing's label, deleting, and the roles.
+84. **The desktop app's program is `wtf-app`** on Windows and Linux (`BINARY_NAME`, and on Windows the file names in `Runner.rc`), so that it never clashes with `wtf`, the command-line tool: Windows ignores case in file names, so the two `wtf.exe` couldn't share a folder, and whichever came first on the PATH won. People start the app by its display name, "WtF", which stays everywhere: the window title, the Start menu, the launcher entry, the program's properties. On Linux the package was `wtf-app` already (decision 71); the app is now `/opt/wtf/wtf-app`. macOS keeps `WtF.app`, which clashes with nothing.

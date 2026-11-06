@@ -75,6 +75,8 @@ Future<bool> deleteNode(
                 ],
                 if (below == 0 && uses == 0)
                   const Text('Nothing else is in it.'),
+                const SizedBox(height: 12),
+                const Text("This can't be undone."),
               ],
             ),
           ),

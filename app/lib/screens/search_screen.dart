@@ -7,14 +7,13 @@ import 'package:provider/provider.dart';
 
 import '../api/client.dart';
 import '../api/models.dart';
-import '../api/units.dart';
+import '../api/input.dart';
 import '../session.dart';
-import '../widgets/attachments.dart';
+import '../widgets/files.dart';
 import '../widgets/common.dart';
 import '../widgets/link.dart';
 import '../widgets/pickers.dart';
 import '../widgets/select_keys.dart';
-import '../widgets/value_fields.dart';
 
 /// The start screen, like `wtf find`: search words, a class, and with a
 /// class, conditions on its attributes. Search opens the results on top, so
@@ -97,19 +96,11 @@ class _ItemSearchScreenState extends State<ItemSearchScreen> {
     if (classId == null) return;
     try {
       final cls = await _client.cls(classId);
-      final conditions = await Future.wait(
-        cls.attributes.map((ca) async {
-          final a = ca.attribute.datatype == 'choice'
-              ? await _client.attribute(ca.attribute.id)
-              : ca.attribute;
-          final unit = a.unit;
-          return _Condition(
-            a,
-            perUnit: ca.perUnit,
-            units: unit == null ? null : await _client.unitChoice(unit),
-          );
-        }),
-      );
+      // Files are found by nothing but their item.
+      final conditions = [
+        for (final a in cls.attributes)
+          if (!a.isFile) _Condition(a),
+      ];
       if (!mounted || generation != _generation) {
         for (final c in conditions) {
           c.dispose();
@@ -279,8 +270,8 @@ class _ItemSearchScreenState extends State<ItemSearchScreen> {
               if (_conditions.isNotEmpty) ...[
                 const SectionTitle('Attributes'),
                 Text(
-                  'Numbers and dates: 32k, > 32kohm, >= 2026-01-01, or a range 10k..47k. '
-                  'Per-unit attributes match when any stock row does.',
+                  'Numbers and dates: 32, > 32, >= 2026-01-01, or a range 10..47. '
+                  'Stock attributes match when any stock row does.',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 for (final c in _conditions)
@@ -304,44 +295,40 @@ class _ItemSearchScreenState extends State<ItemSearchScreen> {
 }
 
 /// A condition on one attribute in the search form: text for numbers, dates
-/// and text, options for choices, any/yes/no for yes/no.
+/// and text, choices to tick for choices, any/yes/no for yes/no.
 class _Condition {
-  _Condition(this.attribute, {required this.perUnit, this.units})
-    : controller = MeasureController(plainIn: units?.unit);
+  _Condition(this.attribute);
 
   final Attribute attribute;
-  final bool perUnit;
-  final UnitChoice? units;
-  final MeasureController controller;
-  final Set<String> options = {};
+  final controller = TextEditingController();
+  final Set<String> choices = {};
   bool? yes;
 
   void clear() {
     controller.clear();
-    controller.plainIn = units?.unit;
-    options.clear();
+    choices.clear();
     yes = null;
   }
 
   /// The filter for GET /items?where=, or null when nothing is asked for.
   Map<String, Object>? filter() {
     final a = attribute;
-    switch (a.datatype) {
+    switch (a.type) {
       case 'choice':
-        return options.isEmpty
+        return choices.isEmpty
             ? null
-            : {'attribute': a.id, 'op': 'in', 'value': options.toList()};
+            : {'attribute': a.name, 'op': 'in', 'value': choices.toList()};
       case 'boolean':
         return yes == null
             ? null
-            : {'attribute': a.id, 'op': '=', 'value': yes!};
-      case 'integer' || 'float' || 'date':
-        return parseCondition(a, controller.text, units, controller.plainIn);
+            : {'attribute': a.name, 'op': '=', 'value': yes!};
+      case 'integer' || 'decimal' || 'date':
+        return parseCondition(a, controller.text);
       default:
         final text = controller.text.trim();
         return text.isEmpty
             ? null
-            : {'attribute': a.id, 'op': 'contains', 'value': text};
+            : {'attribute': a.name, 'op': 'contains', 'value': text};
     }
   }
 
@@ -370,8 +357,8 @@ class _ConditionField extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = condition;
     final a = c.attribute;
-    final label = c.perUnit ? '${a.name} (per unit)' : a.name;
-    switch (a.datatype) {
+    final label = a.onStock ? '${a.name} (stock)' : a.name;
+    switch (a.type) {
       case 'choice':
         return InputDecorator(
           decoration: InputDecoration(
@@ -382,12 +369,12 @@ class _ConditionField extends StatelessWidget {
             spacing: 8,
             runSpacing: 4,
             children: [
-              for (final o in a.options)
+              for (final o in a.choices)
                 FilterChip(
-                  label: Text(o.name),
-                  selected: c.options.contains(o.id),
+                  label: Text(o),
+                  selected: c.choices.contains(o),
                   onSelected: (on) {
-                    on ? c.options.add(o.id) : c.options.remove(o.id);
+                    on ? c.choices.add(o) : c.choices.remove(o);
                     onChanged();
                   },
                 ),
@@ -414,28 +401,17 @@ class _ConditionField extends StatelessWidget {
           ),
         );
     }
-    final units = c.units;
-    final number = a.datatype == 'integer' || a.datatype == 'float';
     return TextFormField(
       controller: c.controller,
       decoration: InputDecoration(
         labelText: label,
-        hintText: switch (a.datatype) {
+        hintText: switch (a.type) {
           'date' => '>= 2026-01-01, or -1y..today',
-          _ when number =>
-            units == null
-                ? '>= 10, or 10..20'
-                : '>= 10, or 10..20, in ${units.unit.symbol} or with a unit',
+          _ when a.isNumber => '>= 10, or 10..20',
           _ => 'contains',
         },
+        suffixText: a.unit,
         border: const OutlineInputBorder(),
-        suffixIcon: units == null
-            ? null
-            : UnitMenu(
-                units: units,
-                controller: c.controller,
-                onChanged: onChanged,
-              ),
       ),
       autovalidateMode: AutovalidateMode.onUserInteraction,
       validator: (_) => c.validate(),
@@ -461,8 +437,8 @@ class FoundItemsScreen extends StatefulWidget {
 }
 
 class _FoundItemsScreenState extends State<FoundItemsScreen> {
-  static const _pageSize =
-      20; // each item takes a request of its own, as in the CLI
+  // Each item takes a request of its own, as in the CLI.
+  static const _pageSize = 20;
 
   /// Narrower than this, results are compact rows; wider, a table.
   static const _tableWidth = 720.0;
@@ -472,12 +448,18 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
   /// The table's, sideways.
   final _hScroll = ScrollController();
   final List<ItemListed> _rows = [];
-  int _total = 0;
+
+  /// The `after` of the next page; null when there is none.
+  String? _next;
   bool _loading = false;
   Object? _error;
   CodeTarget? _code;
   final Map<String, Future<ItemDetail>> _details = {};
   final Map<String, ItemDetail> _loaded = {};
+
+  /// The classes of the items, with their attributes, for their values.
+  final Map<String, ClassDetail> _classDetails = {};
+  final Map<String, Future<void>> _classLoads = {};
 
   // For the paths of classes and locations, refreshed as soon as this app
   // changes one.
@@ -509,6 +491,8 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
         }
         _details.clear();
         _loaded.clear();
+        _classDetails.clear();
+        _classLoads.clear();
         for (final r in _rows) {
           _detail(r.id);
         }
@@ -533,13 +517,16 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
   }
 
   Future<ItemDetail> _detail(String id) =>
-      _details[id] ??= _client.item(id).then((d) {
+      _details[id] ??= _client.item(id).then((d) async {
+        await (_classLoads[d.cls.id] ??= _client
+            .cls(d.cls.id)
+            .then((c) => _classDetails[c.id] = c));
         if (mounted) setState(() => _loaded[id] = d);
         return d;
       });
 
   Future<void> _more() async {
-    if (_loading || _rows.length >= _total || _error != null) return;
+    if (_loading || _next == null || _error != null) return;
     await _load();
   }
 
@@ -559,12 +546,12 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
         classId: widget.classId,
         where: widget.where,
         limit: _pageSize,
-        offset: _rows.length,
+        after: _next,
       );
       if (!mounted) return;
       setState(() {
         _rows.addAll(page.rows);
-        _total = page.total;
+        _next = page.more ? page.next : null;
       });
       for (final r in page.rows) {
         _detail(r.id).ignore();
@@ -581,15 +568,7 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          _loading && _rows.isEmpty
-              ? 'Found items'
-              : _total == 1
-              ? '1 item found'
-              : '$_total items found',
-        ),
-      ),
+      appBar: AppBar(title: const Text('Found items')),
       body: LayoutBuilder(
         builder: (context, c) =>
             c.maxWidth < _tableWidth ? Readable(child: _compact()) : _table(c),
@@ -609,7 +588,7 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
     return null;
   }
 
-  bool get _hasMore => _rows.length < _total || _loading;
+  bool get _hasMore => _next != null || _loading;
 
   static const _progress = Padding(
     padding: EdgeInsets.all(16),
@@ -641,19 +620,21 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
     );
   }
 
-  /// The attributes the loaded items show, in the order they were first
-  /// seen, so columns don't move as more rows load. Only the items' own
-  /// values: per-unit ones belong to stock rows, shown on the item.
-  List<(String, String)> get _attributeColumns {
-    final seen = <String, String>{};
+  /// The attributes the loaded items show, by name, in the order they were
+  /// first seen, so columns don't move as more rows load. Only the items'
+  /// own values: those of stock rows are shown on the item, and files on
+  /// its screen.
+  List<String> get _attributeColumns {
+    final seen = <String>{};
     for (final r in _rows) {
       final d = _loaded[r.id];
-      if (d == null) continue;
-      for (final v in d.values) {
-        seen.putIfAbsent(v.attribute.id, () => v.attribute.name);
+      final cls = d == null ? null : _classDetails[d.cls.id];
+      if (d == null || cls == null) continue;
+      for (final a in cls.scoped(stock: false)) {
+        if (!a.isFile && d.values[a.name] != null) seen.add(a.name);
       }
     }
-    return [for (final e in seen.entries) (e.key, e.value)];
+    return seen.toList();
   }
 
   Widget _table(BoxConstraints c) {
@@ -691,7 +672,7 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
         children: [
           for (final (name, w) in fixed)
             cell(w, Text(name, style: theme.textTheme.labelLarge)),
-          for (final (_, name) in columns)
+          for (final name in columns)
             cell(
               attributeWidth,
               Text(
@@ -719,16 +700,19 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
       final d = _loaded[item.id];
       String where = '';
       final values = <String, (String, bool, bool)>{};
+      final cls = d == null ? null : _classDetails[d.cls.id];
       if (d != null) {
         where = d.stock.isEmpty
             ? '(no stock)'
             : {for (final s in d.stock) _locations!.pathOf(s.location)}
                   .join(', ');
-        for (final v in d.values) {
-          values[v.attribute.id] = (
-            v.text,
-            v.isDefault,
-            v.attribute.datatype == 'url',
+        for (final a in cls?.scoped(stock: false) ?? const <Attribute>[]) {
+          final v = d.values[a.name];
+          if (v == null || a.isFile) continue;
+          values[a.name] = (
+            formatValue(a, v),
+            d.defaulted.contains(a.name),
+            a.type == 'url',
           );
         }
       }
@@ -747,34 +731,13 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    PhotoOrIcon(
-                      item.photo ?? _classes!.photoOf(item.classId),
-                      icon: Icons.inventory_2_outlined,
-                    ),
+                    PhotoOrIcon(item.photo, icon: Icons.inventory_2_outlined),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  item.name,
-                                  style: theme.textTheme.titleSmall,
-                                ),
-                              ),
-                              if (item.incomplete)
-                                Tooltip(
-                                  message: 'A required value is missing',
-                                  child: Icon(
-                                    Icons.warning_amber,
-                                    size: 16,
-                                    color: theme.colorScheme.error,
-                                  ),
-                                ),
-                            ],
-                          ),
+                          Text(item.name, style: theme.textTheme.titleSmall),
                           Text(item.code, style: muted),
                         ],
                       ),
@@ -785,8 +748,8 @@ class _FoundItemsScreenState extends State<FoundItemsScreen> {
               cell(fixed[1].$2, short(_classes!.pathOf(item.classId))),
               cell(fixed[2].$2, short(item.stockText)),
               cell(fixed[3].$2, short(where, style: muted)),
-              for (final (id, _) in columns)
-                cell(attributeWidth, switch (values[id]) {
+              for (final name in columns)
+                cell(attributeWidth, switch (values[name]) {
                   (final text, _, true) => LinkText(text, maxLines: 3),
                   (final text, final isDefault, _) => short(
                     text,
@@ -903,32 +866,31 @@ class _CodeTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Deleted things are shown as such; a stock row a move merged into
-    // another leads to that row.
+    // A deleted thing's label leads nowhere.
     final (icon, title, subtitle, path) = switch (target) {
       CodeLocation(:final location) => (
         Icons.place_outlined,
         location.pathText,
-        'Location ${location.code}${location.deleted ? ', deleted' : ''}',
+        'Location ${location.code}',
         '/locations/${location.code}',
       ),
       CodeItem(:final item) => (
         Icons.inventory_2_outlined,
         item.name,
-        'Item ${item.code}${item.deleted ? ', deleted' : ''}',
+        'Item ${item.code}',
         '/items/${item.code}',
-      ),
-      CodeStock(:final stock) when stock.mergedInto != null => (
-        Icons.layers_outlined,
-        stock.item.name,
-        'Stock row ${stock.code}, merged into ${stock.mergedInto}',
-        '/stock/${stock.mergedInto}',
       ),
       CodeStock(:final stock) => (
         Icons.layers_outlined,
-        '${stock.item.name}, ${stock.quantityText}',
-        'Stock row ${stock.code}${stock.deleted ? ', deleted' : ''}',
+        '${stock.item.name}, ${stock.amountText}',
+        'Stock row ${stock.code}',
         '/stock/${stock.code}',
+      ),
+      CodeGone(:final code) => (
+        Icons.label_off_outlined,
+        "This label's item, stock row or location has been deleted",
+        code,
+        null,
       ),
     };
     return Card(
@@ -937,8 +899,8 @@ class _CodeTile extends StatelessWidget {
         leading: Icon(icon),
         title: Text(title),
         subtitle: Text('Label code: $subtitle'),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: () => context.push(path),
+        trailing: path == null ? null : const Icon(Icons.chevron_right),
+        onTap: path == null ? null : () => context.push(path),
       ),
     );
   }
@@ -972,10 +934,7 @@ class _FoundItem extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.only(right: 12),
-              child: PhotoOrIcon(
-                item.photo ?? classes.photoOf(item.classId),
-                icon: Icons.inventory_2_outlined,
-              ),
+              child: PhotoOrIcon(item.photo, icon: Icons.inventory_2_outlined),
             ),
             Expanded(
               child: Column(
@@ -989,15 +948,6 @@ class _FoundItem extends StatelessWidget {
                           style: theme.textTheme.titleMedium,
                         ),
                       ),
-                      if (item.incomplete)
-                        Tooltip(
-                          message: 'A required value is missing',
-                          child: Icon(
-                            Icons.warning_amber,
-                            size: 18,
-                            color: theme.colorScheme.error,
-                          ),
-                        ),
                       Text('  ${item.stockText}'),
                     ],
                   ),
@@ -1037,7 +987,7 @@ class _FoundItem extends StatelessWidget {
                                     Expanded(
                                       child: Text(locations.pathOf(s.location)),
                                     ),
-                                    Text(s.quantityText, style: muted),
+                                    Text(s.amountText, style: muted),
                                   ],
                                 ),
                               ),

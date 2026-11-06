@@ -1,4 +1,4 @@
-// Opening a downloaded attachment with the device's own app: the native
+// Opening a downloaded file with the device's own app: the native
 // apps. The web app opens the file's address instead (open_native_web.dart).
 
 import 'dart:io';

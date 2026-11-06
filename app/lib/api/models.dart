@@ -1,11 +1,10 @@
-// The API's data, as Dart classes. Field names follow openapi/openapi.yaml.
-
-import 'units.dart';
+// The API's data, as Dart classes. Field names follow openapi/openapi.json.
 
 typedef Json = Map<String, dynamic>;
 
-Json? _obj(Object? o) => o as Json?;
 List<Json> _list(Object? o) => (o as List?)?.cast<Json>() ?? const [];
+List<String> _strings(Object? o) =>
+    (o as List?)?.map((s) => '$s').toList() ?? const [];
 
 /// What an account may do (ACCOUNTS.md); each role can do what the ones
 /// before it can.
@@ -16,7 +15,7 @@ enum Role {
   /// Also keeps the items and the stock.
   user('User', 'Items and stock'),
 
-  /// Also sets up locations, classes, attributes, units and accounts.
+  /// Also sets up locations, classes with their attributes, and accounts.
   admin('Admin', 'Everything, also setting up the inventory');
 
   const Role(this.label, this.description);
@@ -49,6 +48,52 @@ class Me {
   final Role role;
 }
 
+/// One of the account's sessions (GET /me/sessions): a device logged in.
+class SessionInfo {
+  const SessionInfo({
+    required this.id,
+    this.client,
+    required this.created,
+    required this.lastUsed,
+    this.maxIdle,
+    this.expires,
+    this.current = false,
+    this.addresses = const [],
+  });
+
+  factory SessionInfo.fromJson(Json json) => SessionInfo(
+    id: json['id'] as String,
+    client: json['client'] as String?,
+    created: DateTime.parse(json['created'] as String).toLocal(),
+    lastUsed: DateTime.parse(json['last_used'] as String).toLocal(),
+    maxIdle: switch (json['max_idle']) {
+      int s => Duration(seconds: s),
+      _ => null,
+    },
+    expires: DateTime.tryParse(json['expires'] as String? ?? '')?.toLocal(),
+    current: json['current'] as bool? ?? false,
+    addresses: [for (final u in _list(json['usage'])) '${u['address']}'],
+  );
+
+  /// The token's hash: no way back to the token.
+  final String id;
+
+  /// What the client called itself at the login ("WtF on Pixel 9").
+  final String? client;
+  final DateTime created;
+  final DateTime lastUsed;
+
+  /// How long it may sit unused; null: until logging out.
+  final Duration? maxIdle;
+  final DateTime? expires;
+
+  /// The session of this app.
+  final bool current;
+
+  /// Where it was used from, newest first.
+  final List<String> addresses;
+}
+
 class NamedRef {
   const NamedRef(this.id, this.name);
 
@@ -59,235 +104,8 @@ class NamedRef {
   final String name;
 }
 
-/// Whether a quantity or unit family can be chosen, and why: global ones
-/// (every inventory has them) follow their default unless the inventory
-/// chose; its own are available unless it chose not (API revision 11).
-mixin Availability {
-  bool get global;
-  bool get available;
-  bool get standard;
-
-  /// The inventory's own choice; null follows the default.
-  bool? get choice;
-}
-
-class Quantity with Availability {
-  const Quantity({
-    required this.id,
-    required this.name,
-    required this.datatype,
-    this.baseSymbol = '',
-    this.global = true,
-    this.available = true,
-    this.standard = true,
-    this.choice,
-  });
-
-  factory Quantity.fromJson(Json json) => Quantity(
-    id: json['id'] as String,
-    name: json['name'] as String,
-    datatype: json['datatype'] as String,
-    baseSymbol:
-        (_obj(json['base_unit']) ?? const {})['symbol'] as String? ?? '',
-    global: json['global'] as bool? ?? true,
-    available: json['available'] as bool? ?? true,
-    standard: json['standard'] as bool? ?? true,
-    choice: json['choice'] as bool?,
-  );
-
-  final String id;
-  final String name;
-
-  /// integer or float.
-  final String datatype;
-
-  /// The symbol of the unit numbers are stored in (API revision 5).
-  final String baseSymbol;
-
-  @override
-  final bool global;
-
-  /// Only from GET /quantities and /quantities/{id}; elsewhere true.
-  @override
-  final bool available;
-  @override
-  final bool standard;
-  @override
-  final bool? choice;
-}
-
-/// The answer of POST /model/import (seed/model-format.md): what was (or
-/// would be) added, how much was there already, and the conflicts.
-class ModelImport {
-  const ModelImport({
-    required this.applied,
-    this.quantities = const [],
-    this.families = const [],
-    this.units = const [],
-    required this.attributes,
-    required this.options,
-    required this.classes,
-    required this.assignments,
-    required this.existing,
-    required this.conflicts,
-  });
-
-  factory ModelImport.fromJson(Json json) {
-    List<String> added(String kind) => [
-      for (final x in ((json[kind] as Json?)?['added'] as List?) ?? const [])
-        '$x',
-    ];
-    int existing(String kind) =>
-        (((json[kind] as Json?)?['existing'] as List?) ?? const []).length;
-    return ModelImport(
-      applied: json['applied'] as bool,
-      quantities: added('quantities'),
-      families: added('families'),
-      units: added('units'),
-      attributes: added('attributes'),
-      options: added('options'),
-      classes: added('classes'),
-      assignments: added('assignments'),
-      existing:
-          existing('quantities') +
-          existing('families') +
-          existing('units') +
-          existing('attributes') +
-          existing('classes') +
-          existing('assignments'),
-      conflicts: [
-        for (final c in _list(json['conflicts']))
-          ('${c['where']}', '${c['message']}'),
-      ],
-    );
-  }
-
-  final bool applied;
-
-  /// Quantity names; families as "Quantity › Family"; units as
-  /// "Quantity › Family › symbol".
-  final List<String> quantities;
-  final List<String> families;
-  final List<String> units;
-
-  /// Attribute names; options as "Attribute: option"; classes as paths
-  /// ("MCU/AVR"); assignments as "path: attribute".
-  final List<String> attributes;
-  final List<String> options;
-  final List<String> classes;
-  final List<String> assignments;
-
-  /// How many things in the file were there already.
-  final int existing;
-
-  /// (where, message) of each conflict.
-  final List<(String, String)> conflicts;
-
-  bool get nothingNew =>
-      quantities.isEmpty &&
-      families.isEmpty &&
-      units.isEmpty &&
-      attributes.isEmpty &&
-      options.isEmpty &&
-      classes.isEmpty &&
-      assignments.isEmpty;
-}
-
-/// base = value × baseFactor + baseOffset. Each unit is in one family of its
-/// quantity, such as Metric length.
-class Unit {
-  const Unit({
-    required this.id,
-    required this.name,
-    required this.symbol,
-    required this.familyId,
-    required this.familyName,
-    required this.quantity,
-    required this.baseFactor,
-    required this.baseOffset,
-  });
-
-  factory Unit.fromJson(Json json) => Unit(
-    id: json['id'] as String,
-    name: json['name'] as String,
-    symbol: json['symbol'] as String,
-    familyId: (json['family'] as Json)['id'] as String,
-    familyName: (json['family'] as Json)['name'] as String,
-    quantity: Quantity.fromJson(json['quantity'] as Json),
-    baseFactor: _exact(json['base_factor'], 1),
-    baseOffset: _exact(json['base_offset'], 0),
-  );
-
-  /// The client passes factors as text, exactly as the server wrote them
-  /// (see decodeBody); a number is taken by its shortest decimal form.
-  static Rational _exact(Object? v, int fallback) => switch (v) {
-    String s =>
-      Rational.tryParse(s) ?? (throw FormatException('not a number: $s')),
-    num n => Rational.fromNum(n),
-    _ => Rational(BigInt.from(fallback)),
-  };
-
-  final String id;
-  final String name;
-  final String symbol;
-  final String familyId;
-  final String familyName;
-  final Quantity quantity;
-  final Rational baseFactor;
-  final Rational baseOffset;
-}
-
-/// Units of one quantity that are used together, and that numbers are
-/// scaled between on output: Metric length is nm … km.
-class UnitFamily with Availability {
-  const UnitFamily({
-    required this.id,
-    required this.name,
-    required this.quantity,
-    this.units = const [],
-    this.global = true,
-    this.available = true,
-    this.standard = true,
-    this.choice,
-  });
-
-  /// [quantity] when the JSON leaves it out (inside GET /quantities/{id}).
-  factory UnitFamily.fromJson(Json json, {Quantity? quantity}) => UnitFamily(
-    id: json['id'] as String,
-    name: json['name'] as String,
-    quantity: json['quantity'] == null
-        ? quantity!
-        : Quantity.fromJson(json['quantity'] as Json),
-    units: _list(json['units']).map(Unit.fromJson).toList(),
-    global: json['global'] as bool? ?? true,
-    available: json['available'] as bool? ?? true,
-    standard: json['standard'] as bool? ?? true,
-    choice: json['choice'] as bool?,
-  );
-
-  final String id;
-  final String name;
-  final Quantity quantity;
-
-  /// Smallest first.
-  final List<Unit> units;
-
-  @override
-  final bool global;
-
-  /// Whether its units can be chosen: never while its quantity is off.
-  @override
-  final bool available;
-  @override
-  final bool standard;
-  @override
-  final bool? choice;
-}
-
-/// A unit as shown next to a thing that has it: "mm (Metric length)", with
-/// ", locked" when [lock] is set.
-String unitLabel(Unit u, {bool lock = false}) =>
-    '${u.symbol} (${u.familyName})${lock ? ', locked' : ''}';
+List<NamedRef> _refs(Object? json) =>
+    _list(json).map(NamedRef.fromJson).toList();
 
 /// A number written plainly: 12 rather than 12.0.
 String formatNumber(num n) {
@@ -297,177 +115,139 @@ String formatNumber(num n) {
   return n.toString();
 }
 
-/// A base-unit number as shown, in the unit that scales best within the
-/// family, or in the unit itself with Unit lock: "1.2 mm".
-class Display {
-  const Display(this.value, this.symbol);
+/// A number with the label of what it is counted in: "12 mm", or "12".
+String withUnit(num n, String? unit) =>
+    unit == null || unit.isEmpty ? formatNumber(n) : '${formatNumber(n)} $unit';
 
-  static Display? fromJson(Object? json) {
-    final j = _obj(json);
-    if (j == null) return null;
-    return Display(j['value'] as num, (j['unit'] as Json)['symbol'] as String);
-  }
-
-  final num value;
-  final String symbol;
-
-  @override
-  String toString() => '${formatNumber(value)} $symbol';
-}
-
-/// A stock quantity: in its display unit, a plain count, or "uncounted".
-String formatQuantity(num? quantity, Display? display) {
-  if (quantity == null) return 'uncounted';
-  return display?.toString() ?? formatNumber(quantity);
-}
-
-const datatypes = [
+/// The types of attributes (api/attribute.md).
+const attributeTypes = [
   'text',
   'integer',
-  'float',
+  'decimal',
   'date',
   'boolean',
   'url',
   'choice',
+  'attachment',
 ];
 
+/// What a type is called on screen.
+String typeLabel(String type) => switch (type) {
+  'decimal' => 'number',
+  'boolean' => 'yes or no',
+  'url' => 'link',
+  'attachment' => 'file',
+  _ => type,
+};
+
+/// The names an attribute can't have: those of the fixed fields, letter
+/// case ignored (api/attribute.md).
+const fixedFields = {
+  'id',
+  'code',
+  'name',
+  'class',
+  'unit',
+  'photo',
+  'item',
+  'location',
+  'amount',
+  'reference',
+  'serial',
+};
+
+/// An attribute of a class: its own, or one it inherits from the class
+/// [classId] above it.
 class Attribute {
   const Attribute({
-    required this.id,
     required this.name,
-    required this.datatype,
+    this.classId = '',
+    this.inherited = false,
+    required this.scope,
+    required this.type,
+    this.required = false,
     this.unit,
-    this.unitLock = false,
-    this.options = const [],
-    this.deleted = false,
+    this.defaultValue,
+    this.choices = const [],
+    this.media = const [],
+    this.order = 0,
   });
 
   factory Attribute.fromJson(Json json) => Attribute(
-    id: json['id'] as String,
     name: json['name'] as String,
-    datatype: json['datatype'] as String,
-    unit: json['unit'] == null ? null : Unit.fromJson(json['unit'] as Json),
-    unitLock: json['unit_lock'] as bool? ?? false,
-    options: _list(json['options']).map(NamedRef.fromJson).toList(),
-    deleted: json['deleted'] as bool? ?? false,
+    classId: json['class'] as String? ?? '',
+    inherited: json['inherited'] as bool? ?? false,
+    scope: json['scope'] as String? ?? 'item',
+    type: json['type'] as String,
+    required: json['required'] as bool? ?? false,
+    unit: json['unit'] as String?,
+    defaultValue: json['default'],
+    choices: _strings(json['choices']),
+    media: _strings(json['media']),
+    order: json['order'] as int? ?? 0,
   );
 
-  final String id;
   final String name;
-  final String datatype;
 
-  /// The unit numbers are typed in; they are shown scaled within its family,
-  /// or in the unit itself with [unitLock].
-  final Unit? unit;
-  final bool unitLock;
+  /// The class that defines it.
+  final String classId;
+  final bool inherited;
 
-  /// Only for choice attributes, in GET /attributes/{id}.
-  final List<NamedRef> options;
-  final bool deleted;
+  /// item: the value is on the item; stock: on each stock row.
+  final String scope;
+  final String type;
+  final bool required;
 
-  bool get isNumber => datatype == 'integer' || datatype == 'float';
+  /// A label for the values ("mm"); nothing converts.
+  final String? unit;
+  final Object? defaultValue;
+
+  /// A choice's texts.
+  final List<String> choices;
+
+  /// The media types an attachment takes ("image/*"); any when empty.
+  final List<String> media;
+
+  /// Its place among the class's attributes of its scope.
+  final int order;
+
+  bool get onStock => scope == 'stock';
+  bool get isNumber => type == 'integer' || type == 'decimal';
+  bool get isFile => type == 'attachment';
+
+  /// The default as shown; empty when there is none.
+  String get defaultText =>
+      defaultValue == null ? '' : formatValue(this, defaultValue);
+
+  /// The definition as POST /classes/{id}/attributes takes it.
+  Json get definition => {
+    'scope': scope,
+    'type': type,
+    'required': required,
+    'unit': ?unit,
+    'default': ?defaultValue,
+    if (type == 'choice') 'choices': choices,
+    if (media.isNotEmpty) 'media': media,
+    // Without one, it goes last among the attributes of its scope.
+    if (order > 0) 'order': order,
+  };
 }
 
-/// A typed value as text: strings as they are, booleans as yes/no, choices
-/// by name, numbers plainly.
-String formatJsonValue(Object? v) => switch (v) {
+/// A value as text: numbers with the attribute's unit, yes/no, the rest as
+/// it is; a file as "file".
+String formatValue(Attribute? a, Object? v) => switch (v) {
   null => '',
+  _ when a?.isFile ?? false => 'file',
   String s => s,
   bool b => b ? 'yes' : 'no',
-  num n => formatNumber(n),
-  Map m when m['name'] is String => m['name'] as String,
+  num n => withUnit(n, a?.unit),
   _ => '$v',
 };
 
-class Value {
-  const Value({
-    required this.attribute,
-    required this.value,
-    this.display,
-    this.isDefault = false,
-  });
+/// Values by attribute name, as items and stock rows have them.
+typedef Values = Map<String, Object?>;
 
-  factory Value.fromJson(Json json) => Value(
-    attribute: Attribute.fromJson(json['attribute'] as Json),
-    value: json['value'],
-    display: Display.fromJson(json['display']),
-    isDefault: json['is_default'] as bool? ?? false,
-  );
-
-  final Attribute attribute;
-  final Object? value;
-  final Display? display;
-
-  /// The class default, shown because there is no own value.
-  final bool isDefault;
-
-  /// In the display unit when it has one.
-  String get text => display?.toString() ?? formatJsonValue(value);
-}
-
-List<Value> _values(Object? json) => _list(json).map(Value.fromJson).toList();
-List<NamedRef> _refs(Object? json) =>
-    _list(json).map(NamedRef.fromJson).toList();
-
-/// A file attached to items, stock rows, locations or classes.
-class Attachment {
-  const Attachment({
-    required this.id,
-    required this.owner,
-    required this.title,
-    required this.type,
-    this.size = 0,
-    this.hash = '',
-    this.deleted = false,
-  });
-
-  /// [owner] is the path of the object it belongs to, such as /items/{id}.
-  factory Attachment.fromJson(Json json, String owner) => Attachment(
-    id: json['id'] as String,
-    owner: owner,
-    title: json['title'] as String,
-    type: json['type'] as String? ?? '',
-    size: json['size'] as int? ?? 0,
-    hash: json['hash'] as String? ?? '',
-    deleted: json['deleted'] as bool? ?? false,
-  );
-
-  static Attachment? maybe(Object? json, String owner) =>
-      json == null ? null : Attachment.fromJson(json as Json, owner);
-
-  final String id;
-
-  /// The path of its object: /items/{id}, /stock/{id}, /locations/{id} or
-  /// /classes/{id}. An attachment is only reached through it.
-  final String owner;
-
-  /// Its own path, under its object.
-  String get path => '$owner/attachments/$id';
-  final String title;
-
-  /// The MIME type.
-  final String type;
-
-  /// In bytes.
-  final int size;
-
-  /// The SHA-256 of the content, in hex.
-  final String hash;
-  final bool deleted;
-
-  String get sizeText {
-    if (size >= 1 << 30) return '${(size / (1 << 30)).toStringAsFixed(1)} GiB';
-    if (size >= 1 << 20) return '${(size / (1 << 20)).toStringAsFixed(1)} MiB';
-    if (size >= 1 << 10) return '${(size / (1 << 10)).toStringAsFixed(1)} KiB';
-    return '$size B';
-  }
-
-  /// Images the app can show itself (SVG is sent as a download).
-  bool get isImage => type.startsWith('image/') && type != 'image/svg+xml';
-}
-
-List<Attachment> _attachments(Object? json, String owner) =>
-    _list(json).map((a) => Attachment.fromJson(a, owner)).toList();
+Values _values(Object? json) => {...?(json as Map?)?.cast<String, Object?>()};
 
 /// A node of the class or location tree.
 class TreeNode {
@@ -477,21 +257,16 @@ class TreeNode {
     this.code,
     this.parent,
     this.container = false,
-    this.photo,
     this.children = const [],
   });
 
-  /// [kindPath]: /classes or /locations, the paths of its attachments.
-  factory TreeNode.fromJson(Json json, String kindPath) => TreeNode(
+  factory TreeNode.fromJson(Json json) => TreeNode(
     id: json['id'] as String,
     name: json['name'] as String,
     code: json['code'] as String?,
     parent: json['parent'] as String?,
     container: json['container'] as bool? ?? false,
-    photo: Attachment.maybe(json['photo'], '$kindPath/${json['id']}'),
-    children: [
-      for (final c in _list(json['children'])) TreeNode.fromJson(c, kindPath),
-    ],
+    children: [for (final c in _list(json['children'])) TreeNode.fromJson(c)],
   );
 
   final String id;
@@ -503,9 +278,6 @@ class TreeNode {
 
   /// Holds only other nodes: classes without items, locations without stock.
   final bool container;
-
-  /// The class or location photo.
-  final Attachment? photo;
   final List<TreeNode> children;
 
   /// Set by [Tree]: the names from the root, joined by "/".
@@ -530,8 +302,8 @@ class Tree {
     walk(roots, '', 0);
   }
 
-  factory Tree.fromJson(Json json, String kindPath, {String? etag}) => Tree(
-    [for (final n in _list(json['tree'])) TreeNode.fromJson(n, kindPath)],
+  factory Tree.fromJson(Json json, {String? etag}) => Tree(
+    [for (final n in _list(json['tree'])) TreeNode.fromJson(n)],
     version: json['version'] as int?,
     etag: etag,
   );
@@ -548,15 +320,6 @@ class Tree {
 
   /// The path of a node, or its id when the tree doesn't know it.
   String pathOf(String? id) => this[id]?.path ?? id ?? '';
-
-  /// The photo of [id], else of the nearest node above it that has one:
-  /// what an item without a photo of its own shows, from its class.
-  Attachment? photoOf(String? id) {
-    for (var n = this[id]; n != null; n = this[n.parent]) {
-      if (n.photo case final photo?) return photo;
-    }
-    return null;
-  }
 
   /// The nodes from the root down to [id].
   List<TreeNode> ancestry(String id) {
@@ -581,42 +344,6 @@ class Tree {
   }
 }
 
-class ClassAttribute {
-  const ClassAttribute({
-    required this.attribute,
-    required this.definedOnClass,
-    required this.inherited,
-    required this.defaultValue,
-    this.defaultDisplay,
-    required this.perUnit,
-    required this.required,
-  });
-
-  factory ClassAttribute.fromJson(Json json) => ClassAttribute(
-    attribute: Attribute.fromJson(json['attribute'] as Json),
-    definedOnClass: json['defined_on_class'] as String? ?? '',
-    inherited: json['inherited'] as bool? ?? false,
-    defaultValue: json['default'],
-    defaultDisplay: Display.fromJson(json['default_display']),
-    perUnit: json['per_unit'] as bool? ?? false,
-    required: json['required'] as bool? ?? false,
-  );
-
-  final Attribute attribute;
-  final String definedOnClass;
-  final bool inherited;
-  final Object? defaultValue;
-  final Display? defaultDisplay;
-
-  /// Values live on stock rows instead of on the item.
-  final bool perUnit;
-  final bool required;
-
-  String get defaultText => defaultValue == null
-      ? ''
-      : defaultDisplay?.toString() ?? formatJsonValue(defaultValue);
-}
-
 class ClassDetail {
   const ClassDetail({
     required this.id,
@@ -625,9 +352,6 @@ class ClassDetail {
     this.container = false,
     this.path = const [],
     this.attributes = const [],
-    this.photo,
-    this.attachments = const [],
-    this.deleted = false,
   });
 
   factory ClassDetail.fromJson(Json json) => ClassDetail(
@@ -636,10 +360,7 @@ class ClassDetail {
     parent: json['parent'] as String?,
     container: json['container'] as bool? ?? false,
     path: _refs(json['path']),
-    attributes: _list(json['attributes']).map(ClassAttribute.fromJson).toList(),
-    photo: Attachment.maybe(json['photo'], '/classes/${json['id']}'),
-    attachments: _attachments(json['attachments'], '/classes/${json['id']}'),
-    deleted: json['deleted'] as bool? ?? false,
+    attributes: _list(json['attributes']).map(Attribute.fromJson).toList(),
   );
 
   final String id;
@@ -647,14 +368,62 @@ class ClassDetail {
   final String? parent;
   final bool container;
   final List<NamedRef> path;
-  final List<ClassAttribute> attributes;
 
-  /// One of its own image attachments, or null.
-  final Attachment? photo;
-  final List<Attachment> attachments;
-  final bool deleted;
+  /// Its own and inherited ones: the item attributes, then the stock
+  /// attributes, each by order.
+  final List<Attribute> attributes;
 
   String get pathText => path.map((p) => p.name).join('/');
+
+  /// The attributes whose values are on the item, or on its stock rows.
+  List<Attribute> scoped({required bool stock}) =>
+      attributes.where((a) => a.onStock == stock).toList();
+
+  Attribute? attribute(String name) =>
+      attributes.where((a) => a.name == name).firstOrNull;
+}
+
+/// What a change of a class's attributes did, or would do in a dry run:
+/// how many items and stock rows it wrote.
+class ClassChange {
+  const ClassChange({
+    required this.cls,
+    required this.items,
+    required this.stock,
+    required this.dryRun,
+  });
+
+  factory ClassChange.fromJson(Json json) => ClassChange(
+    cls: ClassDetail.fromJson(json['class'] as Json),
+    items: json['items'] as int? ?? 0,
+    stock: json['stock'] as int? ?? 0,
+    dryRun: json['dry_run'] as bool? ?? false,
+  );
+
+  final ClassDetail cls;
+  final int items;
+  final int stock;
+  final bool dryRun;
+
+  /// "This rewrites 1,204 items and 3 stock rows.", or that it rewrites
+  /// nothing.
+  String get rewrites {
+    if (items == 0 && stock == 0) return 'No item or stock row changes.';
+    final parts = [
+      if (items > 0) count(items, 'item'),
+      if (stock > 0) count(stock, 'stock row'),
+    ];
+    return 'This rewrites ${parts.join(' and ')}.';
+  }
+}
+
+/// "1 item", "1,204 items".
+String count(int n, String one, [String? many]) {
+  final digits = '$n'.replaceAllMapped(
+    RegExp(r'\B(?=(\d{3})+(?!\d))'),
+    (_) => ',',
+  );
+  return '$digits ${n == 1 ? one : (many ?? '${one}s')}';
 }
 
 class Location {
@@ -665,9 +434,6 @@ class Location {
     this.parent,
     this.container = false,
     this.path = const [],
-    this.photo,
-    this.attachments = const [],
-    this.deleted = false,
   });
 
   factory Location.fromJson(Json json) => Location(
@@ -677,9 +443,6 @@ class Location {
     parent: json['parent'] as String?,
     container: json['container'] as bool? ?? false,
     path: _refs(json['path']),
-    photo: Attachment.maybe(json['photo'], '/locations/${json['id']}'),
-    attachments: _attachments(json['attachments'], '/locations/${json['id']}'),
-    deleted: json['deleted'] as bool? ?? false,
   );
 
   final String id;
@@ -689,12 +452,31 @@ class Location {
   final bool container;
   final List<NamedRef> path;
 
-  /// One of its own image attachments, or null.
-  final Attachment? photo;
-  final List<Attachment> attachments;
-  final bool deleted;
-
   String get pathText => path.map((p) => p.name).join('/');
+}
+
+/// A file of an item or a stock row: its photo ([attribute] null), or the
+/// file of an attachment attribute.
+class FileRef {
+  const FileRef({required this.owner, this.attribute, required this.hash});
+
+  /// /items/{id} or /stock/{id}.
+  final String owner;
+  final String? attribute;
+
+  /// The SHA-256 of its content, in hex: a new file, a new hash.
+  final String hash;
+
+  /// Its route under /api/v1.
+  String get path => attribute == null
+      ? '$owner/photo'
+      : '$owner/files/${Uri.encodeComponent(attribute!)}';
+
+  /// "Photo", or the attribute's name, as the server names the file.
+  String get title => attribute ?? 'Photo';
+
+  static FileRef? photo(String owner, Object? hash) =>
+      hash is String ? FileRef(owner: owner, hash: hash) : null;
 }
 
 class ItemSummary {
@@ -704,8 +486,6 @@ class ItemSummary {
     required this.name,
     required this.classId,
     this.unit,
-    this.unitLock = false,
-    this.deleted = false,
     this.photo,
   });
 
@@ -716,10 +496,8 @@ class ItemSummary {
     classId: json['class'] is Map
         ? (json['class'] as Json)['id'] as String
         : json['class'] as String? ?? '',
-    unit: json['unit'] == null ? null : Unit.fromJson(json['unit'] as Json),
-    unitLock: json['unit_lock'] as bool? ?? false,
-    deleted: json['deleted'] as bool? ?? false,
-    photo: Attachment.maybe(json['photo'], '/items/${json['id']}'),
+    unit: json['unit'] as String?,
+    photo: FileRef.photo('/items/${json['id']}', json['photo']),
   );
 
   final String id;
@@ -727,13 +505,13 @@ class ItemSummary {
   final String name;
   final String classId;
 
-  /// The item photo.
-  final Attachment? photo;
+  /// What its stock is counted in, a label ("m"); null for pieces.
+  final String? unit;
+  final FileRef? photo;
 
-  /// The unit stock is measured in; null means it is counted.
-  final Unit? unit;
-  final bool unitLock;
-  final bool deleted;
+  /// An amount of its stock: "12", "1.5 m", or "uncounted".
+  String amountText(num? amount) =>
+      amount == null ? 'uncounted' : withUnit(amount, unit);
 }
 
 /// An item in a list (GET /items).
@@ -744,140 +522,85 @@ class ItemListed extends ItemSummary {
     required super.name,
     required super.classId,
     super.unit,
-    super.unitLock,
-    super.deleted,
-    required this.stockText,
-    this.incomplete = false,
     super.photo,
+    this.total = 0,
+    this.uncounted = false,
   });
 
   factory ItemListed.fromJson(Json json) {
     final s = ItemSummary.fromJson(json);
+    final stock = json['stock'] as Json? ?? const {};
     return ItemListed(
       id: s.id,
       code: s.code,
       name: s.name,
       classId: s.classId,
       unit: s.unit,
-      unitLock: s.unitLock,
-      deleted: s.deleted,
-      stockText: _formatTotal(_obj(json['stock'])),
-      incomplete: json['incomplete'] as bool? ?? false,
       photo: s.photo,
+      total: stock['total'] as num? ?? 0,
+      uncounted: stock['uncounted'] as bool? ?? false,
     );
   }
 
-  /// The total stock: "12", "1.2 m", "3 + uncounted", "uncounted" or "".
-  final String stockText;
+  /// The counted stock, and whether some is uncounted.
+  final num total;
+  final bool uncounted;
 
-  /// The item or one of its stock rows lacks a required value.
-  final bool incomplete;
+  /// The total stock: "12", "1.2 m", "3 + uncounted" or "uncounted".
+  String get stockText {
+    final counted = withUnit(total, unit);
+    if (!uncounted) return counted;
+    return total == 0 ? 'uncounted' : '$counted + uncounted';
+  }
 }
 
-String _formatTotal(Json? t) {
-  if (t == null) return '';
-  var s = formatNumber(t['total'] as num? ?? 0);
-  final d = Display.fromJson(t['display']);
-  if (d != null) s = d.toString();
-  if (t['uncounted'] == true) return s == '0' ? 'uncounted' : '$s + uncounted';
-  return s;
-}
-
-/// A stock row of an item, as GET /items/{id} lists them.
-class ItemStock {
-  const ItemStock({
-    required this.id,
-    required this.code,
-    required this.location,
-    this.quantity,
-    this.display,
-    this.values = const [],
-    this.missing = const [],
-    this.photo,
-    this.attachments = const [],
-  });
-
-  factory ItemStock.fromJson(Json json) => ItemStock(
-    id: json['id'] as String,
-    code: json['code'] as String? ?? '',
-    location: json['location'] as String,
-    quantity: json['quantity'] as num?,
-    display: Display.fromJson(json['display']),
-    values: _values(json['values']),
-    missing: _refs(json['missing']),
-    photo: Attachment.maybe(json['photo'], '/stock/${json['id']}'),
-    attachments: _attachments(json['attachments'], '/stock/${json['id']}'),
-  );
-
-  final String id;
-  final String code;
-  final String location;
-  final num? quantity;
-  final Display? display;
-  final List<Value> values;
-  final List<NamedRef> missing;
-  final Attachment? photo;
-  final List<Attachment> attachments;
-
-  String get quantityText => formatQuantity(quantity, display);
-}
-
-class ItemDetail {
+class ItemDetail extends ItemSummary {
   const ItemDetail({
-    required this.id,
-    required this.code,
-    required this.name,
+    required super.id,
+    required super.code,
+    required super.name,
     required this.cls,
-    this.unit,
-    this.unitLock = false,
-    this.values = const [],
-    this.missing = const [],
-    this.photo,
-    this.attachments = const [],
+    super.unit,
+    super.photo,
+    this.values = const {},
+    this.defaulted = const {},
     this.stock = const [],
-    this.deleted = false,
-  });
+  }) : super(classId: '');
 
-  factory ItemDetail.fromJson(Json json) => ItemDetail(
-    id: json['id'] as String,
-    code: json['code'] as String? ?? '',
-    name: json['name'] as String,
-    deleted: json['deleted'] as bool? ?? false,
-    cls: ClassDetail.fromJson(json['class'] as Json),
-    unit: json['unit'] == null ? null : Unit.fromJson(json['unit'] as Json),
-    unitLock: json['unit_lock'] as bool? ?? false,
-    values: _values(json['values']),
-    missing: _refs(json['missing']),
-    photo: Attachment.maybe(json['photo'], '/items/${json['id']}'),
-    attachments: _attachments(json['attachments'], '/items/${json['id']}'),
-    stock: _list(json['stock']).map(ItemStock.fromJson).toList(),
-  );
+  factory ItemDetail.fromJson(Json json) {
+    final s = ItemSummary.fromJson(json);
+    final cls = json['class'] as Json;
+    return ItemDetail(
+      id: s.id,
+      code: s.code,
+      name: s.name,
+      cls: (
+        id: cls['id'] as String,
+        name: cls['name'] as String,
+        path: _refs(cls['path']),
+      ),
+      unit: s.unit,
+      photo: s.photo,
+      values: _values(json['values']),
+      defaulted: _strings(json['defaulted']).toSet(),
+      stock: [for (final r in _list(json['stock'])) Stock.fromJson(r, item: s)],
+    );
+  }
 
-  final String id;
-  final String code;
-  final String name;
-  final ClassDetail cls;
-  final Unit? unit;
-  final bool unitLock;
-  final List<Value> values;
-  final List<NamedRef> missing;
-  final Attachment? photo;
-  final List<Attachment> attachments;
+  final ({String id, String name, List<NamedRef> path}) cls;
 
-  /// The live stock rows; for a deleted item, those deleted with it.
-  final List<ItemStock> stock;
-  final bool deleted;
+  @override
+  String get classId => cls.id;
 
-  ItemSummary get summary => ItemSummary(
-    id: id,
-    code: code,
-    name: name,
-    classId: cls.id,
-    unit: unit,
-    unitLock: unitLock,
-    deleted: deleted,
-    photo: photo,
-  );
+  final Values values;
+
+  /// The names of the values that follow the class's default.
+  final Set<String> defaulted;
+
+  /// Its stock rows, by location name.
+  final List<Stock> stock;
+
+  String get classPath => cls.path.map((p) => p.name).join('/');
 }
 
 class Stock {
@@ -886,71 +609,63 @@ class Stock {
     required this.code,
     required this.item,
     required this.location,
-    this.quantity,
-    this.display,
-    this.values = const [],
-    this.missing = const [],
+    this.amount,
+    this.reference,
+    this.serial,
     this.photo,
-    this.attachments = const [],
-    this.deleted = false,
-    this.mergedInto,
+    this.values = const {},
+    this.defaulted = const {},
   });
 
-  factory Stock.fromJson(Json json) => Stock(
+  /// [item] is the item of an item's own stock rows, whose JSON has only
+  /// its id.
+  factory Stock.fromJson(Json json, {ItemSummary? item}) => Stock(
     id: json['id'] as String,
     code: json['code'] as String? ?? '',
-    item: ItemSummary.fromJson(json['item'] as Json),
+    item: json['item'] is Map
+        ? ItemSummary.fromJson(json['item'] as Json)
+        : item!,
     location: json['location'] as String,
-    quantity: json['quantity'] as num?,
-    display: Display.fromJson(json['display']),
+    amount: json['amount'] as num?,
+    reference: json['reference'] as String?,
+    serial: json['serial'] as String?,
+    photo: FileRef.photo('/stock/${json['id']}', json['photo']),
     values: _values(json['values']),
-    missing: _refs(json['missing']),
-    photo: Attachment.maybe(json['photo'], '/stock/${json['id']}'),
-    attachments: _attachments(json['attachments'], '/stock/${json['id']}'),
-    deleted: json['deleted'] as bool? ?? false,
-    mergedInto: _obj(json['merged_into'])?['code'] as String?,
+    defaulted: _strings(json['defaulted']).toSet(),
   );
-
-  final bool deleted;
-
-  /// For a row a move merged into another: that row's code.
-  final String? mergedInto;
 
   final String id;
   final String code;
   final ItemSummary item;
   final String location;
-  final num? quantity;
-  final Display? display;
+
+  /// In the item's unit; null: there, but not counted.
+  final num? amount;
+  final String? reference;
+  final String? serial;
+  final FileRef? photo;
 
   /// Not in list rows (GET /stock).
-  final List<Value> values;
-  final List<NamedRef> missing;
+  final Values values;
+  final Set<String> defaulted;
 
-  /// One of its own image attachments, or null.
-  final Attachment? photo;
-  final List<Attachment> attachments;
-
-  String get quantityText => formatQuantity(quantity, display);
+  String get amountText => item.amountText(amount);
 }
 
-/// One page of a list.
+/// One page of a list. Pages go by key: [next] is the `after` of the next
+/// page, when there is [more].
 class ResultPage<T> {
-  const ResultPage({
-    required this.total,
-    required this.offset,
-    required this.rows,
-  });
+  const ResultPage({required this.rows, this.more = false, this.next});
 
   factory ResultPage.fromJson(Json json, T Function(Json) row) => ResultPage(
-    total: json['total'] as int? ?? 0,
-    offset: json['offset'] as int? ?? 0,
     rows: _list(json['rows']).map(row).toList(),
+    more: json['more'] as bool? ?? false,
+    next: json['next'] as String?,
   );
 
-  final int total;
-  final int offset;
   final List<T> rows;
+  final bool more;
+  final String? next;
 }
 
 /// What a label code belongs to.
@@ -980,6 +695,13 @@ class CodeItem extends CodeTarget {
 class CodeStock extends CodeTarget {
   const CodeStock(this.stock);
   final Stock stock;
+}
+
+/// A code that was handed out, whose item, stock row or location has been
+/// deleted (410).
+class CodeGone extends CodeTarget {
+  const CodeGone(this.code);
+  final String code;
 }
 
 /// What a recursive delete would delete (or did).
@@ -1032,7 +754,6 @@ class Account {
     required this.email,
     required this.hasPassword,
     required this.role,
-    this.deleted = false,
   });
 
   factory Account.fromJson(Json json) => Account(
@@ -1040,86 +761,50 @@ class Account {
     email: json['email'] as String,
     hasPassword: json['has_password'] as bool? ?? false,
     role: Role.parse(json['role']),
-    deleted: json['deleted'] as bool? ?? false,
   );
 
   final String id;
   final String email;
   final bool hasPassword;
   final Role role;
-
-  /// Deleted accounts can't log in; they stay because history refers to them.
-  final bool deleted;
 }
 
-/// One history entry: one changed row (see api/history.md), as the server
-/// sends it. The history screen turns entries into sentences
-/// (history_text.dart).
-class HistoryEntry {
-  const HistoryEntry({
-    required this.id,
-    this.happenedAt,
-    required this.transaction,
-    this.who,
-    this.whoDeleted = false,
-    required this.table,
-    required this.operation,
-    this.data = const {},
-    this.changes = const {},
+/// The answer of POST /model/import (seed/model-format.md): how many
+/// classes and attributes were (or would be) added, how many were there
+/// already, and how many items and stock rows below classes that were
+/// there already it wrote.
+class ModelImport {
+  const ModelImport({
+    required this.dryRun,
+    this.classesAdded = 0,
+    this.classesExisting = 0,
+    this.attributesAdded = 0,
+    this.attributesExisting = 0,
+    this.items = 0,
+    this.stock = 0,
   });
 
-  factory HistoryEntry.fromJson(Json json) {
-    final account = _obj(json['account']);
-    return HistoryEntry(
-      id: json['id'] as int? ?? 0,
-      happenedAt: DateTime.tryParse(json['happened_at'] as String? ?? '')
-          ?.toLocal(),
-      transaction: json['transaction']?.toString() ?? '',
-      who: account?['email'] as String?,
-      whoDeleted: account?['deleted'] == true,
-      table: json['table'] as String? ?? '',
-      operation: json['operation'] as String? ?? '',
-      data: _obj(json['data']) ?? const {},
-      changes: _obj(json['changes']) ?? const {},
+  factory ModelImport.fromJson(Json json) {
+    int n(String kind, String what) =>
+        (json[kind] as Json?)?[what] as int? ?? 0;
+    return ModelImport(
+      dryRun: json['dry_run'] as bool? ?? false,
+      classesAdded: n('classes', 'added'),
+      classesExisting: n('classes', 'existing'),
+      attributesAdded: n('attributes', 'added'),
+      attributesExisting: n('attributes', 'existing'),
+      items: json['items'] as int? ?? 0,
+      stock: json['stock'] as int? ?? 0,
     );
   }
 
-  final int id;
+  final bool dryRun;
+  final int classesAdded;
+  final int classesExisting;
+  final int attributesAdded;
+  final int attributesExisting;
+  final int items;
+  final int stock;
 
-  /// The start of the transaction: the same for everything one action did.
-  final DateTime? happenedAt;
-  final String transaction;
-
-  /// The account's email; null for changes outside the API.
-  final String? who;
-  final bool whoDeleted;
-
-  /// item, value, stock, stock_value, location, class, class_attribute,
-  /// attribute, attribute_option, attachment or account.
-  final String table;
-
-  /// insert, update or delete.
-  final String operation;
-
-  /// The row after the change (before it, for a delete).
-  final Json data;
-
-  /// Updates only: {column: {old, new}}.
-  final Json changes;
-
-  /// The row's id.
-  String get rowId => data['id']?.toString() ?? '';
-
-  /// The old and new value of a changed column, or null.
-  ({Object? old, Object? now})? change(String column) {
-    final c = changes[column];
-    if (c is! Map) return null;
-    return (old: c['old'], now: c['new']);
-  }
-
-  /// Marking the row deleted (since migration 0010, a delete is an update).
-  bool get marksDeleted => change('deleted')?.now == true;
-
-  /// Restoring it.
-  bool get marksRestored => change('deleted')?.now == false;
+  bool get nothingNew => classesAdded == 0 && attributesAdded == 0;
 }

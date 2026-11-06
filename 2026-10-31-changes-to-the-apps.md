@@ -1,5 +1,7 @@
 # Changes to the apps – reminders
 
+**Status: done (2026-11-04),** all of it, in `app/`; [APP.md](APP.md) decisions 72–83 describe the result.
+
 What the refactor ([database](2026-10-31-database-refactor.md), [accessors](2026-10-31-pl-pgsql-accessor-refactor.md), [API](2026-10-31-api-refactor.md)) means for the Flutter apps in `app/`. Collected as the decisions are taken; done after the API, when its new shape is known. The database starts over (database decision 6), so the apps only need to read the new names, never the old ones. The CLI changes with the API, in part 3.
 
 ## From database decision 2: scopes `item` and `stock`

@@ -3,8 +3,8 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../api/client.dart';
+import '../api/input.dart';
 import '../api/models.dart';
-import '../api/units.dart';
 import '../session.dart';
 import '../widgets/common.dart';
 import '../widgets/pickers.dart';
@@ -12,8 +12,9 @@ import '../widgets/select_keys.dart';
 import '../widgets/value_fields.dart';
 
 /// Adds an item (in [classId], if given), or edits the item with [code].
-/// Like `wtf item add` and `wtf item edit`: class, name, unit, then
-/// the class's attributes, required ones first.
+/// Like `wtf item add` and `wtf item edit`: class, name, what its stock is
+/// counted in, then the class's attributes. Saving an item is one request,
+/// its fields and values together.
 class ItemFormScreen extends StatelessWidget {
   const ItemFormScreen({super.key, this.code, this.classId});
 
@@ -55,9 +56,9 @@ class _ItemForm extends StatefulWidget {
 class _ItemFormState extends State<_ItemForm> {
   final _form = GlobalKey<FormState>();
   late final _name = TextEditingController(text: widget.item?.name ?? '');
+  late final _unit = TextEditingController(text: widget.item?.unit ?? '');
   late String? _classId = widget.item?.cls.id ?? _usable(widget.classId);
-  late Unit? _unit = widget.item?.unit;
-  late bool _unitLock = widget.item?.unitLock ?? false;
+  ClassDetail? _class;
   List<ValueInput> _inputs = [];
   bool _loadingValues = false;
   Object? _valuesError;
@@ -79,6 +80,7 @@ class _ItemFormState extends State<_ItemForm> {
   @override
   void dispose() {
     _name.dispose();
+    _unit.dispose();
     for (final i in _inputs) {
       i.dispose();
     }
@@ -96,25 +98,26 @@ class _ItemFormState extends State<_ItemForm> {
     });
     try {
       final typed = {
-        for (final i in _inputs) i.attribute.id: i.controller.text,
+        for (final i in _inputs) i.attribute.name: i.controller.text,
       };
       final cls = await _client.cls(classId);
-      final current = widget.item == null
-          ? <String, String>{}
-          : ownValues(widget.item!.values);
-      final inputs = await loadValueInputs(
-        _client,
-        cls.attributes,
-        perUnit: false,
-        current: current,
+      final item = widget.item;
+      final inputs = valueInputs(
+        cls,
+        stock: false,
+        values: item?.values ?? const {},
+        defaulted: item?.defaulted ?? const {},
       );
       for (final i in inputs) {
-        final text = typed[i.attribute.id];
+        final text = typed[i.attribute.name];
         if (text != null) i.controller.text = text;
       }
       if (!mounted || classId != _classId) return;
       final old = _inputs;
-      setState(() => _inputs = inputs);
+      setState(() {
+        _class = cls;
+        _inputs = inputs;
+      });
       // The old fields are still drawn once more.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         for (final i in old) {
@@ -141,19 +144,19 @@ class _ItemFormState extends State<_ItemForm> {
     _loadValues();
   }
 
-  Future<void> _chooseUnit([String query = '']) async {
-    final current = widget.item?.unit;
-    final picked = await pickUnit(
-      context,
-      query: query,
-      // A new item may be counted; an existing one can only change to
-      // another unit of the same quantity, as in the CLI.
-      noneLabel: _editing ? null : 'None: counted one by one',
-      quantityId: _editing ? current?.quantity.id : null,
-    );
-    if (picked == null) return;
-    setState(() => _unit = picked.unit);
+  /// The values the item has that the chosen class has no attribute for:
+  /// moving it there removes them.
+  List<String> get _dropped {
+    final item = widget.item;
+    final cls = _class;
+    if (item == null || cls == null || cls.id == item.cls.id) return const [];
+    return [
+      for (final name in item.values.keys)
+        if (cls.attribute(name)?.onStock != false) name,
+    ];
   }
+
+  String? get _unitText => _unit.text.trim().isEmpty ? null : _unit.text.trim();
 
   Future<void> _save() async {
     if (_busy || _loadingValues || _classId == null) {
@@ -179,16 +182,11 @@ class _ItemFormState extends State<_ItemForm> {
   }
 
   Future<void> _create() async {
-    final values = <String, Object?>{
-      for (final i in _inputs)
-        if (i.text.isNotEmpty) i.attribute.id: i.parse(),
-    };
     final item = await _client.createItem(
       classId: _classId!,
       name: _name.text.trim(),
-      unitId: _unit?.id,
-      unitLock: _unit != null && _unitLock,
-      values: values,
+      unit: _unitText,
+      values: newValues(_inputs),
     );
     if (!mounted) return;
     // As in the CLI: asked once, after the item was created.
@@ -210,33 +208,28 @@ class _ItemFormState extends State<_ItemForm> {
 
   Future<void> _update(ItemDetail item) async {
     final name = _name.text.trim();
-    final changes = <String, Object?>{
+    final changes = valueChanges(_inputs);
+    final dropped = _dropped;
+    if (dropped.isNotEmpty) {
+      changes['values'] = {
+        for (final n in dropped) n: null,
+        ...?changes['values'] as Map<String, Object?>?,
+      };
+    }
+    changes.addAll({
       if (name != item.name) 'name': name,
       if (_classId != item.cls.id) 'class': _classId,
-      if (_unit != null && _unit!.id != item.unit?.id) 'unit': _unit!.id,
-      if (_unit != null && _unitLock != item.unitLock) 'unit_lock': _unitLock,
-    };
-    final saved = <String>[];
-    if (changes.isNotEmpty) {
-      await _client.patchItem(item.id, changes);
-      saved.addAll(changes.keys.map((k) => k == 'unit_lock' ? 'Unit lock' : k));
-    }
-    final all = await saveValues(
-      _inputs,
-      set: (a, v) => _client.setItemValue(item.id, a, v),
-      remove: (a) => _client.deleteItemValue(item.id, a),
-      savedBefore: saved,
-    );
+      if (_unitText != item.unit) 'unit': _unitText,
+    });
+    if (changes.isNotEmpty) await _client.patchItem(item.id, changes);
     if (!mounted) return;
-    showMessage(
-      context,
-      all.isEmpty ? 'No changes.' : 'Saved: ${all.join(', ')}.',
-    );
-    context.pop(all.isNotEmpty);
+    showMessage(context, changes.isEmpty ? 'No changes.' : 'Saved.');
+    context.pop(changes.isNotEmpty);
   }
 
   @override
   Widget build(BuildContext context) {
+    final dropped = _dropped;
     return Scaffold(
       appBar: AppBar(
         title: Text(_editing ? 'Edit ${widget.item!.name}' : 'New item'),
@@ -281,6 +274,17 @@ class _ItemFormState extends State<_ItemForm> {
                   ),
                 ),
               ),
+              if (dropped.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    'In this class it has no ${dropped.join(', ')}: '
+                    'saving removes ${dropped.length == 1 ? 'that value' : 'those values'}.',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
               const SizedBox(height: 16),
               TextFormField(
                 controller: _name,
@@ -292,39 +296,19 @@ class _ItemFormState extends State<_ItemForm> {
                 validator: (v) =>
                     (v ?? '').trim().isEmpty ? 'Enter a name' : null,
               ),
-              if (!_editing || widget.item!.unit != null) ...[
-                const SizedBox(height: 16),
-                InputDecorator(
-                  decoration: const InputDecoration(
-                    labelText: 'Stock',
-                    border: OutlineInputBorder(),
-                  ),
-                  child: PickerKeys(
-                    open: _chooseUnit,
-                    child: InkWell(
-                      onTap: _chooseUnit,
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              _unit == null
-                                  ? 'counted'
-                                  : 'measured in ${unitLabel(_unit!)}',
-                            ),
-                          ),
-                          const Icon(Icons.arrow_drop_down),
-                        ],
-                      ),
-                    ),
-                  ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _unit,
+                decoration: const InputDecoration(
+                  labelText: 'Unit of its stock',
+                  hintText: 'm, kg, l …',
+                  helperText:
+                      'What its stock is counted in, a label; empty: pieces, '
+                      'counted one by one',
+                  helperMaxLines: 2,
+                  border: OutlineInputBorder(),
                 ),
-                if (_unit != null)
-                  UnitLockSwitch(
-                    unit: _unit!,
-                    value: _unitLock,
-                    onChanged: (v) => setState(() => _unitLock = v),
-                  ),
-              ],
+              ),
               if (_valuesError != null) ...[
                 const SizedBox(height: 16),
                 Text(
@@ -345,11 +329,11 @@ class _ItemFormState extends State<_ItemForm> {
                 const SectionTitle('Values'),
                 if (_editing)
                   const EmptyNote(
-                    'Clear a value to remove it; the class default then applies again.',
+                    "Clear a value to remove it. Files are uploaded on the item's screen.",
                   ),
                 for (final i in _inputs)
                   Padding(
-                    key: ValueKey(i.attribute.id),
+                    key: ValueKey(i.attribute.name),
                     padding: const EdgeInsets.only(top: 12),
                     child: ValueField(i),
                   ),

@@ -31,7 +31,7 @@ depends=$(
     mkdir -p "$root/debian"
     echo "Source: wtf-app" > "$root/debian/control"
     cd "$root"
-    dpkg-shlibdeps -O -lopt/wtf/lib opt/wtf/wtf opt/wtf/lib/*.so 2>/dev/null |
+    dpkg-shlibdeps -O -lopt/wtf/lib opt/wtf/wtf-app opt/wtf/lib/*.so 2>/dev/null |
         sed -n 's/^shlibs:Depends=//p'
 )
 rm -r "$root/debian"

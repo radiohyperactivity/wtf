@@ -36,22 +36,17 @@ const _admin = _Destination(
 );
 const _me = _Destination('/me', 'Me', Icons.person_outline, Icons.person);
 
-/// The screens under Admin: setting up classes, attributes, units and
-/// accounts.
-final _underAdmin = RegExp(r'^/(classes|attributes|accounts|units)(/|$)');
+/// The screens under Admin: setting up classes and accounts.
+final _underAdmin = RegExp(r'^/(classes|accounts)(/|$)');
 
 /// Whether the screen at [path] is for admins only (ACCOUNTS.md): Admin and
-/// what is under it, making and changing locations, and the history of
-/// anything but items and stock rows. The router sends others to Items.
-bool adminOnly(String path) {
-  if (path == '/admin' || _underAdmin.hasMatch(path)) return true;
-  if (path == '/locations/new' ||
-      RegExp(r'^/locations/[^/]+/edit$').hasMatch(path)) {
-    return true;
-  }
-  return path.startsWith('/history/') &&
-      !RegExp(r'^/history/(items|stock)/').hasMatch(path);
-}
+/// what is under it, and making and changing locations. The router sends
+/// others to Items.
+bool adminOnly(String path) =>
+    path == '/admin' ||
+    _underAdmin.hasMatch(path) ||
+    path == '/locations/new' ||
+    RegExp(r'^/locations/[^/]+/edit$').hasMatch(path);
 
 /// Below this width (logical pixels) the navigation is a bottom bar.
 const compactWidth = 600.0;
@@ -62,13 +57,11 @@ class AppShell extends StatelessWidget {
   final String location;
   final Widget child;
 
-  /// The destination a screen belongs to: locations (and their history) to
-  /// their tree, classes, attributes, units and accounts (and their history)
-  /// to Admin, everything else (items, stock, search results) to Items.
+  /// The destination a screen belongs to: locations to their tree, classes
+  /// and accounts to Admin, everything else (items, stock, search results)
+  /// to Items.
   int _selected(List<_Destination> destinations) {
-    var path = location.startsWith('/history/')
-        ? location.substring('/history'.length)
-        : location;
+    var path = location;
     if (_underAdmin.hasMatch(path)) path = '/admin';
     final i = destinations.lastIndexWhere(
       (d) => path == d.path || d.path != '/' && path.startsWith('${d.path}/'),
