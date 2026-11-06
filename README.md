@@ -198,7 +198,7 @@ By default it listens on `127.0.0.1:8080`, for a reverse proxy on the same machi
 
 Instead of the environment variable, the password can come from PostgreSQL's password file, as for every PostgreSQL client: `~/.pgpass` (mode 600), `%APPDATA%\postgresql\pgpass.conf` on Windows, or the file `PGPASSFILE` names. To run `wtfd` as a service, see [Running as a service](#running-as-a-service).
 
-**TLS is recommended but not required:** passwords travel to `wtfd` and on to PostgreSQL, which hashes them. Whether to use HTTPS at the proxy and `hostssl` / `--database-sslmode require` for the database connection is the administrator's decision.
+**TLS is recommended but not required:** passwords travel to `wtfd` and on to PostgreSQL, which hashes them. Whether to use HTTPS at the proxy and `hostssl` / `--database-sslmode require` for the database connection is the administrator's decision. [PROXY.md](PROXY.md) shows how to set up nginx with a Let's Encrypt certificate on Ubuntu.
 
 ### 8. Create the first account
 

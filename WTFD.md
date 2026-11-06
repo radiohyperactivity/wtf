@@ -195,7 +195,7 @@ There are no Go structs per entity. It uses the standard library's `net/http` (m
 ### Deployment assumptions
 
 - **Logins** (see "Logins" below). Every request except `/api/health`, `/api/v1/openapi` and `/api/v1/login` needs the session cookie. Without it, `wtfd` answers 401 before touching the database. See [ACCOUNTS.md](ACCOUNTS.md).
-- **The proxy handles TLS.** `wtfd` speaks plain HTTP. HTTPS is recommended, but not required, and the web app needs it in practice: browsers keep a secure cookie, and later the camera, only over HTTPS (localhost excepted). Tell `wtfd` about HTTPS with `X-Forwarded-Proto: https`, so the session cookie is marked Secure.
+- **The proxy handles TLS.** `wtfd` speaks plain HTTP. HTTPS is recommended, but not required, and the web app needs it in practice: browsers keep a secure cookie, and later the camera, only over HTTPS (localhost excepted). Tell `wtfd` about HTTPS with `X-Forwarded-Proto: https`, so the session cookie is marked Secure. The proxy must pass on the `Host` the browser used, which the check against other sites compares with `Origin`. [PROXY.md](PROXY.md) sets up nginx with Let's Encrypt.
 - **No CORS.** The web app is served by `wtfd` itself (`--web-root`), on the API's own hostname, so it needs none, and `wtfd` sends no CORS headers. The native apps and the CLI don't need CORS.
 - **Localhost by default.** `wtfd` listens on `127.0.0.1:8080`, so only a local proxy can reach it unless you change `--listen`.
 - **Paths.** The API is under `/api/v1/` (see "Versions"), `/api/health` is outside the versions, and everything outside `/api` is the web app.
