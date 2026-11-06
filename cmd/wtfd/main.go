@@ -4,6 +4,9 @@
 //	wtfd serve [flags]     run the REST API
 //	wtfd gc [flags]        remove attachment files nothing refers to any more
 //	wtfd account <command> create an account, or set a lost password
+//	wtfd database create   make the database and its roles on a server
+//	wtfd install [flags]   set WtF up on this machine (Windows)
+//	wtfd service <command> run wtfd serve as a Windows service
 //
 // Run "wtfd <action> -h" for the flags of an action. See WTFD.md.
 package main
@@ -14,6 +17,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	iofs "io/fs"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -26,6 +30,7 @@ import (
 	"github.com/radiohyperactivity/wtf/internal/files"
 	"github.com/radiohyperactivity/wtf/internal/schema"
 	"github.com/radiohyperactivity/wtf/internal/serve"
+	"github.com/radiohyperactivity/wtf/internal/webapp"
 )
 
 const (
@@ -42,15 +47,23 @@ Actions:
   serve     run the REST API
   gc        remove files nothing refers to any more
   account   create an account, or set a lost password
+  database  make the database and its roles on a server (create)
+  install   set WtF up on this machine: programs, data, database (Windows)
+  service   run wtfd serve as a Windows service (install, uninstall)
 
 Run "wtfd <action> -h" for the flags of an action.
 `
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	if code, ok := runService(os.Args[1:]); ok {
+		os.Exit(code)
+	}
+	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
+// run runs an action. Cancelling ctx stops "serve" as SIGTERM does; the
+// Windows service uses it for Stop and Shutdown.
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
 		return exitUsage
@@ -59,11 +72,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "schema":
 		return runSchema(args[1:], stderr)
 	case "serve":
-		return runServe(args[1:], stderr)
+		return runServe(ctx, args[1:], stderr)
 	case "gc":
 		return runGC(args[1:], stderr)
 	case "account":
 		return runAccount(args[1:], stdout, stderr)
+	case "database":
+		return runDatabase(args[1:], os.Stdin, stdout, stderr)
+	case "install":
+		return runInstall(args[1:], os.Stdin, stdout, stderr)
+	case "service":
+		return runServiceCommand(args[1:], os.Stdin, stdout, stderr)
 	case "help", "-h", "-help", "--help":
 		fmt.Fprint(stderr, usage)
 		return exitOK
@@ -77,6 +96,7 @@ func runSchema(args []string, stderr io.Writer) int {
 	fs := flag.NewFlagSet("wtfd schema", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	database := config.RegisterDatabase(fs)
+	file := config.RegisterFile(fs)
 	dryRun := fs.Bool("dry-run", false, "report what would be done, change nothing (exit code 1 if changes are pending)")
 	verbose := fs.Bool("verbose", false, "log every migration, script and grant as it is applied")
 	if err := fs.Parse(args); err != nil {
@@ -87,6 +107,9 @@ func runSchema(args []string, stderr io.Writer) int {
 	}
 	if fs.NArg() > 0 {
 		fmt.Fprintf(stderr, "wtfd schema: unexpected argument %q\n", fs.Arg(0))
+		return exitUsage
+	}
+	if !applyConfig(file, fs, stderr) {
 		return exitUsage
 	}
 	if err := database.Validate(); err != nil {
@@ -126,10 +149,11 @@ func runSchema(args []string, stderr io.Writer) int {
 	return exitOK
 }
 
-func runServe(args []string, stderr io.Writer) int {
+func runServe(ctx context.Context, args []string, stderr io.Writer) int {
 	fs := flag.NewFlagSet("wtfd serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	database := config.RegisterDatabase(fs)
+	file := config.RegisterFile(fs)
 	settings := config.RegisterServe(fs)
 	filesDir := config.RegisterFiles(fs)
 	verbose := fs.Bool("verbose", false, "debug logging")
@@ -143,6 +167,9 @@ func runServe(args []string, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "wtfd serve: unexpected argument %q\n", fs.Arg(0))
 		return exitUsage
 	}
+	if !applyConfig(file, fs, stderr) {
+		return exitUsage
+	}
 	if err := errors.Join(database.Validate(), settings.Validate(), filesDir.Validate()); err != nil {
 		fmt.Fprintf(stderr, "wtfd serve: %v\n", err)
 		return exitUsage
@@ -153,6 +180,9 @@ func runServe(args []string, stderr io.Writer) int {
 		level = slog.LevelDebug
 	}
 	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: level})).With("action", "serve")
+	if file.Read {
+		log.Info("settings", "config", file.Path)
+	}
 
 	store, err := files.Open(filesDir.Directory)
 	if err != nil {
@@ -166,7 +196,21 @@ func runServe(args []string, stderr io.Writer) int {
 		return exitFailure
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// The web app: from --web-root when given, else the one built in, if
+	// any.
+	var web iofs.FS
+	switch {
+	case settings.WebRoot != "":
+		web = os.DirFS(settings.WebRoot)
+		log.Info("web app", "from", settings.WebRoot)
+	case webapp.Files != nil:
+		web = webapp.Files
+		log.Info("web app", "from", "built in")
+	default:
+		log.Info("web app", "from", "none: this wtfd has none built in, and --web-root isn't given")
+	}
+
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	err = serve.Run(ctx, serve.Options{
@@ -177,7 +221,7 @@ func runServe(args []string, stderr io.Writer) int {
 		Files:              store,
 		MaxAttachmentSize:  settings.MaxAttachmentSize,
 		Scripts:            db.Scripts,
-		WebRoot:            settings.WebRoot,
+		Web:                web,
 		TrustedProxies:     trusted,
 		Logger:             log,
 	})
@@ -192,6 +236,7 @@ func runGC(args []string, stderr io.Writer) int {
 	fs := flag.NewFlagSet("wtfd gc", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	database := config.RegisterDatabase(fs)
+	file := config.RegisterFile(fs)
 	filesDir := config.RegisterFiles(fs)
 	settings := config.RegisterGC(fs)
 	dryRun := fs.Bool("dry-run", false, "report what would be removed, remove nothing")
@@ -204,6 +249,9 @@ func runGC(args []string, stderr io.Writer) int {
 	}
 	if fs.NArg() > 0 {
 		fmt.Fprintf(stderr, "wtfd gc: unexpected argument %q\n", fs.Arg(0))
+		return exitUsage
+	}
+	if !applyConfig(file, fs, stderr) {
 		return exitUsage
 	}
 	if err := errors.Join(database.Validate(), filesDir.Validate(), settings.Validate()); err != nil {
@@ -277,6 +325,7 @@ func runAccount(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("wtfd account "+command, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	database := config.RegisterDatabase(fs)
+	file := config.RegisterFile(fs)
 	email := fs.String("email", "", "the account's email (required)")
 	role := "admin"
 	if command == "create" {
@@ -298,6 +347,9 @@ func runAccount(args []string, stdout, stderr io.Writer) int {
 	}
 	if !slices.Contains(admin.Roles, role) {
 		fmt.Fprintf(stderr, "wtfd account %s: role %q: use viewer, user or admin\n", command, role)
+		return exitUsage
+	}
+	if !applyConfig(file, fs, stderr) {
 		return exitUsage
 	}
 	if err := database.Validate(); err != nil {

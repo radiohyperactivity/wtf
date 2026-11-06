@@ -23,19 +23,39 @@
         }
       ],
       "get": {
-        "summary": "Database reachability",
+        "summary": "Database reachability, and which build runs since when",
         "operationId": "health",
         "security": [],
         "responses": {
           "200": {
-            "description": "The database is reachable.",
+            "description": "The database is reachable. Times are RFC 3339 in UTC, to the second; what this build doesn't know is null.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "required": ["status", "build", "commit", "revision", "started"],
                   "properties": {
                     "status": {
                       "const": "ok"
+                    },
+                    "build": {
+                      "type": ["string", "null"],
+                      "format": "date-time",
+                      "description": "When wtfd was built; stamped by scripts/build.sh, null for a plain go build."
+                    },
+                    "commit": {
+                      "type": ["string", "null"],
+                      "format": "date-time",
+                      "description": "When the commit it was built from was made; null when built outside a git checkout."
+                    },
+                    "revision": {
+                      "type": ["string", "null"],
+                      "description": "That commit's ID; null when built outside a git checkout."
+                    },
+                    "started": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "When this wtfd started serving."
                     }
                   }
                 }
@@ -180,7 +200,7 @@
       },
       "delete": {
         "summary": "Delete a class; with recursive=true also every class below it",
-        "description": "Without `recursive`, the class must have no subclasses or items (else 409).\nWith `recursive=true`, the class and every class below it are deleted in one\ntransaction. If any of them has items, nothing is deleted (409), unless `force=true`,\nwhich deletes the items too (with their values, stock rows and attachments).\n`GET /classes/{id}/deletion` previews it.\n",
+        "description": "Without `recursive`, the class must have no subclasses or items (else 409).\nWith `recursive=true`, the class and every class below it are deleted in one\ntransaction. If any of them has items, nothing is deleted (409), unless `force=true`,\nwhich deletes the items too (with their values, files and stock rows).\n`GET /classes/{id}/deletion` previews it.\n",
         "operationId": "classDelete",
         "parameters": [
           {
@@ -2084,50 +2104,6 @@
       }
     },
     "requestBodies": {
-      "Upload": {
-        "required": true,
-        "content": {
-          "multipart/form-data": {
-            "schema": {
-              "type": "object",
-              "required": [
-                "file"
-              ],
-              "properties": {
-                "file": {
-                  "type": "string",
-                  "format": "binary",
-                  "description": "The file; its Content-Type is kept (and detected when missing or application/octet-stream)."
-                },
-                "title": {
-                  "type": "string",
-                  "description": "Default: the file's name."
-                },
-                "photo": {
-                  "type": "boolean",
-                  "description": "Make it the object's photo (images only)."
-                }
-              }
-            }
-          }
-        }
-      },
-      "AttachmentPatch": {
-        "required": true,
-        "content": {
-          "application/json": {
-            "schema": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "title": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      },
       "TreeNodeCreate": {
         "required": true,
         "content": {
@@ -2218,17 +2194,6 @@
                 "container": {
                   "type": "boolean",
                   "description": "Rejected (422) while the class has items or the location has stock."
-                },
-                "photo": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/Uuid"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "description": "One of its own image attachments, or null for none."
                 }
               }
             }
@@ -2408,7 +2373,7 @@
           },
           "stock": {
             "type": "array",
-            "description": "The live stock rows; for a deleted item, those deleted together with it.",
+            "description": "The stock rows in them.",
             "items": {
               "type": "object",
               "properties": {

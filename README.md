@@ -5,6 +5,7 @@ Keeping your stuff organised.
 | Document                     | Contents                                                     |
 |------------------------------|--------------------------------------------------------------|
 | [SCHEMA.md](SCHEMA.md)       | Tables, types, indexes, and what the database enforces        |
+| [SCHEMA.html](SCHEMA.html)   | Entity-relationship diagram                                   |
 | [seed/model-format.md](seed/model-format.md) | Model files: classes with their attributes for one use, such as [MCUs](seed/models/mcu.json); importing and exporting |
 | [API.md](API.md)             | The PL/pgSQL functions all data access goes through           |
 | [WTFD.md](WTFD.md)           | `wtfd`, the server: its actions, routes and configuration     |
@@ -13,6 +14,14 @@ Keeping your stuff organised.
 | [TODO.md](TODO.md)           | Things to come back to later                                  |
 
 ## Database setup
+
+**The short way:** once PostgreSQL is installed (step 1) and lets you connect (step 5), `wtfd database create` does steps 2, 3, 4 and 6, and step 8 if you want it. It connects as an administrator (a superuser such as `postgres`, or a role with `CREATEROLE` and `CREATEDB`), asks for what it needs, and checks the server first: PostgreSQL 18 or newer, with ICU, and none of the names in use. When something fails along the way, it removes what it made. It never sends the roles' passwords themselves, only their hashes, as psql's `\password` does. Passwords it generates are shown once, as lines for PostgreSQL's password file.
+
+```sh
+./wtfd database create
+```
+
+Every question is also a flag (`./wtfd database create -h`), so it can run without a terminal; the administrator's password then comes from PostgreSQL's password file, and the roles' are generated. It reads none of `wtfd`'s environment variables (`WTFD_…`): they describe a database that exists, not the one to make. `./wtfd database create --print-sql` prints the same steps as a psql script, for doing them by hand. The steps below explain what it does and why.
 
 The examples use these names:
 
@@ -118,7 +127,7 @@ These are per-role defaults, applied whenever the role connects to `wtf`:
 
 - **`search_path = public`** lets the API server call functions without a schema prefix (`item_get(...)`). It also keeps `wtf_dba`'s objects in `public` unless a schema is given explicitly. The API functions don't depend on the caller's `search_path`: each pins its own.
 - **`statement_timeout`** cancels any single call that runs longer than 30 seconds, so one runaway request can't hold locks and connections indefinitely.
-- **`idle_in_transaction_session_timeout`** closes connections that opened a transaction and then went quiet for 60 seconds. Such connections hold locks and block the version-counter rows of `data_version`.
+- **`idle_in_transaction_session_timeout`** closes connections that opened a transaction and then went quiet for 60 seconds. Such connections hold locks and block the version counters in `meta`.
 
 Adjust the values to taste; they can be overridden per session with `SET`.
 
@@ -160,6 +169,14 @@ Build it (Go 1.26 or newer):
 go build -o wtfd ./cmd/wtfd
 ```
 
+That `wtfd` has no web app in it; [BUILDING.md](BUILDING.md) has building for every system, the apps included. `scripts/release.sh` builds a release into `dist/release/`: for each system `wtfd` runs on, an archive with `wtf`, `wtfd` (with the web app), the licence and a short README; `.zip` for Windows, `.tar.gz` for Linux and macOS. `scripts/build.sh` builds `wtf` and `wtfd` for every system into `dist/`, with the web app built into `wtfd`; it needs Flutter as well (`FLUTTER=…` names it when `flutter` isn't on the PATH). By hand, the same is:
+
+```sh
+(cd app && flutter build web --release --no-web-resources-cdn)
+rm -rf internal/webapp/dist && cp -r app/build/web internal/webapp/dist
+go build -tags webapp -o wtfd ./cmd/wtfd
+```
+
 Check what it would do, then run it:
 
 ```sh
@@ -177,7 +194,9 @@ export WTFD_API_DATABASE_PASSWORD='…'
 ./wtfd serve --files-directory /var/lib/wtf/files
 ```
 
-By default it listens on `127.0.0.1:8080`, for a reverse proxy on the same machine; name the proxy with `--trusted-proxies 127.0.0.1` (or `WTFD_TRUSTED_PROXIES`), so that the logs and the session list show the client's address, not the proxy's. It refuses to start if the database schema doesn't match the binary; run `wtfd schema` first. Run `./wtfd serve -h` for all flags, and see [WTFD.md](WTFD.md) and `GET /api/v1/openapi` for the API itself. With `--web-root DIR` it also serves the web app.
+By default it listens on `127.0.0.1:8080`, for a reverse proxy on the same machine; name the proxy with `--trusted-proxies 127.0.0.1` (or `WTFD_TRUSTED_PROXIES`), so that the logs and the session list show the client's address, not the proxy's. It refuses to start if the database schema doesn't match the binary; run `wtfd schema` first. Run `./wtfd serve -h` for all flags, and see [WTFD.md](WTFD.md) and `GET /api/v1/openapi` for the API itself. It also serves the web app, when it has one built in (below), or one in `--web-root DIR`.
+
+Instead of the environment variable, the password can come from PostgreSQL's password file, as for every PostgreSQL client: `~/.pgpass` (mode 600), `%APPDATA%\postgresql\pgpass.conf` on Windows, or the file `PGPASSFILE` names. To run `wtfd` as a service, see [Running as a service](#running-as-a-service).
 
 **TLS is recommended but not required:** passwords travel to `wtfd` and on to PostgreSQL, which hashes them. Whether to use HTTPS at the proxy and `hostssl` / `--database-sslmode require` for the database connection is the administrator's decision.
 
@@ -219,6 +238,43 @@ CREATE TABLE test (id int);       -- ERROR: permission denied for schema public
 | `wtf_dba` | owner                | owner           | owner         | owner        | owner         | owner           |
 | `wtf_api` | `CONNECT`            | `USAGE`         | –             | –            | `EXECUTE`     | –               |
 | `PUBLIC`  | –                    | –               | –             | –            | –             | –               |
+
+## Installing on Windows
+
+`wtfd install`, in PowerShell or Windows Terminal opened as an administrator, sets WtF up on the machine, from the folder that has `wtfd.exe` and `wtf.exe`:
+
+```powershell
+.\wtfd.exe install
+```
+
+- **The programs** go in `C:\Program Files\WtF\bin`, which is added to the machine's PATH (for windows opened from then on).
+- **The data** goes in `C:\ProgramData\WtF`, which only administrators and SYSTEM can open: the files in `files\` (`--files-directory` puts them elsewhere, such as on another drive), and `pgpass.conf`, PostgreSQL's password file, with both roles' passwords.
+- **The database:** it asks whether WtF's database is there already. If so, it asks for its server, names and passwords, checks that both roles can connect, and brings the schema up to date. If not, it makes it, as `wtfd database create` does (see [Database setup](#database-setup)).
+- **The settings** go in `C:\ProgramData\WtF\wtfd.conf`: the database's server, name and roles, the files directory, and the address `wtfd serve` listens on, which it asks for (`127.0.0.1:8080` serves this machine only; `0.0.0.0:8080` the network). See [WTFD.md](WTFD.md#configuration) for the file.
+- **Running it again** with a newer `wtfd.exe` upgrades: it stops the `wtfd` service while it replaces the programs, takes the settings from `wtfd.conf` and the passwords from `pgpass.conf`, asking only for what they don't have, brings the schema up to date, and starts the service again. `--reconfigure` asks for every setting again, with the file's as the defaults; a flag (`--listen 127.0.0.1:8080`) changes one without asking.
+
+Afterwards `wtfd serve`, `schema`, `gc` and `account` need no flags or environment variables: they read `wtfd.conf`, and the passwords from the `pgpass.conf` beside it. Both are for administrators only, so run them in an administrator's window; elsewhere `wtfd` says it can't read the file, and goes on without it.
+
+## Running as a service
+
+### Windows
+
+`wtfd` runs as a Windows service of its own: when the Service Control Manager starts it, it reports to it, stops on Stop and on shutdown (waiting up to 30 seconds for requests to finish), and logs to the Event Log (Application, source `wtfd`). The service's command line is an ordinary `wtfd serve`, which takes its settings from `wtfd.conf` and its password from `pgpass.conf` (see [Installing on Windows](#installing-on-windows)).
+
+`wtfd install` offers to set the service up at its end; otherwise, in an administrator's PowerShell:
+
+```powershell
+wtfd service install
+```
+
+- **The service** is `wtfd` ("WtF server"), running `C:\Program Files\WtF\bin\wtfd.exe serve`, never another copy. It starts at boot, delayed until the rest of Windows is up, so the network and PostgreSQL are more likely to be ready. It runs as its own virtual account, `NT SERVICE\wtfd`, which needs no password and may do only what it is given.
+- **When it fails** it is restarted, after 5 seconds, 5 seconds again, and then a minute, counted afresh after a day; also when `serve` stops with an error of its own, such as a database that isn't up yet.
+- **Its access:** read on `wtfd.conf` and `pgpass.conf`, modify on the files directory, and through `ProgramData\WtF` to them, which is otherwise for administrators only. Nothing goes in the service's environment in the registry, which every local user can read.
+- **The firewall:** when `listen` is open to the network, it asks whether to add the inbound rule "WtF server" for that port. With a reverse proxy on the same machine, `wtfd` listens on `127.0.0.1` and needs none.
+- **It starts the service and checks it,** by asking `/api/health`; when that fails, it shows wtfd's last entries in the Event Log. `Get-EventLog -LogName Application -Source wtfd -Newest 20` shows them any time.
+- **Running it again** brings the service up to date and restarts it. `wtfd service uninstall` stops and removes the service, its access, the firewall rule and the Event Log source, and leaves the programs, the settings and the data.
+
+**Upgrading:** run `wtfd install` again with the new `wtfd.exe`: it stops the service, replaces the programs, brings the schema up to date and starts the service again. `serve` refuses to start on a schema that doesn't match it.
 
 ## Command-line client
 
@@ -355,7 +411,8 @@ The scripts in `scripts/` are what CI runs. They are bash scripts, which also ru
 |--------|------|
 | `scripts/test.sh` | checks the formatting (`gofmt`), runs `go vet` for Linux, Windows and macOS, and runs all tests; the integration tests only with the variables above |
 | `scripts/test-db.sh` | creates the roles and the test database on a *fresh* PostgreSQL server, as described above; CI uses it for its throw-away server |
-| `scripts/build.sh` | builds `wtf` and `wtfd` for Linux, Windows and macOS (amd64 and arm64) into `dist/` |
+| `scripts/build.sh` | builds `wtf` and `wtfd` (with the web app) for Linux, Windows and macOS (amd64 and arm64) into `dist/` |
+| `scripts/release.sh` | builds a release: an archive for each system, with `wtf`, `wtfd`, the licence and a README |
 | `scripts/wtfd-env.example.ps1` | a template for setting the `WTFD_…` variables in PowerShell |
 
 On GitHub, `.github/workflows/ci.yml` runs `test.sh` (with a throw-away PostgreSQL 18) and `build.sh` on every push and pull request.

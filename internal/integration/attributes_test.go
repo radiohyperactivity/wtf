@@ -94,7 +94,7 @@ func TestAttributes(t *testing.T) {
 		_, err = admin.call(t, "class.attribute_add", tools, "Bad", js(obj("scope", "item", "type", "choice")), false)
 		wantState(t, err, "22023", "needs its choices")
 		_, err = admin.call(t, "class.attribute_add", tools, "Bad", js(obj("scope", "item", "type", "integer", "default", 1.5)), false)
-		wantState(t, err, "22023", "a whole number")
+		wantState(t, err, "22023", "an integer")
 	})
 
 	var drill string

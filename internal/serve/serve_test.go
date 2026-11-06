@@ -12,9 +12,12 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/radiohyperactivity/wtf/internal/buildinfo"
 	"github.com/radiohyperactivity/wtf/openapi"
 )
 
@@ -301,7 +304,7 @@ func TestWebApp(t *testing.T) {
 		}
 	}
 	s := testServer()
-	s.webRoot = dir
+	s.web = os.DirFS(dir)
 	h := s.handler()
 	get := func(method, path string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
@@ -338,6 +341,57 @@ func TestWebApp(t *testing.T) {
 		if r.Code != 404 {
 			t.Errorf("no web root: %d, want 404", r.Code)
 		}
+	}
+}
+
+// The health answer says which build this is, and since when it runs; what
+// isn't known is null.
+func TestHealthAnswer(t *testing.T) {
+	started := time.Date(2026, 11, 6, 16, 30, 0, 500_000_000, time.FixedZone("CET", 3600))
+	got, _ := json.Marshal(healthAnswer(buildinfo.Info{
+		Build:    time.Date(2026, 11, 6, 14, 2, 11, 0, time.UTC),
+		Commit:   time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC),
+		Revision: "a188ffb0",
+	}, started))
+	want := `{"build":"2026-11-06T14:02:11Z","commit":"2026-11-05T09:00:00Z","revision":"a188ffb0","started":"2026-11-06T15:30:00Z","status":"ok"}`
+	if string(got) != want {
+		t.Errorf("health answer\n%s\nwant\n%s", got, want)
+	}
+	got, _ = json.Marshal(healthAnswer(buildinfo.Info{}, started))
+	want = `{"build":null,"commit":null,"revision":null,"started":"2026-11-06T15:30:00Z","status":"ok"}`
+	if string(got) != want {
+		t.Errorf("health answer of a build without details\n%s\nwant\n%s", got, want)
+	}
+}
+
+// Files without a modification time, as embedded ones are, get an ETag of
+// their contents, so an unchanged file costs a 304.
+func TestWebAppEmbedded(t *testing.T) {
+	s := testServer()
+	s.web = fstest.MapFS{
+		"index.html":   {Data: []byte("<html>app</html>")},
+		"main.dart.js": {Data: []byte("code")},
+	}
+	h := s.handler()
+	get := func(path, ifNoneMatch string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		if ifNoneMatch != "" {
+			r.Header.Set("If-None-Match", ifNoneMatch)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		return rec
+	}
+	first := get("/main.dart.js", "")
+	etag := first.Header().Get("ETag")
+	if first.Code != 200 || first.Body.String() != "code" || etag == "" {
+		t.Fatalf("first: %d %q, ETag %q", first.Code, first.Body.String(), etag)
+	}
+	if again := get("/main.dart.js", etag); again.Code != http.StatusNotModified {
+		t.Errorf("again with its ETag: %d, want 304", again.Code)
+	}
+	if other := get("/locations/1A7K", ""); other.Code != 200 || other.Header().Get("ETag") == etag {
+		t.Errorf("the app's URL: %d, ETag %q", other.Code, other.Header().Get("ETag"))
 	}
 }
 

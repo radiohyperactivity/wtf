@@ -144,7 +144,7 @@ func parseValue(a attribute, input string) (any, error) {
 			return nil, fmt.Errorf("%s: %w", a.Name, err)
 		}
 		if a.Type == "integer" && strings.ContainsAny(n.String(), ".eE") {
-			return nil, fmt.Errorf("%s takes whole numbers, not %s", a.Name, n)
+			return nil, fmt.Errorf("%s takes integers, not %s", a.Name, n)
 		}
 		return n, nil
 	case "date":

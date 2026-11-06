@@ -1,7 +1,9 @@
 // Package config holds wtfd's settings. Every setting is a command-line flag
 // that can also be given as an environment variable; the flag wins.
 // Passwords are only accepted from environment variables, because
-// command-line arguments are visible to other users on the machine.
+// command-line arguments are visible to other users on the machine. When
+// none is given, PostgreSQL's password file (PGPASSFILE, pgpass.conf) is
+// read, as by every PostgreSQL client.
 package config
 
 import (
@@ -68,7 +70,7 @@ type Database struct {
 // RegisterDatabase adds the database flags to fs.
 func RegisterDatabase(fs *flag.FlagSet) *Database {
 	d := &Database{}
-	fs.StringVar(&d.Host, "database-host", d.env.string("WTFD_DATABASE_HOST", "localhost"),
+	fs.StringVar(&d.Host, "database-host", d.env.string("WTFD_DATABASE_HOST", "127.0.0.1"),
 		"database host name, IP address or Unix socket directory (env WTFD_DATABASE_HOST)")
 	fs.IntVar(&d.Port, "database-port", d.env.int("WTFD_DATABASE_PORT", 5432),
 		"database port (env WTFD_DATABASE_PORT)")
@@ -80,6 +82,20 @@ func RegisterDatabase(fs *flag.FlagSet) *Database {
 		"role that owns the schema; password in env "+DBAPasswordEnv+" (env WTFD_DBA_DATABASE_USER)")
 	fs.StringVar(&d.APIUser, "api-database-user", d.env.string("WTFD_API_DATABASE_USER", "wtf_api"),
 		"role the REST API connects as; password in env "+APIPasswordEnv+" (env WTFD_API_DATABASE_USER)")
+	return d
+}
+
+// RegisterNewDatabase adds the same flags to fs, for a database yet to be
+// made ("wtfd database create"). Their defaults are the built-in ones: the
+// environment variables describe a database that exists, so none is read.
+func RegisterNewDatabase(fs *flag.FlagSet) *Database {
+	d := &Database{}
+	fs.StringVar(&d.Host, "database-host", "127.0.0.1", "the server's host name, IP address or Unix socket directory")
+	fs.IntVar(&d.Port, "database-port", 5432, "the server's port")
+	fs.StringVar(&d.Name, "database-name", "wtf", "the new database's name")
+	fs.StringVar(&d.SSLMode, "database-sslmode", "prefer", "TLS mode: "+strings.Join(sslModes, ", "))
+	fs.StringVar(&d.DBAUser, "dba-database-user", "wtf_dba", "the new role that owns the database")
+	fs.StringVar(&d.APIUser, "api-database-user", "wtf_api", "the new role the REST API connects as")
 	return d
 }
 
@@ -217,7 +233,7 @@ func RegisterServe(fs *flag.FlagSet) *Serve {
 	fs.StringVar(&s.Listen, "listen", s.env.string("WTFD_LISTEN", "127.0.0.1:8080"),
 		"address and port to listen on (env WTFD_LISTEN)")
 	fs.StringVar(&s.WebRoot, "web-root", s.env.string("WTFD_WEB_ROOT", ""),
-		"directory of the web app (a Flutter web build), served outside /api; none if empty (env WTFD_WEB_ROOT)")
+		"directory of the web app (a Flutter web build), served outside /api; if empty, the one built into wtfd, if any (env WTFD_WEB_ROOT)")
 	fs.IntVar(&s.MaxConnections, "api-database-max-connections", s.env.int("WTFD_API_DATABASE_MAX_CONNECTIONS", 10),
 		"size of the database connection pool (env WTFD_API_DATABASE_MAX_CONNECTIONS)")
 	fs.IntVar(&s.MaxRequestBodySize, "max-request-body-size", s.env.int("WTFD_MAX_REQUEST_BODY_SIZE", 1<<20),

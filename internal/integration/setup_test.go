@@ -95,7 +95,7 @@ func connect(d *testDatabase) (*environment, error) {
 	e := &environment{
 		dba:       d.dba,
 		api:       d.api,
-		handler:   serve.NewHandler(d.api, quiet, 1<<20, store, testMaxAttachment, "", nil),
+		handler:   serve.NewHandler(d.api, quiet, 1<<20, store, testMaxAttachment, nil, nil),
 		dbaConfig: d.dbaConfig,
 		apiUser:   d.apiUser,
 		files:     store,

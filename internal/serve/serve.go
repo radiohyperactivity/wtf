@@ -30,8 +30,8 @@ type Options struct {
 	MaxRequestBodySize int
 	Files              *files.Store // attachment contents
 	MaxAttachmentSize  int
-	Scripts            fs.FS  // the embedded schema scripts, to check the database against
-	WebRoot            string // the web app's files; "" serves no web app
+	Scripts            fs.FS // the embedded schema scripts, to check the database against
+	Web                fs.FS // the web app (a Flutter web build); nil serves none
 	// TrustedProxies are the reverse proxies whose X-Forwarded-For is
 	// believed for the client's address (WTFD_TRUSTED_PROXIES).
 	TrustedProxies []netip.Prefix
@@ -44,8 +44,9 @@ type server struct {
 	maxBody       int64
 	files         *files.Store
 	maxAttachment int64
-	webRoot       string
+	web           fs.FS
 	trusted       []netip.Prefix
+	started       time.Time // when the handler was made, as the server started
 }
 
 // Run serves the API until ctx is cancelled, then shuts down gracefully.
@@ -73,7 +74,7 @@ func Run(ctx context.Context, o Options) error {
 
 	httpServer := &http.Server{
 		Handler: NewHandler(pool, o.Logger, int64(o.MaxRequestBodySize), o.Files, int64(o.MaxAttachmentSize),
-			o.WebRoot, o.TrustedProxies),
+			o.Web, o.TrustedProxies),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
@@ -101,14 +102,14 @@ func Run(ctx context.Context, o Options) error {
 	}
 }
 
-// NewHandler returns the HTTP handler: the API, and the web app from webRoot
-// if it isn't "". Run uses it; integration tests use it directly, without a
+// NewHandler returns the HTTP handler: the API, and the web app in web
+// unless it is nil. Run uses it; integration tests use it directly, without a
 // listening socket. trusted are the reverse proxies whose X-Forwarded-For
 // is believed.
 func NewHandler(pool *pgxpool.Pool, log *slog.Logger, maxRequestBodySize int64,
-	store *files.Store, maxAttachmentSize int64, webRoot string, trusted []netip.Prefix) http.Handler {
+	store *files.Store, maxAttachmentSize int64, web fs.FS, trusted []netip.Prefix) http.Handler {
 	s := &server{pool: pool, log: log, maxBody: maxRequestBodySize, files: store, maxAttachment: maxAttachmentSize,
-		webRoot: webRoot, trusted: trusted}
+		web: web, trusted: trusted, started: time.Now()}
 	return s.handler()
 }
 
@@ -155,8 +156,8 @@ func (s *server) handler() http.Handler {
 		mux.Handle(fullPattern(rt.pattern), s.wrap(rt.handler, s.maxAttachment+multipartOverhead, false))
 	}
 	web := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { writeProblem(w, notFound) }))
-	if s.webRoot != "" {
-		web = webApp(s.webRoot)
+	if s.web != nil {
+		web = webApp(s.web)
 	}
 
 	api := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

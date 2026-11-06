@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/radiohyperactivity/wtf/internal/buildinfo"
 	"github.com/radiohyperactivity/wtf/openapi"
 )
 
@@ -415,8 +416,35 @@ func (s *server) health(w http.ResponseWriter, r *http.Request) error {
 		})
 		return nil
 	}
-	writeJSON(w, http.StatusOK, []byte(`{"status":"ok"}`))
+	body, err := json.Marshal(healthAnswer(buildinfo.Read(), s.started))
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, body)
 	return nil
+}
+
+// healthAnswer is what /api/health answers: that all is well, which build
+// this is, and since when it runs. A time or revision that isn't known is
+// null; times are RFC 3339 in UTC, to the second.
+func healthAnswer(info buildinfo.Info, started time.Time) map[string]any {
+	when := func(t time.Time) any {
+		if t.IsZero() {
+			return nil
+		}
+		return t.UTC().Truncate(time.Second).Format(time.RFC3339)
+	}
+	var revision any
+	if info.Revision != "" {
+		revision = info.Revision
+	}
+	return map[string]any{
+		"status":   "ok",
+		"build":    when(info.Build),
+		"commit":   when(info.Commit),
+		"revision": revision,
+		"started":  when(started),
+	}
 }
 
 // openAPI sends the API's description, openapi/openapi.json. JSON is valid

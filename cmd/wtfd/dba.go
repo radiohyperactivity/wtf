@@ -32,6 +32,17 @@ func parse(fs *flag.FlagSet, args []string, stderr io.Writer) (int, bool) {
 	return 0, true
 }
 
+// applyConfig reads the config file into fs's flags (config.File.Apply),
+// reporting a warning or a failure. False stops the action.
+func applyConfig(file *config.File, fs *flag.FlagSet, stderr io.Writer) bool {
+	err := file.Apply(fs, func(warning string) { fmt.Fprintf(stderr, "%s: %s\n", fs.Name(), warning) })
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: %v\n", fs.Name(), err)
+		return false
+	}
+	return true
+}
+
 // withDBA connects as the DBA role and runs fn, reporting its error.
 func withDBA(database *config.Database, name string, stderr io.Writer, fn func(ctx context.Context, conn *pgx.Conn) error) int {
 	if err := database.Validate(); err != nil {

@@ -121,7 +121,7 @@ func query(name, key, typ string) param {
 			}
 		case "integer", "bigint":
 			if _, err := strconv.ParseInt(v, 10, 64); err != nil {
-				return nil, invalidInput("query parameter %s=%q is not a whole number", key, v)
+				return nil, invalidInput("query parameter %s=%q is not an integer", key, v)
 			}
 		case "boolean":
 			if v != "true" && v != "false" {
@@ -145,8 +145,8 @@ func constant(name, typ string, value any) param {
 
 // field maps a key of the JSON request body to a function argument.
 // typ is the SQL type: "uuid", "text", "datatype", "role" and "scope" take
-// a JSON string, "numeric" a JSON number, "integer" a whole one, "boolean"
-// true or false, "seconds" a whole number of seconds (as an interval), and
+// a JSON string, "numeric" a JSON number, "integer" an integer, "boolean"
+// true or false, "seconds" an integer, in seconds (as an interval), and
 // "jsonb" any JSON value. JSON null is passed as SQL NULL. A key the
 // accessor has no default for must be given, even if as null; an optional
 // one may be left out, so that the function's default applies.
@@ -217,13 +217,13 @@ func fieldValue(f field, raw json.RawMessage) (any, error) {
 	case "integer":
 		var n int32
 		if err := json.Unmarshal(raw, &n); err != nil {
-			return nil, invalidInput("field %q must be a whole number", f.key)
+			return nil, invalidInput("field %q must be an integer", f.key)
 		}
 		return n, nil
 	case "seconds":
 		var n int64
 		if err := json.Unmarshal(raw, &n); err != nil || n <= 0 {
-			return nil, invalidInput("field %q must be a whole number of seconds, more than 0, or null", f.key)
+			return nil, invalidInput("field %q must be an integer number of seconds, more than 0, or null", f.key)
 		}
 		return fmt.Sprintf("%d seconds", n), nil
 	case "boolean":

@@ -1,6 +1,8 @@
 // Package admin implements the operator's actions that bypass the REST API:
 // "wtfd account" (creating an account, such as the first, and setting a
-// lost password). It connects as the DBA role. See WTFD.md and ACCOUNTS.md.
+// lost password), which connects as the DBA role, and "wtfd database
+// create", which connects as an administrator of the PostgreSQL server.
+// See WTFD.md and ACCOUNTS.md.
 package admin
 
 import (

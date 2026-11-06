@@ -19,7 +19,7 @@ CREATE SCHEMA class;
 -- Whether p_value fits attribute definition p_def: a JSON string for text
 -- (not blank), url (http or https), date (YYYY-MM-DD), choice (one of its
 -- choices) and attachment (a file's hash); a JSON number for decimal, a
--- whole one for integer; true or false for boolean.
+-- JSON integer for integer; true or false for boolean.
 CREATE FUNCTION class.value_fits(p_def jsonb, p_value jsonb)
 RETURNS boolean
 LANGUAGE sql IMMUTABLE AS $$
@@ -41,15 +41,15 @@ LANGUAGE sql IMMUTABLE AS $$
     END;
 $$;
 
--- What a value of attribute definition p_def must be, for messages: "a
--- whole number", "one of Red, Green, Blue", ….
+-- What a value of attribute definition p_def must be, for messages: "an
+-- integer", "one of Red, Green, Blue", ….
 CREATE FUNCTION class.type_words(p_def jsonb)
 RETURNS text
 LANGUAGE sql IMMUTABLE AS $$
     SELECT CASE p_def ->> 'type'
         WHEN 'text'       THEN 'text'
         WHEN 'url'        THEN 'a web address (http or https)'
-        WHEN 'integer'    THEN 'a whole number'
+        WHEN 'integer'    THEN 'an integer'
         WHEN 'decimal'    THEN 'a number'
         WHEN 'date'       THEN 'a date (YYYY-MM-DD)'
         WHEN 'boolean'    THEN 'true or false'
@@ -133,7 +133,7 @@ BEGIN
     IF p_def ? 'order' AND NOT (CASE jsonb_typeof(p_def -> 'order')
                                     WHEN 'number' THEN (p_def ->> 'order')::numeric = trunc((p_def ->> 'order')::numeric)
                                     ELSE jsonb_typeof(p_def -> 'order') = 'null' END) THEN
-        PERFORM error.invalid(format('The order of "%s" must be a whole number', p_name));
+        PERFORM error.invalid(format('The order of "%s" must be an integer', p_name));
     END IF;
 
     IF v_type = 'choice' THEN

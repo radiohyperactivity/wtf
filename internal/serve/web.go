@@ -1,12 +1,15 @@
 package serve
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"io"
 	"io/fs"
 	"net/http"
-	"os"
 	urlpath "path"
 	"strings"
+	"sync"
 )
 
 // webCSP is the Content Security Policy of the web app's pages: everything
@@ -26,15 +29,18 @@ const webCSP = "default-src 'self'; " +
 	"form-action 'self'; " +
 	"frame-ancestors 'none'"
 
-// webApp serves the web app (a Flutter web build) from dir:
+// webApp serves the web app (a Flutter web build) from root, a directory
+// or the build embedded in wtfd:
 //
 //   - files as they are, revalidated on every use (Cache-Control: no-cache),
-//     so a new build is picked up at once; unchanged files cost a 304;
+//     so a new build is picked up at once; unchanged files cost a 304, by
+//     their modification time, or, embedded ones having none, by an ETag
+//     of their contents;
 //   - for any other path without a file extension, index.html, so the app's
 //     own URLs (/locations/1A7K) work when opened or reloaded;
 //   - no hidden files (names starting with ".") and no directory listings.
-func webApp(dir string) http.Handler {
-	root := os.DirFS(dir)
+func webApp(root fs.FS) http.Handler {
+	var etags sync.Map // name → ETag, of the files without a modification time
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
@@ -86,6 +92,22 @@ func webApp(dir string) http.Handler {
 		h.Set("X-Frame-Options", "DENY") // frame-ancestors, for older browsers
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "same-origin")
+		if fi.ModTime().IsZero() {
+			etag, ok := etags.Load(name)
+			if !ok {
+				sum := sha256.New()
+				if _, err := io.Copy(sum, content); err != nil {
+					writeProblem(w, notFound)
+					return
+				}
+				if _, err := content.Seek(0, io.SeekStart); err != nil {
+					writeProblem(w, notFound)
+					return
+				}
+				etag, _ = etags.LoadOrStore(name, `"`+hex.EncodeToString(sum.Sum(nil)[:16])+`"`)
+			}
+			h.Set("ETag", etag.(string))
+		}
 		http.ServeContent(w, r, fi.Name(), fi.ModTime(), content)
 	})
 }

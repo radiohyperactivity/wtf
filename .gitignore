@@ -4,3 +4,6 @@
 
 # Claude Code's personal settings
 .claude/settings.local.json
+
+# The web build, copied here to be embedded in wtfd (scripts/build.sh)
+/internal/webapp/dist/

@@ -650,7 +650,7 @@ func classAttributeGroup() group {
 						if order.set {
 							var n int
 							if _, err := fmt.Sscanf(order.value, "%d", &n); err != nil {
-								return usagef("--order takes a whole number")
+								return usagef("--order takes an integer")
 							}
 							body["order"] = n
 						}

@@ -12,14 +12,32 @@ wtfd <action> [flags]
 | `serve`  | Run the REST API                                                     | implemented |
 | `gc`     | Remove files that nothing references any more, and expired sessions | implemented |
 | `account`| Create an account, or set a lost password (`create`, `password`)     | implemented |
+| `database` | Make the database and its roles on a PostgreSQL server (`create`) | implemented |
+| `install`  | Set WtF up on this machine: programs, data, database (Windows only) | implemented |
+| `service`  | Run `wtfd serve` as a Windows service (`install`, `uninstall`)      | implemented |
 
 ## Configuration
 
-Every setting is a command-line flag. Each flag can also come from an environment variable; the flag wins when both are given. Passwords are only accepted from environment variables, because command-line arguments are visible to other users on the machine (`ps`).
+Every setting is a command-line flag. Each flag can also come from an environment variable, and from the config file; a flag wins over its environment variable, which wins over the file, which wins over the built-in default. Passwords are only accepted from environment variables and PostgreSQL's password file, because command-line arguments are visible to other users on the machine (`ps`).
+
+**The config file,** `wtfd.conf`, has a setting on each line, with the flags' names as keys, and `#` for comments:
+
+```text
+# wtfd's settings
+database-host = 127.0.0.1
+files-directory = C:\ProgramData\WtF\files
+listen = 127.0.0.1:8080
+```
+
+- **Where:** `--config FILE` or `WTFD_CONFIG`; otherwise `%ProgramData%\WtF\wtfd.conf` on Windows (`wtfd install` writes it), `/etc/wtf/wtfd.conf` on Linux and `/Library/Application Support/WtF/wtfd.conf` on macOS. `--config=` reads none.
+- **A file at the default place may be missing.** One named with `--config` or `WTFD_CONFIG` must be there. One that can't be read (ProgramData's is for administrators only) is reported, and the action goes on without it.
+- **Keys** are the flags of the table below and of `serve` and `gc`; an action takes those that are its own flags and passes over the others, but a key that is no action's setting is an error, so a typo doesn't go unnoticed. An action's own switches (`--dry-run`, `--verbose`) aren't settings.
+- **Passwords are never in it.** When the file is read and `PGPASSFILE` isn't set, the PostgreSQL password file beside it (`pgpass.conf`) is used.
+- `wtfd database create` reads neither the file nor the environment: they describe a database that exists.
 
 | Flag                      | Environment variable          | Default     | Meaning                                       |
 |---------------------------|-------------------------------|-------------|-----------------------------------------------|
-| `--database-host`         | `WTFD_DATABASE_HOST`          | `localhost` | Host name, IP address, or Unix socket directory |
+| `--database-host`         | `WTFD_DATABASE_HOST`          | `127.0.0.1` | Host name, IP address, or Unix socket directory |
 | `--database-port`         | `WTFD_DATABASE_PORT`          | `5432`      | Port                                          |
 | `--database-name`         | `WTFD_DATABASE_NAME`          | `wtf`       | Database name                                 |
 | `--database-sslmode`      | `WTFD_DATABASE_SSLMODE`       | `prefer`    | `disable`, `allow`, `prefer`, `require`, `verify-ca` or `verify-full`, as in libpq |
@@ -35,7 +53,7 @@ Flags specific to `schema`:
 | `--dry-run` | –                    | off     | Report what would be done, change nothing                   |
 | `--verbose` | –                    | off     | Log every migration, script and grant as it is applied      |
 
-If a password variable is unset, the connection is attempted without a password. That works with `peer` or `trust` authentication.
+If a password variable is unset, the connection is attempted without a password. The password then comes from PostgreSQL's password file (`PGPASSFILE`, `~/.pgpass`, `%APPDATA%\postgresql\pgpass.conf`), as for every PostgreSQL client, or isn't needed, with `peer` or `trust` authentication.
 
 Command-line parsing uses the standard library (`flag`) with a small action dispatcher. The only external dependency is the PostgreSQL driver, [pgx v5](https://github.com/jackc/pgx). Logging uses `log/slog` and goes to stderr.
 
@@ -57,7 +75,8 @@ internal/config/               flags + environment variables
 internal/schema/               the schema action (migration runner)
 internal/serve/                the serve action (REST API)
 internal/files/                file store and the gc action
-internal/admin/                the account action
+internal/admin/                the account and database actions
+internal/webapp/               the web app built into wtfd (build tag webapp)
 openapi/openapi.json           OpenAPI description, embedded and served at /api/v1/openapi
 db/embed.go                    //go:embed migrations/*.sql repeatable/*.sql
 db/migrations/0001_schema.sql  versioned migrations
@@ -269,6 +288,20 @@ When the database knows what to do about an error, a `hint` says so, e.g. what t
 | request body too large | `/problems/body-too-large` | 413 |
 | anything else | `/problems/internal` | 500 (details only in the log) |
 
+### Which build runs
+
+`GET /api/health` says which build answers, and since when, besides that the database is reachable. It needs no login, like the rest of `/api/health`:
+
+```json
+{"status": "ok", "build": "2026-11-06T14:02:11Z", "commit": "2026-11-05T09:00:00Z",
+ "revision": "a188ffbd98669db5ec5af31263844213c1f62c14", "started": "2026-11-06T15:30:00Z"}
+```
+
+- **`build`:** when `wtfd` was built. Go doesn't record that, so `scripts/build.sh` stamps it (`-ldflags -X …/internal/buildinfo.date=…`); a plain `go build` or `go install` has none, and says null.
+- **`commit`** and **`revision`:** when the commit it was built from was made, and its ID, as Go records them when it builds in a git checkout (`vcs.time`, `vcs.revision`); null outside one.
+- **`started`:** when this `wtfd serve` started.
+- Times are RFC 3339 in UTC, to the second (`internal/buildinfo`, `healthAnswer` in `internal/serve`).
+
 ### Versions
 
 - **Paths:** the API is served under `/api/v1/`. The routes below are relative to it (`GET /items` is `GET /api/v1/items`), except `GET /api/health`.
@@ -297,9 +330,10 @@ The session travels in a cookie, for every client: browsers keep it themselves, 
 
 ### The web app
 
-With `--web-root DIR`, `wtfd` serves the web app (a Flutter web build) outside `/api`:
+`wtfd` serves the web app (a Flutter web build) outside `/api`: the one built into it, or the one in `--web-root DIR`, which wins when given.
 
-- **Files** are served as they are, with `Cache-Control: no-cache`: a new build is picked up at once, and unchanged files cost a 304. That includes Flutter's `version.json`, which the app compares with its own version to reload itself after an update.
+- **Built in:** `scripts/build.sh` builds the web app once, copies it to `internal/webapp/dist` (not in git) and builds `wtfd` with the tag `webapp`, which embeds it (`internal/webapp`). The server and its web app are then always of the same version, and one file is all there is to install; it makes `wtfd` about 40 MB larger. A `wtfd` built without the tag, as by `go install`, has none, and `serve` logs which it serves, if any. `--web-root` is for development: a fresh `flutter build web` without building `wtfd` again.
+- **Files** are served as they are, with `Cache-Control: no-cache`: a new build is picked up at once, and unchanged files cost a 304, by their modification time, or, for the built-in ones, which have none, by an ETag of their contents. That includes Flutter's `version.json`, which the app compares with its own version to reload itself after an update.
 - **The app's own URLs** (`/locations/1A7K`) get `index.html` when they aren't a file, so links, bookmarks and reloads work. A missing file name with an extension (`/missing.js`) is a 404.
 - **Not served:** hidden files (names starting with `.`) and directory listings.
 - **Security headers:** a Content Security Policy that allows only this server (plus WebAssembly, which Flutter needs) and no framing by other sites (`frame-ancestors 'none'`, against clickjacking), plus `X-Content-Type-Options: nosniff` and `Referrer-Policy: same-origin`.
@@ -311,7 +345,7 @@ Every route calls one function ([API.md](API.md) has them all); a body's fields 
 
 | Method & path | Function | Body / query |
 |---------------|----------|--------------|
-| `GET /api/health` | `SELECT 1` | – (200, or 503 if the database is unreachable) |
+| `GET /api/health` | `SELECT 1` | – (200 with `{status, build, commit, revision, started}`, or 503 if the database is unreachable) |
 | `GET /openapi` | – | – (the embedded OpenAPI description, JSON or YAML) |
 | `POST /model/import` | `model.import` | a model file ([seed/model-format.md](seed/model-format.md)); `?parent=&dry_run=true` |
 | `GET /classes` | `class.list` | `If-None-Match` |
@@ -388,6 +422,68 @@ wtfd account password --email anna@example.com
 ```
 
 `create` makes an account, an admin unless `--role` says viewer or user. `password` gives an existing account a new password, lifts a lockout and ends its sessions. Both print the generated password once; the account should change it after logging in (`PUT /me/password`). Further accounts are made through the API (`POST /accounts`). See [ACCOUNTS.md](ACCOUNTS.md).
+
+## The `database` action
+
+`wtfd database create` makes WtF's database on a PostgreSQL server that has none: the roles, the database, its privileges and the roles' settings (README.md, steps 2–4), then the schema, as `wtfd schema` does (step 6), and optionally the first account (step 8).
+
+```sh
+wtfd database create                                  # asks, on a terminal
+wtfd database create --database-host db.example.lan --first-account anna@example.com
+wtfd database create --print-sql                      # the same as a psql script; does nothing
+```
+
+It has the database flags above, for the new database and roles, but **reads none of the environment variables**: they describe a database that exists, and taking their values as defaults would aim it at that one. Its defaults are the built-in ones. Flags of its own:
+
+| Flag                     | Default    | Meaning |
+|--------------------------|------------|---------|
+| `--admin-user`           | `postgres` | The administrator it connects as: a superuser, or a role with `CREATEROLE` and `CREATEDB` |
+| `--admin-database`       | `postgres` | The database the administrator connects to |
+| `--icu-locale`           | `und`      | The new database's collation, an ICU locale; `und` sorts language-neutral |
+| `--api-connection-limit` | `50`       | The API role's `CONNECTION LIMIT` |
+| `--first-account`        | none       | Email of an admin account to create at the end |
+| `--print-sql`            | off        | Print the steps as a psql script for a superuser, and do nothing |
+
+- **On a terminal it asks** for the server, the administrator, the names, the roles' passwords and the first account, each with the flag's value as its default; a flag given on the command line isn't asked for. Without a terminal it asks nothing and takes the flags.
+- **Passwords:** the administrator's comes from PostgreSQL's password file, else it is asked for. The roles' are asked for on a terminal; an empty answer, or no terminal, generates them. Before creating anything it says which were typed in and which generated; generated ones are printed once at the end, as lines for the password file. A role's password is sent as a SCRAM-SHA-256 hash made by `wtfd` (as psql's `\password` does), so the server's log never sees it; for that it must be printable ASCII, at least 8 characters.
+- **It checks first,** changing nothing: PostgreSQL 18 or newer, built with ICU; an administrator that may create roles and databases; no database or role of the new names.
+- **A failure while making the roles and the database removes them again** (`DROP DATABASE … WITH (FORCE)`, `DROP ROLE`), and says so. After that, the database stays: when the schema or the API role's test connection fails, typically for want of a `pg_hba.conf` line, it says what to add and to run `wtfd schema` once that works.
+- **An administrator that isn't a superuser** (as on managed PostgreSQL services) makes itself a member of the DBA role while it works (`WITH INHERIT FALSE, SET TRUE`), since only a member may make a role a database's owner, and leaves it again at the end.
+- **The test connections run from where `wtfd` runs.** When `wtfd serve` will run on another machine, `pg_hba.conf` must let that one in too.
+
+## The `install` action
+
+`wtfd install` sets WtF up on a Windows machine (README.md, "Installing on Windows"). It must run as an administrator, and refuses otherwise, saying how. On other systems it isn't there yet.
+
+1. **The programs:** run from the installed copy (`Program Files\WtF\bin\wtfd.exe`), it says there is nothing new to install, and how to upgrade, and goes on with the rest. Otherwise it stops the `wtfd` service if it runs, and copies `wtfd.exe`, and `wtf.exe` from the same folder, to `Program Files\WtF\bin`. A program in the way is renamed (`wtfd.exe.old-…`), as Windows lets a running program be renamed but not overwritten; the next run removes those. It adds the folder to the machine's PATH, and tells running programs so.
+2. **The data:** it makes `ProgramData\WtF` and the files directory (`--files-directory`, default `ProgramData\WtF\files`), open to Administrators and SYSTEM only, in place of ProgramData's permissions, which let every user create files. The service's own access is for setting up the service.
+3. **The database.** When `wtfd.conf` has its settings already (host, port, database and both roles), it takes them without asking, says which, and goes on as for one that is there, below; this works without a terminal too, as long as `pgpass.conf` has the passwords. Otherwise, on a terminal only, it asks whether it is there already, and its default is yes when `pgpass.conf` is there.
+   - **There:** it asks for the server, the database and both roles, connects as each, asking for a password only when `pgpass.conf` hasn't the right one, and brings the schema up to date, as `wtfd schema` does.
+   - **Not there:** it makes it, as `wtfd database create` does, with the same flags.
+4. **`ProgramData\WtF\pgpass.conf`** gets the passwords typed in or generated, both roles'. A line for the same server, database and role replaces the old one; other lines stay.
+5. **`ProgramData\WtF\wtfd.conf`,** the config file, gets what it knows: the database's server, name and roles, the files directory, and the address `serve` listens on, which it asks for (`--listen`; `127.0.0.1:8080`, this machine only, unless told otherwise). Keys it doesn't write, and comments, stay. On the next run, what the file has isn't asked for again, and the environment is ignored; `--reconfigure` asks for everything, with the file's values as the defaults, and a flag on the command line sets one value without asking.
+6. **It starts the service again** if it stopped it; when a step fails, the service stays stopped, and it says so.
+
+Both Program Files and ProgramData are asked of Windows (known folders), not assumed to be on `C:`.
+
+At the end, when there is no `wtfd` service yet, it offers to set one up, as `wtfd service install` does.
+
+## The `service` action
+
+`wtfd service install` runs `wtfd serve` as a Windows service, after `wtfd install`; `wtfd service uninstall` takes it away again. Both must run as an administrator. On other systems the action isn't there yet.
+
+`install`:
+
+1. **Checks** that `Program Files\WtF\bin\wtfd.exe` and `ProgramData\WtF\wtfd.conf` are there; the service always runs the installed program.
+2. **Registers the Event Log source** `wtfd` (with `EventCreate.exe` as its message file), so Event Viewer shows the entries as they are.
+3. **Creates the service,** or brings an existing one up to date, stopping it first: `wtfd`, "WtF server", running `"…\wtfd.exe" serve`; automatic, delayed start; as the virtual account `NT SERVICE\wtfd` (unrestricted service SID); restarted 5 s, 5 s and 60 s after a failure, counted afresh after a day, also when it stops with an error of its own (recovery actions on non-crash failures).
+4. **Gives the account its access,** in place of any it had: traverse (no listing) on `ProgramData\WtF`, read on `wtfd.conf` and `pgpass.conf`, and modify on the files directory and all in it. A DACL protected from inheritance (ProgramData\WtF's, a files directory elsewhere) stays protected.
+5. **The firewall:** when `listen` isn't a loopback address, it asks whether to add the inbound rule "WtF server" (TCP, that port, for `wtfd.exe`), replacing one from an earlier run; without a terminal, it prints the `netsh` command.
+6. **Starts the service,** waits until it runs, and asks `http://<listen>/api/health` (127.0.0.1 for a listen on all addresses) for up to 20 seconds. When that fails, it shows wtfd's last five Event Log entries.
+
+`uninstall` asks first, then stops the service, takes the account's access away (while the account still exists to be named), removes the service, the firewall rule and the Event Log source, and leaves the programs, the settings, the data and the log's entries.
+
+**The passwords:** for now, the service can read all of `pgpass.conf`, the DBA's password too. Whether `serve` should have only the API role's, and how `wtfd gc` is run on a schedule, is still open.
 
 ## The `gc` action
 
