@@ -11,7 +11,7 @@ What there is to build, what each part needs, and on which systems it can be bui
 | The Linux app | Flutter | Linux | a folder, packed as a `.deb` |
 | The macOS app | Flutter | macOS | `WtF.app` |
 | The iOS app | Flutter | macOS | `Runner.app`, for the simulator or, signed for development, for devices |
-| The Android app | Flutter | Windows, Linux or macOS | an `.apk` |
+| The Android app | Flutter | Windows, Linux or macOS | an `.apk`, signed with its own key |
 
 ## Tools
 
@@ -61,6 +61,7 @@ go build -tags webapp ./cmd/wtfd
 | `scripts/release.sh` | runs `build.sh`, and packs each system's `wtf`, `wtfd`, `LICENSE` and a README (`scripts/release-readme.txt`) into `dist/release/`: `.zip` for Windows, `.tar.gz` for Linux and macOS, with the programs executable |
 | `scripts/test.sh` | what CI checks: `gofmt`, `go vet` for every system, and the tests |
 | `scripts/ios-signing-setup.sh`, `scripts/ios-device.sh` | sign the iOS app for devices over SSH, build it, and install it; see [iOS](#ios) |
+| `scripts/android-signing-setup.sh`, `scripts/android-device.sh` | make the Android app's signing key, build the app, and install it by cable or Wi-Fi; see [Android](#android) |
 
 The version in a release's names is the app's, from `app/pubspec.yaml`.
 
@@ -94,7 +95,18 @@ Needs the Android SDK, with the NDK version Flutter asks for: the newer command-
 flutter build apk --release
 ```
 
-Into `app/build/app/outputs/flutter-apk/app-release.apk`, for Android 7.0 (API 24) and later. It is **signed with Flutter's debug key**, which is fine for installing directly, but not for Google Play; a signing key of its own is still to come.
+Into `app/build/app/outputs/flutter-apk/app-release.apk`, for Android 7.0 (API 24) and later.
+
+**Signing:** release builds are signed with the app's own key when Gradle finds it: `local/android/key.properties` (not in git), or the file `WTF_ANDROID_KEY_PROPERTIES` names, with the keystore beside it. `scripts/android-signing-setup.sh` makes them once, with a random password that nothing prints; it needs `keytool`, from a JDK (Android Studio's is found). Back that folder up: Android only updates an app with one signed by the same key, on devices and on Google Play. Without the key, the build is signed with the debug key of the machine at hand, which is fine for trying it out.
+
+**On a device:**
+
+```sh
+scripts/android-device.sh                    # a release build only
+scripts/android-device.sh <serial number>    # and install it on the device
+```
+
+The device is named by its serial number (`adb devices -l`, or Settings, About phone), and found by cable or over Wi-Fi. For Wi-Fi, turn on Developer options and, in them, **Wireless debugging** (Android 11 and later); pair the computer once with **Pair device with pairing code**, which shows an address and a code for `adb pair <address> <code>`. After that the script finds the device on the network by itself, as long as wireless debugging is on (Android turns it off after a restart, and on another network). The script installs, keeping the app's data, and doesn't start the app. An app signed with another key (the debug key, say) has to be uninstalled first, which loses its login.
 
 On Windows, Kotlin's incremental compilation is off (`kotlin.incremental=false` in `app/android/gradle.properties`): its caches fail when the project and Flutter's package cache are on different drives.
 
