@@ -453,3 +453,12 @@ Built for the API as the plan of 2 November 2026 left it ([2026-11-02-attributes
     - **Over Wi-Fi:** once paired by cable, the phone is reached over the network, so later installs need no cable.
     - **Not yet:** TestFlight and the App Store.
 86. **Me is called Account** (your choice): in the bar and the rail, and as the screen's title. What it shows is as before (your account, the server, your role, the appearance, your password, your sessions); the line with your email address is labelled Email rather than Account, as that is now the screen's name. Its address in the web app stays `/me`, as does the API's `GET /me`. The decisions above that say "Me" mean this screen.
+87. **A System look,** the new default, next to Teal and Orange (your idea and choices): close to the platform's own apps rather than Material's, which looked alien there. Teal and Orange stay as they were, and so does a device where one of them was chosen.
+    - **Why Material looked alien:** backgrounds, bars and cards tinted with the theme's colour, pill-shaped buttons and tab highlights, very round dialogs, ripples where you tap, and Material's text sizes.
+    - **iPhone, iPad and Mac:** iOS blue as the one accent, white (or black) pages with light grey bars and groups, titles in the middle of the top bar, a bottom bar like iOS's tab bar (the selected tab in blue, nothing behind it), San Francisco at Apple's sizes, corners of 10 and 14 points, filled grey text fields. Confirmations are Apple's own alerts, and switches Apple's own.
+    - **Windows:** Windows 11's default accent blue, a light grey page with white cards and fields with a line around them, corners of 4 and 8 pixels, Segoe UI at 14 points.
+    - **Linux:** GNOME's Adwaita: its blue, titles in the middle, grey fields, corners of 6 and 12 pixels.
+    - **Android:** Material as it is, which is Android's own look. The wallpaper's colours (Material You) would need the `dynamic_color` package, a new dependency; not for now.
+    - **Everywhere but Android:** no ripples, and surfaces without the accent's tint.
+    - **How:** one theme per platform in `lib/theme.dart`, built from Material's widgets, as the screens are the same everywhere; no Cupertino or Fluent widget sets, which would mean building every screen twice. The web app takes the look of the device the browser runs on. The accents are fixed per platform, not the one chosen in the system's settings. The forms' outlined text fields take the System look's borders.
+    - **Tests:** 56, with one for the System look on each platform.

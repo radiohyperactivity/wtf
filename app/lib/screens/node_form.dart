@@ -288,8 +288,7 @@ class _NodeFormState extends State<_NodeForm> {
                 ),
               ),
               const SizedBox(height: 8),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
+              SwitchTile(
                 title: const Text('Container'),
                 subtitle: Text(
                   _locations
@@ -300,8 +299,7 @@ class _NodeFormState extends State<_NodeForm> {
                 onChanged: _grid ? null : (v) => setState(() => _container = v),
               ),
               if (_locations && !editing) ...[
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
+                SwitchTile(
                   title: const Text('Compartment grid'),
                   subtitle: const Text(
                     'Also creates a compartment for every cell, named like spreadsheet cells: '

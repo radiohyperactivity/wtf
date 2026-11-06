@@ -678,8 +678,7 @@ Future<bool> showAttributeDialog(
                               ? 'An integer'
                               : null,
                         ),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
+                      SwitchTile(
                         title: const Text('Required'),
                         subtitle: const Text(
                           'Every item (or stock row) has a value; without a '

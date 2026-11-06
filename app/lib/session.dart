@@ -113,9 +113,11 @@ const idleChoices = <(String, Duration?)>[
 /// What the login offers first: 30 days.
 const defaultIdle = Duration(days: 30);
 
-/// The colour the app's theme is built from, light and dark: teal, the
-/// first one, or the logo's orange.
+/// The app's look, light and dark: System, the default, looks like the
+/// platform's own apps (lib/theme.dart); Teal and Orange are Material's,
+/// built from teal or the logo's orange.
 enum AppColour {
+  system('System'),
   teal('Teal'),
   orange('Orange');
 
@@ -155,8 +157,8 @@ class Session extends ChangeNotifier {
     await storage.writeTheme(mode.name);
   }
 
-  /// The colours the app's theme is built from; kept per device too.
-  AppColour colour = AppColour.teal;
+  /// The app's look; kept per device too.
+  AppColour colour = AppColour.system;
 
   Future<void> setColour(AppColour colour) async {
     this.colour = colour;
@@ -174,7 +176,7 @@ class Session extends ChangeNotifier {
         ThemeMode.system;
     colour =
         AppColour.values.asNameMap()[await storage.readColour()] ??
-        AppColour.teal;
+        AppColour.system;
     String? token;
     if (isWeb) {
       server = webOrigin;

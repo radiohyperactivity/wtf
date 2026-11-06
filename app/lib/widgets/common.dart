@@ -2,6 +2,7 @@
 
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -9,6 +10,7 @@ import 'package:provider/provider.dart';
 import '../api/client.dart';
 import '../api/input.dart';
 import '../session.dart';
+import '../theme.dart';
 import 'link.dart';
 
 /// The text to show for an error.
@@ -48,7 +50,8 @@ void showMessage(BuildContext context, String message) {
   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
 }
 
-/// Asks before something is done; true when confirmed.
+/// Asks before something is done; true when confirmed. In the System look
+/// on Apple devices, as Apple's own alert.
 Future<bool> confirm(
   BuildContext context, {
   required String title,
@@ -57,6 +60,33 @@ Future<bool> confirm(
   String action = 'Delete',
   bool destructive = true,
 }) async {
+  if (appleLook(context)) {
+    final body = content ?? (message == null ? null : Text(message));
+    final ok = await showCupertinoDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) => CupertinoAlertDialog(
+        title: Text(title),
+        // Material, for content made of Material's widgets.
+        content: body == null
+            ? null
+            : Material(type: MaterialType.transparency, child: body),
+        actions: [
+          CupertinoDialogAction(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          CupertinoDialogAction(
+            isDefaultAction: !destructive,
+            isDestructiveAction: destructive,
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(action),
+          ),
+        ],
+      ),
+    );
+    return ok ?? false;
+  }
   final ok = await showDialog<bool>(
     context: context,
     builder: (context) {
@@ -84,6 +114,42 @@ Future<bool> confirm(
     },
   );
   return ok ?? false;
+}
+
+/// A switch with a title, filling a form's width: Apple's own switch in the
+/// System look on Apple devices, Material's otherwise.
+class SwitchTile extends StatelessWidget {
+  const SwitchTile({
+    super.key,
+    required this.title,
+    this.subtitle,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final Widget title;
+  final Widget? subtitle;
+  final bool value;
+
+  /// Null makes the switch greyed out.
+  final ValueChanged<bool>? onChanged;
+
+  @override
+  Widget build(BuildContext context) => appleLook(context)
+      ? SwitchListTile.adaptive(
+          contentPadding: EdgeInsets.zero,
+          title: title,
+          subtitle: subtitle,
+          value: value,
+          onChanged: onChanged,
+        )
+      : SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: title,
+          subtitle: subtitle,
+          value: value,
+          onChanged: onChanged,
+        );
 }
 
 /// Asks before deleting [what] ("Delete Drill?"), saying that it can't be

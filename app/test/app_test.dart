@@ -633,17 +633,17 @@ void main() {
     expect(mode(), ThemeMode.light);
     expect(storage.theme, 'light');
 
-    // Teal, or the logo's orange, light and dark.
+    // System to start with, then the logo's orange, light and dark.
     Color primary() => tester
         .widget<MaterialApp>(find.byType(MaterialApp))
         .theme!
         .colorScheme
         .primary;
-    final teal = primary();
+    final system = primary();
     await tester.tap(find.text('Orange'));
     await tester.pumpAndSettle();
     expect(storage.colour, 'orange');
-    expect(primary(), isNot(teal));
+    expect(primary(), isNot(system));
     expect(
       tester
           .widget<MaterialApp>(find.byType(MaterialApp))
