@@ -349,16 +349,17 @@ func TestWebApp(t *testing.T) {
 func TestHealthAnswer(t *testing.T) {
 	started := time.Date(2026, 11, 6, 16, 30, 0, 500_000_000, time.FixedZone("CET", 3600))
 	got, _ := json.Marshal(healthAnswer(buildinfo.Info{
+		Version:  "0.1.0",
 		Build:    time.Date(2026, 11, 6, 14, 2, 11, 0, time.UTC),
 		Commit:   time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC),
 		Revision: "a188ffb0",
 	}, started))
-	want := `{"build":"2026-11-06T14:02:11Z","commit":"2026-11-05T09:00:00Z","revision":"a188ffb0","started":"2026-11-06T15:30:00Z","status":"ok"}`
+	want := `{"build":"2026-11-06T14:02:11Z","commit":"2026-11-05T09:00:00Z","revision":"a188ffb0","started":"2026-11-06T15:30:00Z","status":"ok","version":"0.1.0"}`
 	if string(got) != want {
 		t.Errorf("health answer\n%s\nwant\n%s", got, want)
 	}
 	got, _ = json.Marshal(healthAnswer(buildinfo.Info{}, started))
-	want = `{"build":null,"commit":null,"revision":null,"started":"2026-11-06T15:30:00Z","status":"ok"}`
+	want = `{"build":null,"commit":null,"revision":null,"started":"2026-11-06T15:30:00Z","status":"ok","version":null}`
 	if string(got) != want {
 		t.Errorf("health answer of a build without details\n%s\nwant\n%s", got, want)
 	}

@@ -452,6 +452,17 @@ class FakeServer {
         },
       );
     }
+    // Outside the API's versions, and without a login.
+    if (req.url.path == '/api/health') {
+      return _json({
+        'status': 'ok',
+        'version': '0.1.0',
+        'build': '2026-11-18T13:23:00Z',
+        'commit': '2026-11-18T13:00:00Z',
+        'revision': '70ef34d1a2b3c4d5e6f7',
+        'started': '2026-11-18T14:00:00Z',
+      });
+    }
     if (req.headers['Cookie'] != 'wtf_session=tok') {
       return _problem(401, 'Not authenticated');
     }

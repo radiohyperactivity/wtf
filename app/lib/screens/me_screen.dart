@@ -105,6 +105,7 @@ class MeScreen extends StatelessWidget {
                 ],
               ),
             ),
+            const _Versions(),
           ],
         ),
       ),
@@ -130,6 +131,80 @@ String _when(DateTime t) {
   ];
   String two(int n) => n.toString().padLeft(2, '0');
   return '${t.day} ${months[t.month - 1]} ${t.year}, ${two(t.hour)}:${two(t.minute)}';
+}
+
+/// The versions of this app and of the server, and when each was built;
+/// the server's also with the commit it was built from.
+class _Versions extends StatefulWidget {
+  const _Versions();
+
+  @override
+  State<_Versions> createState() => _VersionsState();
+}
+
+class _VersionsState extends State<_Versions> {
+  late final Future<ServerBuild> _server = context
+      .read<Session>()
+      .client
+      .serverBuild();
+
+  /// "0.1.0+1" as "0.1.0 (build 1)".
+  static String _version(String v) {
+    final (name, number) = switch (v.split('+')) {
+      [final n, final b] => (n, b),
+      _ => (v, null),
+    };
+    return number == null ? name : '$name (build $number)';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder(
+      future: _server,
+      builder: (context, snap) {
+        final server = snap.data;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SectionTitle('Versions'),
+            ListTile(
+              leading: const Icon(Icons.apps_outlined),
+              title: Text(
+                'App ${appVersion == null ? '(a development build)' : _version(appVersion!)}',
+              ),
+              subtitle: Text(
+                appBuild == null
+                    ? 'Build date not known'
+                    : 'Built ${_when(appBuild!)}',
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.dns_outlined),
+              title: Text(switch (server?.version) {
+                final v? => 'Server $v',
+                _ when server == null => 'Server',
+                _ => 'Server (a development build)',
+              }),
+              subtitle: Text(
+                snap.hasError
+                    ? errorText(snap.error!)
+                    : server == null
+                    ? 'Asking the server…'
+                    : [
+                        server.build == null
+                            ? 'Build date not known'
+                            : 'Built ${_when(server.build!)}',
+                        if (server.revision case final r?)
+                          'commit ${r.substring(0, r.length < 7 ? r.length : 7)}'
+                              '${server.commit == null ? '' : ' of ${_when(server.commit!)}'}',
+                      ].join(' · '),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
 }
 
 /// The account's sessions: each device logged in, since when, last used

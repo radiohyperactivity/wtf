@@ -27,7 +27,7 @@ for a in adb "${ANDROID_HOME:-}/platform-tools/adb" \
     if command -v "$a" > /dev/null 2>&1; then adb=$a; fi
 done
 
-"${FLUTTER:-flutter}" build apk --release
+../scripts/app-build.sh apk --release
 [ $# -gt 0 ] || exit 0
 want=$1
 if [ -z "$adb" ]; then

@@ -250,6 +250,15 @@ class ApiClient {
   /// GET /me: the logged-in account.
   Future<Me> me() async => Me.fromJson(await _call('GET', '/me') as Json);
 
+  /// GET /api/health, outside the API's versions: which build of wtfd
+  /// answers.
+  Future<ServerBuild> serverBuild() async {
+    final req = http.Request('GET', server.resolve('/api/health'))
+      ..headers['Accept'] = 'application/json';
+    final resp = await _send(req);
+    return ServerBuild.fromJson(jsonDecode(resp.body) as Json);
+  }
+
   /// POST /logout: ends the session.
   Future<void> logout() => _call('POST', '/logout');
 

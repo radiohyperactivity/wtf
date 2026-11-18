@@ -21,7 +21,7 @@ if [ ! -f "$keychain" ] || [ ! -f "$password_file" ]; then
 fi
 security unlock-keychain -p "$(cat "$password_file")" "$keychain"
 
-"${FLUTTER:-flutter}" build ios --release
+../scripts/app-build.sh ios --release
 
 if [ $# -gt 0 ]; then
     xcrun devicectl device install app --device "$1" build/ios/iphoneos/Runner.app

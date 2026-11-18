@@ -290,14 +290,14 @@ When the database knows what to do about an error, a `hint` says so, e.g. what t
 
 ### Which build runs
 
-`GET /api/health` says which build answers, and since when, besides that the database is reachable. It needs no login, like the rest of `/api/health`:
+`GET /api/health` says which build answers, and since when, besides that the database is reachable. It needs no login, like the rest of `/api/health`. The apps show it under Account:
 
 ```json
-{"status": "ok", "build": "2026-11-06T14:02:11Z", "commit": "2026-11-05T09:00:00Z",
+{"status": "ok", "version": "0.1.0", "build": "2026-11-06T14:02:11Z", "commit": "2026-11-05T09:00:00Z",
  "revision": "a188ffbd98669db5ec5af31263844213c1f62c14", "started": "2026-11-06T15:30:00Z"}
 ```
 
-- **`build`:** when `wtfd` was built. Go doesn't record that, so `scripts/build.sh` stamps it (`-ldflags -X …/internal/buildinfo.date=…`); a plain `go build` or `go install` has none, and says null.
+- **`version`** and **`build`:** the version of `wtfd`, which is the app's (`app/pubspec.yaml`, without the build number), and when it was built. Go records neither, so `scripts/build.sh` stamps them (`-ldflags -X …/internal/buildinfo.version=… -X …/internal/buildinfo.date=…`); a plain `go build` or `go install` has none, and says null.
 - **`commit`** and **`revision`:** when the commit it was built from was made, and its ID, as Go records them when it builds in a git checkout (`vcs.time`, `vcs.revision`); null outside one.
 - **`started`:** when this `wtfd serve` started.
 - Times are RFC 3339 in UTC, to the second (`internal/buildinfo`, `healthAnswer` in `internal/serve`).
@@ -345,7 +345,7 @@ Every route calls one function ([API.md](API.md) has them all); a body's fields 
 
 | Method & path | Function | Body / query |
 |---------------|----------|--------------|
-| `GET /api/health` | `SELECT 1` | – (200 with `{status, build, commit, revision, started}`, or 503 if the database is unreachable) |
+| `GET /api/health` | `SELECT 1` | – (200 with `{status, version, build, commit, revision, started}`, or 503 if the database is unreachable) |
 | `GET /openapi` | – | – (the embedded OpenAPI description, JSON or YAML) |
 | `POST /model/import` | `model.import` | a model file ([seed/model-format.md](seed/model-format.md)); `?parent=&dry_run=true` |
 | `GET /classes` | `class.list` | `If-None-Match` |

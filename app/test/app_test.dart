@@ -156,6 +156,19 @@ void main() {
     expect(find.text('Logged out 1 other session.'), findsOneWidget);
     expect(find.text('WtF on Android'), findsNothing);
 
+    // The versions, at the end: this test's app is built without the
+    // scripts' stamp.
+    await tester.scrollUntilVisible(
+      find.text('Server 0.1.0'),
+      200,
+      scrollable: find.byType(Scrollable).last,
+    );
+    expect(find.text('App (a development build)'), findsOneWidget);
+    expect(
+      find.textContaining('commit 70ef34d of 18 Nov 2026'),
+      findsOneWidget,
+    );
+
     // A new password: the other devices are logged out, unless unticked.
     clearMessages(tester);
     await tester.pumpAndSettle();

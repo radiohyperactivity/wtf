@@ -48,6 +48,34 @@ class Me {
   final Role role;
 }
 
+/// Which build of wtfd answers (GET /api/health): its version, when it was
+/// built, and the commit it was built from. Each is null when the server
+/// doesn't know it, as with a build made without scripts/build.sh.
+class ServerBuild {
+  const ServerBuild({this.version, this.build, this.commit, this.revision});
+
+  factory ServerBuild.fromJson(Json json) => ServerBuild(
+    version: json['version'] as String?,
+    build: DateTime.tryParse(json['build'] as String? ?? '')?.toLocal(),
+    commit: DateTime.tryParse(json['commit'] as String? ?? '')?.toLocal(),
+    revision: json['revision'] as String?,
+  );
+
+  final String? version;
+  final DateTime? build;
+  final DateTime? commit;
+  final String? revision;
+}
+
+/// This app's version ("0.1.0+1") and when it was built, as
+/// scripts/app-build.sh stamps them; null in a build made without it.
+const String? appVersion = bool.hasEnvironment('WTF_VERSION')
+    ? String.fromEnvironment('WTF_VERSION')
+    : null;
+final DateTime? appBuild = DateTime.tryParse(
+  const String.fromEnvironment('WTF_BUILD'),
+)?.toLocal();
+
 /// One of the account's sessions (GET /me/sessions): a device logged in.
 class SessionInfo {
   const SessionInfo({

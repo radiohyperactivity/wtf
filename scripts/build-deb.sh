@@ -10,7 +10,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-(cd app && flutter build linux --release)
+scripts/app-build.sh linux --release
 
 version=$(sed -n 's/^version: *//p' app/pubspec.yaml)
 description=$(sed -n 's/^description: *"\(.*\)"$/\1/p' app/pubspec.yaml)

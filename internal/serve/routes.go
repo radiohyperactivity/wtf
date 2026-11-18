@@ -423,8 +423,8 @@ func (s *server) health(w http.ResponseWriter, r *http.Request) error {
 }
 
 // healthAnswer is what /api/health answers: that all is well, which build
-// this is, and since when it runs. A time or revision that isn't known is
-// null; times are RFC 3339 in UTC, to the second.
+// this is, and since when it runs. A version, time or revision that isn't
+// known is null; times are RFC 3339 in UTC, to the second.
 func healthAnswer(info buildinfo.Info, started time.Time) map[string]any {
 	when := func(t time.Time) any {
 		if t.IsZero() {
@@ -432,15 +432,18 @@ func healthAnswer(info buildinfo.Info, started time.Time) map[string]any {
 		}
 		return t.UTC().Truncate(time.Second).Format(time.RFC3339)
 	}
-	var revision any
-	if info.Revision != "" {
-		revision = info.Revision
+	known := func(s string) any {
+		if s == "" {
+			return nil
+		}
+		return s
 	}
 	return map[string]any{
 		"status":   "ok",
+		"version":  known(info.Version),
 		"build":    when(info.Build),
 		"commit":   when(info.Commit),
-		"revision": revision,
+		"revision": known(info.Revision),
 		"started":  when(started),
 	}
 }

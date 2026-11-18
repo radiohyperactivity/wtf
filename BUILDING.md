@@ -59,15 +59,16 @@ go build -tags webapp ./cmd/wtfd
 |--------|------|
 | `scripts/build.sh` | builds the web app, then `wtf` and `wtfd` (with the web app) for Linux, Windows and macOS, amd64 and arm64, into `dist/<os>-<arch>/`; `NO_WEB_APP=1` leaves the web app out |
 | `scripts/release.sh` | runs `build.sh`, and packs each system's `wtf`, `wtfd`, `LICENSE` and a README (`scripts/release-readme.txt`) into `dist/release/`: `.zip` for Windows, `.tar.gz` for Linux and macOS, with the programs executable |
+| `scripts/app-build.sh` | runs `flutter build` in `app/` with its arguments (`scripts/app-build.sh windows --release`), stamped with the app's version and the time of the build, which the app shows under Account; the other scripts build the app with it |
 | `scripts/test.sh` | what CI checks: `gofmt`, `go vet` for every system, and the tests |
 | `scripts/ios-signing-setup.sh`, `scripts/ios-device.sh` | sign the iOS app for devices over SSH, build it, and install it; see [iOS](#ios) |
 | `scripts/android-signing-setup.sh`, `scripts/android-device.sh` | make the Android app's signing key, build the app, and install it by cable or Wi-Fi; see [Android](#android) |
 
-The version in a release's names is the app's, from `app/pubspec.yaml`.
+The version in a release's names is the app's, from `app/pubspec.yaml`. `build.sh` stamps it, and the time of the build, into `wtfd`, which `/api/health` gives and the app shows under Account.
 
 ## The apps
 
-All are built in `app/`, with `flutter build <platform> --release` (or `fvm flutter …`). A platform's app can only be built on that platform, except Android's; and only for the machine's own processor, except macOS's, which is built for both Apple silicon and Intel.
+All are built in `app/`, with `flutter build <platform> --release` (or `fvm flutter …`). `scripts/app-build.sh <platform> --release` does the same, and stamps the build with the app's version (`app/pubspec.yaml`) and the time, which the app shows under Account; a build without it says it is a development build. A platform's app can only be built on that platform, except Android's; and only for the machine's own processor, except macOS's, which is built for both Apple silicon and Intel.
 
 ### Web
 

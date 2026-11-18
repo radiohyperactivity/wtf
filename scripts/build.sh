@@ -15,16 +15,18 @@ cd "$(dirname "$0")/.."
 tags=""
 if [ -z "${NO_WEB_APP:-}" ]; then
     # No CDN: wtfd's Content Security Policy only allows its own files.
-    (cd app && "${FLUTTER:-flutter}" build web --release --no-web-resources-cdn)
+    scripts/app-build.sh web --release --no-web-resources-cdn
     rm -rf internal/webapp/dist
     cp -r app/build/web internal/webapp/dist
     tags=webapp
     echo "built the web app"
 fi
 
-# When it was built, for wtfd's /api/health (internal/buildinfo); Go
-# records the commit itself.
-ldflags="-X github.com/radiohyperactivity/wtf/internal/buildinfo.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+# Its version (the app's) and when it was built, for wtfd's /api/health
+# (internal/buildinfo); Go records the commit itself.
+version=$(sed -n 's/^version: *\([^+]*\).*/\1/p' app/pubspec.yaml)
+ldflags="-X github.com/radiohyperactivity/wtf/internal/buildinfo.version=$version"
+ldflags="$ldflags -X github.com/radiohyperactivity/wtf/internal/buildinfo.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 for target in linux/amd64 linux/arm64 windows/amd64 windows/arm64 darwin/amd64 darwin/arm64; do
     os=${target%/*}
