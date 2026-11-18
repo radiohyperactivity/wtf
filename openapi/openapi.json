@@ -3,7 +3,7 @@
   "info": {
     "title": "WtF API",
     "version": "1",
-    "description": "Version 1 of the API, served under /api/v1. Within a version the API only\ngrows (new routes, optional fields, fields in answers); every answer names\nthe current revision in the `API-Revision` header. A breaking change would\nbecome /api/v2, served next to /api/v1 for a while. A request for a\nversion the server doesn't serve gets an `unsupported-api-version`\nproblem that lists the versions it does serve (`supported`). The\nrefactors of 2026-11-01 and 2026-11-02 changed /api/v1 in place, and its\nrevision started again at 1 (WTFD.md, \"Versions\").\n\nWhere to Find: a register of the things you own and where they are.\nEvery endpoint calls one database function; see API.md for the semantics\nand WTFD.md for the HTTP conventions. One server is one installation.\n\n- A class has attributes, its own and those it inherits. An item's and a\n  stock row's values are a JSON object by attribute name (`values`), with\n  the names of those that follow the class's default (`defaulted`).\n- Everything has UUIDs as ids; attributes are named.\n- Every account has a role (ACCOUNTS.md): a `viewer` reads everything\n  but the accounts; a `user` also changes items and stock rows (with\n  their values and files); an `admin` also sets up locations and classes\n  with their attributes, imports and exports model files, and manages\n  accounts. A request the role doesn't allow gets 403.\n- A field the server needs is required in a request body, even if as\n  null; nothing is assumed.\n- Lists are paged by key: a page answers `more` and, when there is more,\n  `next`, the `after` of the next page. They give no total.\n- Errors are RFC 9457 problem details (`application/problem+json`).\n- `GET /classes` and `GET /locations` support `ETag` / `If-None-Match`.\n- POST /login sets the session cookie `wtf_session` (HttpOnly,\n  SameSite=Strict, Path=/api); send it back with every request. Only\n  /api/health, /api/v1/openapi and /login work without it; a request\n  without it gets 401 at once. Requests that change something are\n  refused (403) when their Origin header names another site.\n"
+    "description": "Version 1 of the API, served under /api/v1. Within a version the API only\ngrows (new routes, optional fields, fields in answers); every answer names\nthe current revision in the `API-Revision` header. A breaking change would\nbecome /api/v2, served next to /api/v1 for a while. A request for a\nversion the server doesn't serve gets an `unsupported-api-version`\nproblem that lists the versions it does serve (`supported`). The\nrefactors of 2026-11-01 and 2026-11-02 changed /api/v1 in place, and its\nrevision started again at 1; on 2026-11-08 a stock row lost its reference\nand serial in place too (WTFD.md, \"Versions\").\n\nWhere to Find: a register of the things you own and where they are.\nEvery endpoint calls one database function; see API.md for the semantics\nand WTFD.md for the HTTP conventions. One server is one installation.\n\n- A class has attributes, its own and those it inherits. An item's and a\n  stock row's values are a JSON object by attribute name (`values`), with\n  the names of those that follow the class's default (`defaulted`).\n- Everything has UUIDs as ids; attributes are named.\n- Every account has a role (ACCOUNTS.md): a `viewer` reads everything\n  but the accounts; a `user` also changes items and stock rows (with\n  their values and files); an `admin` also sets up locations and classes\n  with their attributes, imports and exports model files, and manages\n  accounts. A request the role doesn't allow gets 403.\n- A field the server needs is required in a request body, even if as\n  null; nothing is assumed.\n- Lists are paged by key: a page answers `more` and, when there is more,\n  `next`, the `after` of the next page. They give no total.\n- Errors are RFC 9457 problem details (`application/problem+json`).\n- `GET /classes` and `GET /locations` support `ETag` / `If-None-Match`.\n- POST /login sets the session cookie `wtf_session` (HttpOnly,\n  SameSite=Strict, Path=/api); send it back with every request. Only\n  /api/health, /api/v1/openapi and /login work without it; a request\n  without it gets 401 at once. Requests that change something are\n  refused (403) when their Origin header names another site.\n"
   },
   "servers": [
     {
@@ -685,7 +685,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Words that must each occur, letter case ignored, in the reference or the serial."
+            "description": "Words that must each occur, letter case ignored, in the row's text, url and choice values."
           },
           {
             "$ref": "#/components/parameters/Limit"
@@ -749,18 +749,6 @@
                     ],
                     "description": "In the item's unit; null: present, not counted."
                   },
-                  "reference": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "serial": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
                   "values": {
                     "allOf": [
                       {
@@ -774,8 +762,6 @@
                   "item",
                   "location",
                   "amount",
-                  "reference",
-                  "serial",
                   "values"
                 ]
               }
@@ -847,18 +833,6 @@
                       "null"
                     ],
                     "description": "In the item's unit; null: not counted."
-                  },
-                  "reference": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "serial": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
                   },
                   "photo": {
                     "type": "null",
@@ -1469,7 +1443,7 @@
       ],
       "post": {
         "summary": "Merge (part of) a stock row into another row of the same item",
-        "description": "Adds the amount (null: all of it) to the row \"into\", which may be at another location. Both rows must be of the same item and counted. Where they differ (reference, serial, photo, or a value), resolve must say which row's to keep for each, or the merge is refused (422, naming the differences). Merging all of it deletes the row, whose label then answers 410. Answers \"into\".",
+        "description": "Adds the amount (null: all of it) to the row \"into\", which may be at another location. Both rows must be of the same item and counted. Where they differ (photo, or a value), resolve must say which row's to keep for each, or the merge is refused (422, naming the differences). Merging all of it deletes the row, whose label then answers 410. Answers \"into\".",
         "operationId": "stockMerge",
         "requestBody": {
           "required": true,
@@ -1494,7 +1468,7 @@
                       "object",
                       "null"
                     ],
-                    "description": "{\"reference\": \"from\" | \"into\", \"serial\": …, \"photo\": …, \"values\": {\"<name>\": \"from\" | \"into\"}}"
+                    "description": "{\"photo\": \"from\" | \"into\", \"values\": {\"<name>\": \"from\" | \"into\"}}"
                   }
                 },
                 "required": [
@@ -2522,7 +2496,7 @@
             "properties": {
               "name": {
                 "type": "string",
-                "description": "Not the name of a fixed field: id, code, name, class, unit, photo, item, location, amount, reference or serial."
+                "description": "Not the name of a fixed field: id, code, name, class, unit, photo, item, location or amount."
               },
               "class": {
                 "allOf": [
@@ -2793,18 +2767,6 @@
               "null"
             ],
             "description": "In the item's unit (whole for pieces); null: present, not counted."
-          },
-          "reference": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "serial": {
-            "type": [
-              "string",
-              "null"
-            ]
           },
           "photo": {
             "oneOf": [

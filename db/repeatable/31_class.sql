@@ -75,7 +75,7 @@ BEGIN
         PERFORM error.invalid('An attribute''s name can be at most 100 characters');
     END IF;
     IF lower(btrim(p_name)) = ANY (ARRAY['id', 'code', 'name', 'class', 'unit', 'photo', 'item', 'location',
-                                         'amount', 'reference', 'serial']) THEN
+                                         'amount']) THEN
         PERFORM error.invalid(format('"%s" is the name of a fixed field of items or stock rows; '
                                      'an attribute needs another name', btrim(p_name)));
     END IF;

@@ -58,7 +58,7 @@ The file is a JSON object (UTF-8):
 | `attributes` | optional | The attributes it defines, by name, each a definition as [api/attribute.md](../api/attribute.md) describes: `scope`, `type`, `required`, `unit`, `default`, `choices`, `media` and `order`. |
 | `classes` | optional | The classes below it, of the same form. |
 
-A class's attributes are inherited by the classes below it, and a class can't define a name it inherits. An attribute's name can't be that of a fixed field (`name`, `class`, `unit`, `photo`, `amount`, `reference`, `serial`, …). Any key that isn't in these tables is refused.
+A class's attributes are inherited by the classes below it, and a class can't define a name it inherits. An attribute's name can't be that of a fixed field (`name`, `class`, `unit`, `photo`, `amount`, …). Any key that isn't in these tables is refused.
 
 ## Importing
 

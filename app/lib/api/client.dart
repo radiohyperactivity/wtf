@@ -382,7 +382,7 @@ class ApiClient {
   // --- Stock ---
 
   /// GET /stock: rows of one item, at a location and everything below it,
-  /// or with [search] in their reference or serial; by item name.
+  /// or with [search] in their text, url and choice values; by item name.
   Future<ResultPage<Stock>> stockList({
     String? itemId,
     String? locationId,
@@ -413,8 +413,6 @@ class ApiClient {
     required String itemId,
     required String locationId,
     Decimal? amount,
-    String? reference,
-    String? serial,
     Values values = const {},
   }) async => Stock.fromJson(
     await _call(
@@ -424,15 +422,13 @@ class ApiClient {
         'item': itemId,
         'location': locationId,
         'amount': amount,
-        'reference': reference,
-        'serial': serial,
         'values': values,
       },
     ) as Json,
   );
 
   /// PATCH /stock/{id}: any of item, location, amount (null: uncounted),
-  /// reference, serial, photo (null only), values and default.
+  /// photo (null only), values and default.
   Future<Stock> patchStock(String id, Json changes) async =>
       Stock.fromJson(await _call('PATCH', '/stock/$id', body: changes) as Json);
 
@@ -452,8 +448,7 @@ class ApiClient {
 
   /// Adds all of a row, or [amount] of it, to the row [into]; [resolve]
   /// says, for each difference between them, which row's to keep: {
-  /// "reference": "from" | "into", "serial": …, "photo": …, "values":
-  /// {name: …}}. Answers [into].
+  /// "photo": "from" | "into", "values": {name: …}}. Answers [into].
   Future<Stock> mergeStock(
     String id,
     String into, {

@@ -95,6 +95,7 @@ func TestCLI(t *testing.T) {
 	c.ok("class", "add", "Screws", "--parent", "Hardware")
 	c.ok("class", "attribute", "add", "Hardware", "Colour", "--type", "choice", "--choices", "Red,Blue")
 	c.ok("class", "attribute", "add", "Hardware", "Lot", "--type", "text", "--stock")
+	c.ok("class", "attribute", "add", "Hardware", "Serial", "--type", "text", "--stock")
 	c.ok("class", "attribute", "add", "Hardware", "Manual", "--type", "attachment", "--media", "text/*")
 	contains(t, c.ok("class", "attribute", "add", "Screws", "Length", "--type", "decimal", "--unit", "mm", "--default", "12"),
 		"Length", "mm", "12")
@@ -145,7 +146,7 @@ func TestCLI(t *testing.T) {
 	contains(t, c.ok("stock", "list", "--search", "sn-1"), "M4 screw")
 	c.ok("stock", "set", "M4 screw@Garage", "--lot", "B2", "--no-serial")
 	_, stderr = c.run(1, "", "stock", "merge", "M4 screw@Garage", "M4 screw@Garage/Shelf 2")
-	contains(t, stderr, "differ", "serial", "Lot", "--keep")
+	contains(t, stderr, "differ", "Serial", "Lot", "--keep")
 	contains(t, c.ok("stock", "merge", "M4 screw@Garage", "M4 screw@Garage/Shelf 2", "--keep", "serial=into", "--keep", "lot=from"),
 		"100", "B2", "SN-1")
 	_, stderr = c.run(1, "", "stock", "get", "M4 screw@Garage")

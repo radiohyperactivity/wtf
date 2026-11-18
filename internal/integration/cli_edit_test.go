@@ -69,8 +69,8 @@ func TestCLIEdit(t *testing.T) {
 
 	// Stock form.
 	c.ok("stock", "add", "M3x10", "Garage/Shelf", "5")
-	out, _ = c.interact([]string{clear + "8\r", "\r", "PO-7\r", "\r"}, false, "stock", "edit", "M3x10")
-	contains(t, out, "Amount:     8", "Garage/Shelf", "Reference:  PO-7")
+	out, _ = c.interact([]string{clear + "8\r", "\r"}, false, "stock", "edit", "M3x10")
+	contains(t, out, "Amount:    8", "Garage/Shelf")
 
 	// Location form.
 	out, _ = c.interact([]string{clear + "Shelf A\r", "\r", "\r"}, false, "location", "edit", "Garage/Shelf")

@@ -13,8 +13,8 @@ import '../widgets/value_fields.dart';
 
 /// Adds a stock row (of [itemId] and at [locationId], when given), or edits
 /// the row with [code]. Like `wtf stock add` and `wtf stock edit`: item,
-/// location, amount (empty: uncounted), reference and serial, then the
-/// values of the class's stock attributes.
+/// location and amount (empty: uncounted), then the values of the class's
+/// stock attributes.
 class StockFormScreen extends StatelessWidget {
   const StockFormScreen({
     super.key,
@@ -90,10 +90,6 @@ class _StockFormState extends State<_StockForm> {
         ? ''
         : formatNumber(widget.stock!.amount!),
   );
-  late final _reference = TextEditingController(
-    text: widget.stock?.reference ?? '',
-  );
-  late final _serial = TextEditingController(text: widget.stock?.serial ?? '');
   late ItemDetail? _item = widget.item;
   late String? _locationId =
       widget.stock?.location ?? _usable(widget.locationId);
@@ -118,8 +114,6 @@ class _StockFormState extends State<_StockForm> {
   @override
   void dispose() {
     _amount.dispose();
-    _reference.dispose();
-    _serial.dispose();
     for (final i in _inputs) {
       i.dispose();
     }
@@ -181,9 +175,6 @@ class _StockFormState extends State<_StockForm> {
     if (id != null) setState(() => _locationId = id);
   }
 
-  static String? _text(TextEditingController c) =>
-      c.text.trim().isEmpty ? null : c.text.trim();
-
   Future<void> _save() async {
     if (_busy || _loading) return;
     final item = _item;
@@ -199,16 +190,12 @@ class _StockFormState extends State<_StockForm> {
     setState(() => _busy = true);
     try {
       final amount = AmountField.parse(_amount, item.unit);
-      final reference = _text(_reference);
-      final serial = _text(_serial);
       final stock = widget.stock;
       if (stock == null) {
         final created = await _client.createStock(
           itemId: item.id,
           locationId: location,
           amount: amount,
-          reference: reference,
-          serial: serial,
           values: newValues(_inputs),
         );
         if (mounted) {
@@ -229,8 +216,6 @@ class _StockFormState extends State<_StockForm> {
         ..addAll({
           if (location != stock.location) 'location': location,
           if (!sameNumber(amount, stock.amount)) 'amount': amount,
-          if (reference != stock.reference) 'reference': reference,
-          if (serial != stock.serial) 'serial': serial,
         });
       if (changes.isNotEmpty) await _client.patchStock(stock.id, changes);
       if (mounted) {
@@ -325,23 +310,6 @@ class _StockFormState extends State<_StockForm> {
                 const SizedBox(height: 16),
                 AmountField(controller: _amount, unit: item.unit),
               ],
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _reference,
-                decoration: const InputDecoration(
-                  labelText: 'Reference',
-                  helperText: 'An order number, a receipt …',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _serial,
-                decoration: const InputDecoration(
-                  labelText: 'Serial number',
-                  border: OutlineInputBorder(),
-                ),
-              ),
               if (_loadError != null) ...[
                 const SizedBox(height: 16),
                 Text(

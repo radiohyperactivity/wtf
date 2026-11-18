@@ -131,7 +131,7 @@ func TestAttributes(t *testing.T) {
 			t.Fatal("the name changed with a refused patch")
 		}
 		user.must(t, "item.patch", drill, js(obj("values", obj("Length", 120))))
-		_, err = admin.call(t, "class.attribute_add", tools, "Serial", js(obj("scope", "item", "type", "text")), false)
+		_, err = admin.call(t, "class.attribute_add", tools, "Amount", js(obj("scope", "item", "type", "text")), false)
 		wantState(t, err, "22023", "fixed field")
 	})
 
@@ -234,7 +234,7 @@ func TestItemListPagesAndFilters(t *testing.T) {
 		item := user.id(t, "item.create", parts, fmt.Sprintf("Part %d", i), nil,
 			js(obj("Size", i, "Kind", kind, "Made", fmt.Sprintf("2026-01-%02d", i))))
 		if i == 7 {
-			user.must(t, "stock.create", item, shelf, 1, nil, nil, js(obj("Lot", "L-77")))
+			user.must(t, "stock.create", item, shelf, 1, js(obj("Lot", "L-77")))
 		}
 	}
 	// Two of the same name, which paging keeps apart by id.
@@ -295,35 +295,37 @@ func TestStockValuesAndMerge(t *testing.T) {
 	admin, user := at.admin, at.user
 	cables := admin.id(t, "class.create", "Cables", nil, false)
 	addAttribute(t, admin, cables, "Colour", obj("scope", "stock", "type", "text", "default", "Black"))
+	addAttribute(t, admin, cables, "Order", obj("scope", "stock", "type", "text"))
 	shelf := admin.id(t, "location.create", "Shelf", nil, false, nil, nil, nil)
 	box := admin.id(t, "location.create", "Box", nil, false, nil, nil, nil)
 	cable := user.id(t, "item.create", cables, "Cable", "m", js(obj()))
 	pieces := user.id(t, "item.create", cables, "Plug", nil, js(obj()))
 
-	a := user.must(t, "stock.create", cable, shelf, 12.5, "PO-1", nil, js(obj()))
-	sameJSON(t, "default on stock", get(t, a, "values"), obj("Colour", "Black"))
-	_, err := user.call(t, "stock.create", pieces, shelf, 1.5, nil, nil, js(obj()))
+	a := user.must(t, "stock.create", cable, shelf, 12.5, js(obj("Order", "PO-1")))
+	sameJSON(t, "default on stock", get(t, a, "values"), obj("Colour", "Black", "Order", "PO-1"))
+	_, err := user.call(t, "stock.create", pieces, shelf, 1.5, js(obj()))
 	wantState(t, err, "23514", "counted in pieces")
 
 	split := user.must(t, "stock.move", str(t, a, "id"), box, 2.5)
-	if str(t, split, "reference") != "PO-1" || num(t, split, "amount") != 2.5 {
+	if str(t, split, "values", "Order") != "PO-1" || num(t, split, "amount") != 2.5 {
 		t.Fatalf("split: %v", split)
 	}
-	b := user.must(t, "stock.create", cable, box, 1, "PO-2", "SN-9", js(obj("Colour", "Red")))
+	b := user.must(t, "stock.create", cable, box, 1, js(obj("Colour", "Red", "Order", "PO-2")))
 
 	_, err = user.call(t, "stock.merge", str(t, b, "id"), str(t, split, "id"), nil, nil)
-	wantState(t, err, "23514", "differ in reference, serial, values.Colour")
+	wantState(t, err, "23514", "differ in values.Colour, values.Order")
 	r := user.must(t, "stock.merge", str(t, b, "id"), str(t, split, "id"), nil,
-		js(obj("reference", "into", "serial", "from", "values", obj("Colour", "from"))))
-	if num(t, r, "amount") != 3.5 || str(t, r, "serial") != "SN-9" || str(t, r, "reference") != "PO-1" {
+		js(obj("values", obj("Colour", "from", "Order", "into"))))
+	if num(t, r, "amount") != 3.5 {
 		t.Fatalf("merged: %v", r)
 	}
-	sameJSON(t, "merged values", get(t, r, "values"), obj("Colour", "Red"))
+	sameJSON(t, "merged values", get(t, r, "values"), obj("Colour", "Red", "Order", "PO-1"))
 	if _, err := user.call(t, "stock.get", str(t, b, "id")); sqlState(err) != "P0002" {
 		t.Fatalf("merged row still there: %v", err)
 	}
 
-	page := at.viewer.must(t, "stock.list", nil, nil, "sn-9", 100, nil)
+	// Every word in the values: Red and PO-1 are both only in the merged row.
+	page := at.viewer.must(t, "stock.list", nil, nil, "red po-1", 100, nil)
 	if len(get(t, page, "rows").([]any)) != 1 {
 		t.Fatalf("stock search: %v", page)
 	}

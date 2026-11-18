@@ -8,7 +8,6 @@ import '../api/input.dart';
 import '../session.dart';
 import '../widgets/files.dart';
 import '../widgets/common.dart';
-import 'item_screen.dart' show stockMarks;
 import 'node_delete.dart';
 
 /// Stock rows shown on a location screen at most; more are counted.
@@ -235,13 +234,7 @@ class _StockRow extends StatelessWidget {
         icon: Icons.inventory_2_outlined,
       ),
       title: Text(stock.item.name),
-      subtitle: Text(
-        [
-          stock.code,
-          ?place,
-          stockMarks(stock),
-        ].where((t) => t.isNotEmpty).join('  ·  '),
-      ),
+      subtitle: Text([stock.code, ?place].join('  ·  ')),
       trailing: Text(stock.amountText),
       onTap: onTap,
     );

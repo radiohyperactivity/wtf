@@ -152,8 +152,6 @@ const fixedFields = {
   'item',
   'location',
   'amount',
-  'reference',
-  'serial',
 };
 
 /// An attribute of a class: its own, or one it inherits from the class
@@ -610,8 +608,6 @@ class Stock {
     required this.item,
     required this.location,
     this.amount,
-    this.reference,
-    this.serial,
     this.photo,
     this.values = const {},
     this.defaulted = const {},
@@ -627,8 +623,6 @@ class Stock {
         : item!,
     location: json['location'] as String,
     amount: json['amount'] as num?,
-    reference: json['reference'] as String?,
-    serial: json['serial'] as String?,
     photo: FileRef.photo('/stock/${json['id']}', json['photo']),
     values: _values(json['values']),
     defaulted: _strings(json['defaulted']).toSet(),
@@ -641,8 +635,6 @@ class Stock {
 
   /// In the item's unit; null: there, but not counted.
   final num? amount;
-  final String? reference;
-  final String? serial;
   final FileRef? photo;
 
   /// Not in list rows (GET /stock).

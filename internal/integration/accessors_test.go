@@ -326,7 +326,7 @@ func TestAccessorDeleting(t *testing.T) {
 	drills := admin.id(t, "class.create", "Drills", tools, false)
 	shed := admin.id(t, "location.create", "Shed", nil, false, nil, nil, nil)
 	drill := user.id(t, "item.create", drills, "Drill", nil, "{}")
-	stock := user.id(t, "stock.create", drill, shed, 1, nil, nil, "{}")
+	stock := user.id(t, "stock.create", drill, shed, 1, "{}")
 
 	t.Run("what is in the way is named", func(t *testing.T) {
 		_, err := admin.call(t, "class.delete", tools)
@@ -379,7 +379,7 @@ func TestAccessorDeleting(t *testing.T) {
 		wantState(t, err, "23514", "can't become a container")
 		room := admin.id(t, "location.create", "Room", nil, true, nil, nil, nil)
 		_, err = user.call(t, "stock.create", str(t, user.must(t, "item.create", things, "Other", nil, "{}"), "id"),
-			room, 1, nil, nil, "{}")
+			room, 1, "{}")
 		wantState(t, err, "23514", "is a container")
 	})
 }

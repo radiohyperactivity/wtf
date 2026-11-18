@@ -98,8 +98,6 @@ func (s *server) routes() []route {
 			field{key: "item", name: "p_item", typ: "uuid"},
 			field{key: "location", name: "p_location", typ: "uuid"},
 			field{key: "amount", name: "p_amount", typ: "numeric"},
-			field{key: "reference", name: "p_reference", typ: "text"},
-			field{key: "serial", name: "p_serial", typ: "text"},
 			field{key: "values", name: "p_values", typ: "jsonb"},
 		))},
 		{"GET /stock/{id}", s.read("stock.get", path("p_stock", "id"))},

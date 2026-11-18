@@ -219,7 +219,7 @@ var requiredFields = []struct {
 	{"POST", regexp.MustCompile(`^/classes$`), map[string]any{"parent": nil, "container": false}},
 	{"POST", regexp.MustCompile(`^/locations$`), map[string]any{"parent": nil, "container": false, "grid": nil}},
 	{"POST", regexp.MustCompile(`^/items$`), map[string]any{"unit": nil, "values": map[string]any{}}},
-	{"POST", regexp.MustCompile(`^/stock$`), map[string]any{"amount": nil, "reference": nil, "serial": nil, "values": map[string]any{}}},
+	{"POST", regexp.MustCompile(`^/stock$`), map[string]any{"amount": nil, "values": map[string]any{}}},
 	{"POST", regexp.MustCompile(`^/stock/[^/]+/move$`), map[string]any{"amount": nil}},
 	{"POST", regexp.MustCompile(`^/stock/[^/]+/merge$`), map[string]any{"amount": nil, "resolve": nil}},
 	{"POST", regexp.MustCompile(`^/accounts$`), map[string]any{"password": nil, "role": "viewer"}},

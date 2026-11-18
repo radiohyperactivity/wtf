@@ -150,8 +150,8 @@ func runPerformance(t *testing.T, n int) string {
 	read("stock.list, one item", func() string { return rows(viewer.must(t, "stock.list", p.middle, nil, nil, 100, nil)) })
 	read("stock.list, a room (subtree)", func() string { return rows(viewer.must(t, "stock.list", nil, p.room, nil, 100, nil)) })
 	read("stock.list, all, first page", func() string { return rows(viewer.must(t, "stock.list", nil, nil, nil, 100, nil)) })
-	read("stock.list, a serial (reads all)", func() string {
-		return rows(viewer.must(t, "stock.list", nil, nil, "sn-"+p.middleCode, 100, nil))
+	read("stock.list, a rare search (reads all)", func() string {
+		return rows(viewer.must(t, "stock.list", nil, nil, "zzzz", 100, nil))
 	})
 	nodes := func(v any) string { return fmt.Sprintf("%d nodes", len(get(t, v, "nodes").([]any))) }
 	read("class.list (the tree)", func() string { return nodes(viewer.must(t, "class.list", nil)) })
@@ -343,8 +343,8 @@ func loadPerf(t *testing.T, n int) perfData {
 		    CROSS JOIN generate_series(1, 2) k
 		), codes AS (SELECT util.take_codes((SELECT count(*)::integer FROM rows)) AS first),
 		numbered AS (SELECT r.*, codes.first + row_number() OVER () - 1 AS code FROM rows r CROSS JOIN codes)
-		INSERT INTO public.stock (code, item, location, amount, serial, values)
-		SELECT r.code, r.id, s.id, r.item_code % 7, 'SN-' || util.code_text(r.code),
+		INSERT INTO public.stock (code, item, location, amount, values)
+		SELECT r.code, r.id, s.id, r.item_code % 7,
 		       CASE WHEN r.lot THEN jsonb_build_object('Lot', 'L-' || r.code) ELSE '{}' END
 		FROM numbered r
 		JOIN shelves s ON s.n = (r.item_code + r.k) % (SELECT count(*) FROM shelves)`)

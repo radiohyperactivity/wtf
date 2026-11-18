@@ -388,27 +388,15 @@ func (e *env) printItemJSON(data json.RawMessage) error {
 	fmt.Fprintln(w, "Stock:")
 	for _, s := range it.Stock {
 		t := newTable(w)
-		t.row("  "+s.Code, locations.pathString(s.Location), formatAmount(s.Amount, it.Unit),
-			stockNotes(s.Reference, s.Serial, s.Photo))
+		photo := ""
+		if s.Photo != nil {
+			photo = "photo"
+		}
+		t.row("  "+s.Code, locations.pathString(s.Location), formatAmount(s.Amount, it.Unit), photo)
 		t.flush()
 		printValues(w, "      ", c, "stock", s.Values, s.Defaulted)
 	}
 	return nil
-}
-
-// stockNotes are a stock row's reference, serial and photo, for one line.
-func stockNotes(reference, serial, photo *string) string {
-	var notes []string
-	if reference != nil {
-		notes = append(notes, "ref "+*reference)
-	}
-	if serial != nil {
-		notes = append(notes, "serial "+*serial)
-	}
-	if photo != nil {
-		notes = append(notes, "photo")
-	}
-	return strings.Join(notes, ", ")
 }
 
 func stockGroup() group {
@@ -422,7 +410,7 @@ func stockGroup() group {
 			{
 				name:    "list",
 				args:    "[--item I] [--location L] [--search WORDS] [--limit N] [--all]",
-				summary: "List stock rows, of an item, at a location (and below it), or by reference or serial.",
+				summary: "List stock rows, of an item, at a location (and below it), or by words in their values.",
 				flags: map[string]param{
 					"item":     arg("Item", completeItems),
 					"location": arg("Location", completeLocations),
@@ -430,7 +418,7 @@ func stockGroup() group {
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
 					itemRef := fs.String("item", "", "only this item's stock")
 					locationRef := fs.String("location", "", "only stock at this location, or below it")
-					search := fs.String("search", "", "words in the reference or the serial")
+					search := fs.String("search", "", "words in the text, url and choice values")
 					var p paging
 					p.register(fs)
 					return func(e *env, args []string) error {
@@ -481,13 +469,11 @@ func stockGroup() group {
 			},
 			{
 				name:    "add",
-				args:    "<item> <location> [amount] [--reference R] [--serial S] [--<attribute> VALUE]… [--edit]",
+				args:    "<item> <location> [amount] [--<attribute> VALUE]… [--edit]",
 				summary: "Put an item at a location. Without an amount it is uncounted.",
 				params:  []param{arg("Item", completeItems), locationParam, {name: "Amount", optional: true, variadic: true}},
 				values:  true,
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					reference := fs.String("reference", "", "an order number, an invoice, …")
-					serial := fs.String("serial", "", "a serial number")
 					editAfter := fs.Bool("edit", false, "open the new stock row in the edit form")
 					explicit, _ := valueFlags(fs, false)
 					return func(e *env, args []string) error {
@@ -525,7 +511,7 @@ func stockGroup() group {
 						if err != nil {
 							return err
 						}
-						data, err := e.createStock(it, c, locationID, amount, *reference, *serial, set)
+						data, err := e.createStock(it, c, locationID, amount, set)
 						if err != nil {
 							return err
 						}
@@ -583,7 +569,7 @@ func stockGroup() group {
 				params:  []param{stockParam, stockParam, {name: "Amount", optional: true, variadic: true}},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
 					var keep stringList
-					fs.Var(&keep, "keep", "which row's value to keep where they differ: reference=from, serial=into, Colour=from … (repeatable)")
+					fs.Var(&keep, "keep", "which row's value to keep where they differ: photo=from, Colour=into … (repeatable)")
 					return func(e *env, args []string) error {
 						if err := wantArgs(args, 2, -1); err != nil {
 							return err
@@ -628,8 +614,8 @@ func stockGroup() group {
 			},
 			{
 				name:    "set",
-				args:    "<stock> [--amount A|none] [--location L] [--item I] [--reference R | --no-reference] [--serial S | --no-serial] [--no-photo] [--<attribute> VALUE] [--no-<attribute>] [--default ATTRIBUTE]…",
-				summary: "Change a stock row's amount (none: uncounted), location, item, reference, serial or values, in one change.",
+				args:    "<stock> [--amount A|none] [--location L] [--item I] [--no-photo] [--<attribute> VALUE] [--no-<attribute>] [--default ATTRIBUTE]…",
+				summary: "Change a stock row's amount (none: uncounted), location, item, photo or values, in one change.",
 				params:  []param{stockParam},
 				flags: map[string]param{
 					"location": locationParam,
@@ -637,14 +623,10 @@ func stockGroup() group {
 				},
 				values: true,
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					var amount, locationRef, itemRef, reference, serial optString
+					var amount, locationRef, itemRef optString
 					fs.Var(&amount, "amount", "new amount, or none for uncounted")
 					fs.Var(&locationRef, "location", "new location (a correction; see 'stock move')")
 					fs.Var(&itemRef, "item", "new item; its class must take the row's values")
-					fs.Var(&reference, "reference", "new reference")
-					fs.Var(&serial, "serial", "new serial number")
-					noReference := fs.Bool("no-reference", false, "remove the reference")
-					noSerial := fs.Bool("no-serial", false, "remove the serial number")
 					noPhoto := fs.Bool("no-photo", false, "remove its photo")
 					explicit, defaults := valueFlags(fs, true)
 					return func(e *env, args []string) error {
@@ -685,20 +667,6 @@ func stockGroup() group {
 								}
 							}
 						}
-						for _, f := range []struct {
-							key   string
-							value optString
-							none  bool
-						}{{"reference", reference, *noReference}, {"serial", serial, *noSerial}} {
-							switch {
-							case f.value.set && f.none:
-								return usagef("give --%s or --no-%s, not both", f.key, f.key)
-							case f.value.set:
-								body[f.key] = f.value.value
-							case f.none:
-								body[f.key] = nil
-							}
-						}
 						if *noPhoto {
 							body["photo"] = nil
 						}
@@ -735,7 +703,7 @@ func stockGroup() group {
 
 // resolveMerge says, for each difference between stock rows from and into,
 // which row's to keep, as stock merge's resolve: from --keep FIELD=from|into
-// (FIELD a fixed field, reference, serial or photo, or an attribute), and on
+// (FIELD photo, or an attribute), and on
 // a terminal by asking for the rest. Without a terminal, a difference that
 // --keep doesn't settle is an error that lists them all.
 func (e *env) resolveMerge(from, into stock, keep []string) (object, error) {
@@ -743,24 +711,10 @@ func (e *env) resolveMerge(from, into stock, keep []string) (object, error) {
 		key, label, fromText, intoText string
 		value                          bool // a value, not a fixed field
 	}
-	text := func(s *string) string {
-		if s == nil {
-			return "(none)"
-		}
-		return *s
-	}
 	var diffs []difference
-	for _, f := range []struct {
-		key  string
-		a, b *string
-	}{{"reference", from.Reference, into.Reference}, {"serial", from.Serial, into.Serial}, {"photo", from.Photo, into.Photo}} {
-		if text(f.a) != text(f.b) {
-			a, b := text(f.a), text(f.b)
-			if f.key == "photo" {
-				a, b = photoText(f.a), photoText(f.b)
-			}
-			diffs = append(diffs, difference{key: f.key, label: f.key, fromText: a, intoText: b})
-		}
+	if (from.Photo == nil) != (into.Photo == nil) || from.Photo != nil && *from.Photo != *into.Photo {
+		diffs = append(diffs, difference{key: "photo", label: "photo",
+			fromText: photoText(from.Photo), intoText: photoText(into.Photo)})
 	}
 	var names []string
 	for name := range from.Values {
@@ -848,7 +802,7 @@ func (e *env) renderStock(data json.RawMessage, header bool) ([]string, error) {
 	var rows [][]string
 	for _, s := range pg.Rows {
 		rows = append(rows, []string{s.Code, s.Item.Name, locations.pathString(s.Location),
-			formatAmount(s.Amount, s.Item.Unit), stockNotes(s.Reference, s.Serial, nil)})
+			formatAmount(s.Amount, s.Item.Unit)})
 	}
 	return tableLines([]string{"CODE", "ITEM", "LOCATION", "AMOUNT"}, rows, header), nil
 }
@@ -867,20 +821,11 @@ func (e *env) printStockJSON(data json.RawMessage) error {
 		return err
 	}
 	w := e.stdout
-	reference, serial := "", ""
-	if s.Reference != nil {
-		reference = *s.Reference
-	}
-	if s.Serial != nil {
-		serial = *s.Serial
-	}
 	fields(w,
 		"Code", s.Code,
 		"Item", s.Item.Code+"  "+s.Item.Name,
 		"Location", locations.pathString(s.Location),
 		"Amount", formatAmount(s.Amount, s.Item.Unit),
-		"Reference", reference,
-		"Serial", serial,
 		"Photo", photoText(s.Photo),
 		"Id", s.ID)
 	if len(s.Values) > 0 {
@@ -891,12 +836,10 @@ func (e *env) printStockJSON(data json.RawMessage) error {
 }
 
 // createStock puts item it, of class c, at a location: amount as typed (""
-// for uncounted), with a reference, a serial and values as given, and on a
-// terminal the stock values it still needs (all of them in an interactive
-// session).
-func (e *env) createStock(it item, c class, locationID, amount, reference, serial string, set object) (json.RawMessage, error) {
-	body := object{"item": it.ID, "location": locationID, "amount": nil,
-		"reference": orNil(reference), "serial": orNil(serial)}
+// for uncounted), with values as given, and on a terminal the stock values
+// it still needs (all of them in an interactive session).
+func (e *env) createStock(it item, c class, locationID, amount string, set object) (json.RawMessage, error) {
+	body := object{"item": it.ID, "location": locationID, "amount": nil}
 	if amount != "" {
 		q, err := e.parseAmount(amount, it.Unit)
 		if err != nil {
@@ -946,7 +889,7 @@ func (e *env) offerStock(itemID string) error {
 	if err == nil {
 		var c class
 		if c, err = e.classDetail(it.Class.ID); err == nil {
-			data, err = e.createStock(it, c, locationID, amount, "", "", nil)
+			data, err = e.createStock(it, c, locationID, amount, nil)
 		}
 	}
 	if err != nil {

@@ -11,25 +11,24 @@ The SQL is in [`db/repeatable/40_location.sql`](../db/repeatable/40_location.sql
 A stock row is an item at a location, with:
 
 - **`amount`**, in the item's unit (whole for pieces); null: present, but not counted; 0: none left, but this is where they belong;
-- **`reference`** and **`serial`**, optional texts (an order number, a serial number); neither is unique;
 - **`photo`**, the hash of its photo's file, or null;
-- **`values`** and **`defaulted`**, for its item's class's attributes with scope `stock` ([attribute.md](attribute.md)).
+- **`values`** and **`defaulted`**, for its item's class's attributes with scope `stock` ([attribute.md](attribute.md)). An order number or a serial number is one of these, where a class wants it: a stock row has no fields of its own for them.
 
-`stock.create(p_item, p_location, p_amount, p_reference, p_serial, p_values)` makes one; `stock.patch` changes its item, location, amount, reference, serial, photo (null only) and values, in one transaction.
+`stock.create(p_item, p_location, p_amount, p_values)` makes one; `stock.patch` changes its item, location, amount, photo (null only) and values, in one transaction.
 
-`stock.list(p_item, p_location, p_search, p_limit, p_after)` (`GET /stock`) is a page of stock rows by item name, paged by key as `item.list` is: of an item, in a location or below it, or with `p_search`, words that must each occur in the reference or the serial.
+`stock.list(p_item, p_location, p_search, p_limit, p_after)` (`GET /stock`) is a page of stock rows by item name, paged by key as `item.list` is: of an item, in a location or below it, or with `p_search`, words that must each occur, letter case ignored, in the row's text, url and choice values.
 
 ## Moving and merging
 
-`stock.move(p_stock, p_location, p_amount)` moves a row, or part of it, to another location; `p_amount` null moves the whole row, otherwise the row must be counted. A whole row changes location and keeps its code; a part is split off into a new row at the destination, with a code of its own and everything else the row has: its reference, serial, photo and values. A move never merges into another row. It returns the row at the destination.
+`stock.move(p_stock, p_location, p_amount)` moves a row, or part of it, to another location; `p_amount` null moves the whole row, otherwise the row must be counted. A whole row changes location and keeps its code; a part is split off into a new row at the destination, with a code of its own and everything else the row has: its photo and values. A move never merges into another row. It returns the row at the destination.
 
 `stock.merge(p_stock, p_into, p_amount, p_resolve)` adds `p_amount` of a row (null: all of it) to another row, `p_into`, which may be at another location; it is the user's own action, not a side effect of moving.
 
 - **Both rows** must be of the same item and counted, and not the same row.
-- **Where they differ** (their reference, serial, photo, or a value), `p_resolve` says which row's to keep, for each difference:
+- **Where they differ** (their photo, or a value), `p_resolve` says which row's to keep, for each difference:
 
   ```json
-  {"reference": "into", "serial": "from", "photo": "into", "values": {"Colour": "from"}}
+  {"photo": "into", "values": {"Colour": "from", "Serial": "into"}}
   ```
 
   `from` is `p_stock`'s, `into` is `p_into`'s. Without a resolution for every difference, the merge is refused (422, naming the differences), so that the client can ask the user. `p_into` takes what is resolved `from`.

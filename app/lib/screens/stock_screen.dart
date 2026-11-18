@@ -13,9 +13,9 @@ import '../widgets/select_keys.dart';
 import '../widgets/value_fields.dart';
 import 'item_screen.dart';
 
-/// A stock row, like `wtf stock get`: item, location, amount, reference,
-/// serial, its values and files. It can be moved, all or part (`wtf stock
-/// move`), and merged into another row of its item (`wtf stock merge`).
+/// A stock row, like `wtf stock get`: item, location, amount, its values
+/// and files. It can be moved, all or part (`wtf stock move`), and merged
+/// into another row of its item (`wtf stock merge`).
 class StockScreen extends StatelessWidget {
   const StockScreen({super.key, required this.code});
 
@@ -195,8 +195,6 @@ class StockScreen extends StatelessWidget {
                             : () => context.push('/locations/${place!.code}'),
                       ),
                       Field('Amount', stock.amountText),
-                      if (stock.reference case final r?) Field('Reference', r),
-                      if (stock.serial case final s?) Field('Serial number', s),
                       Field('Code', stock.code),
                       if (values.isNotEmpty) ...[
                         const SectionTitle('Values'),
@@ -338,11 +336,9 @@ Future<Stock?> showMoveDialog(
 }
 
 /// What differs between stock rows [a] and [b], as the server finds it:
-/// "reference", "serial", "photo", and `values.NAME` for each value one
-/// has and the other hasn't, or has with another value.
+/// "photo", and `values.NAME` for each value one has and the other
+/// hasn't, or has with another value.
 List<String> stockDifferences(Stock a, Stock b) => [
-  if (a.reference != b.reference) 'reference',
-  if (a.serial != b.serial) 'serial',
   if (a.photo?.hash != b.photo?.hash) 'photo',
   for (final name in {...a.values.keys, ...b.values.keys})
     if (a.values[name] != b.values[name]) 'values.$name',
@@ -389,8 +385,6 @@ Future<Stock?> showMergeDialog(
 
   String shown(String difference, Stock s) {
     final text = switch (difference) {
-      'reference' => s.reference,
-      'serial' => s.serial,
       'photo' => s.photo == null ? null : 'a photo',
       _ => formatValue(
         cls.attribute(difference.substring('values.'.length)),
@@ -401,8 +395,6 @@ Future<Stock?> showMergeDialog(
   }
 
   String label(String difference) => switch (difference) {
-    'reference' => 'Reference',
-    'serial' => 'Serial number',
     'photo' => 'Photo',
     _ => difference.substring('values.'.length),
   };
@@ -447,12 +439,7 @@ Future<Stock?> showMergeDialog(
                                 title: Text(
                                   '${s.code}  ${locations.pathOf(s.location)}',
                                 ),
-                                subtitle: Text(
-                                  [
-                                    s.amountText,
-                                    stockMarks(s),
-                                  ].where((t) => t.isNotEmpty).join(' · '),
-                                ),
+                                subtitle: Text(s.amountText),
                               ),
                           ],
                         ),

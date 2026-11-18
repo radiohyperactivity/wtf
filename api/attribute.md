@@ -30,7 +30,7 @@ A class's attributes are in the class row, and an item's or stock row's values i
 | `order` | its place on screen among the class's attributes of its scope |
 
 - **Names** are unique in a class, with what it inherits: a class can't define a name it inherits, nor can a class above it add one that a class below defines itself.
-- **A name can't be a fixed field's:** `id`, `code`, `name`, `class`, `unit`, `photo`, `item`, `location`, `amount`, `reference` or `serial`, letter case ignored. So a name means one thing everywhere: in the JSON, in filters, in file routes, and as a CLI flag.
+- **A name can't be a fixed field's:** `id`, `code`, `name`, `class`, `unit`, `photo`, `item`, `location` or `amount`, letter case ignored. So a name means one thing everywhere: in the JSON, in filters, in file routes, and as a CLI flag.
 - **`class.get`** lists the attributes as a list, the item attributes first, each by `order`, with its `name` and whether it is `inherited`.
 
 ## Values

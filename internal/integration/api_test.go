@@ -166,6 +166,8 @@ func TestStock(t *testing.T) {
 	attic := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Attic")).body, "id")
 
 	classID := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Parts")).body, "id")
+	e.expect(t, 200, "POST", "/classes/"+classID+"/attributes",
+		obj("name", "Serial", "definition", obj("scope", "stock", "type", "text")))
 	itemID := str(t, e.expect(t, 201, "POST", "/items", obj("class", classID, "name", "Screw")).body, "id")
 	source := str(t, e.expect(t, 201, "POST", "/stock", obj("item", itemID, "location", shelfID, "amount", 10)).body, "id")
 
@@ -189,7 +191,7 @@ func TestStock(t *testing.T) {
 	e.expect(t, 422, "POST", "/stock", obj("item", itemID, "location", garage, "amount", 1.5))
 
 	// An uncounted row in the garage.
-	e.expect(t, 201, "POST", "/stock", obj("item", itemID, "location", garage, "serial", "SN-1"))
+	e.expect(t, 201, "POST", "/stock", obj("item", itemID, "location", garage, "values", obj("Serial", "SN-1")))
 
 	list := e.expect(t, 200, "GET", "/items?search=scr", nil).body
 	if len(get(t, list, "rows").([]any)) != 1 || num(t, list, "rows", 0, "stock", "total") != 10 ||
@@ -201,7 +203,7 @@ func TestStock(t *testing.T) {
 		t.Errorf("stock in the garage (and below): %v rows, want 2", n)
 	}
 	if n := len(get(t, e.expect(t, 200, "GET", "/stock?search=sn-1", nil).body, "rows").([]any)); n != 1 {
-		t.Errorf("stock by serial: %v rows, want 1", n)
+		t.Errorf("stock by a value: %v rows, want 1", n)
 	}
 	item := e.expect(t, 200, "GET", "/items/"+itemID, nil).body
 	if n := len(get(t, item, "stock").([]any)); n != 3 {

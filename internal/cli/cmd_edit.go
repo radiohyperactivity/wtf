@@ -420,22 +420,6 @@ func (e *env) editStock(id string) error {
 			return err
 		}
 	}
-	for _, f := range []struct {
-		label, key string
-		current    *string
-	}{{"Reference (empty: none)", "reference", s.Reference}, {"Serial (empty: none)", "serial", s.Serial}} {
-		old := ""
-		if f.current != nil {
-			old = *f.current
-		}
-		v, err := e.field(f.label, old, nil)
-		if err != nil {
-			return err
-		}
-		if v != old {
-			p.patch[f.key] = orNil(v)
-		}
-	}
 	c, err := e.classDetail(s.Item.Class)
 	if err != nil {
 		return err

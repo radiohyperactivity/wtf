@@ -19,7 +19,7 @@ Tables, types and domains are in `public`; every function is in a schema named a
 | `class` | A category in a tree (Tools → Power tools → Drills), with `attributes`: every attribute it has, its own and those it inherits, by name, in JSON ([api/attribute.md](api/attribute.md)). |
 | `item` | A *kind* of thing ("M3x10 hex screw", "Makita DHP482 drill"), in exactly one class: its `unit` (a label for its stock amounts; NULL: pieces), `values` (JSON, by attribute name), `defaulted` (the names of the values that follow the class's default), `search` (its search text) and `photo` (a file's hash). |
 | `location` | A place in a tree (House → Garage → Shelf 2 → Bin 4). |
-| `stock` | The physical things: an `amount` of an item at a location (NULL: present, not counted), with an optional `reference` and `serial`, `values` and `defaulted` for its class's stock attributes, and a `photo`. |
+| `stock` | The physical things: an `amount` of an item at a location (NULL: present, not counted), with `values` and `defaulted` for its class's stock attributes (an order number or a serial number is one of these, where a class wants it), and a `photo`. |
 
 Types: `datatype` (`text`, `integer`, `decimal`, `date`, `boolean`, `url`, `choice`, `attachment`), `scope` (`item`, `stock`), `role` (ordered: viewer < user < admin), `session_usage` and `request` (who is calling: token and address, the first argument of every function the API calls). Domains: `name_text` (text that isn't blank), `path_name` (a `name_text` without `/`), `file_hash` (a SHA-256 as hex) and `json_object`. The collation `natural` sorts numbers by value ("Item 2" before "Item 10").
 

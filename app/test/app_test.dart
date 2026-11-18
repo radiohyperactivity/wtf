@@ -763,8 +763,6 @@ void main() {
       'item': 'i-drill',
       'location': 'l-shelf2',
       'amount': 3,
-      'reference': 'PO-7',
-      'serial': null,
       'photo': null,
       'values': <String, Object?>{'Bought': '2026-01-05'},
       'defaulted': <String>[],
@@ -775,21 +773,20 @@ void main() {
     // The only other counted row; where they differ, which to keep.
     expect(find.text('1C01  Garage/Shelf 2'), findsOneWidget);
     expect(find.text('The rows differ. Which to keep?'), findsOneWidget);
-    expect(find.text('1C00: none'), findsNWidgets(2));
-    expect(find.text('1C01: PO-7'), findsOneWidget);
+    expect(find.text('1C00: none'), findsOneWidget);
     expect(find.text('1C01: 2026-01-05'), findsOneWidget);
-    await tester.tap(find.text('1C00: none').first);
+    await tester.tap(find.text('1C00: none'));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Merge'));
     await tester.pumpAndSettle();
     expect(
       fake.changes.last,
       'POST /api/v1/stock/s-1/merge {"into":"s-2","amount":null,'
-      '"resolve":{"reference":"from","values":{"Bought":"into"}}}',
+      '"resolve":{"values":{"Bought":"from"}}}',
     );
     // On to the row merged into; the other's label is gone.
     expect(find.text('5'), findsOneWidget);
-    expect(fake.stock.single['reference'], isNull);
+    expect((fake.stock.single['values'] as Map)['Bought'], isNull);
     expect(fake.gone, contains('1C00'));
   });
 
@@ -1006,11 +1003,11 @@ void main() {
     await tester.pumpAndSettle();
 
     // Not the name of a field every item has.
-    await tester.enterText(field('Name'), 'Serial');
+    await tester.enterText(field('Name'), 'Amount');
     await tester.tap(find.widgetWithText(FilledButton, 'Add'));
     await tester.pumpAndSettle();
     expect(
-      find.text('"Serial" is a field of every item or stock row'),
+      find.text('"Amount" is a field of every item or stock row'),
       findsOne,
     );
     expect(fake.changes, isEmpty);
@@ -1231,8 +1228,6 @@ void main() {
     await tester.tap(find.text('Garage/Shelf 2'));
     await tester.pumpAndSettle();
     await tester.enterText(field('Amount'), '2.5 m');
-    await tester.enterText(field('Reference'), 'PO-1');
-    await tester.enterText(field('Serial number'), 'SN-9');
     await tester.enterText(field('Bought'), '2026-11-01');
     await tester.tap(find.widgetWithText(FilledButton, 'Add'));
     await tester.pumpAndSettle();
@@ -1241,13 +1236,12 @@ void main() {
       fake.changes.last,
       endsWith(
         '{"item":"i-new0","location":"l-shelf2","amount":2.5,'
-        '"reference":"PO-1","serial":"SN-9","values":{"Bought":"2026-11-01"}}',
+        '"values":{"Bought":"2026-11-01"}}',
       ),
     );
     // Then the item's screen shows it.
     expect(find.text('Drill cable'), findsWidgets);
     expect(find.text('2.5 m'), findsOneWidget);
-    expect(find.textContaining('ref PO-1 · serial SN-9'), findsOneWidget);
     expect(find.text('2026-11-01'), findsOneWidget);
   });
 

@@ -116,8 +116,6 @@ class FakeServer {
       'item': 'i-drill',
       'location': 'l-shelf1',
       'amount': 2,
-      'reference': null,
-      'serial': null,
       'photo': null,
       'values': <String, Object?>{},
       'defaulted': <String>[],
@@ -236,16 +234,7 @@ class FakeServer {
     bool withItem = true,
     bool withValues = true,
   }) => {
-    for (final k in [
-      'id',
-      'code',
-      'location',
-      'amount',
-      'reference',
-      'serial',
-      'photo',
-    ])
-      k: s[k],
+    for (final k in ['id', 'code', 'location', 'amount', 'photo']) k: s[k],
     'item': withItem
         ? _summary(items.firstWhere((i) => i['id'] == s['item']))
         : s['item'],
@@ -513,7 +502,7 @@ class FakeServer {
       // A class's attributes.
       case ('POST', ['classes', final id, 'attributes']):
         final name = body!['name'] as String;
-        const fixed = {'name', 'class', 'unit', 'photo', 'amount', 'serial'};
+        const fixed = {'name', 'class', 'unit', 'photo', 'amount'};
         if (fixed.contains(name.toLowerCase())) {
           return _problem(400, 'Invalid input', '"$name" is a fixed field');
         }
@@ -741,8 +730,6 @@ class FakeServer {
           'item': body['item'],
           'location': body['location'],
           'amount': body['amount'],
-          'reference': body['reference'],
-          'serial': body['serial'],
           'photo': null,
           'values': values,
           'defaulted': defaulted,
@@ -751,14 +738,7 @@ class FakeServer {
         return _json(stockJson(row['id'] as String), 201);
       case ('PATCH', ['stock', final id]):
         final row = stock.firstWhere((s) => s['id'] == id);
-        for (final k in [
-          'item',
-          'location',
-          'amount',
-          'reference',
-          'serial',
-          'photo',
-        ]) {
+        for (final k in ['item', 'location', 'amount', 'photo']) {
           if (body!.containsKey(k)) row[k] = body[k];
         }
         final item = items.firstWhere((i) => i['id'] == row['item']);
@@ -794,8 +774,7 @@ class FakeServer {
         final fromValues = from['values'] as Map;
         final intoValues = into['values'] as Map;
         final differences = [
-          for (final k in ['reference', 'serial', 'photo'])
-            if (from[k] != into[k]) k,
+          if (from['photo'] != into['photo']) 'photo',
           for (final name in {...fromValues.keys, ...intoValues.keys})
             if (fromValues[name] != intoValues[name]) 'values.$name',
         ];

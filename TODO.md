@@ -13,5 +13,5 @@ Not needed now; for when something measurably gets slow ([PERFORMANCE.md](PERFOR
 
 - **A trigram index on `item.search`** (`pg_trgm`, with `btree_gin`), so that a search reads only the items that match; today it reads the items in name order until the page is full, all of them for a rare word ([2026-11-02-attributes-in-json.md](2026-11-02-attributes-in-json.md), decision 28).
 - **A GIN index on `item.values` and `stock.values`** (`jsonb_path_ops`), so that an equality filter reads only the rows that match (decision 33).
-- **An index on `stock.serial`,** if serial numbers are looked up often (decision 29).
+- **A faster stock search:** `stock.list` with search words reads the stock rows and their values until the page is full, all of them for a rare word. A serial number is a stock value now, so it is found that way too.
 - **Running a big class change in the background:** a change that rewrites millions of rows holds its class's lock for the whole of it, and writes of items in that class wait.

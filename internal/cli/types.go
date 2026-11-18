@@ -109,8 +109,6 @@ type itemStock struct {
 	Code      string       `json:"code"`
 	Location  string       `json:"location"`
 	Amount    *json.Number `json:"amount"`
-	Reference *string      `json:"reference"`
-	Serial    *string      `json:"serial"`
 	Photo     *string      `json:"photo"`
 	Values    values       `json:"values"`
 	Defaulted []string     `json:"defaulted"`
@@ -122,8 +120,6 @@ type stock struct {
 	Item      itemRow      `json:"item"`
 	Location  string       `json:"location"`
 	Amount    *json.Number `json:"amount"`
-	Reference *string      `json:"reference"`
-	Serial    *string      `json:"serial"`
 	Photo     *string      `json:"photo"`
 	Values    values       `json:"values"`
 	Defaulted []string     `json:"defaulted"`

@@ -52,13 +52,6 @@ List<Widget> fileTiles(
       ),
 ];
 
-/// A stock row's reference and serial, when it has them: "ref PO-12 ·
-/// serial 4711".
-String stockMarks(Stock s) => [
-  if (s.reference case final r?) 'ref $r',
-  if (s.serial case final n?) 'serial $n',
-].join(' · ');
-
 /// An item, like `wtf item get`: class, values, files, stock rows with
 /// their locations. The code may also be one of its stock rows' (as in the
 /// CLI's references).
@@ -223,12 +216,7 @@ class ItemScreen extends StatelessWidget {
                     ListTile(
                       leading: PhotoOrIcon(s.photo, icon: Icons.place_outlined),
                       title: Text(locations.pathOf(s.location)),
-                      subtitle: Text(
-                        [
-                          s.code,
-                          stockMarks(s),
-                        ].where((t) => t.isNotEmpty).join('  ·  '),
-                      ),
+                      subtitle: Text(s.code),
                       trailing: Text(
                         s.amountText,
                         style: Theme.of(context).textTheme.titleSmall,

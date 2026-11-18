@@ -90,7 +90,7 @@ item       (list) { id, code, name, class: <class id>, unit, photo, stock: { tot
            (get)  { id, code, name, class: { id, name, path }, unit, photo, values, defaulted: [ name ],
                     stock: [ stock, with item: <item id> ] }
 stock      { id, code, item: item (list form, without stock), location: <location id>, amount: number | null,
-             reference, serial, photo, values, defaulted }      (stock.list rows: without values and defaulted)
+             photo, values, defaulted }                         (stock.list rows: without values and defaulted)
 page       { rows, more, next }
 ```
 
@@ -135,7 +135,7 @@ The 50 functions the API calls, and the routes that call them (under `/api/v1`).
 | `location.delete_tree(p_location, p_force, p_dry_run)` | `{locations, stock}` | `DELETE /locations/{id}?recursive=true[&force=true]`; preview `GET /locations/{id}/deletion` |
 | `stock.list(p_item, p_location, p_search, p_limit, p_after)` | page of stock | `GET /stock` |
 | `stock.get(p_stock)` | stock | `GET /stock/{id}` |
-| `stock.create(p_item, p_location, p_amount, p_reference, p_serial, p_values)` | stock | `POST /stock` |
+| `stock.create(p_item, p_location, p_amount, p_values)` | stock | `POST /stock` |
 | `stock.patch(p_stock, p_patch)` | stock | `PATCH /stock/{id}` |
 | `stock.move(p_stock, p_location, p_amount)` | stock (where it went) | `POST /stock/{id}/move` |
 | `stock.merge(p_stock, p_into, p_amount, p_resolve)` | stock (`p_into`) | `POST /stock/{id}/merge` |
