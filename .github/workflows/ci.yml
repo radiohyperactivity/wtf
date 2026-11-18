@@ -57,5 +57,8 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      # Without the web app, which would need Flutter here.
       - name: Build wtf and wtfd
         run: scripts/build.sh
+        env:
+          NO_WEB_APP: "1"
