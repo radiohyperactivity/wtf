@@ -60,6 +60,7 @@ go build -tags webapp ./cmd/wtfd
 | `scripts/build.sh` | builds the web app, then `wtf` and `wtfd` (with the web app) for Linux, Windows and macOS, amd64 and arm64, into `dist/<os>-<arch>/`; `NO_WEB_APP=1` leaves the web app out |
 | `scripts/release.sh` | runs `build.sh`, and packs each system's `wtf`, `wtfd`, `LICENSE` and a README (`scripts/release-readme.txt`) into `dist/release/`: `.zip` for Windows, `.tar.gz` for Linux and macOS, with the programs executable |
 | `scripts/app-build.sh` | runs `flutter build` in `app/` with its arguments (`scripts/app-build.sh windows --release`), stamped with the app's version and the time of the build, which the app shows under Account; the other scripts build the app with it |
+| `scripts/windows-installer.sh` | builds the Windows app and its installer, `dist/wtf-app-<version>-windows-x64-setup.exe`; see [Windows](#windows) |
 | `scripts/test.sh` | what CI checks: `gofmt`, `go vet` for every system, and the tests |
 | `scripts/ios-signing-setup.sh`, `scripts/ios-device.sh` | sign the iOS app for devices over SSH, build it, and install it; see [iOS](#ios) |
 | `scripts/android-signing-setup.sh`, `scripts/android-device.sh` | make the Android app's signing key, build the app, and install it by cable or Wi-Fi; see [Android](#android) |
@@ -87,6 +88,8 @@ flutter build windows --release
 ```
 
 Into `app\build\windows\x64\runner\Release`: `wtf-app.exe` with the libraries and the `data` folder beside it, which go along wherever it goes. The app's program is `wtf-app`, on Linux too, so that it never clashes with `wtf`, the command-line tool; people see it as "WtF". A build folder from before that name (`wtf`) makes CMake fail with "No target "wtf"": remove `build\windows` (or `build/linux`) once, and build again. The app for Windows on ARM can only be built on Windows on ARM.
+
+`scripts/windows-installer.sh`, in Git Bash, builds the app and an installer of it with [Inno Setup](https://jrsoftware.org/isinfo.php) 6.3 or newer (`ISCC` names its `ISCC.exe` when it isn't where Inno Setup installs it), from `scripts/windows-installer.iss`: `dist/wtf-app-<version>-windows-x64-setup.exe`. The installer is one file. It installs for the current user, without administrator rights, into `%LOCALAPPDATA%\Programs\WtF` (or for everyone, into Program Files, if chosen), with a Start menu entry and an uninstaller under Settings → Apps; a new version installs over the old one, and the app's settings stay. It includes the Microsoft C++ runtime from Visual Studio, so the app starts on a PC without it. The installer isn't signed, so Windows SmartScreen warns about it at first: **More info → Run anyway**.
 
 ### Android
 
