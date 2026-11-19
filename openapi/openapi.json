@@ -1408,6 +1408,212 @@
         }
       }
     },
+    "/me/camera": {
+      "put": {
+        "summary": "Be the camera for another of one's sessions",
+        "operationId": "cameraSet",
+        "description": "This session, on a phone say, becomes the camera for another session of the same account, on a desktop say: the photos it uploads with PUT /me/camera/photo go to what that session has open. It replaces any session it was the camera for. The other session is told on GET /me/events (camera). The camera is kept in wtfd's memory: it ends when this session stops it, either session logs out, or this session hasn't asked for 12 hours; a restart of wtfd forgets it, and GET /me/camera makes it so again. Another account's session is not found; the session itself is refused.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "session"
+                ],
+                "properties": {
+                  "session": {
+                    "type": "string",
+                    "description": "The session's id, as GET /me/sessions gives it."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The camera for that session.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "session": {
+                      "type": "string"
+                    },
+                    "client": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "What that session's app calls itself."
+                    },
+                    "camera": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "description": "What this session's app calls itself."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "get": {
+        "summary": "What a photo would be for",
+        "operationId": "cameraGet",
+        "description": "What the session this one is the camera for has open. Without the database while wtfd knows the camera.",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "description": "The id of the session this one is the camera for, as GET /me/sessions gives it. When wtfd has forgotten the camera (a restart), it makes it so again, after checking with the database; a session that has ended is not found."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What a photo is for.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CameraTarget"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Stop being a camera",
+        "operationId": "cameraEnd",
+        "description": "Also when this session is no camera.",
+        "responses": {
+          "204": {
+            "description": "No camera."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/me/camera/photo": {
+      "put": {
+        "summary": "Upload a photo for what the other session has open",
+        "description": "Uploaded as the photo of the item, stock row or location the session this one is the camera for has open as it arrives (409 when nothing is, or when it isn't saved yet). It must be an image; a location's photo is for admins. That session is told on GET /me/events (changed).",
+        "operationId": "cameraPhotoPut",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "description": "The id of the session this one is the camera for, as GET /me/sessions gives it. When wtfd has forgotten the camera (a restart), it makes it so again, after checking with the database; a session that has ended is not found."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What the photo went to.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CameraTarget"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/me/target": {
+      "put": {
+        "summary": "What this session has open",
+        "operationId": "targetSet",
+        "description": "An app says what it has open that a photo could be for, once it has a camera (GET /me/events, camera), and whenever that changes. Kept only while the session has a camera; otherwise thrown away. The answer is the same either way.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CameraTarget"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Noted."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/me/events": {
+      "get": {
+        "summary": "The session's event stream",
+        "operationId": "events",
+        "description": "Server-sent events, as long as the client keeps the request open. `camera` {client}: a session, on a phone say, has become this one's camera, and its app calls itself client; also at once when the stream opens. `camera` {}: it has none any more. `changed` {path}: the session that is this one's camera changed what is at that path (relative to /api/v1), as by uploading a photo. `ended` {}: this session has ended (checked every 5 minutes). A comment line comes every 30 seconds when there is nothing else.",
+        "responses": {
+          "200": {
+            "description": "The stream.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/me/sessions/logout-others": {
       "post": {
         "summary": "End one's other sessions",
@@ -1924,6 +2130,57 @@
         }
       }
     },
+    "/locations/{id}/photo": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        }
+      ],
+      "get": {
+        "summary": "The location photo",
+        "operationId": "locationPhotoGet",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/File"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "put": {
+        "summary": "Upload the location photo",
+        "description": "It must be an image. PATCH photo null removes it. For admins.",
+        "operationId": "locationPhotoPut",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Location"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/stock/{id}/files/{attribute}": {
       "parameters": [
         {
@@ -2168,6 +2425,10 @@
                 "container": {
                   "type": "boolean",
                   "description": "Rejected (422) while the class has items or the location has stock."
+                },
+                "photo": {
+                  "type": "null",
+                  "description": "Locations only: null removes the photo; a photo is uploaded."
                 }
               }
             }
@@ -2513,6 +2774,37 @@
           }
         ]
       },
+      "CameraTarget": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "What a session has open that a photo can be for: an item, a stock row or a location (type, id and name), or a new one that isn't saved yet (waiting, alone); {} for nothing.",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "item",
+              "stock",
+              "location"
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "What it is called, to show on the phone."
+          },
+          "waiting": {
+            "type": "string",
+            "enum": [
+              "item",
+              "stock",
+              "location"
+            ]
+          }
+        }
+      },
       "TreeNode": {
         "type": "object",
         "properties": {
@@ -2538,6 +2830,17 @@
           },
           "container": {
             "type": "boolean"
+          },
+          "photo": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Hash"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Location trees only."
           },
           "children": {
             "type": "array",
@@ -2628,6 +2931,16 @@
           "container": {
             "type": "boolean",
             "description": "Holds only other locations, no stock."
+          },
+          "photo": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Hash"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "path": {
             "type": "array",

@@ -11,13 +11,15 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// hashesUsed is the hashes of the files in use: the photos of the items and
-// stock rows, and the values of their attachment attributes. One read of
-// the items and stock rows, once per run.
+// hashesUsed is the hashes of the files in use: the photos of the items,
+// stock rows and locations, and the values of the attachment attributes of
+// the items and stock rows. One read of them, once per run.
 const hashesUsed = `
 	SELECT i.photo FROM public.item i WHERE i.photo IS NOT NULL
 	UNION
 	SELECT s.photo FROM public.stock s WHERE s.photo IS NOT NULL
+	UNION
+	SELECT l.photo FROM public.location l WHERE l.photo IS NOT NULL
 	UNION
 	SELECT e.value
 	FROM public.item i
@@ -40,7 +42,8 @@ const hashUsed = `SELECT
 	EXISTS (SELECT 1 FROM public.item i
 	        WHERE i.photo = $1 OR EXISTS (SELECT 1 FROM jsonb_each_text(i.values) e WHERE e.value = $1))
 	OR EXISTS (SELECT 1 FROM public.stock s
-	           WHERE s.photo = $1 OR EXISTS (SELECT 1 FROM jsonb_each_text(s.values) e WHERE e.value = $1))`
+	           WHERE s.photo = $1 OR EXISTS (SELECT 1 FROM jsonb_each_text(s.values) e WHERE e.value = $1))
+	OR EXISTS (SELECT 1 FROM public.location l WHERE l.photo = $1)`
 
 // expiredSessions removes the expired sessions: those that sat
 // unused for longer than their max_idle.

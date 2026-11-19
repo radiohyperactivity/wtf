@@ -47,6 +47,7 @@ type server struct {
 	web           fs.FS
 	trusted       []netip.Prefix
 	started       time.Time // when the handler was made, as the server started
+	cameras       *cameras  // which phone is the camera for which desktop (camera.go)
 }
 
 // Run serves the API until ctx is cancelled, then shuts down gracefully.
@@ -72,15 +73,18 @@ func Run(ctx context.Context, o Options) error {
 		return err
 	}
 
+	s := newServer(pool, o.Logger, int64(o.MaxRequestBodySize), o.Files, int64(o.MaxAttachmentSize),
+		o.Web, o.TrustedProxies)
 	httpServer := &http.Server{
-		Handler: NewHandler(pool, o.Logger, int64(o.MaxRequestBodySize), o.Files, int64(o.MaxAttachmentSize),
-			o.Web, o.TrustedProxies),
+		Handler:           s.handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		ErrorLog:          slog.NewLogLogger(o.Logger.Handler(), slog.LevelWarn),
 	}
+	// Event streams don't end by themselves; Shutdown waits for them.
+	httpServer.RegisterOnShutdown(s.cameras.shutdown)
 
 	listener, err := net.Listen("tcp", o.Listen)
 	if err != nil {
@@ -108,9 +112,13 @@ func Run(ctx context.Context, o Options) error {
 // is believed.
 func NewHandler(pool *pgxpool.Pool, log *slog.Logger, maxRequestBodySize int64,
 	store *files.Store, maxAttachmentSize int64, web fs.FS, trusted []netip.Prefix) http.Handler {
-	s := &server{pool: pool, log: log, maxBody: maxRequestBodySize, files: store, maxAttachment: maxAttachmentSize,
-		web: web, trusted: trusted, started: time.Now()}
-	return s.handler()
+	return newServer(pool, log, maxRequestBodySize, store, maxAttachmentSize, web, trusted).handler()
+}
+
+func newServer(pool *pgxpool.Pool, log *slog.Logger, maxRequestBodySize int64,
+	store *files.Store, maxAttachmentSize int64, web fs.FS, trusted []netip.Prefix) *server {
+	return &server{pool: pool, log: log, maxBody: maxRequestBodySize, files: store, maxAttachment: maxAttachmentSize,
+		web: web, trusted: trusted, started: time.Now(), cameras: newCameras()}
 }
 
 // CheckSchema refuses a database whose schema differs from the scripts in fsys.
@@ -204,7 +212,8 @@ func (s *server) handler() http.Handler {
 // cookie (unless anonymous), at once and without the database, passes the
 // caller (the session's token and the client's address) on in the
 // context, limits the request body and converts returned errors into
-// problem responses.
+// problem responses. After a successful change by a phone that is a
+// camera, its desktop is told (cameraChange).
 func (s *server) wrap(h handlerFunc, maxBody int64, anonymous bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		who := caller{address: clientAddress(r, s.trusted)}
@@ -223,6 +232,11 @@ func (s *server) wrap(h handlerFunc, maxBody int64, anonymous bool) http.Handler
 		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		err := h(w, r)
 		if err == nil {
+			if who.token != "" {
+				if path := strings.TrimPrefix(r.URL.Path, apiPrefix); cameraChange(r.Method, path) {
+					s.cameras.changed(sessionID(who.token), path)
+				}
+			}
 			return
 		}
 		p, expected := problemFor(err, r.Method)

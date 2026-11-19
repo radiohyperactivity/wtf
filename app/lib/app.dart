@@ -5,8 +5,10 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import 'api/client.dart';
+import 'camera.dart';
 import 'screens/account_screens.dart';
 import 'screens/admin_screen.dart';
+import 'screens/camera_screen.dart';
 import 'screens/class_screen.dart';
 import 'screens/item_form.dart';
 import 'screens/item_screen.dart';
@@ -32,22 +34,34 @@ class WtfApp extends StatefulWidget {
 }
 
 class _WtfAppState extends State<WtfApp> {
-  late final GoRouter _router = buildRouter(widget.session);
+  late final _camera = Camera(session: widget.session);
+  late final GoRouter _router = buildRouter(widget.session, _camera);
+
+  @override
+  void initState() {
+    super.initState();
+    _camera.attach(_router);
+  }
 
   @override
   void dispose() {
+    _camera.dispose();
     _router.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider.value(
-      value: widget.session,
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider.value(value: widget.session),
+        ChangeNotifierProvider.value(value: _camera),
+      ],
       child: ListenableBuilder(
         listenable: widget.session,
         builder: (context, _) => MaterialApp.router(
           title: 'WtF',
+          scaffoldMessengerKey: _camera.messenger,
           theme: appTheme(widget.session.colour, Brightness.light),
           darkTheme: appTheme(widget.session.colour, Brightness.dark),
           themeMode: widget.session.themeMode,
@@ -58,8 +72,10 @@ class _WtfAppState extends State<WtfApp> {
   }
 }
 
-GoRouter buildRouter(Session session) => GoRouter(
-  refreshListenable: session,
+/// The app's router. While the app is the camera for another session
+/// ([camera]), it shows only the camera screen.
+GoRouter buildRouter(Session session, Camera camera) => GoRouter(
+  refreshListenable: Listenable.merge([session, camera]),
   redirect: (context, state) {
     final atLogin = state.matchedLocation == '/login';
     if (session.me == null) {
@@ -77,12 +93,16 @@ GoRouter buildRouter(Session session) => GoRouter(
           ? from
           : '/';
     }
+    final atCamera = state.matchedLocation == '/camera';
+    if (camera.pairing != null) return atCamera ? null : '/camera';
+    if (atCamera) return '/';
     // The server would refuse the rest of an admin screen anyway.
     if (!session.isAdmin && adminOnly(state.matchedLocation)) return '/';
     return null;
   },
   routes: [
     GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
+    GoRoute(path: '/camera', builder: (context, state) => const CameraScreen()),
     ShellRoute(
       builder: (context, state, child) =>
           AppShell(location: state.matchedLocation, child: child),

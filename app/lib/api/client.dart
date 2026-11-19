@@ -250,6 +250,82 @@ class ApiClient {
   /// GET /me: the logged-in account.
   Future<Me> me() async => Me.fromJson(await _call('GET', '/me') as Json);
 
+  // --- The phone as a remote camera (2026-11-19-remote-camera.md) ---
+
+  /// PUT /me/camera: this session becomes the camera for the session [id],
+  /// another of the account's.
+  Future<CameraPairing> cameraFor(String id) async => CameraPairing.fromJson(
+    await _call('PUT', '/me/camera', body: {'session': id}) as Json,
+  );
+
+  /// DELETE /me/camera: this session is no camera any more.
+  Future<void> cameraStop() => _call('DELETE', '/me/camera');
+
+  /// GET /me/camera: what the session [desktop], which this one is the
+  /// camera for, has open.
+  Future<CameraTarget> cameraTarget(String desktop) async =>
+      CameraTarget.fromJson(
+        await _call('GET', '/me/camera', query: {'session': desktop}) as Json,
+      );
+
+  /// PUT /me/camera/photo: a photo for what the session [desktop] has open
+  /// as it arrives; answers what it went to.
+  Future<CameraTarget> cameraPhoto(
+    String desktop, {
+    required String name,
+    required List<int> bytes,
+  }) async => CameraTarget.fromJson(
+    jsonDecode(
+      (await _upload(
+        '/me/camera/photo?session=${Uri.encodeQueryComponent(desktop)}',
+        name,
+        bytes,
+      )).body,
+    ) as Json,
+  );
+
+  /// PUT /me/target: what this app has open that a photo could be for.
+  Future<void> putTarget(CameraTarget target) =>
+      _call('PUT', '/me/target', body: target.toJson());
+
+  /// GET /me/events: the session's event stream, until the subscription is
+  /// cancelled or the server ends it.
+  Future<Stream<ServerEvent>> events() async {
+    final req = http.Request('GET', server.resolve('$apiPath/me/events'))
+      ..headers['Accept'] = 'text/event-stream'
+      ..headers.addAll(authHeaders);
+    final http.StreamedResponse resp;
+    try {
+      resp = await _http.send(req);
+    } on http.ClientException catch (e) {
+      throw ApiProblem(
+        type: ApiProblem.unreachable,
+        title: "Can't reach the server",
+        status: 0,
+        detail: e.message,
+      );
+    }
+    if (manageCookie) _noteCookie(resp.headers['set-cookie']);
+    if (resp.statusCode != 200) {
+      throw ApiProblem.fromResponse(await http.Response.fromStream(resp));
+    }
+    return resp.stream
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .transform(serverEvents);
+  }
+
+  final _remoteChanges = StreamController<String>.broadcast();
+
+  /// Changes made by the session that is this one's camera (the path
+  /// changed); screens that show data load again.
+  Stream<String> get remoteChanges => _remoteChanges.stream;
+
+  /// Notes a change made by this session's camera (remoteChanges).
+  void noteRemoteChange(String path) {
+    if (!_remoteChanges.isClosed) _remoteChanges.add(path);
+  }
+
   /// GET /api/health, outside the API's versions: which build of wtfd
   /// answers.
   Future<ServerBuild> serverBuild() async {
@@ -475,8 +551,8 @@ class ApiClient {
 
   // --- Files ---
 
-  /// Uploads the photo of the item or stock row at [owner] (/items/{id} or
-  /// /stock/{id}); it must be an image.
+  /// Uploads the photo of the item, stock row or location at [owner]
+  /// (/items/{id}, /stock/{id} or /locations/{id}); it must be an image.
   Future<void> uploadPhoto(
     String owner, {
     required String name,
@@ -493,7 +569,11 @@ class ApiClient {
     required List<int> bytes,
   }) => _upload('$owner/files/${_segment(attribute)}', name, bytes);
 
-  Future<void> _upload(String path, String name, List<int> bytes) async {
+  Future<http.Response> _upload(
+    String path,
+    String name,
+    List<int> bytes,
+  ) async {
     final req = http.MultipartRequest('PUT', server.resolve('$apiPath$path'))
       ..headers['Accept'] = 'application/json';
     final type = mediaTypeOf(name);
@@ -505,7 +585,7 @@ class ApiClient {
         contentType: type == null ? null : MediaType.parse(type),
       ),
     );
-    await _send(req);
+    return _send(req);
   }
 
   /// A file's content, with the name and type the server gives it.
@@ -814,6 +894,7 @@ class ApiClient {
   /// Closes the HTTP client, unless it was given to the constructor.
   void close() {
     _treeChanges.close();
+    _remoteChanges.close();
     if (_ownsHttp) _http.close();
   }
 

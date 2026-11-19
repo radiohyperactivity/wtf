@@ -7,7 +7,8 @@ CREATE SCHEMA location;
 -- Helpers
 -- ---------------------------------------------------------------------------
 
--- A location as the API shows it. Its code is for its label.
+-- A location as the API shows it. Its code is for its label; photo is its
+-- file's hash, or null.
 CREATE FUNCTION location.json(p_location public.location)
 RETURNS jsonb
 LANGUAGE sql IMMUTABLE AS $$
@@ -16,7 +17,8 @@ LANGUAGE sql IMMUTABLE AS $$
         'code',      util.code_text(p_location.code),
         'name',      p_location.name,
         'parent',    p_location.parent,
-        'container', p_location.container
+        'container', p_location.container,
+        'photo',     p_location.photo
     );
 $$;
 
@@ -179,10 +181,11 @@ END;
 $$;
 
 -- Changes the fields of a location that p_patch has:
--- name, parent (null: to the top) and container. Moving a location takes
--- everything in and below it along. A move into one of its own locations is
--- refused, and so is becoming a container while it has stock. Returns
--- the location as location.get does. For admins.
+-- name, parent (null: to the top), container and photo (null only: a photo
+-- is uploaded). Moving a location takes everything in and below it along.
+-- A move into one of its own locations is refused, and so is becoming a
+-- container while it has stock. Returns the location as location.get does.
+-- For admins.
 CREATE FUNCTION location.patch(p_request public.request, p_location uuid, p_patch jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -194,7 +197,10 @@ DECLARE
     v_name     text;
     v_parent   uuid;
 BEGIN
-    PERFORM util.check_patch(p_patch, ARRAY['name', 'parent', 'container'], ARRAY['name', 'container']);
+    PERFORM util.check_patch(p_patch, ARRAY['name', 'parent', 'container', 'photo'], ARRAY['name', 'container']);
+    IF p_patch ? 'photo' AND jsonb_typeof(p_patch -> 'photo') <> 'null' THEN
+        PERFORM error.invalid('A photo is uploaded; photo can only be set to null here, which removes it');
+    END IF;
     SELECT l.* INTO v_location
     FROM public.location l
     WHERE l.id = p_location
@@ -232,7 +238,8 @@ BEGIN
     UPDATE public.location l
     SET name      = v_name,
         parent    = v_parent,
-        container = coalesce((p_patch ->> 'container')::boolean, l.container)
+        container = coalesce((p_patch ->> 'container')::boolean, l.container),
+        photo     = CASE WHEN p_patch ? 'photo' THEN NULL ELSE l.photo END
     WHERE l.id = p_location
     RETURNING * INTO v_location;
     PERFORM util.bump_version('location');

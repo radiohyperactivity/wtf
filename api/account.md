@@ -16,6 +16,7 @@ The SQL is in [`db/repeatable/20_account.sql`](../db/repeatable/20_account.sql),
 - **`account.session_list()`** returns the account's sessions, most recently used first: `{id, client, created, last_used, max_idle, expires, current, usage}`. `id` is the token's hash in hex, which can't be turned back into the token; `max_idle` is seconds or null; `expires` is `last_used + max_idle`, or null; `current` marks the session asking; `usage` lists the addresses it was used from, newest first.
 - **`account.session_logout(p_session)`** ends one of the account's own sessions, by its id; another account's session is not found. Ending the current one is a logout.
 - **`account.session_logout_others()`** ends every session of the account but the current one ("log out everywhere else"), and returns how many ended.
+- **`account.session_camera(p_session)`** checks that the current session, on a phone say, may be the camera for `p_session`: another active session of the same account, by its id. It returns `{session, client, camera}`: that session's id and client name, and the current session's client name. Another account's session is not found (P0002); the current one is refused (22023). The camera itself, and what it passes on, are kept by `wtfd`, in memory ([2026-11-19-remote-camera.md](../2026-11-19-remote-camera.md); WTFD.md, "The phone as a remote camera").
 
 Tokens are 32 random bytes, base64url-encoded; the database stores only their SHA-256 hash. `wtfd gc` removes expired sessions.
 

@@ -98,7 +98,7 @@ page       { rows, more, next }
 
 ## Function index
 
-The 50 functions the API calls, and the routes that call them (under `/api/v1`). `wtfd`'s own work (the operator's accounts, `gc`) uses the tables directly, as the schema owner ([WTFD.md](WTFD.md)).
+The 51 functions the API calls, and the routes that call them (under `/api/v1`). `wtfd`'s own work (the operator's accounts, `gc`) uses the tables directly, as the schema owner ([WTFD.md](WTFD.md)).
 
 | Function | Returns | Route |
 |----------|---------|-------|
@@ -109,6 +109,7 @@ The 50 functions the API calls, and the routes that call them (under `/api/v1`).
 | `account.session_list()` | [session] | `GET /me/sessions` |
 | `account.session_logout(p_session)` | void | `DELETE /me/sessions/{id}` |
 | `account.session_logout_others()` | the number ended | `POST /me/sessions/logout-others` |
+| `account.session_camera(p_session)` | `{session, client, camera}` | `PUT /me/camera`, and `GET /me/camera` and `PUT /me/camera/photo` after a restart (the camera is kept by wtfd, in memory); `account.me()` also checks the session of `GET /me/events` |
 | `account.list()` | [account] | `GET /accounts` |
 | `account.get(p_account)` | account | `GET /accounts/{id}` |
 | `account.create(p_email, p_password, p_role)` | account | `POST /accounts` |
@@ -146,14 +147,14 @@ The 50 functions the API calls, and the routes that call them (under `/api/v1`).
 | `item.patch(p_item, p_patch)` | item | `PATCH /items/{id}` |
 | `item.delete(p_item)` | void | `DELETE /items/{id}` |
 | `attachment.lock(p_hash)` | void | `PUT /{kind}/{id}/photo`, `PUT /{kind}/{id}/files/{attribute}` (multipart; wtfd stores the file between the two calls) |
-| `attachment.set(p_kind, p_owner, p_attribute, p_hash, p_media_type)` | item or stock | the same |
+| `attachment.set(p_kind, p_owner, p_attribute, p_hash, p_media_type)` | item, stock or location | the same, and `PUT /me/camera/photo` (a photo for what the session the phone is the camera for has open) |
 | `attachment.get(p_kind, p_owner, p_attribute)` | `{hash, name}` | `GET /{kind}/{id}/photo`, `GET /{kind}/{id}/files/{attribute}` (wtfd sends the file) |
 | `model.import(p_data, p_parent, p_dry_run)` | report | `POST /model/import?parent=&dry_run=` |
 | `model.export(p_class)` | a model file | `GET /classes/{id}/model` |
 | `code.resolve(p_code)` | `{type, object}`; 410 for a deleted thing's code | `GET /codes/{code}` |
 | `meta.schema_version()` | `{version, repeatables}` | – (wtfd at startup; takes no request) |
 
-`{kind}` is `items` or `stock`. The routes with `dry_run` take it as a query parameter (`?dry_run=true`).
+`{kind}` is `items` or `stock`, or `locations` for a photo. The routes with `dry_run` take it as a query parameter (`?dry_run=true`).
 
 ## Deferred
 

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../api/client.dart';
 import '../api/input.dart';
 import '../api/models.dart';
+import '../camera.dart';
 import '../session.dart';
 import '../widgets/common.dart';
 import '../widgets/files.dart';
@@ -28,7 +29,9 @@ class StockScreen extends StatelessWidget {
     return Loader<(Stock, ClassDetail, Tree)>(
       key: ValueKey(code),
       title: 'Stock $code',
-      refreshOn: client.treeChanges,
+      // Also after a change by this session's camera, such as a photo
+      // taken on the phone.
+      refreshOn: anyOf([client.treeChanges, client.remoteChanges]),
       load: () async {
         final target = await client.code(code);
         if (target is CodeGone) {
@@ -97,116 +100,128 @@ class StockScreen extends StatelessWidget {
           stock: true,
         );
 
-        return Scaffold(
-          appBar: AppBar(
-            title: Text('${stock.item.name} · ${stock.code}'),
-            actions: [
-              if (write) ...[
-                IconButton(
-                  icon: const Icon(Icons.edit_outlined),
-                  tooltip: 'Edit',
-                  onPressed: () async {
-                    if (await context.push('/stock/${stock.code}/edit') ==
-                        true) {
-                      reload();
-                    }
-                  },
-                ),
-                PopupMenuButton<String>(
-                  onSelected: (action) async {
-                    switch (action) {
-                      case 'photo':
-                        if (await editPhoto(
-                          context,
-                          owner: owner,
-                          hasPhoto: stock.photo != null,
-                          remove: () =>
-                              client.patchStock(stock.id, {'photo': null}),
-                        )) {
-                          reload();
-                        }
-                      case 'merge':
-                        merge();
-                      case 'delete':
-                        delete();
-                    }
-                  },
-                  itemBuilder: (context) => [
-                    const PopupMenuItem(value: 'photo', child: Text('Photo…')),
-                    if (stock.amount != null)
-                      const PopupMenuItem(
-                        value: 'merge',
-                        child: Text('Merge into…'),
-                      ),
-                    const PopupMenuItem(
-                      value: 'delete',
-                      child: Text('Delete…'),
-                    ),
-                  ],
-                ),
-              ],
-            ],
+        return CameraSubject(
+          path: '/stock/$code',
+          target: CameraTarget(
+            type: 'stock',
+            id: stock.id,
+            name: '${stock.item.name} · ${locations.pathOf(stock.location)}',
           ),
-          floatingActionButton: write
-              ? FloatingActionButton.extended(
-                  onPressed: () async {
-                    final moved = await showMoveDialog(
-                      context,
-                      stock,
-                      locations,
-                    );
-                    if (moved == null || !context.mounted) return;
-                    // The answer is the row at the destination: this one
-                    // (moved whole), or one split off from it.
-                    showMessage(
-                      context,
-                      'Moved to ${locations.pathOf(moved.location)}.',
-                    );
-                    if (moved.id == stock.id) {
-                      reload();
-                    } else {
-                      context.pushReplacement('/stock/${moved.code}');
-                    }
-                  },
-                  icon: const Icon(Icons.move_down),
-                  label: const Text('Move'),
-                )
-              : null,
-          body: Readable(
-            child: RefreshIndicator(
-              onRefresh: reload,
-              child: ListView(
-                padding: const EdgeInsets.only(bottom: 88),
-                children: [
-                  WithPhoto(
-                    photo: stock.photo,
-                    children: [
-                      const SizedBox(height: 8),
-                      Field(
-                        'Item',
-                        '${stock.item.name}  (${stock.item.code})',
-                        onTap: () => context.push('/items/${stock.item.code}'),
+          child: Scaffold(
+            appBar: AppBar(
+              title: Text('${stock.item.name} · ${stock.code}'),
+              actions: [
+                if (write) ...[
+                  IconButton(
+                    icon: const Icon(Icons.edit_outlined),
+                    tooltip: 'Edit',
+                    onPressed: () async {
+                      if (await context.push('/stock/${stock.code}/edit') ==
+                          true) {
+                        reload();
+                      }
+                    },
+                  ),
+                  PopupMenuButton<String>(
+                    onSelected: (action) async {
+                      switch (action) {
+                        case 'photo':
+                          if (await editPhoto(
+                            context,
+                            owner: owner,
+                            hasPhoto: stock.photo != null,
+                            remove: () =>
+                                client.patchStock(stock.id, {'photo': null}),
+                          )) {
+                            reload();
+                          }
+                        case 'merge':
+                          merge();
+                        case 'delete':
+                          delete();
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      const PopupMenuItem(
+                        value: 'photo',
+                        child: Text('Photo…'),
                       ),
-                      Field(
-                        'Location',
-                        locations.pathOf(stock.location),
-                        onTap: place?.code == null
-                            ? null
-                            : () => context.push('/locations/${place!.code}'),
+                      if (stock.amount != null)
+                        const PopupMenuItem(
+                          value: 'merge',
+                          child: Text('Merge into…'),
+                        ),
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Text('Delete…'),
                       ),
-                      Field('Amount', stock.amountText),
-                      Field('Code', stock.code),
-                      if (values.isNotEmpty) ...[
-                        const SectionTitle('Values'),
-                        ...values,
-                      ],
                     ],
                   ),
-                  if (files.isNotEmpty) ...[
-                    const SectionTitle('Files'),
-                    ...files,
-                  ],
                 ],
+              ],
+            ),
+            floatingActionButton: write
+                ? FloatingActionButton.extended(
+                    onPressed: () async {
+                      final moved = await showMoveDialog(
+                        context,
+                        stock,
+                        locations,
+                      );
+                      if (moved == null || !context.mounted) return;
+                      // The answer is the row at the destination: this one
+                      // (moved whole), or one split off from it.
+                      showMessage(
+                        context,
+                        'Moved to ${locations.pathOf(moved.location)}.',
+                      );
+                      if (moved.id == stock.id) {
+                        reload();
+                      } else {
+                        context.pushReplacement('/stock/${moved.code}');
+                      }
+                    },
+                    icon: const Icon(Icons.move_down),
+                    label: const Text('Move'),
+                  )
+                : null,
+            body: Readable(
+              child: RefreshIndicator(
+                onRefresh: reload,
+                child: ListView(
+                  padding: const EdgeInsets.only(bottom: 88),
+                  children: [
+                    WithPhoto(
+                      photo: stock.photo,
+                      children: [
+                        const SizedBox(height: 8),
+                        Field(
+                          'Item',
+                          '${stock.item.name}  (${stock.item.code})',
+                          onTap: () =>
+                              context.push('/items/${stock.item.code}'),
+                        ),
+                        Field(
+                          'Location',
+                          locations.pathOf(stock.location),
+                          onTap: place?.code == null
+                              ? null
+                              : () => context.push('/locations/${place!.code}'),
+                        ),
+                        Field('Amount', stock.amountText),
+                        Field('Code', stock.code),
+                        if (values.isNotEmpty) ...[
+                          const SectionTitle('Values'),
+                          ...values,
+                        ],
+                      ],
+                    ),
+                    if (files.isNotEmpty) ...[
+                      const SectionTitle('Files'),
+                      ...files,
+                    ],
+                  ],
+                ),
               ),
             ),
           ),

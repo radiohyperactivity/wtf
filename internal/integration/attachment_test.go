@@ -12,6 +12,7 @@ import (
 	"net/textproto"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/radiohyperactivity/wtf/internal/files"
 )
@@ -143,6 +144,33 @@ func TestFiles(t *testing.T) {
 		t.Errorf("split-off row: %v", split)
 	}
 
+	// Locations: a photo, shown in the tree, for admins, and no other
+	// files.
+	location := "/locations/" + garage
+	garagePNG := append(append([]byte(nil), pngBytes...), 'g')
+	garageHash := str(t, e.upload(t, 200, location+"/photo", "garage.png", "", garagePNG).body, "photo")
+	if tree := e.expect(t, 200, "GET", "/locations", nil).body; str(t, tree, "tree", 0, "photo") != garageHash {
+		t.Errorf("location tree photo: %v", get(t, tree, "tree", 0))
+	}
+	if rec := e.raw("GET", location+"/photo"); rec.Code != 200 || !bytes.Equal(rec.Body.Bytes(), garagePNG) {
+		t.Errorf("location photo: %d", rec.Code)
+	}
+	e.upload(t, 400, location+"/photo", "manual.pdf", "", pdfBytes)
+	e.upload(t, 404, "/locations/"+missing+"/photo", "x.png", "", pngBytes)
+	e.expect(t, 404, "PUT", location+"/files/Receipt", nil)
+	e.expect(t, 400, "PATCH", location, obj("photo", "abc"))
+	email := fmt.Sprintf("files-%d@test.local", time.Now().UnixNano())
+	e.expect(t, 201, "POST", "/accounts", obj("email", email, "password", "secret-password", "role", "user"))
+	user := session(t, e.expect(t, 200, "POST", "/login",
+		obj("email", email, "password", "secret-password", "client", "test", "max_idle", nil), "Cookie", ""))
+	e.expect(t, 403, "PATCH", location, obj("photo", nil), as(user)...)
+	body, contentType := photoUpload(t, garagePNG)
+	e.expect(t, 403, "PUT", location+"/photo", body, append([]string{"Content-Type", contentType}, as(user)...)...)
+	if got := e.expect(t, 200, "PATCH", location, obj("photo", nil)).body; get(t, got, "photo") != nil {
+		t.Errorf("location photo removed: %v", got)
+	}
+	e.upload(t, 200, location+"/photo", "garage.png", "", garagePNG)
+
 	// Limits and format.
 	e.upload(t, 413, item+"/files/Page", "big.bin", "application/octet-stream", bytes.Repeat([]byte{1}, testMaxAttachment+1))
 	e.expect(t, 415, "PUT", item+"/photo", obj("file", "x"))
@@ -172,8 +200,8 @@ func TestFiles(t *testing.T) {
 	if e.fileExists(t, htmlHash) {
 		t.Error("gc kept an unreferenced file")
 	}
-	if !e.fileExists(t, pngHash) || !e.fileExists(t, pdfHash) {
-		t.Error("gc removed a file a stock row or a value has")
+	if !e.fileExists(t, pngHash) || !e.fileExists(t, pdfHash) || !e.fileExists(t, garageHash) {
+		t.Error("gc removed a file a stock row, a location or a value has")
 	}
 	if rec := e.raw("GET", stock+"/photo"); rec.Code != http.StatusOK {
 		t.Errorf("download after gc: %d", rec.Code)

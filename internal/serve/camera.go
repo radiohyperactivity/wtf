@@ -1,0 +1,560 @@
+package serve
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+)
+
+// The phone as a remote camera (2026-11-19-remote-camera.md): a session, on
+// a phone say, is the camera for another session of the same account, on a
+// desktop, and a photo it takes goes to what that desktop has open. Which
+// phone is the camera for which desktop, and what that desktop has open,
+// live in wtfd's memory, not in the database; a restart forgets them, and
+// the phone's next request makes it the camera again.
+
+// How long a camera lasts while its phone doesn't ask, how often old cameras
+// are looked for, how often a quiet stream sends a line, and how often an
+// open stream asks the database whether its session is still valid.
+// Variables, for the tests.
+var (
+	cameraIdle      = 12 * time.Hour
+	cameraSweep     = 10 * time.Minute
+	streamKeepAlive = 30 * time.Second
+	streamRecheck   = 5 * time.Minute
+)
+
+// The name a desktop gives what it has open is at most this many
+// characters.
+const maxTargetName = 500
+
+// A session's id, as account.session_list gives it: the SHA-256 of its
+// token, in hex.
+var sessionIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// event is one server-sent event: its name, and its data, JSON.
+type event struct {
+	name string
+	data []byte
+}
+
+// stream is one open event stream of a session. Events wait in a short
+// queue; a stream that falls that far behind is ended, and its app hears
+// whether it has a camera again when it reconnects.
+type stream struct {
+	events chan event
+	done   chan struct{}
+	ended  bool // done is closed
+}
+
+func (st *stream) end() {
+	if !st.ended {
+		st.ended = true
+		close(st.done)
+	}
+}
+
+// target is what a desktop has open that a photo can be for: an item, a
+// stock row or a location (Type "item", "stock" or "location", its ID and
+// its Name), or a new one that isn't saved yet (Waiting: its type). The
+// zero target is nothing a photo can be for.
+type target struct {
+	Type    string `json:"type,omitempty"`
+	ID      string `json:"id,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Waiting string `json:"waiting,omitempty"`
+}
+
+// targetPaths are the API paths of the types of target.
+var targetPaths = map[string]string{"item": "/items/", "stock": "/stock/", "location": "/locations/"}
+
+// camera is a phone's camera: the desktop session it is for, that
+// session's client name, the phone's own, and when the phone last asked.
+type camera struct {
+	desktop, client, phoneClient string
+	seen                         time.Time
+}
+
+// cameras are which phone is the camera for which desktop, what each
+// desktop with a camera has open, and the open event streams, by session
+// id (sessionID). Only desktops with a camera have a target kept, so memory
+// grows with the cameras, not with the sessions.
+type cameras struct {
+	mu      sync.Mutex
+	of      map[string]*camera          // phone → its camera
+	phones  map[string]map[string]bool  // desktop → its phones
+	target  map[string]target           // desktop → what it has open, once it said
+	streams map[string]map[*stream]bool // session → its open streams
+	swept   time.Time                   // when old cameras were last looked for
+	closed  bool                        // wtfd is shutting down
+	now     func() time.Time
+}
+
+func newCameras() *cameras {
+	return &cameras{
+		of:      map[string]*camera{},
+		phones:  map[string]map[string]bool{},
+		target:  map[string]target{},
+		streams: map[string]map[*stream]bool{},
+		now:     time.Now,
+	}
+}
+
+// eventData is v as an event's data.
+func eventData(name string, v any) event {
+	data, _ := json.Marshal(v)
+	return event{name: name, data: data}
+}
+
+// send queues e on every open stream of session; the lock is held.
+func (c *cameras) send(session string, e event) {
+	for st := range c.streams[session] {
+		select {
+		case st.events <- e:
+		default:
+			st.end()
+		}
+	}
+}
+
+// cameraEvent is the camera event for desktop: the client name of the phone
+// that asked last, or {} when it has no camera; the lock is held.
+func (c *cameras) cameraEvent(desktop string) event {
+	data := map[string]string{}
+	var latest *camera
+	for phone := range c.phones[desktop] {
+		if cam := c.of[phone]; latest == nil || cam.seen.After(latest.seen) {
+			latest = cam
+		}
+	}
+	if latest != nil {
+		data["client"] = latest.phoneClient
+	}
+	return eventData("camera", data)
+}
+
+// start makes phone, whose client name is phoneClient, the camera for
+// desktop, whose client name is client, instead of any desktop it was the
+// camera for before. A desktop that gets a camera is told, so that it says
+// what it has open.
+func (c *cameras) start(phone, desktop, client, phoneClient string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sweep()
+	if cam := c.of[phone]; cam != nil && cam.desktop == desktop {
+		// The same camera again: it stays as it is, and so does the
+		// desktop's target.
+		cam.client, cam.phoneClient, cam.seen = client, phoneClient, c.now()
+		return
+	}
+	c.stop(phone)
+	c.of[phone] = &camera{desktop: desktop, client: client, phoneClient: phoneClient, seen: c.now()}
+	if c.phones[desktop] == nil {
+		c.phones[desktop] = map[string]bool{}
+	}
+	c.phones[desktop][phone] = true
+	c.send(desktop, c.cameraEvent(desktop))
+}
+
+// stop ends phone's camera, if it has one; the lock is held. A desktop
+// left without a camera loses its target, and is told.
+func (c *cameras) stop(phone string) {
+	cam := c.of[phone]
+	if cam == nil {
+		return
+	}
+	delete(c.of, phone)
+	delete(c.phones[cam.desktop], phone)
+	if len(c.phones[cam.desktop]) == 0 {
+		delete(c.phones, cam.desktop)
+		delete(c.target, cam.desktop)
+	}
+	c.send(cam.desktop, c.cameraEvent(cam.desktop))
+}
+
+// unpair ends phone's camera (DELETE /me/camera).
+func (c *cameras) unpair(phone string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.stop(phone)
+}
+
+// forget drops a session that has ended: its own camera, and the cameras
+// for it, whose phones hear so on their next request, when the database
+// no longer finds it. Its streams end.
+func (c *cameras) forget(session string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.stop(session)
+	for phone := range c.phones[session] {
+		c.stop(phone)
+	}
+	for st := range c.streams[session] {
+		st.end()
+	}
+}
+
+// report notes what desktop has open. A desktop without a camera keeps
+// nothing.
+func (c *cameras) report(desktop string, t target) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.phones[desktop]) == 0 {
+		return
+	}
+	c.target[desktop] = t
+}
+
+// lookup is what the desktop phone is the camera for has open, when phone
+// is its camera; ok is false when it isn't (any more), as after a restart.
+func (c *cameras) lookup(phone, desktop string) (t target, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cam := c.of[phone]
+	if cam == nil || cam.desktop != desktop {
+		return target{}, false
+	}
+	cam.seen = c.now()
+	return c.target[desktop], true
+}
+
+// changed tells the desktop that session is the camera for, if any, that
+// session changed what is at path.
+func (c *cameras) changed(session, path string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if cam := c.of[session]; cam != nil {
+		c.send(cam.desktop, eventData("changed", map[string]string{"path": path}))
+	}
+}
+
+// open registers a new event stream of session. A desktop with a camera
+// hears so at once. It is nil when wtfd is shutting down.
+func (c *cameras) open(session string) *stream {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil
+	}
+	c.sweep()
+	st := &stream{events: make(chan event, 16), done: make(chan struct{})}
+	if c.streams[session] == nil {
+		c.streams[session] = map[*stream]bool{}
+	}
+	c.streams[session][st] = true
+	if len(c.phones[session]) > 0 {
+		// To the new stream only; the others have had it.
+		st.events <- c.cameraEvent(session)
+	}
+	return st
+}
+
+// close unregisters an event stream of session that has ended.
+func (c *cameras) close(session string, st *stream) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	st.end()
+	delete(c.streams[session], st)
+	if len(c.streams[session]) == 0 {
+		delete(c.streams, session)
+	}
+}
+
+// sweep ends the cameras whose phone hasn't asked for cameraIdle, at most
+// every cameraSweep; the lock is held.
+func (c *cameras) sweep() {
+	now := c.now()
+	if now.Sub(c.swept) < cameraSweep {
+		return
+	}
+	c.swept = now
+	for phone, cam := range c.of {
+		if now.Sub(cam.seen) > cameraIdle {
+			c.stop(phone)
+		}
+	}
+}
+
+// shutdown ends every stream, and refuses new ones, as wtfd stops.
+func (c *cameras) shutdown() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = true
+	for _, streams := range c.streams {
+		for st := range streams {
+			st.end()
+		}
+	}
+}
+
+// pair asks the database whether this session may be the camera for
+// desktop, and makes it so. Returns what account.session_camera does.
+func (s *server) pair(r *http.Request, desktop string) ([]byte, error) {
+	result, err := s.callJSON(r.Context(), "account.session_camera",
+		[]arg{{name: "p_session", typ: "text", value: desktop}})
+	if err != nil {
+		return nil, err
+	}
+	var found struct {
+		Session string  `json:"session"`
+		Client  *string `json:"client"`
+		Camera  *string `json:"camera"`
+	}
+	if err := json.Unmarshal(result, &found); err != nil {
+		return nil, err
+	}
+	text := func(s *string) string {
+		if s == nil {
+			return ""
+		}
+		return *s
+	}
+	s.cameras.start(sessionID(callerOf(r.Context()).token), found.Session, text(found.Client), text(found.Camera))
+	return result, nil
+}
+
+// cameraFor: PUT /me/camera {"session": "<id>"}. The database checks that
+// this session may be the camera for that one; the camera itself is kept
+// here. Answers {session, client, camera}.
+func (s *server) cameraFor(w http.ResponseWriter, r *http.Request) error {
+	object, err := readObject(r)
+	if err != nil {
+		return err
+	}
+	var desktop string
+	for key, raw := range object {
+		if key != "session" {
+			return invalidInput("unknown field %q", key)
+		}
+		if json.Unmarshal(raw, &desktop) != nil {
+			return invalidInput("field %q is a string", "session")
+		}
+	}
+	result, err := s.pair(r, desktop)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, result)
+	return nil
+}
+
+// cameraStop: DELETE /me/camera. Only the holder of the session's token can
+// send a cookie that hashes to its id, so the database isn't asked.
+func (s *server) cameraStop(w http.ResponseWriter, r *http.Request) error {
+	s.cameras.unpair(sessionID(callerOf(r.Context()).token))
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// cameraTarget is what the desktop session ?session=<id> has open, for this
+// session as its camera. Without the database while it is the camera
+// already; after a restart, the database is asked again, and a desktop
+// session that has ended is not found (404).
+func (s *server) cameraTarget(r *http.Request) (string, target, error) {
+	desktop := r.URL.Query().Get("session")
+	if !sessionIDPattern.MatchString(desktop) {
+		return "", target{}, invalidInput("session must be a session's id, 64 hexadecimal digits")
+	}
+	phone := sessionID(callerOf(r.Context()).token)
+	if t, ok := s.cameras.lookup(phone, desktop); ok {
+		return desktop, t, nil
+	}
+	if _, err := s.pair(r, desktop); err != nil {
+		return "", target{}, err
+	}
+	t, _ := s.cameras.lookup(phone, desktop)
+	return desktop, t, nil
+}
+
+// cameraLook: GET /me/camera?session=<id>, what a photo would be for:
+// {type, id, name}, {waiting}, or {}.
+func (s *server) cameraLook(w http.ResponseWriter, r *http.Request) error {
+	_, t, err := s.cameraTarget(r)
+	if err != nil {
+		return err
+	}
+	data, _ := json.Marshal(t)
+	writeJSON(w, http.StatusOK, data)
+	return nil
+}
+
+// cameraPhoto: PUT /me/camera/photo?session=<id>, a photo for what the
+// desktop session has open as it arrives, uploaded as its photo. Answers
+// the target it went to; 409 when there is none. The desktop is told
+// (changed).
+func (s *server) cameraPhoto(w http.ResponseWriter, r *http.Request) error {
+	_, t, err := s.cameraTarget(r)
+	if err != nil {
+		return err
+	}
+	if t.ID == "" {
+		detail := "Nothing is open there that a photo can be for."
+		if t.Waiting != "" {
+			detail = "What is open there isn't saved yet."
+		}
+		return &problem{
+			Type:   "/problems/wrong-state",
+			Title:  "Not possible in this state",
+			Status: http.StatusConflict,
+			Detail: detail,
+		}
+	}
+	if _, err := s.store(w, r, t.Type, t.ID, ""); err != nil {
+		return err
+	}
+	s.cameras.changed(sessionID(callerOf(r.Context()).token), targetPaths[t.Type]+t.ID+"/photo")
+	data, _ := json.Marshal(t)
+	writeJSON(w, http.StatusOK, data)
+	return nil
+}
+
+// targetReport: PUT /me/target, what this session's app has open: {type,
+// id, name}, {waiting}, or {}. Kept only when the session has a camera;
+// without the database, as for cameraStop. The answer is the same either
+// way.
+func (s *server) targetReport(w http.ResponseWriter, r *http.Request) error {
+	object, err := readObject(r)
+	if err != nil {
+		return err
+	}
+	var t target
+	for key, raw := range object {
+		var value string
+		if json.Unmarshal(raw, &value) != nil {
+			return invalidInput("field %q is a string", key)
+		}
+		switch key {
+		case "type":
+			t.Type = value
+		case "id":
+			t.ID = strings.ToLower(value)
+		case "name":
+			t.Name = value
+		case "waiting":
+			t.Waiting = value
+		default:
+			return invalidInput("unknown field %q", key)
+		}
+	}
+	switch {
+	case t.Waiting != "":
+		if _, ok := targetPaths[t.Waiting]; !ok || t.Type != "" || t.ID != "" || t.Name != "" {
+			return invalidInput("waiting is item, stock or location, on its own")
+		}
+	case t.Type != "" || t.ID != "" || t.Name != "":
+		if _, ok := targetPaths[t.Type]; !ok {
+			return invalidInput("type is item, stock or location")
+		}
+		if !uuidPattern.MatchString(t.ID) {
+			return invalidInput("id must be a UUID")
+		}
+		if len(t.Name) > maxTargetName {
+			return invalidInput("a name is at most %d characters", maxTargetName)
+		}
+	}
+	s.cameras.report(sessionID(callerOf(r.Context()).token), t)
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// events: GET /me/events, the session's event stream.
+func (s *server) events(w http.ResponseWriter, r *http.Request) error {
+	check := func() error {
+		_, err := s.callJSON(r.Context(), "account.me", nil)
+		return err
+	}
+	return s.stream(w, r, check)
+}
+
+// stream sends the session's events as server-sent events until the client
+// goes, the session is found ended (check, when the stream opens and every
+// streamRecheck), or wtfd shuts down. A quiet stream sends a comment line
+// every streamKeepAlive, so that proxies keep it open.
+func (s *server) stream(w http.ResponseWriter, r *http.Request, check func() error) error {
+	// Before the answer starts, an ended session still gets its 401.
+	if err := check(); err != nil {
+		return err
+	}
+	session := sessionID(callerOf(r.Context()).token)
+	st := s.cameras.open(session)
+	if st == nil {
+		return &problem{
+			Type:   "/problems/unavailable",
+			Title:  "Shutting down",
+			Status: http.StatusServiceUnavailable,
+		}
+	}
+	defer s.cameras.close(session, st)
+
+	// The server's read and write timeouts are for ordinary requests; this
+	// one stays open. Each write gets a deadline of its own instead.
+	rc := http.NewResponseController(w)
+	_ = rc.SetReadDeadline(time.Time{})
+	write := func(text string) bool {
+		_ = rc.SetWriteDeadline(time.Now().Add(streamKeepAlive))
+		if _, err := fmt.Fprint(w, text); err != nil {
+			return false
+		}
+		return rc.Flush() == nil
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no") // nginx: pass it on as it comes
+	w.WriteHeader(http.StatusOK)
+	if !write(": events\n\n") {
+		return nil
+	}
+
+	keepAlive := time.NewTicker(streamKeepAlive)
+	defer keepAlive.Stop()
+	recheck := time.NewTicker(streamRecheck)
+	defer recheck.Stop()
+	// Once the answer has started, an error can't become a problem any
+	// more: the stream just ends.
+	for {
+		select {
+		case <-r.Context().Done():
+			return nil
+		case <-st.done:
+			return nil
+		case e := <-st.events:
+			if !write(fmt.Sprintf("event: %s\ndata: %s\n\n", e.name, e.data)) {
+				return nil
+			}
+		case <-keepAlive.C:
+			if !write(": keep-alive\n\n") {
+				return nil
+			}
+		case <-recheck.C:
+			err := check()
+			if p, _ := problemFor(err, r.Method); err != nil && p.Status == http.StatusUnauthorized {
+				write("event: ended\ndata: {}\n\n")
+				s.cameras.forget(session)
+				return nil
+			} else if err != nil && !errors.Is(err, r.Context().Err()) {
+				s.log.Warn("event stream: checking the session failed", "error", err)
+			}
+		}
+	}
+}
+
+// cameraChange is whether a successful request changes something the
+// desktop a session is the camera for is told about (changed): any request
+// but a GET under /items, /stock and /locations. path is relative to the
+// API's prefix.
+func cameraChange(method, path string) bool {
+	if method == http.MethodGet {
+		return false
+	}
+	for _, prefix := range []string{"/items", "/stock", "/locations"} {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}

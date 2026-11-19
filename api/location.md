@@ -4,7 +4,7 @@ The SQL is in [`db/repeatable/40_location.sql`](../db/repeatable/40_location.sql
 
 ## Locations
 
-`location.list(p_known_version)` is the location tree, flat, which `wtfd` nests (`GET /locations`, with `ETag` and `If-None-Match`); its version is `meta.location_version`. `location.get` is a location with its code and path. `location.create` and `location.patch` take `name`, `parent` and `container`; a move below itself is refused.
+`location.list(p_known_version)` is the location tree, flat, which `wtfd` nests (`GET /locations`, with `ETag` and `If-None-Match`); its version is `meta.location_version`. `location.get` is a location with its code and path. `location.create` and `location.patch` take `name`, `parent` and `container`; a move below itself is refused. A location's `photo` is the hash of its photo's file, or null ([attachment.md](attachment.md)), in the tree too; `location.patch` removes it with `{"photo": null}`. Both are for admins.
 
 ## Stock rows
 

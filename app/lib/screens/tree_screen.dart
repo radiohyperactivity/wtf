@@ -44,7 +44,13 @@ class _TreeScreenState extends State<TreeScreen> {
       key: ValueKey(widget.kind),
       title: title,
       load: () => session.client.tree(widget.kind),
-      refreshOn: session.client.treeChanges.where((k) => k == widget.kind),
+      // The locations also after a change of them by this session's
+      // camera.
+      refreshOn: anyOf([
+        session.client.treeChanges.where((k) => k == widget.kind),
+        if (widget.kind == TreeKind.locations)
+          session.client.remoteChanges.where((p) => p.startsWith('/locations')),
+      ]),
       builder: (context, tree, reload) {
         final filter = _filter.text.trim();
         final rows =
@@ -207,7 +213,7 @@ class _NodeRow extends StatelessWidget {
                     : null,
               ),
               PhotoOrIcon(
-                null,
+                node.photo,
                 size: 36,
                 icon: node.container
                     ? Icons.folder_outlined

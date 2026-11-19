@@ -161,6 +161,26 @@ Future<bool> confirmDelete(BuildContext context, String what, {String? note}) =>
       message: [?note, "This can't be undone."].join('\n\n'),
     );
 
+/// The events of all [streams], for [Loader.refreshOn]: a screen that loads
+/// again on more than one kind of change.
+Stream<Object?> anyOf(List<Stream<Object?>> streams) {
+  final subscriptions = <StreamSubscription<Object?>>[];
+  late final StreamController<Object?> merged;
+  merged = StreamController<Object?>(
+    onListen: () {
+      for (final s in streams) {
+        subscriptions.add(s.listen(merged.add));
+      }
+    },
+    onCancel: () async {
+      for (final s in subscriptions) {
+        await s.cancel();
+      }
+    },
+  );
+  return merged.stream;
+}
+
 /// Loads data for a screen, and shows a spinner, the error with "Try again",
 /// or what [builder] makes of the data. [builder] gets a function that
 /// loads again, for after a change; so does every event of [refreshOn].

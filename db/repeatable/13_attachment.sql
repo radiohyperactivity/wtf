@@ -1,9 +1,9 @@
--- Files (schema attachment): the photos of items and stock rows, and the
--- files of their attachment attributes. Explained in api/attachment.md.
+-- Files (schema attachment): the photos of items, stock rows and locations,
+-- and the files of the attachment attributes of items and stock rows. Explained in api/attachment.md.
 --
 -- A file is stored once, in wtfd's files directory, named by the SHA-256
--- of its content. An item or stock
--- row holds only the hash: its photo in the photo column, an attachment in
+-- of its content. An item, stock row
+-- or location holds only the hash: its photo in the photo column, an attachment in
 -- its values. wtfd finds the media type from the file itself.
 
 CREATE SCHEMA attachment;
@@ -52,12 +52,13 @@ END;
 $$;
 
 -- Puts a file, which wtfd has already stored under its hash p_hash, on one
--- of the items or stock rows (p_kind 'item' or 'stock', p_owner):
--- as its photo when p_attribute is NULL, which must be an image; otherwise
--- as the value of attachment attribute p_attribute of its class, which must
--- take p_media_type when it lists the media types it takes. A file that is
--- there already is replaced. Returns the item or stock row as its get does.
--- For users.
+-- of the items, stock rows or locations (p_kind 'item', 'stock' or
+-- 'location', p_owner): as its photo when p_attribute is NULL, which must be
+-- an image; otherwise as the value of attachment attribute p_attribute of
+-- its class, which must take p_media_type when it lists the media types it
+-- takes (a location has only a photo). A file that is there already is
+-- replaced. Returns the item, stock row or location as its get does. For
+-- users; a location's photo for admins, who set up the locations.
 CREATE FUNCTION attachment.set(
     p_request    public.request,
     p_kind       text,
@@ -78,11 +79,27 @@ BEGIN
     IF v_hash IS NULL OR v_hash !~ '^[0-9a-f]{64}$' THEN
         PERFORM error.invalid('A file hash is 64 hexadecimal digits');
     END IF;
-    IF p_kind IS NULL OR p_kind NOT IN ('item', 'stock') THEN
-        PERFORM error.invalid('A file goes on an item or a stock row');
+    IF p_kind IS NULL OR p_kind NOT IN ('item', 'stock', 'location') THEN
+        PERFORM error.invalid('A file goes on an item, a stock row or a location');
+    END IF;
+    IF p_kind = 'location' AND p_attribute IS NOT NULL THEN
+        PERFORM error.invalid('A location has a photo, and no other files');
     END IF;
     IF p_attribute IS NULL AND coalesce(p_media_type, '') NOT LIKE 'image/%' THEN
         PERFORM error.invalid(format('A photo must be an image, and this is %s', coalesce(p_media_type, 'unknown')));
+    END IF;
+
+    IF p_kind = 'location' THEN
+        IF v_session.role < 'admin' THEN
+            PERFORM error.forbidden(format('This needs the role admin; you are %s', v_session.role));
+        END IF;
+        UPDATE public.location l SET photo = v_hash WHERE l.id = p_owner;
+        IF NOT FOUND THEN
+            PERFORM error.not_found('location', p_owner::text);
+        END IF;
+        -- The tree shows the photos.
+        PERFORM util.bump_version('location');
+        RETURN (SELECT location.detail_json(l) FROM public.location l WHERE l.id = p_owner);
     END IF;
 
     IF p_kind = 'item' THEN
@@ -121,7 +138,7 @@ BEGIN
 END;
 $$;
 
--- The hash of a file on an item or stock row (p_kind,
+-- The hash of a file on an item, stock row or location (p_kind,
 -- p_owner): its photo when p_attribute is NULL, otherwise the value of
 -- attachment attribute p_attribute. {hash, name}, name being what a
 -- download is called: the attribute's name, or "Photo". Not found (404)
@@ -135,10 +152,14 @@ DECLARE
     v_session record := util.session(p_request, 'viewer');
     v_hash    text;
 BEGIN
-    IF p_kind IS NULL OR p_kind NOT IN ('item', 'stock') THEN
-        PERFORM error.invalid('A file is on an item or a stock row');
+    IF p_kind IS NULL OR p_kind NOT IN ('item', 'stock', 'location') THEN
+        PERFORM error.invalid('A file is on an item, a stock row or a location');
     END IF;
-    IF p_kind = 'item' THEN
+    IF p_kind = 'location' THEN
+        SELECT l.photo INTO v_hash
+        FROM public.location l
+        WHERE l.id = p_owner AND p_attribute IS NULL;
+    ELSIF p_kind = 'item' THEN
         SELECT CASE WHEN p_attribute IS NULL THEN i.photo ELSE i.values ->> p_attribute END
         INTO v_hash
         FROM public.item i JOIN public.class c ON c.id = i.class
@@ -153,7 +174,7 @@ BEGIN
     END IF;
     IF v_hash IS NULL THEN
         PERFORM error.not_found(CASE WHEN p_attribute IS NULL THEN 'photo' ELSE 'file' END,
-                                format('of %s %s', CASE p_kind WHEN 'item' THEN 'item' ELSE 'stock row' END, p_owner)
+                                format('of %s %s', CASE p_kind WHEN 'stock' THEN 'stock row' ELSE p_kind END, p_owner)
                                 || CASE WHEN p_attribute IS NULL THEN '' ELSE format(' for "%s"', p_attribute) END);
     END IF;
     RETURN jsonb_build_object('hash', v_hash, 'name', coalesce(p_attribute, 'Photo'));

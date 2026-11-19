@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/testing.dart';
 import 'package:wtf/app.dart';
+import 'package:wtf/camera.dart' show cameraPoll;
 import 'package:wtf/screens/model_import.dart';
 import 'package:wtf/screens/search_screen.dart';
 import 'package:wtf/session.dart';
@@ -526,6 +527,69 @@ void main() {
     await tester.tap(find.text('Remove the photo'));
     await tester.pumpAndSettle();
     expect(fake.changes.last, 'PATCH /api/v1/items/i-drill {"photo":null}');
+    expect(find.byType(ObjectPhoto), findsNothing);
+  });
+
+  testWidgets('a location photo: by an admin, in the tree, for stock rows', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    pickUploadFile = ({bool image = false}) async =>
+        image ? ('shelf.png', () async => [1, 2, 3]) : null;
+    addTearDown(() => pickUploadFile = ({bool image = false}) async => null);
+    await startApp(tester, fake);
+    GoRouter.of(tester.element(find.byType(Scaffold).first))
+        .go('/locations/1A01');
+    await tester.pumpAndSettle();
+    expect(find.byType(ObjectPhoto), findsNothing);
+
+    await menu(tester, 'Photo…');
+    await tester.tap(find.text('Choose a photo'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      startsWith('PUT /api/v1/locations/l-shelf1/photo'),
+    );
+    expect(find.byType(ObjectPhoto), findsOneWidget);
+
+    // A stock row without a photo of its own shows its location's, and the
+    // tree shows it too.
+    GoRouter.of(tester.element(find.byType(Scaffold).first)).go('/items/1B00');
+    await tester.pumpAndSettle();
+    final thumb = find.descendant(
+      of: find.widgetWithText(ListTile, 'Garage/Shelf 1'),
+      matching: find.byType(FileImage),
+    );
+    expect(tester.widget<FileImage>(thumb).file.owner, '/locations/l-shelf1');
+    fake.stock.first['photo'] = 'hash-own';
+    final router = GoRouter.of(tester.element(find.byType(Scaffold).first));
+    router.go('/locations');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Expand'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widgetList<FileImage>(find.byType(FileImage))
+          .map((i) => i.file.owner),
+      contains('/locations/l-shelf1'),
+    );
+    router.go('/items/1B00');
+    await tester.pumpAndSettle();
+    expect(tester.widget<FileImage>(thumb).file.owner, '/stock/s-1');
+
+    // Removing it is a patch of the photo alone.
+    clearMessages(tester);
+    GoRouter.of(tester.element(find.byType(Scaffold).first))
+        .go('/locations/1A01');
+    await tester.pumpAndSettle();
+    await menu(tester, 'Photo…');
+    await tester.tap(find.text('Remove the photo'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      'PATCH /api/v1/locations/l-shelf1 {"photo":null}',
+    );
     expect(find.byType(ObjectPhoto), findsNothing);
   });
 
@@ -1445,12 +1509,24 @@ void main() {
     expect(find.text('Add stock'), findsOneWidget);
     expect(find.byTooltip('Edit'), findsOneWidget);
 
-    // Locations: no new ones, no changing them; stock, yes.
+    // Locations: no new ones, no changing them, nor their photos; stock,
+    // yes.
     await tester.tap(
       find.descendant(of: rail, matching: find.text('Locations')),
     );
     await tester.pumpAndSettle();
     expect(find.text('New location'), findsNothing);
+    GoRouter.of(tester.element(find.byType(Scaffold).first))
+        .go('/locations/1A01');
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: find.byType(AppBar),
+        matching: find.byType(PopupMenuButton<String>),
+      ),
+      findsNothing,
+    );
+    expect(find.text('Add stock here'), findsOneWidget);
 
     // Admin screens, even by URL, lead to Items.
     for (final path in ['/admin', '/classes/c-drills', '/accounts']) {
@@ -1463,5 +1539,204 @@ void main() {
       );
       expect(find.text('New item'), findsOneWidget, reason: path);
     }
+  });
+
+  testWidgets('a phone as the camera for the PC: what for, a photo, stop', (
+    tester,
+  ) async {
+    setSize(tester, 400, 1400);
+    final fake = FakeServer();
+    final camera = canTakePhoto;
+    canTakePhoto = (_) => true;
+    takeCameraPhoto = () async => ('shot.jpg', () async => [1, 2, 3]);
+    addTearDown(() {
+      canTakePhoto = camera;
+      takeCameraPhoto = () async => null;
+    });
+    await startApp(tester, fake);
+    expect(fake.openStreams, 1);
+
+    // The camera for another session, chosen under Account: the app shows
+    // only the camera, and has no event stream.
+    await tester.tap(find.text('Account'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Be its camera'));
+    await tester.pumpAndSettle();
+    expect(fake.cameraFor, 'sess-phone');
+    expect(
+      find.text('Photos go to what WtF on Android has open.'),
+      findsOneWidget,
+    );
+    expect(find.byType(NavigationBar), findsNothing);
+    expect(fake.openStreams, 0);
+    FilledButton shutter() => tester.widget<FilledButton>(
+      find.ancestor(
+        of: find.text('Take photo'),
+        matching: find.byWidgetPredicate((w) => w is FilledButton),
+      ),
+    );
+
+    // Nothing open there, then a new item not saved yet: no photo.
+    expect(find.text('Open an item on the PC'), findsOneWidget);
+    expect(shutter().onPressed, isNull);
+    fake.cameraTarget = {'waiting': 'item'};
+    await tester.pump(cameraPoll);
+    await tester.pumpAndSettle();
+    expect(find.text('Save the item on the PC first'), findsOneWidget);
+    expect(shutter().onPressed, isNull);
+
+    // A saved item: the photo goes to it.
+    fake.cameraTarget = {
+      'type': 'item',
+      'id': 'i-drill',
+      'name': 'Cordless drill',
+    };
+    await tester.pump(cameraPoll);
+    await tester.pumpAndSettle();
+    expect(find.text('Cordless drill'), findsOneWidget);
+    expect(find.text('The photo of this item'), findsOneWidget);
+    await tester.tap(find.text('Take photo'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      startsWith('PUT /api/v1/me/camera/photo?session=sess-phone'),
+    );
+    expect(fake.changes.last, contains('filename="shot.jpg"'));
+    expect(fake.items.first['photo'], isNotNull);
+    expect(find.text('Added to Cordless drill'), findsOneWidget);
+
+    // The PC moved on before the photo arrived: it says so, and the photo
+    // can be sent again.
+    fake.cameraTarget = {};
+    await tester.tap(find.text('Take photo'));
+    await tester.pumpAndSettle();
+    expect(find.text('Open an item on the PC'), findsNWidgets(2));
+    fake.cameraTarget = {
+      'type': 'stock',
+      'id': 's-1',
+      'name': 'Cordless drill · Garage/Shelf 1',
+    };
+    await tester.tap(find.text('Send again'));
+    await tester.pumpAndSettle();
+    expect(find.text('Added to Cordless drill · Garage/Shelf 1'), findsOne);
+    expect(fake.stock.first['photo'], isNotNull);
+
+    // Back from a locked screen, it asks at once.
+    for (final state in [
+      AppLifecycleState.inactive,
+      AppLifecycleState.hidden,
+      AppLifecycleState.paused,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(state);
+    }
+    fake.cameraTarget = {
+      'type': 'location',
+      'id': 'l-shelf1',
+      'name': 'Shelf 1',
+    };
+    for (final state in [
+      AppLifecycleState.hidden,
+      AppLifecycleState.inactive,
+      AppLifecycleState.resumed,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(state);
+    }
+    await tester.pumpAndSettle();
+    expect(find.text('The photo of this location'), findsOneWidget);
+
+    // Stop: the app as before, with its event stream.
+    await tester.tap(find.text('Stop'));
+    await tester.pumpAndSettle();
+    expect(fake.cameraFor, isNull);
+    expect(find.byType(NavigationBar), findsOneWidget);
+    expect(fake.openStreams, 1);
+  });
+
+  testWidgets('the PC says what it has open once it has a camera, and loads '
+      'again without losing what is typed', (tester) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    await startApp(tester, fake);
+    await openItem(tester, 'Cordless drill');
+    expect(fake.targets, isEmpty);
+
+    // A phone becomes its camera: a bar says so, and the server is told
+    // what is open.
+    fake.sendEvent('camera', {'client': 'WtF on iPhone'});
+    await tester.pumpAndSettle();
+    expect(find.text('Camera: WtF on iPhone'), findsOneWidget);
+    const drill = {'type': 'item', 'id': 'i-drill', 'name': 'Cordless drill'};
+    expect(fake.targets, [drill]);
+
+    // A photo taken on the phone: the item's screen loads again.
+    fake.items.first['name'] = 'Hammer drill';
+    fake.sendEvent('changed', {'path': '/items/i-drill/photo'});
+    await tester.pumpAndSettle();
+    expect(find.text('Hammer drill'), findsWidgets);
+    expect(fake.targets.last, {...drill, 'name': 'Hammer drill'});
+
+    // Its form: the same item, so nothing new is said; what is typed
+    // stays, while the item's screen under it loads again.
+    final told = fake.targets.length;
+    await tester.tap(find.byTooltip('Edit'));
+    await tester.pumpAndSettle();
+    expect(fake.targets.length, told);
+    await tester.enterText(field('Name'), 'Typed name');
+    fake.items.first['name'] = 'Another name';
+    fake.sendEvent('changed', {'path': '/items/i-drill/photo'});
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextFormField>(field('Name')).controller!.text,
+      'Typed name',
+    );
+    expect(fake.targets.last, {...drill, 'name': 'Another name'});
+
+    // A new item isn't saved yet; a list is nothing a photo is for.
+    final router = GoRouter.of(tester.element(find.byType(Scaffold).first));
+    router.go('/items/new');
+    await tester.pumpAndSettle();
+    expect(fake.targets.last, {'waiting': 'item'});
+    router.go('/locations');
+    await tester.pumpAndSettle();
+    expect(fake.targets.last, isEmpty);
+
+    // The phone stops: the bar goes, and nothing more is said.
+    fake.sendEvent('camera');
+    await tester.pumpAndSettle();
+    expect(find.text('Camera: WtF on iPhone'), findsNothing);
+    final before = fake.targets.length;
+    router.go('/items/1B00');
+    await tester.pumpAndSettle();
+    expect(fake.targets.length, before);
+  });
+
+  testWidgets('a camera goes on after a restart, until its PC logs out', (
+    tester,
+  ) async {
+    setSize(tester, 400, 1000);
+    final fake = FakeServer();
+    final storage = MemoryStorage(
+      camera: jsonEncode({'session': 'sess-phone', 'client': 'WtF on Android'}),
+    );
+    final session = Session(storage: storage, httpClient: fake.client);
+    await session.login('anna@example.com', 'secret', server: server);
+    await tester.pumpWidget(WtfApp(session: session));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Photos go to what WtF on Android has open.'),
+      findsOneWidget,
+    );
+
+    fake.cameraGone = true;
+    await tester.pump(cameraPoll);
+    await tester.pumpAndSettle();
+    expect(
+      find.text(
+        "WtF on Android isn't logged in any more: no longer its camera.",
+      ),
+      findsOneWidget,
+    );
+    expect(storage.camera, isNull);
+    expect(find.byType(NavigationBar), findsOneWidget);
   });
 }

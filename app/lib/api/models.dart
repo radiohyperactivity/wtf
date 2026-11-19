@@ -1,5 +1,8 @@
 // The API's data, as Dart classes. Field names follow openapi/openapi.json.
 
+import 'dart:async';
+import 'dart:convert';
+
 typedef Json = Map<String, dynamic>;
 
 List<Json> _list(Object? o) => (o as List?)?.cast<Json>() ?? const [];
@@ -66,6 +69,113 @@ class ServerBuild {
   final DateTime? commit;
   final String? revision;
 }
+
+/// The session this one is the camera for (PUT /me/camera): its id, as
+/// GET /me/sessions gives it, and what its app calls itself.
+class CameraPairing {
+  const CameraPairing({required this.session, this.client});
+
+  factory CameraPairing.fromJson(Json json) => CameraPairing(
+    session: json['session'] as String,
+    client: json['client'] as String?,
+  );
+
+  final String session;
+  final String? client;
+
+  Json toJson() => {'session': session, 'client': client};
+
+  /// How the app names it: "WtF on Windows", or "the other session".
+  String get label => client ?? 'the other session';
+}
+
+/// What a session has open that a photo can be for (GET /me/camera, PUT
+/// /me/target): an item, a stock row or a location ([type], [id] and
+/// [name]), or a new one not saved yet ([waiting]: its type); none of them
+/// for nothing.
+class CameraTarget {
+  const CameraTarget({this.type, this.id, this.name, this.waiting});
+
+  const CameraTarget.waiting(String type) : this(waiting: type);
+
+  factory CameraTarget.fromJson(Json json) => CameraTarget(
+    type: json['type'] as String?,
+    id: json['id'] as String?,
+    name: json['name'] as String?,
+    waiting: json['waiting'] as String?,
+  );
+
+  static const none = CameraTarget();
+
+  final String? type;
+  final String? id;
+  final String? name;
+  final String? waiting;
+
+  /// Whether a photo can be taken for it.
+  bool get ready => id != null;
+
+  Json toJson() => {
+    'type': ?type,
+    'id': ?id,
+    'name': ?name,
+    'waiting': ?waiting,
+  };
+
+  /// "item", "stock row" or "location", for a type.
+  static String kind(String? type) => switch (type) {
+    'stock' => 'stock row',
+    final t? => t,
+    null => 'item',
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is CameraTarget &&
+      other.type == type &&
+      other.id == id &&
+      other.name == name &&
+      other.waiting == waiting;
+
+  @override
+  int get hashCode => Object.hash(type, id, name, waiting);
+}
+
+/// One event of GET /me/events: its name (camera, changed, ended) and its
+/// data.
+class ServerEvent {
+  const ServerEvent(this.name, this.data);
+
+  final String name;
+  final Json data;
+}
+
+/// Turns the lines of a server-sent event stream into its events: "event:"
+/// names one, "data:" gives its JSON, an empty line ends it, and comment
+/// lines (":") are skipped. Cancelling the events cancels the lines, and so
+/// closes the connection.
+final serverEvents = StreamTransformer<String, ServerEvent>.fromBind((lines) {
+  var name = 'message';
+  final data = StringBuffer();
+  return lines.transform(
+    StreamTransformer.fromHandlers(
+      handleData: (line, sink) {
+        if (line.isEmpty) {
+          if (data.isNotEmpty) {
+            final decoded = jsonDecode(data.toString());
+            sink.add(ServerEvent(name, decoded is Json ? decoded : const {}));
+          }
+          name = 'message';
+          data.clear();
+        } else if (line.startsWith('event:')) {
+          name = line.substring(6).trim();
+        } else if (line.startsWith('data:')) {
+          data.write(line.substring(5).trim());
+        }
+      },
+    ),
+  );
+});
 
 /// This app's version ("0.1.0+1") and when it was built, as
 /// scripts/app-build.sh stamps them; null in a build made without it.
@@ -283,6 +393,7 @@ class TreeNode {
     this.code,
     this.parent,
     this.container = false,
+    this.photo,
     this.children = const [],
   });
 
@@ -292,6 +403,7 @@ class TreeNode {
     code: json['code'] as String?,
     parent: json['parent'] as String?,
     container: json['container'] as bool? ?? false,
+    photo: FileRef.photo('/locations/${json['id']}', json['photo']),
     children: [for (final c in _list(json['children'])) TreeNode.fromJson(c)],
   );
 
@@ -304,6 +416,9 @@ class TreeNode {
 
   /// Holds only other nodes: classes without items, locations without stock.
   final bool container;
+
+  /// Locations only.
+  final FileRef? photo;
   final List<TreeNode> children;
 
   /// Set by [Tree]: the names from the root, joined by "/".
@@ -459,6 +574,7 @@ class Location {
     required this.name,
     this.parent,
     this.container = false,
+    this.photo,
     this.path = const [],
   });
 
@@ -468,6 +584,7 @@ class Location {
     name: json['name'] as String,
     parent: json['parent'] as String?,
     container: json['container'] as bool? ?? false,
+    photo: FileRef.photo('/locations/${json['id']}', json['photo']),
     path: _refs(json['path']),
   );
 
@@ -476,17 +593,18 @@ class Location {
   final String name;
   final String? parent;
   final bool container;
+  final FileRef? photo;
   final List<NamedRef> path;
 
   String get pathText => path.map((p) => p.name).join('/');
 }
 
-/// A file of an item or a stock row: its photo ([attribute] null), or the
-/// file of an attachment attribute.
+/// A file of an item, a stock row or a location: its photo ([attribute]
+/// null), or the file of an attachment attribute.
 class FileRef {
   const FileRef({required this.owner, this.attribute, required this.hash});
 
-  /// /items/{id} or /stock/{id}.
+  /// /items/{id}, /stock/{id} or /locations/{id}.
   final String owner;
   final String? attribute;
 

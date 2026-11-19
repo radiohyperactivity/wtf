@@ -70,6 +70,7 @@ type location struct {
 	Name      string  `json:"name"`
 	Parent    *string `json:"parent"`
 	Container bool    `json:"container"`
+	Photo     *string `json:"photo"`
 	Path      []ref   `json:"path"`
 }
 

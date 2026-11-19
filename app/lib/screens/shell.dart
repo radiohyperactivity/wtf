@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../camera.dart';
 import '../session.dart';
 
 class _Destination {
@@ -81,9 +82,20 @@ class AppShell extends StatelessWidget {
     ];
     final selected = _selected(destinations);
     void select(int i) => context.go(destinations[i].path);
+    // While another session is this one's camera, a bar under the screen
+    // says so.
+    final camera = context.watch<Camera>().cameraClient;
+    final body = camera == null
+        ? child
+        : Column(
+            children: [
+              Expanded(child: child),
+              _CameraBar(camera),
+            ],
+          );
     if (MediaQuery.sizeOf(context).width < compactWidth) {
       return Scaffold(
-        body: child,
+        body: body,
         bottomNavigationBar: NavigationBar(
           selectedIndex: selected,
           onDestinationSelected: select,
@@ -115,8 +127,44 @@ class AppShell extends StatelessWidget {
             ],
           ),
           const VerticalDivider(width: 1),
-          Expanded(child: child),
+          Expanded(child: body),
         ],
+      ),
+    );
+  }
+}
+
+/// "Camera: WtF on iPhone" (decision 9): photos taken there go to what this
+/// app has open.
+class _CameraBar extends StatelessWidget {
+  const _CameraBar(this.client);
+
+  final String client;
+
+  @override
+  Widget build(BuildContext context) {
+    final colours = Theme.of(context).colorScheme;
+    return Material(
+      color: colours.secondaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(
+          children: [
+            Icon(
+              Icons.photo_camera_outlined,
+              size: 20,
+              color: colours.onSecondaryContainer,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Camera: ${client.isEmpty ? 'another session' : client}',
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: colours.onSecondaryContainer),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

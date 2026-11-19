@@ -25,6 +25,7 @@ func testServer() *server {
 	return &server{
 		log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 		maxBody: 1 << 20,
+		cameras: newCameras(),
 	}
 }
 

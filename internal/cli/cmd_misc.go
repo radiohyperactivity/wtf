@@ -16,14 +16,16 @@ import (
 	"github.com/radiohyperactivity/wtf/internal/mediatype"
 )
 
-// owner is an item or a stock row that has files: its API path, its kind
-// ("item" or "stock"), and its class.
+// owner is an item, a stock row or a location that has files: its API
+// path, its kind ("item", "stock" or "location"), and its class (none for a
+// location, which has only a photo).
 type owner struct {
 	path, kind, class string
 }
 
-// resolveOwner finds the item or stock row ref names: a label code says
-// which it is; ITEM@LOCATION is a stock row; anything else is an item.
+// resolveOwner finds the item, stock row or location ref names: a label
+// code says which it is; ITEM@LOCATION is a stock row; anything else is an
+// item.
 func (e *env) resolveOwner(ref string) (owner, error) {
 	if r, ok, err := e.lookupCode(ref); err != nil {
 		return owner{}, err
@@ -37,6 +39,10 @@ func (e *env) resolveOwner(ref string) (owner, error) {
 			var s stock
 			err := e.decode(r.Object, &s)
 			return owner{path: "/stock/" + s.ID, kind: "stock", class: s.Item.Class}, err
+		case "location":
+			var l location
+			err := e.decode(r.Object, &l)
+			return owner{path: "/locations/" + l.ID, kind: "location"}, err
 		}
 		return owner{}, fmt.Errorf("%s is the code of a %s, which has no files", normalizeCode(ref), r.Type)
 	}
@@ -64,6 +70,9 @@ func (e *env) filePath(o owner, name string) (string, error) {
 	if strings.EqualFold(strings.TrimSpace(name), "photo") {
 		return o.path + "/photo", nil
 	}
+	if o.kind == "location" {
+		return "", usagef("a location has a photo, and no other files")
+	}
 	c, err := e.classDetail(o.class)
 	if err != nil {
 		return "", err
@@ -79,15 +88,15 @@ func (e *env) filePath(o owner, name string) (string, error) {
 }
 
 func fileGroup() group {
-	owner := arg("Item or stock row", completeItems)
+	owner := arg("Item, stock row or location", completeItems)
 	name := arg("Attribute or photo", completeOwnerFiles(0))
 	return group{
 		name:    "file",
-		summary: "Files of items and stock rows: their photos and attachment attributes",
+		summary: "Files of items, stock rows and locations: their photos, and the attachment attributes of items and stock rows",
 		commands: []command{
 			{
 				name:    "put",
-				args:    "<item or stock row> <attribute|photo> <file>",
+				args:    "<item, stock row or location> <attribute|photo> <file>",
 				summary: "Upload a file as the photo, or as the file of an attachment attribute; it replaces the one there.",
 				params:  []param{owner, name, fileArg("File")},
 				setup: simple(func(e *env, args []string) error {
@@ -108,8 +117,11 @@ func fileGroup() group {
 					}
 					e.wrote(path)
 					return e.emit(data, func() error {
-						if o.kind == "item" {
+						switch o.kind {
+						case "item":
 							return e.printItemJSON(data)
+						case "location":
+							return e.printLocationJSON(data)
 						}
 						return e.printStockJSON(data)
 					})
@@ -117,7 +129,7 @@ func fileGroup() group {
 			},
 			{
 				name:    "get",
-				args:    "<item or stock row> <attribute|photo> [file] [--force]",
+				args:    "<item, stock row or location> <attribute|photo> [file] [--force]",
 				summary: "Save a file; without a file name, it is named after the attribute (or Photo), with an extension for its type. - writes it to stdout.",
 				params:  []param{owner, name, {name: "File", files: true, optional: true, complete: completeFiles}},
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {

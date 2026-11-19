@@ -152,6 +152,8 @@ sudo systemctl reload nginx
 
 `proxy_pass` names `wtfd` by its address, not by a name, so nginx doesn't depend on name lookups to start.
 
+**The event stream** (`GET /api/v1/me/events`, for the phone as a remote camera) stays open for as long as an app is in the foreground, and needs nothing more here. `wtfd` sends it with `X-Accel-Buffering: no`, so nginx passes each event on at once, and sends a line every 30 seconds, within nginx's `proxy_read_timeout` (60 seconds by default). Keep that timeout above 30 seconds.
+
 **HTTPS by IP address:** Ubuntu's `default` site answers only on port 80. Over HTTPS, a request that names no site (`https://` and the machine's address) goes to the first HTTPS site instead, WtF's, with a certificate warning. To refuse such connections rather than show WtF, add this to the `default` site (`/etc/nginx/sites-available/default`), and reload nginx:
 
 ```nginx

@@ -84,6 +84,7 @@ func (s *server) routes() []route {
 		{"GET /locations", s.versioned("location.list", "tree")},
 		{"POST /locations", s.create("location.create", "/locations/", locationBody())},
 		{"GET /locations/{id}", s.read("location.get", path("p_location", "id"))},
+		{"GET /locations/{id}/photo", s.download("location", false)},
 		{"PATCH /locations/{id}", s.update("location.patch", path("p_location", "id"), patch("p_patch"))},
 		{"DELETE /locations/{id}", s.removeTree("location.delete", "location.delete_tree", path("p_location", "id"))},
 		{"GET /locations/{id}/deletion", s.read("location.delete_tree", path("p_location", "id"),
@@ -126,6 +127,11 @@ func (s *server) routes() []route {
 		{"GET /me/sessions", s.read("account.session_list")},
 		{"DELETE /me/sessions/{id}", s.sessionLogout},
 		{"POST /me/sessions/logout-others", s.logoutOthers},
+		{"PUT /me/camera", s.cameraFor},
+		{"DELETE /me/camera", s.cameraStop},
+		{"GET /me/camera", s.cameraLook},
+		{"PUT /me/target", s.targetReport},
+		{"GET /me/events", s.events},
 		{"GET /accounts", s.read("account.list")},
 		{"POST /accounts", s.create("account.create", "/accounts/", body(
 			field{key: "email", name: "p_email", typ: "text"},
@@ -149,6 +155,8 @@ func (s *server) uploadRoutes() []route {
 		{"PUT /items/{id}/files/{attribute}", s.upload("item", true)},
 		{"PUT /stock/{id}/photo", s.upload("stock", false)},
 		{"PUT /stock/{id}/files/{attribute}", s.upload("stock", true)},
+		{"PUT /locations/{id}/photo", s.upload("location", false)},
+		{"PUT /me/camera/photo", s.cameraPhoto},
 	}
 }
 

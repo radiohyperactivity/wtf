@@ -377,6 +377,7 @@ func (e *env) printLocationJSON(data json.RawMessage) error {
 		"Name", l.Name,
 		"Container", yesNo(l.Container),
 		"Path", pathNames(l.Path),
+		"Photo", photoText(l.Photo),
 		"Id", l.ID)
 	return nil
 }

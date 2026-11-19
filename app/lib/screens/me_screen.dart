@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../api/models.dart';
+import '../camera.dart';
 import '../session.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import '../widgets/files.dart';
 
 /// The logged-in account, like `wtf whoami`: email, server, role;
 /// the appearance; the account's sessions (`wtf sessions list`); changing
@@ -312,10 +314,16 @@ class _SessionsState extends State<_Sessions> {
                           : 'ends ${_when(s.expires!)} unless used',
                     ].join(' · '),
                   ),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.logout),
-                    tooltip: 'Log out',
-                    onPressed: () => _end(s),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (!s.current && canTakePhoto(context)) _CameraButton(s),
+                      IconButton(
+                        icon: const Icon(Icons.logout),
+                        tooltip: 'Log out',
+                        onPressed: () => _end(s),
+                      ),
+                    ],
                   ),
                 ),
           ],
@@ -323,6 +331,28 @@ class _SessionsState extends State<_Sessions> {
       },
     );
   }
+}
+
+/// Makes this app the camera for another session of the account (decision
+/// 1): photos taken here then go to what that session has open. On devices
+/// that take photos only.
+class _CameraButton extends StatelessWidget {
+  const _CameraButton(this.session);
+
+  final SessionInfo session;
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    icon: const Icon(Icons.photo_camera_outlined),
+    tooltip: 'Be its camera',
+    onPressed: () async {
+      try {
+        await context.read<Camera>().start(session.id);
+      } catch (e) {
+        if (context.mounted) showError(context, e);
+      }
+    },
+  );
 }
 
 /// Changes the own password; the other sessions of the account end too,

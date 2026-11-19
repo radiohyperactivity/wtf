@@ -246,7 +246,7 @@ func completeProfiles(e *env, _ []string, _ string, _ bool) []string {
 }
 
 // completeOwnerFiles completes "photo" and the attachment attributes of the
-// item or stock row in args[i].
+// item or stock row in args[i]; only "photo" for a location.
 func completeOwnerFiles(i int) completer {
 	return func(e *env, args []string, _ string, _ bool) []string {
 		out := []string{"photo"}
@@ -254,7 +254,7 @@ func completeOwnerFiles(i int) completer {
 			return out
 		}
 		o, err := e.resolveOwner(args[i])
-		if err != nil {
+		if err != nil || o.kind == "location" {
 			return out
 		}
 		c, err := e.classDetail(o.class)

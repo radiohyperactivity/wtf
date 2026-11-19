@@ -169,6 +169,18 @@ func TestCLI(t *testing.T) {
 	contains(t, stderr, "must be an image")
 	_, stderr = c.run(2, "", "file", "put", "M4 screw", "Size", file)
 	contains(t, stderr, "not a file")
+	// A location's photo, by its code.
+	var attic struct {
+		Code string `json:"code"`
+	}
+	c.json(&attic, "location", "get", "Attic")
+	photo := filepath.Join(t.TempDir(), "attic.png")
+	if err := os.WriteFile(photo, pngBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	contains(t, c.ok("file", "put", attic.Code, "photo", photo), "Attic", "Photo:")
+	_, stderr = c.run(2, "", "file", "put", attic.Code, "manual", file)
+	contains(t, stderr, "no other files")
 
 	// Accounts, login and logout through a profile. Accounts outlive reset(),
 	// so the email is new on every run.

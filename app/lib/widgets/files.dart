@@ -1,5 +1,5 @@
-// Files of items and stock rows: their photo, and the files of attachment
-// attributes (api/attachment.md). Showing, opening, saving, uploading and
+// Files of items, stock rows and locations: their photo, and the files of
+// the attachment attributes of items and stock rows (api/attachment.md). Showing, opening, saving, uploading and
 // removing them.
 
 import 'package:file_picker/file_picker.dart';
@@ -407,8 +407,10 @@ Future<void> openFile(BuildContext context, FileRef f) async {
 }
 
 /// Whether this device can take a photo: phones (and phone browsers, which
-/// offer the camera for a photo upload); not desktops.
-bool canTakePhoto(BuildContext context) {
+/// offer the camera for a photo upload); not desktops. Tests replace it.
+bool Function(BuildContext context) canTakePhoto = _canTakePhoto;
+
+bool _canTakePhoto(BuildContext context) {
   final picker = ImagePicker();
   if (!picker.supportsImageSource(ImageSource.camera)) return false;
   if (kIsWeb) return MediaQuery.sizeOf(context).shortestSide < 600;
@@ -431,6 +433,12 @@ Future<PickedFile?> Function({bool image}) pickUploadFile =
       return (files.first.name, files.first.readAsBytes);
     };
 
+/// Takes a photo with the camera; null when cancelled. Tests replace it.
+Future<PickedFile?> Function() takeCameraPhoto = () async {
+  final shot = await ImagePicker().pickImage(source: ImageSource.camera);
+  return shot == null ? null : (shot.name, shot.readAsBytes);
+};
+
 /// Uploads [file] with [send], saying so; true when done.
 Future<bool> _upload(
   BuildContext context,
@@ -451,9 +459,9 @@ Future<bool> _upload(
   }
 }
 
-/// The photo of the item or stock row at [owner] (/items/{id} or
-/// /stock/{id}): choose an image or take one, or remove it. True when it
-/// changed.
+/// The photo of the item, stock row or location at [owner] (/items/{id},
+/// /stock/{id} or /locations/{id}): choose an image or take one, or remove
+/// it. True when it changed.
 Future<bool> editPhoto(
   BuildContext context, {
   required String owner,
@@ -496,11 +504,11 @@ Future<bool> editPhoto(
         await remove();
         return true;
       case 'take':
-        final shot = await ImagePicker().pickImage(source: ImageSource.camera);
+        final shot = await takeCameraPhoto();
         if (shot == null || !context.mounted) return false;
         return await _upload(
           context,
-          (shot.name, shot.readAsBytes),
+          shot,
           (name, bytes) => client.uploadPhoto(owner, name: name, bytes: bytes),
         );
       default:

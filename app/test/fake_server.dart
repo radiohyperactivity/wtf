@@ -2,6 +2,7 @@
 // locations, one item with stock, and the answers of the API calls the app
 // makes. It records the requests that change something.
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -23,6 +24,41 @@ class FakeServer {
 
   /// The body of the login, as sent.
   JsonMap? login;
+
+  // --- The phone as a remote camera ---
+
+  /// What the app said it has open (PUT /me/target), not in [changes].
+  final List<JsonMap> targets = [];
+
+  /// The session the app is the camera for (PUT /me/camera); null for
+  /// none.
+  String? cameraFor;
+
+  /// What that session has open, as GET /me/camera answers.
+  JsonMap cameraTarget = {};
+
+  /// That session has logged out: GET /me/camera and photos are 404.
+  bool cameraGone = false;
+
+  /// The open event streams (GET /me/events).
+  final List<StreamController<List<int>>> _streams = [];
+
+  /// How many event streams the app has open.
+  int get openStreams => _streams.where((c) => !c.isClosed).length;
+
+  /// Sends an event on every open stream, as wtfd would.
+  void sendEvent(String name, [JsonMap data = const {}]) {
+    for (final c in _streams.where((c) => !c.isClosed)) {
+      c.add(utf8.encode('event: $name\ndata: ${jsonEncode(data)}\n\n'));
+    }
+  }
+
+  /// Ends the open event streams, as when wtfd restarts.
+  Future<void> endStreams() async {
+    for (final c in _streams) {
+      await c.close();
+    }
+  }
 
   // --- The data ---
 
@@ -423,12 +459,16 @@ class FakeServer {
     },
   );
 
-  late final http.Client client = MockClient((req) async {
+  /// The pretend server's HTTP client: the event stream streams, the rest
+  /// is answered by [_answer].
+  late final http.Client client = _Streaming(this);
+
+  late final MockClient _answer = MockClient((req) async {
     final path = req.url.path.replaceFirst('/api/v1', '');
     final q = req.url.queryParameters;
     final method = req.method;
     final dryRun = q['dry_run'] == 'true';
-    if (method != 'GET' && path != '/login') {
+    if (method != 'GET' && path != '/login' && path != '/me/target') {
       changes.add(
         '$method ${req.url.path}${req.url.hasQuery ? '?${req.url.query}' : ''} ${req.body}'
             .trim(),
@@ -470,6 +510,39 @@ class FakeServer {
     switch ((method, segments)) {
       case ('GET', ['me']):
         return _json(me);
+      case ('PUT', ['me', 'target']):
+        targets.add(body!);
+        return _noContent;
+      case ('PUT', ['me', 'camera']):
+        final id = body!['session'];
+        final s = sessions.where((s) => s['id'] == id).firstOrNull;
+        if (s == null) return _problem(404, 'Not found');
+        if (s['current'] == true) {
+          return _problem(400, "A session can't be its own camera");
+        }
+        cameraFor = id as String;
+        return _json({
+          'session': id,
+          'client': s['client'],
+          'camera': 'WtF on Windows',
+        });
+      case ('DELETE', ['me', 'camera']):
+        cameraFor = null;
+        return _noContent;
+      case ('GET', ['me', 'camera']):
+        if (cameraGone) return _problem(404, 'Not found');
+        return _json(cameraTarget);
+      case ('PUT', ['me', 'camera', 'photo']):
+        if (cameraGone) return _problem(404, 'Not found');
+        final id = cameraTarget['id'];
+        if (id == null) return _problem(409, 'Not possible in this state');
+        final rows = switch (cameraTarget['type']) {
+          'stock' => stock,
+          'location' => locations,
+          _ => items,
+        };
+        rows.firstWhere((r) => r['id'] == id)['photo'] = 'hash-${_nextId++}';
+        return _json(cameraTarget);
       case ('POST', ['logout']):
         return http.Response(
           '',
@@ -693,6 +766,10 @@ class FakeServer {
         return _noContent;
 
       // Files: the photo, and the file of an attachment attribute.
+      case ('PUT', ['locations', final id, 'photo']):
+        locations.firstWhere((l) => l['id'] == id)['photo'] =
+            'hash-${_nextId++}';
+        return _json(locationJson(id));
       case ('PUT', [final kind, final id, 'photo']):
         final row = (kind == 'items' ? items : stock).firstWhere(
           (r) => r['id'] == id,
@@ -910,6 +987,12 @@ class FakeServer {
               },
           ],
         });
+      case ('PATCH', ['locations', final id]):
+        final l = locations.firstWhere((l) => l['id'] == id);
+        for (final k in ['name', 'parent', 'container', 'photo']) {
+          if (body!.containsKey(k)) l[k] = body[k];
+        }
+        return _json(locationJson(id));
       case ('DELETE', ['locations', final id]):
         final ids = _subtree(locations, id);
         final used = stock.any((s) => ids.contains(s['location']));
@@ -947,4 +1030,32 @@ class FakeServer {
     }
     return _problem(404, 'Not found: $method $path');
   });
+}
+
+/// Streams GET /me/events from a controller the test sends events into
+/// (FakeServer.sendEvent); everything else goes to the pretend server's
+/// answers.
+class _Streaming extends http.BaseClient {
+  _Streaming(this.fake);
+
+  final FakeServer fake;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    if (request.method == 'GET' && request.url.path == '/api/v1/me/events') {
+      if (request.headers['Cookie'] != 'wtf_session=tok') {
+        return fake._answer.send(request);
+      }
+      // Closed when the app cancels it, as a connection the app drops.
+      late final StreamController<List<int>> events;
+      events = StreamController(onCancel: () => events.close());
+      fake._streams.add(events);
+      return http.StreamedResponse(
+        events.stream,
+        200,
+        headers: {'content-type': 'text/event-stream'},
+      );
+    }
+    return fake._answer.send(request);
+  }
 }

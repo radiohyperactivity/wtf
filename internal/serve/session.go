@@ -65,7 +65,11 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, token string, maxA
 // first: once the 204 is written, headers can't change any more.
 func (s *server) logout(w http.ResponseWriter, r *http.Request) error {
 	setSessionCookie(w, r, "", 0)
-	return s.remove("account.logout")(w, r)
+	if err := s.remove("account.logout")(w, r); err != nil {
+		return err
+	}
+	s.cameras.forget(sessionID(callerOf(r.Context()).token))
+	return nil
 }
 
 // sessionLogout ends one of the caller's sessions, DELETE
@@ -75,7 +79,11 @@ func (s *server) sessionLogout(w http.ResponseWriter, r *http.Request) error {
 	if sessionID(callerOf(r.Context()).token) == strings.ToLower(r.PathValue("id")) {
 		setSessionCookie(w, r, "", 0)
 	}
-	return s.remove("account.session_logout", pathText("p_session", "id"))(w, r)
+	if err := s.remove("account.session_logout", pathText("p_session", "id"))(w, r); err != nil {
+		return err
+	}
+	s.cameras.forget(strings.ToLower(r.PathValue("id")))
+	return nil
 }
 
 // logoutOthers ends the caller's other sessions, POST

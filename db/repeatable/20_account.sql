@@ -294,6 +294,43 @@ BEGIN
 END;
 $$;
 
+-- Checks that the session the call is made with, on a phone say, may be the
+-- camera for p_session, one of its account's other active sessions, as
+-- account.session_list gives its id: its photos go to what that session
+-- has open. Returns that session's id and client, and the client of the
+-- session the call is made with (camera). Another account's session is
+-- not found, the same as one that doesn't exist. wtfd keeps the camera
+-- itself, in memory (2026-11-19-remote-camera.md).
+CREATE FUNCTION account.session_camera(p_request public.request, p_session text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
+AS $$
+DECLARE
+    v_session record := util.session(p_request, 'viewer');
+    v_client  text;
+BEGIN
+    IF p_session IS NULL OR p_session !~ '^[0-9a-f]{64}$' THEN
+        PERFORM error.invalid('A session id is 64 hexadecimal digits');
+    END IF;
+    IF decode(p_session, 'hex') = v_session.session THEN
+        PERFORM error.invalid('A session can''t be its own camera');
+    END IF;
+    SELECT s.client INTO v_client
+    FROM public.session s
+    WHERE s.token_hash = decode(p_session, 'hex')
+      AND s.account = v_session.account
+      AND (s.max_idle IS NULL OR s.last_used > now() - s.max_idle);
+    IF NOT FOUND THEN
+        PERFORM error.not_found('session', p_session);
+    END IF;
+    RETURN jsonb_build_object(
+        'session', p_session,
+        'client',  v_client,
+        'camera',  (SELECT s.client FROM public.session s WHERE s.token_hash = v_session.session));
+END;
+$$;
+
 -- ---------------------------------------------------------------------------
 -- Managing accounts (admins)
 -- ---------------------------------------------------------------------------

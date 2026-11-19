@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -347,4 +348,30 @@ void main() {
     );
     expect(FileRef(owner: '/items/i1', hash: 'h').path, '/items/i1/photo');
   });
+
+  test(
+    'server-sent events: parsed, and cancelling reaches the connection',
+    () async {
+      var cancelled = false;
+      final source = StreamController<List<int>>(
+        onCancel: () => cancelled = true,
+      );
+      final events = <String>[];
+      final sub = source.stream
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .transform(serverEvents)
+          .listen((e) => events.add('${e.name} ${jsonEncode(e.data)}'));
+      source.add(
+        utf8.encode(
+          ': events\n\nevent: camera\ndata: {"client":"WtF on iPhone"}\n\n'
+          ': keep-alive\n\nevent: ended\ndata: {}\n\n',
+        ),
+      );
+      await pumpEventQueue();
+      expect(events, ['camera {"client":"WtF on iPhone"}', 'ended {}']);
+      await sub.cancel().timeout(const Duration(seconds: 1));
+      expect(cancelled, isTrue);
+    },
+  );
 }

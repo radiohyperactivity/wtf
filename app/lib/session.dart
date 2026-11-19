@@ -11,7 +11,8 @@ import 'api/models.dart';
 import 'client_name.dart' if (dart.library.js_interop) 'client_name_web.dart';
 
 /// Where the native apps keep the server address and the session token, and
-/// every app (the web app too) the appearance.
+/// every app (the web app too) the appearance and the session it is the
+/// camera for.
 abstract class SessionStorage {
   Future<String?> readServer();
   Future<void> writeServer(String server);
@@ -21,6 +22,11 @@ abstract class SessionStorage {
   Future<void> writeTheme(String theme);
   Future<String?> readColour();
   Future<void> writeColour(String colour);
+
+  /// The session this one is the camera for, as JSON (CameraPairing); null
+  /// for none.
+  Future<String?> readCamera();
+  Future<void> writeCamera(String? camera);
 }
 
 /// The server address and appearance in the settings (in a browser, its
@@ -31,6 +37,7 @@ class DeviceStorage implements SessionStorage {
   static const _tokenKey = 'session';
   static const _themeKey = 'theme';
   static const _colourKey = 'colour';
+  static const _cameraKey = 'camera';
   final _secure = const FlutterSecureStorage();
 
   @override
@@ -61,6 +68,18 @@ class DeviceStorage implements SessionStorage {
   Future<String?> readToken() => _secure.read(key: _tokenKey);
 
   @override
+  Future<String?> readCamera() async =>
+      (await SharedPreferences.getInstance()).getString(_cameraKey);
+
+  @override
+  Future<void> writeCamera(String? camera) async {
+    final prefs = await SharedPreferences.getInstance();
+    camera == null
+        ? await prefs.remove(_cameraKey)
+        : await prefs.setString(_cameraKey, camera);
+  }
+
+  @override
   Future<void> writeToken(String? token) => token == null
       ? _secure.delete(key: _tokenKey)
       : _secure.write(key: _tokenKey, value: token);
@@ -68,12 +87,19 @@ class DeviceStorage implements SessionStorage {
 
 /// Storage for tests.
 class MemoryStorage implements SessionStorage {
-  MemoryStorage({this.server, this.token, this.theme, this.colour});
+  MemoryStorage({
+    this.server,
+    this.token,
+    this.theme,
+    this.colour,
+    this.camera,
+  });
 
   String? server;
   String? token;
   String? theme;
   String? colour;
+  String? camera;
 
   @override
   Future<String?> readTheme() async => theme;
@@ -95,6 +121,12 @@ class MemoryStorage implements SessionStorage {
 
   @override
   Future<String?> readToken() async => token;
+
+  @override
+  Future<String?> readCamera() async => camera;
+
+  @override
+  Future<void> writeCamera(String? camera) async => this.camera = camera;
 
   @override
   Future<void> writeToken(String? token) async => this.token = token;

@@ -178,7 +178,7 @@ $ WTFD_DBA_DATABASE_PASSWORD=… wtfd schema
 schema: database wtf at version 0, binary has version 1
 schema: applied 0001_schema.sql
 schema: rebuilt 11 repeatable scripts (130 functions)
-schema: granted EXECUTE on 50 functions to wtf_api
+schema: granted EXECUTE on 51 functions to wtf_api
 schema: up to date at version 1
 ```
 
@@ -199,6 +199,7 @@ There are no Go structs per entity. It uses the standard library's `net/http` (m
 - **No CORS.** The web app is served by `wtfd` itself (`--web-root`), on the API's own hostname, so it needs none, and `wtfd` sends no CORS headers. The native apps and the CLI don't need CORS.
 - **Localhost by default.** `wtfd` listens on `127.0.0.1:8080`, so only a local proxy can reach it unless you change `--listen`.
 - **Paths.** The API is under `/api/v1/` (see "Versions"), `/api/health` is outside the versions, and everything outside `/api` is the web app.
+- **One `wtfd` per database.** Which phone is the camera for which session ("The phone as a remote camera") lives in one `wtfd`'s memory, so a second `wtfd` serving the same database would have cameras of its own.
 
 ### Flags
 
@@ -243,7 +244,7 @@ The password comes from `WTFD_API_DATABASE_PASSWORD`.
   | `POST /stock/{id}/move`, `POST /stock/{id}/merge` | 200 |
   | `DELETE` of an object | 204 No Content |
   | `DELETE` of a class attribute or choice | 200 with the change (`{class, items, stock, dry_run}`) |
-  | `PUT` of a photo or a file | 200 with the item or stock row |
+  | `PUT` of a photo or a file | 200 with the item, stock row or location |
 
 - **Versions:** `GET /classes` and `GET /locations` send their version as a strong `ETag` (`"17"`). A request with `If-None-Match: "17"` gets `304 Not Modified` when nothing has changed. Responses carry `Cache-Control: no-cache`, so clients always revalidate. They answer `{version, tree}`: the tree, which the database gives as a flat list and `wtfd` nests, each node with its `children`.
 - **Paged lists:** `GET /items` and `GET /stock` take `limit` and `after` as query parameters and answer `{rows, more, next}` ([API.md](API.md)).
@@ -328,6 +329,18 @@ The session travels in a cookie, for every client: browsers keep it themselves, 
 - **Cross-site requests are refused:** a request that changes something (not GET or HEAD) is refused with 403 when its `Origin` header names another site. Together with `SameSite=Strict`, this prevents cross-site request forgery. Clients that send no `Origin` (the CLI, the apps) pass.
 - **There is no `Authorization: Bearer` any more.**
 
+### The phone as a remote camera
+
+A session, on a phone say, can be the camera for another session of the same account, on a desktop: a photo taken on the phone goes to the item, stock row or location the desktop has open, and the desktop shows it at once ([2026-11-19-remote-camera.md](2026-11-19-remote-camera.md); APP.md, decision 91).
+
+- **In memory, not in the database.** `wtfd` keeps which phone is the camera for which desktop session, and what each desktop with a camera has open; a desktop without a camera keeps nothing. A restart forgets it all; the phone says which desktop it is the camera for with every request, which makes it so again.
+- **`PUT /me/camera {"session": "<id>"}`** makes this session the camera for that one, after `account.session_camera` has checked it: another active session of the same account. **`DELETE /me/camera`** ends it.
+- **`PUT /me/target`:** what a desktop has open: `{type, id, name}` for an item, a stock row or a location, `{waiting}` for a new one not saved yet, or `{}`. Kept while the session has a camera, otherwise thrown away; 204 either way.
+- **`GET /me/camera?session=<id>`:** what a photo would be for, as above. **`PUT /me/camera/photo?session=<id>`** uploads one, as the photo of what the desktop has open as it arrives, and answers what it went to; 409 when nothing is, or when it isn't saved yet. After a restart, both ask the database again (`account.session_camera`); a desktop session that has ended is not found (404).
+- **`GET /me/events`:** the desktop's event stream, server-sent events. `camera {client}` when a phone becomes its camera, and at once when the stream opens if it has one; `camera {}` when it has none any more; `changed {path}` after each successful change by its camera (a photo, or any change but GET under `/items`, `/stock` and `/locations`); `ended {}` when this session is found ended. A comment line every 30 seconds keeps a quiet stream open.
+- **The database is asked little:** once when a camera starts, and by the stream when it opens and every 5 minutes, whether its session is still valid. `GET /me/camera`, `PUT /me/target` and `DELETE /me/camera` don't ask it: only the holder of a session's token can send a cookie that hashes to that session's id. A photo is an upload like any other.
+- **A camera ends** when the phone stops it or becomes another's, when either session logs out (an ended session is noticed by its stream within 5 minutes), and when the phone hasn't asked for 12 hours.
+
 ### The web app
 
 `wtfd` serves the web app (a Flutter web build) outside `/api`: the one built into it, or the one in `--web-root DIR`, which wins when given.
@@ -375,6 +388,8 @@ Every route calls one function ([API.md](API.md) has them all); a body's fields 
 | `PATCH /locations/{id}` | `location.patch` | patch object |
 | `DELETE /locations/{id}` | `location.delete`, or with `?recursive=true` `location.delete_tree` | `force`; recursive answers 200 with what was deleted |
 | `GET /locations/{id}/deletion` | `location.delete_tree` with `p_dry_run` | `force`; what a recursive delete would delete |
+| `GET /locations/{id}/photo` | `attachment.get` + files directory | `If-None-Match`, `Range` |
+| `PUT /locations/{id}/photo` | `attachment.lock`, `attachment.set` | multipart: `file` |
 | `GET /stock` | `stock.list` | `?item=&location=&search=&limit=&after=` |
 | `POST /stock` | `stock.create` | `{item, location, amount, values}` |
 | `GET /stock/{id}` | `stock.get` | |
@@ -392,6 +407,12 @@ Every route calls one function ([API.md](API.md) has them all); a body's fields 
 | `GET /me/sessions` | `account.session_list` | |
 | `DELETE /me/sessions/{id}` | `account.session_logout` | (the current session's id logs out, and clears the cookie) |
 | `POST /me/sessions/logout-others` | `account.session_logout_others` | answers `{"ended": n}` |
+| `PUT /me/camera` | `account.session_camera` | `{session}`; answers `{session, client, camera}`; the camera is kept in memory ("The phone as a remote camera") |
+| `DELETE /me/camera` | – | 204, also without a camera |
+| `GET /me/camera` | – (`account.session_camera` after a restart) | `?session=`; what a photo would be for |
+| `PUT /me/camera/photo` | `attachment.lock`, `attachment.set` | `?session=`; multipart: `file`; answers what it went to |
+| `PUT /me/target` | – | `{type, id, name}`, `{waiting}` or `{}`; 204 |
+| `GET /me/events` | `account.me` | the event stream (`text/event-stream`); the function when it opens and every 5 minutes |
 | `GET /accounts` | `account.list` | |
 | `POST /accounts` | `account.create` | `{email, password, role}` |
 | `GET /accounts/{id}` | `account.get` | |
@@ -409,7 +430,7 @@ Every route calls one function ([API.md](API.md) has them all); a body's fields 
   - **Success:** `level=INFO msg=login`, with the account id.
   - **Failure:** `level=WARN msg="login failed"`, with `reason=invalid` (unknown email or wrong password) or `reason=locked` (lockout).
   - Passwords are never logged. Behind a reverse proxy not named in `--trusted-proxies`, `address` is the proxy's.
-- **HTTP server timeouts:** 10 s to read the request header, 30 s to read the whole request, 60 s to write the response, and 120 s for idle keep-alive connections.
+- **HTTP server timeouts:** 10 s to read the request header, 30 s to read the whole request, 60 s to write the response, and 120 s for idle keep-alive connections. The event stream (`GET /me/events`) lifts the read and write limits for itself, and gives each write 30 s instead; `wtfd` ends the streams when it shuts down.
 - **Database:** each call is limited by the role's `statement_timeout` (30 s in the README).
 
 ## The `account` action
@@ -494,7 +515,7 @@ wtfd gc --files-directory /var/lib/wtf/files --dry-run   # report only
 wtfd gc --files-directory /var/lib/wtf/files
 ```
 
-It connects as the DBA role, reads the hashes in use once (the photos of items and stock rows, and the values of their attachment attributes), and removes two kinds of file:
+It connects as the DBA role, reads the hashes in use once (the photos of items, stock rows and locations, and the values of the attachment attributes of items and stock rows), and removes two kinds of file:
 
 - files whose hash nothing has;
 - abandoned uploads in the `tmp` directory.
