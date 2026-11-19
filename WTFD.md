@@ -483,7 +483,8 @@ It has the database flags above, for the new database and roles, but **reads non
    - **Not there:** it makes it, as `wtfd database create` does, with the same flags.
 4. **`ProgramData\WtF\pgpass.conf`** gets the passwords typed in or generated, both roles'. A line for the same server, database and role replaces the old one; other lines stay.
 5. **`ProgramData\WtF\wtfd.conf`,** the config file, gets what it knows: the database's server, name and roles, the files directory, and the address `serve` listens on, which it asks for (`--listen`; `127.0.0.1:8080`, this machine only, unless told otherwise). Keys it doesn't write, and comments, stay. On the next run, what the file has isn't asked for again, and the environment is ignored; `--reconfigure` asks for everything, with the file's values as the defaults, and a flag on the command line sets one value without asking.
-6. **It starts the service again** if it stopped it; when a step fails, the service stays stopped, and it says so.
+6. **The service's access:** when the service is there, it gets its access again, as `wtfd service install` gives it (below). The settings and the passwords are written as new files, which have only what `ProgramData\WtF` passes on, and step 2 makes that directory for administrators only again, so without this an upgrade left the service unable to read its settings until `wtfd service install` was run too.
+7. **It starts the service again** if it stopped it; when a step fails, the service stays stopped, and it says so.
 
 Both Program Files and ProgramData are asked of Windows (known folders), not assumed to be on `C:`.
 

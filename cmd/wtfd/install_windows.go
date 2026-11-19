@@ -262,6 +262,15 @@ func runInstall(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "\nWrote the settings to %s.\n", configPath)
 
+	// The service's access, which the new files and the data directory's
+	// permissions above took away.
+	if serviceExists() {
+		if err := grantServiceAccess(l, *filesDir); err != nil {
+			return fail(err)
+		}
+		fmt.Fprintf(stdout, "Gave the %s service its access to them again.\n", installedService)
+	}
+
 	if databaseCode != exitOK {
 		stillStopped()
 		return databaseCode

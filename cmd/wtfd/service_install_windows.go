@@ -232,19 +232,8 @@ func installService(q *questions, stdout io.Writer) error {
 		return fmt.Errorf("setting the service's restarts: %w", err)
 	}
 
-	// Its access: ProgramData\WtF is for administrators, so the service is
-	// let through it to its settings and passwords, and into the files.
-	sid, _, _, err := windows.LookupSID("", serviceAccount)
-	if err != nil {
-		return fmt.Errorf("finding the account %s: %w", serviceAccount, err)
-	}
-	for _, a := range serviceAccess(l, filesDir) {
-		if _, err := os.Stat(a.path); errors.Is(err, fs.ErrNotExist) && a.optional {
-			continue
-		}
-		if err := setAccess(a.path, sid, a.mask, a.inherit, windows.SET_ACCESS); err != nil {
-			return fmt.Errorf("giving the service access to %s: %w", a.path, err)
-		}
+	if err := grantServiceAccess(l, filesDir); err != nil {
+		return err
 	}
 	fmt.Fprintf(stdout, "  Gave it access to %s, %s and %s.\n", l.configPath, l.passPath, filesDir)
 	if _, err := os.Stat(l.passPath); err != nil {
@@ -262,6 +251,28 @@ func installService(q *questions, stdout io.Writer) error {
 	if err := checkService(s, listen, stdout); err != nil {
 		showServiceLog(stdout)
 		return err
+	}
+	return nil
+}
+
+// grantServiceAccess gives the service its access: ProgramData\WtF is for
+// administrators, so the service is let through it to its settings and
+// passwords, and into the files. "wtfd install" does it again whenever the
+// service is there, as it writes the settings and the passwords as new
+// files, which have only what the directory passes on, and makes
+// ProgramData\WtF for administrators only again.
+func grantServiceAccess(l layout, filesDir string) error {
+	sid, _, _, err := windows.LookupSID("", serviceAccount)
+	if err != nil {
+		return fmt.Errorf("finding the account %s: %w", serviceAccount, err)
+	}
+	for _, a := range serviceAccess(l, filesDir) {
+		if _, err := os.Stat(a.path); errors.Is(err, fs.ErrNotExist) && a.optional {
+			continue
+		}
+		if err := setAccess(a.path, sid, a.mask, a.inherit, windows.SET_ACCESS); err != nil {
+			return fmt.Errorf("giving the service access to %s: %w", a.path, err)
+		}
 	}
 	return nil
 }
