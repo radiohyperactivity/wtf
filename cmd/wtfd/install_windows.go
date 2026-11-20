@@ -21,7 +21,10 @@ import (
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/radiohyperactivity/wtf/db"
+	"github.com/radiohyperactivity/wtf/internal/admin"
 	"github.com/radiohyperactivity/wtf/internal/config"
 	"github.com/radiohyperactivity/wtf/internal/schema"
 	"github.com/radiohyperactivity/wtf/internal/webapp"
@@ -41,8 +44,13 @@ Run again with a newer wtfd, it upgrades: it stops the wtfd service while it
 replaces the programs, brings the database's schema up to date, and starts
 the service again. It takes the settings from ProgramData\WtF\wtfd.conf and
 the passwords from pgpass.conf, and asks only for what they don't have;
---reconfigure asks for everything again, with theirs as the defaults. It must run as an administrator. Run
-"wtfd install -h" for the flags.
+--reconfigure asks for everything again, with theirs as the defaults.
+
+--database existing or new, with the database's flags, sets WtF up without
+asking, also without a terminal, as the Windows installer does: the
+passwords are taken from the environment (wtfd install -h says which).
+
+It must run as an administrator. Run "wtfd install -h" for the flags.
 `
 
 // configHeader starts the config file install writes.
@@ -73,11 +81,19 @@ func runInstall(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	filesDir := flags.String("files-directory", filepath.Join(dataDir, "files"), "where wtfd keeps the files (photos and attachments); may be on another drive")
 	listen := flags.String("listen", "127.0.0.1:8080", "the address and port wtfd serve listens on")
 	reconfigure := flags.Bool("reconfigure", false, "ask for every setting again, with wtfd.conf's as the defaults, rather than take them from it")
+	databaseMode := flags.String("database", "", `"existing": connect to the database that is there; "new": make it; empty: as wtfd.conf has it, or ask. With all the database's flags, it asks nothing, also without a terminal: the passwords are in env `+config.DBAPasswordEnv+` and `+config.APIPasswordEnv+` (existing) or `+config.AdminPasswordEnv+` (new), or in pgpass.conf`)
 	c := registerDatabaseCreation(flags, name)
 	if code, ok := parse(flags, args, stderr); !ok {
 		return code
 	}
 	c.given(flags)
+
+	switch *databaseMode {
+	case "", "existing", "new":
+	default:
+		fmt.Fprintf(stderr, "%s: --database is \"existing\" or \"new\", not %q\n", name, *databaseMode)
+		return exitUsage
+	}
 
 	if !requireAdmin(name, stderr) {
 		return exitFailure
@@ -129,8 +145,12 @@ func runInstall(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	// first, as it is an easy mistake when upgrading.
 	fmt.Fprintf(stdout, "The programs, in %s:\n", binDir)
 	if installedCopy(binDir) {
-		fmt.Fprintf(stdout, "  This is the installed wtfd.exe, so there is nothing new to install. To upgrade,\n"+
-			"  run the new wtfd.exe install from where you unpacked it. Going on with the rest.\n")
+		// The Windows installer puts the programs there itself, and runs
+		// this one; on a terminal, it is more likely a mistake.
+		fmt.Fprintln(stdout, "  This is the installed wtfd.exe, so there is nothing new to install.")
+		if q != nil {
+			fmt.Fprintln(stdout, "  To upgrade, run the new wtfd.exe install from where you unpacked it. Going on with the rest.")
+		}
 	} else {
 		wasRunning, err = stopService(installedService)
 		if err != nil {
@@ -177,18 +197,16 @@ func runInstall(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	var lines []string // the password file's new lines
 	databaseCode := exitOK
 	databaseKnown := false // the database's settings are known, for the config file
+	mode := *databaseMode
 	switch {
+	case mode != "":
 	case upgrade:
 		d := c.database
 		fmt.Fprintf(stdout, "\nThe database: %s on %s:%d, as %s and %s (from %s):\n",
 			d.Name, d.Host, d.Port, d.DBAUser, d.APIUser, configPath)
-		lines, err = connectExisting(q, c.database, c.set, stdout, stderr)
-		if err != nil {
-			return fail(err)
-		}
-		databaseKnown = true
+		mode = "existing"
 	case q == nil:
-		fmt.Fprintln(stdout, "\nNot on a terminal, so the database is left as it is; run wtfd install in a terminal to set it up.")
+		fmt.Fprintln(stdout, "\nNot on a terminal, so the database is left as it is; run wtfd install in a terminal to set it up, or give --database.")
 	default:
 		_, statErr := os.Stat(pgpassPath)
 		fmt.Fprintln(stdout)
@@ -197,23 +215,34 @@ func runInstall(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 			return fail(err)
 		}
 		fmt.Fprintln(stdout)
+		mode = "new"
 		if exists {
-			lines, err = connectExisting(q, c.database, c.set, stdout, stderr)
-			if err != nil {
+			mode = "existing"
+		}
+	}
+	switch mode {
+	case "existing":
+		var dbaConfig *pgx.ConnConfig
+		lines, dbaConfig, err = connectExisting(q, c.database, c.set, stdout, stderr)
+		if err != nil {
+			return fail(err)
+		}
+		databaseKnown = true
+		if c.firstAccount != "" {
+			if err := firstAccount(dbaConfig, c.firstAccount, stdout); err != nil {
 				return fail(err)
 			}
+		}
+	case "new":
+		// A database that was made has its passwords written even when a
+		// later step failed, as the roles exist with them.
+		databaseCode = c.run(q, stdout, stderr)
+		if c.created {
+			lines = c.pgpassLines()
 			databaseKnown = true
-		} else {
-			// A database that was made has its passwords written even when
-			// a later step failed, as the roles exist with them.
-			databaseCode = c.run(q, stdout, stderr)
-			if c.created {
-				lines = c.pgpassLines()
-				databaseKnown = true
-			} else if databaseCode != exitOK {
-				stillStopped()
-				return databaseCode
-			}
+		} else if databaseCode != exitOK {
+			stillStopped()
+			return databaseCode
 		}
 	}
 	if len(lines) > 0 {
@@ -301,7 +330,7 @@ func runInstall(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		return exitOK
 	}
 	fmt.Fprintln(stdout)
-	if err := installService(q, stdout); err != nil {
+	if err := installService(q, "", stdout); err != nil {
 		return fail(err)
 	}
 	return exitOK
@@ -309,10 +338,11 @@ func runInstall(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 
 // connectExisting asks for an existing database's server, names and
 // passwords, checks that both roles can connect, and brings its schema up
-// to date. What set has, or the password file has, isn't asked for; with
-// all of it known, q may be nil. It returns the password file's lines for
-// the passwords typed in.
-func connectExisting(q *questions, database *config.Database, set map[string]bool, stdout, stderr io.Writer) ([]string, error) {
+// to date. What set has, or the environment or the password file has, isn't
+// asked for; with all of it known, q may be nil. It returns the password
+// file's lines for the passwords typed in or taken from the environment,
+// and the DBA role's connection settings.
+func connectExisting(q *questions, database *config.Database, set map[string]bool, stdout, stderr io.Writer) ([]string, *pgx.ConnConfig, error) {
 	ctx := context.Background()
 	var err error
 	if !(set["database-host"] && set["database-port"] && set["database-name"] && set["dba-database-user"] && set["api-database-user"]) {
@@ -331,16 +361,18 @@ func connectExisting(q *questions, database *config.Database, set map[string]boo
 	ask("dba-database-user", "  Its owner (DBA role)", &database.DBAUser)
 	ask("api-database-user", "  The REST API's role", &database.APIUser)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := database.Validate(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var lines []string
 	passwords := map[string]string{}
+	passwordEnv := map[string]string{database.DBAUser: config.DBAPasswordEnv, database.APIUser: config.APIPasswordEnv}
 	for _, role := range []string{database.DBAUser, database.APIUser} {
-		password := "" // from the password file, if it has it
+		// From the environment, or else the password file, if it has it.
+		password := os.Getenv(passwordEnv[role])
 		for tries := 0; ; tries++ {
 			conn, err := connectTo(ctx, database, role, password, database.Name, "wtfd install")
 			if err == nil {
@@ -348,19 +380,19 @@ func connectExisting(q *questions, database *config.Database, set map[string]boo
 				break
 			}
 			if q == nil && needsPassword(err) {
-				return nil, fmt.Errorf("connecting as %s: %w\nThe password file has no password for %s that works; run wtfd install in a terminal to give it one", role, err, role)
+				return nil, nil, fmt.Errorf("connecting as %s: %w\nNeither %s nor the password file has a password for %s that works; run wtfd install in a terminal to give it one", role, err, passwordEnv[role], role)
 			}
 			if !needsPassword(err) || tries == 3 {
 				if strings.Contains(err.Error(), "pg_hba.conf") {
 					err = fmt.Errorf("%w\nThe server's pg_hba.conf has no line that lets %s connect to %s from here; add one (README.md, step 5), and reload it", err, role, database.Name)
 				}
-				return nil, fmt.Errorf("connecting as %s: %w", role, err)
+				return nil, nil, fmt.Errorf("connecting as %s: %w", role, err)
 			}
 			if tries > 0 {
 				fmt.Fprintln(stdout, "  That password didn't work.")
 			}
 			if password, err = q.password(fmt.Sprintf("  Password for %s", role)); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 		if password != "" {
@@ -372,7 +404,7 @@ func connectExisting(q *questions, database *config.Database, set map[string]boo
 
 	dbaConfig, err := database.ConnConfig(database.DBAUser, passwords[database.DBAUser], "wtfd schema")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	result, err := schema.Run(ctx, schema.Options{
 		ConnConfig: dbaConfig,
@@ -381,14 +413,40 @@ func connectExisting(q *questions, database *config.Database, set map[string]boo
 		Logger:     slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
 	})
 	if err != nil {
-		return lines, fmt.Errorf("bringing the schema up to date: %w", err)
+		return nil, nil, fmt.Errorf("bringing the schema up to date: %w", err)
 	}
 	if result.Pending {
 		fmt.Fprintln(stdout, "  Brought the schema up to date.")
 	} else {
 		fmt.Fprintln(stdout, "  The schema is up to date.")
 	}
-	return lines, nil
+	return lines, dbaConfig, nil
+}
+
+// firstAccount makes the admin account email in a database that exists,
+// when it has no accounts yet; with accounts, it makes none, and says so,
+// so that running install again doesn't make another.
+func firstAccount(dbaConfig *pgx.ConnConfig, email string, stdout io.Writer) error {
+	ctx := context.Background()
+	conn, err := admin.Connect(ctx, dbaConfig)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(ctx)
+	var accounts int64
+	if err := conn.QueryRow(ctx, "SELECT count(*) FROM public.account").Scan(&accounts); err != nil {
+		return err
+	}
+	if accounts > 0 {
+		fmt.Fprintf(stdout, "  The database has accounts already, so %s wasn't created.\n", email)
+		return nil
+	}
+	password, err := admin.CreateAccount(ctx, conn, email, "admin")
+	if err != nil {
+		return fmt.Errorf("creating the account: %w", err)
+	}
+	accountCreated(stdout, email, password)
+	return nil
 }
 
 // installPrograms copies wtfd.exe, and wtf.exe beside it, into binDir. A

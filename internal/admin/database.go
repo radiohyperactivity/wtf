@@ -68,6 +68,16 @@ func CheckServer(ctx context.Context, conn *pgx.Conn) (Server, error) {
 // Check reports what is wrong with d's names and passwords, and whether the
 // database or the roles exist already. It changes nothing.
 func (d NewDatabase) Check(ctx context.Context, conn *pgx.Conn) error {
+	for _, p := range []struct{ role, password string }{{d.DBAUser, d.DBAPassword}, {d.APIUser, d.APIPassword}} {
+		if err := CheckPassword(p.password); err != nil {
+			return fmt.Errorf("the password for %s %w", p.role, err)
+		}
+	}
+	return d.CheckNames(ctx, conn)
+}
+
+// CheckNames is Check without the passwords, for before they are known.
+func (d NewDatabase) CheckNames(ctx context.Context, conn *pgx.Conn) error {
 	for _, n := range []struct{ what, name string }{
 		{"database", d.Name}, {"DBA role", d.DBAUser}, {"API role", d.APIUser},
 	} {
@@ -80,11 +90,6 @@ func (d NewDatabase) Check(ctx context.Context, conn *pgx.Conn) error {
 	}
 	if d.APIConnectionLimit < 1 {
 		return errors.New("the API role's connection limit must be at least 1")
-	}
-	for _, p := range []struct{ role, password string }{{d.DBAUser, d.DBAPassword}, {d.APIUser, d.APIPassword}} {
-		if err := CheckPassword(p.password); err != nil {
-			return fmt.Errorf("the password for %s %w", p.role, err)
-		}
 	}
 	var exists bool
 	err := conn.QueryRow(ctx, "SELECT EXISTS (SELECT FROM pg_database WHERE datname = $1)", d.Name).Scan(&exists)

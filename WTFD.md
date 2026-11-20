@@ -12,7 +12,7 @@ wtfd <action> [flags]
 | `serve`  | Run the REST API                                                     | implemented |
 | `gc`     | Remove files that nothing references any more, and expired sessions | implemented |
 | `account`| Create an account, or set a lost password (`create`, `password`)     | implemented |
-| `database` | Make the database and its roles on a PostgreSQL server (`create`) | implemented |
+| `database` | Make the database and its roles on a PostgreSQL server (`create`), or try the settings for one (`check`) | implemented |
 | `install`  | Set WtF up on this machine: programs, data, database (Windows only) | implemented |
 | `service`  | Run `wtfd serve` as a Windows service (`install`, `uninstall`)      | implemented |
 
@@ -33,7 +33,7 @@ listen = 127.0.0.1:8080
 - **A file at the default place may be missing.** One named with `--config` or `WTFD_CONFIG` must be there. One that can't be read (ProgramData's is for administrators only) is reported, and the action goes on without it.
 - **Keys** are the flags of the table below and of `serve` and `gc`; an action takes those that are its own flags and passes over the others, but a key that is no action's setting is an error, so a typo doesn't go unnoticed. An action's own switches (`--dry-run`, `--verbose`) aren't settings.
 - **Passwords are never in it.** When the file is read and `PGPASSFILE` isn't set, the PostgreSQL password file beside it (`pgpass.conf`) is used.
-- `wtfd database create` reads neither the file nor the environment: they describe a database that exists.
+- `wtfd database create` reads neither the file nor the environment, but for the administrator's password: they describe a database that exists.
 
 | Flag                      | Environment variable          | Default     | Meaning                                       |
 |---------------------------|-------------------------------|-------------|-----------------------------------------------|
@@ -45,6 +45,7 @@ listen = 127.0.0.1:8080
 | `--api-database-user`     | `WTFD_API_DATABASE_USER`      | `wtf_api`   | Role the REST API connects as; `schema` grants it `EXECUTE` |
 | –                         | `WTFD_DBA_DATABASE_PASSWORD`  | none        | Password of the DBA role                      |
 | –                         | `WTFD_API_DATABASE_PASSWORD`  | none        | Password of the API role (used by `serve`)    |
+| –                         | `WTFD_ADMIN_DATABASE_PASSWORD` | none       | Password of the PostgreSQL administrator, for making a database (`database create`, `install --database new`) |
 
 Flags specific to `schema`:
 
@@ -466,11 +467,17 @@ It has the database flags above, for the new database and roles, but **reads non
 | `--print-sql`            | off        | Print the steps as a psql script for a superuser, and do nothing |
 
 - **On a terminal it asks** for the server, the administrator, the names, the roles' passwords and the first account, each with the flag's value as its default; a flag given on the command line isn't asked for. Without a terminal it asks nothing and takes the flags.
-- **Passwords:** the administrator's comes from PostgreSQL's password file, else it is asked for. The roles' are asked for on a terminal; an empty answer, or no terminal, generates them. Before creating anything it says which were typed in and which generated; generated ones are printed once at the end, as lines for the password file. A role's password is sent as a SCRAM-SHA-256 hash made by `wtfd` (as psql's `\password` does), so the server's log never sees it; for that it must be printable ASCII, at least 8 characters.
+- **Passwords:** the administrator's comes from `WTFD_ADMIN_DATABASE_PASSWORD`, or PostgreSQL's password file, else it is asked for. The roles' are asked for on a terminal; an empty answer, or no terminal, generates them. Before creating anything it says which were typed in and which generated; generated ones are printed once at the end, as lines for the password file. A role's password is sent as a SCRAM-SHA-256 hash made by `wtfd` (as psql's `\password` does), so the server's log never sees it; for that it must be printable ASCII, at least 8 characters.
 - **It checks first,** changing nothing: PostgreSQL 18 or newer, built with ICU; an administrator that may create roles and databases; no database or role of the new names.
 - **A failure while making the roles and the database removes them again** (`DROP DATABASE … WITH (FORCE)`, `DROP ROLE`), and says so. After that, the database stays: when the schema or the API role's test connection fails, typically for want of a `pg_hba.conf` line, it says what to add and to run `wtfd schema` once that works.
 - **An administrator that isn't a superuser** (as on managed PostgreSQL services) makes itself a member of the DBA role while it works (`WITH INHERIT FALSE, SET TRUE`), since only a member may make a role a database's owner, and leaves it again at the end.
 - **The test connections run from where `wtfd` runs.** When `wtfd serve` will run on another machine, `pg_hba.conf` must let that one in too.
+
+`wtfd database check` tries the settings for a database and changes nothing, for the Windows installer, which runs it when Next is pressed on its database pages. It takes `create`'s flags, asks nothing, and gives up after 20 seconds.
+
+- **A database that exists** (no `--new`): it connects as both roles, with the passwords in `WTFD_DBA_DATABASE_PASSWORD` and `WTFD_API_DATABASE_PASSWORD` or the password file, and checks the schema as `wtfd schema --dry-run` does: PostgreSQL 18 or newer, the DBA role owning the database, the API role there, and no schema from a newer `wtfd`. It prints `PostgreSQL: 18.1`, `Schema: up to date` (or `to be brought up to date`) and `Accounts: 0`, a line each.
+- **A database to be made** (`--new`): it connects as the administrator, with the password in `WTFD_ADMIN_DATABASE_PASSWORD` or the password file, and checks what `create` checks first; `--server-only` leaves out whether the names are free. It prints `PostgreSQL: 18.1`.
+- **What is wrong** goes to stderr in plain words, such as "the password for wtf_dba is wrong", and the exit code is 1.
 
 ## The `install` action
 
@@ -481,7 +488,8 @@ It has the database flags above, for the new database and roles, but **reads non
 3. **The database.** When `wtfd.conf` has its settings already (host, port, database and both roles), it takes them without asking, says which, and goes on as for one that is there, below; this works without a terminal too, as long as `pgpass.conf` has the passwords. Otherwise, on a terminal only, it asks whether it is there already, and its default is yes when `pgpass.conf` is there.
    - **There:** it asks for the server, the database and both roles, connects as each, asking for a password only when `pgpass.conf` hasn't the right one, and brings the schema up to date, as `wtfd schema` does.
    - **Not there:** it makes it, as `wtfd database create` does, with the same flags.
-4. **`ProgramData\WtF\pgpass.conf`** gets the passwords typed in or generated, both roles'. A line for the same server, database and role replaces the old one; other lines stay.
+   - **`--database existing` or `new`** answers that question beforehand, so that with the database's flags it asks nothing, also without a terminal, as the Windows installer runs it. The passwords are then taken from the environment, never the command line: the roles' from `WTFD_DBA_DATABASE_PASSWORD` and `WTFD_API_DATABASE_PASSWORD` (otherwise from `pgpass.conf`), and the administrator's from `WTFD_ADMIN_DATABASE_PASSWORD`. With `--first-account`, a database that exists gets that account when it has none yet.
+4. **`ProgramData\WtF\pgpass.conf`** gets the passwords typed in, taken from the environment, or generated, both roles'. A line for the same server, database and role replaces the old one; other lines stay.
 5. **`ProgramData\WtF\wtfd.conf`,** the config file, gets what it knows: the database's server, name and roles, the files directory, and the address `serve` listens on, which it asks for (`--listen`; `127.0.0.1:8080`, this machine only, unless told otherwise). Keys it doesn't write, and comments, stay. On the next run, what the file has isn't asked for again, and the environment is ignored; `--reconfigure` asks for everything, with the file's values as the defaults, and a flag on the command line sets one value without asking.
 6. **The service's access:** when the service is there, it gets its access again, as `wtfd service install` gives it (below). The settings and the passwords are written as new files, which have only what `ProgramData\WtF` passes on, and step 2 makes that directory for administrators only again, so without this an upgrade left the service unable to read its settings until `wtfd service install` was run too.
 7. **It starts the service again** if it stopped it; when a step fails, the service stays stopped, and it says so.
@@ -500,10 +508,10 @@ At the end, when there is no `wtfd` service yet, it offers to set one up, as `wt
 2. **Registers the Event Log source** `wtfd` (with `EventCreate.exe` as its message file), so Event Viewer shows the entries as they are.
 3. **Creates the service,** or brings an existing one up to date, stopping it first: `wtfd`, "WtF server", running `"…\wtfd.exe" serve`; automatic, delayed start; as the virtual account `NT SERVICE\wtfd` (unrestricted service SID); restarted 5 s, 5 s and 60 s after a failure, counted afresh after a day, also when it stops with an error of its own (recovery actions on non-crash failures).
 4. **Gives the account its access,** in place of any it had: traverse (no listing) on `ProgramData\WtF`, read on `wtfd.conf` and `pgpass.conf`, and modify on the files directory and all in it. A DACL protected from inheritance (ProgramData\WtF's, a files directory elsewhere) stays protected.
-5. **The firewall:** when `listen` isn't a loopback address, it asks whether to add the inbound rule "WtF server" (TCP, that port, for `wtfd.exe`), replacing one from an earlier run; without a terminal, it prints the `netsh` command.
+5. **The firewall:** when `listen` isn't a loopback address, it asks whether to add the inbound rule "WtF server" (TCP, that port, for `wtfd.exe`), replacing one from an earlier run; without a terminal, it prints the `netsh` command, and leaves a rule that is there as it is. `--firewall yes` or `no` answers beforehand.
 6. **Starts the service,** waits until it runs, and asks `http://<listen>/api/health` (127.0.0.1 for a listen on all addresses) for up to 20 seconds. When that fails, it shows wtfd's last five Event Log entries.
 
-`uninstall` asks first, then stops the service, takes the account's access away (while the account still exists to be named), removes the service, the firewall rule and the Event Log source, and leaves the programs, the settings, the data and the log's entries.
+`uninstall` asks first (on a terminal), then stops the service, takes the account's access away (while the account still exists to be named), removes the service, the firewall rule and the Event Log source, and leaves the programs, the settings, the data and the log's entries.
 
 **The passwords:** for now, the service can read all of `pgpass.conf`, the DBA's password too. Whether `serve` should have only the API role's, and how `wtfd gc` is run on a schedule, is still open.
 

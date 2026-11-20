@@ -21,10 +21,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Environment variables holding the database passwords.
+// Environment variables holding the database passwords. The administrator's
+// is for making a database ("wtfd database create" and "wtfd install").
 const (
-	DBAPasswordEnv = "WTFD_DBA_DATABASE_PASSWORD"
-	APIPasswordEnv = "WTFD_API_DATABASE_PASSWORD"
+	DBAPasswordEnv   = "WTFD_DBA_DATABASE_PASSWORD"
+	APIPasswordEnv   = "WTFD_API_DATABASE_PASSWORD"
+	AdminPasswordEnv = "WTFD_ADMIN_DATABASE_PASSWORD"
 )
 
 var sslModes = []string{"disable", "allow", "prefer", "require", "verify-ca", "verify-full"}

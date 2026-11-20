@@ -32,9 +32,10 @@ in Program Files\WtF\bin: started at boot, as its own account
 (NT SERVICE\wtfd), restarted when it fails, logging to the Event Log. It gives the
 service access to its settings, its passwords and the files directory, asks
 before opening the firewall when wtfd listens beyond this machine, and starts
-the service and checks that it answers. Run again, it brings the service up
-to date. uninstall leaves the programs, the settings and the data. Both must
-run as an administrator.
+the service and checks that it answers; --firewall yes or no answers that
+question beforehand. Run again, it brings the service up to date. uninstall
+leaves the programs, the settings and the data. Both must run as an
+administrator.
 `
 
 const (
@@ -62,8 +63,13 @@ func runServiceCommand(args []string, stdin *os.File, stdout, stderr io.Writer) 
 	name := "wtfd service " + command
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	firewall := flags.String("firewall", "", `install: "yes" adds the firewall rule when wtfd listens beyond this machine, "no" doesn't; empty: ask on a terminal, and otherwise only say how`)
 	if code, ok := parse(flags, args[1:], stderr); !ok {
 		return code
+	}
+	if *firewall != "" && (command != "install" || (*firewall != "yes" && *firewall != "no")) {
+		fmt.Fprintf(stderr, "%s: --firewall is for install, and is \"yes\" or \"no\"\n", name)
+		return exitUsage
 	}
 	if !requireAdmin(name, stderr) {
 		return exitFailure
@@ -71,7 +77,7 @@ func runServiceCommand(args []string, stdin *os.File, stdout, stderr io.Writer) 
 	q := openQuestions(stdin, stdout)
 	var err error
 	if command == "install" {
-		err = installService(q, stdout)
+		err = installService(q, *firewall, stdout)
 	} else {
 		err = uninstallService(q, stdout)
 	}
@@ -142,8 +148,8 @@ func serviceExists() bool {
 }
 
 // installService sets the service up, or brings it up to date, and starts
-// it.
-func installService(q *questions, stdout io.Writer) error {
+// it. firewall answers openFirewall's question, when it isn't empty.
+func installService(q *questions, firewall string, stdout io.Writer) error {
 	l, err := installLayout()
 	if err != nil {
 		return err
@@ -240,7 +246,7 @@ func installService(q *questions, stdout io.Writer) error {
 		fmt.Fprintf(stdout, "  %s isn't there, so it has no password for the database; run wtfd install again to set one.\n", l.passPath)
 	}
 
-	if err := openFirewall(q, listen, l.program, stdout); err != nil {
+	if err := openFirewall(q, firewall, listen, l.program, stdout); err != nil {
 		return err
 	}
 
@@ -339,9 +345,10 @@ func setAccess(path string, sid *windows.SID, mask, inherit uint32, mode windows
 }
 
 // openFirewall asks, when wtfd listens beyond this machine, whether to let
-// other machines through Windows Firewall to it, and adds the rule. Without
-// a terminal it only says how.
-func openFirewall(q *questions, listen, program string, stdout io.Writer) error {
+// other machines through Windows Firewall to it, and adds the rule. The
+// answer may be given (firewall "yes" or "no"); without it and without a
+// terminal, it only says how, and leaves a rule that is there as it is.
+func openFirewall(q *questions, firewall, listen, program string, stdout io.Writer) error {
 	host, port, err := net.SplitHostPort(listen)
 	if err != nil {
 		return fmt.Errorf("listen %q: %w", listen, err)
@@ -351,14 +358,19 @@ func openFirewall(q *questions, listen, program string, stdout io.Writer) error 
 	}
 	add := fmt.Sprintf(`netsh advfirewall firewall add rule name="%s" dir=in action=allow protocol=TCP localport=%s program="%s"`,
 		firewallRule, port, program)
-	if q == nil {
+	switch {
+	case firewall == "no":
+		return nil
+	case firewall == "yes":
+	case q == nil:
 		fmt.Fprintf(stdout, "  wtfd listens on %s, which Windows Firewall may block. To let other machines in:\n    %s\n", listen, add)
 		return nil
-	}
-	fmt.Fprintf(stdout, "\nwtfd listens on %s, which other machines can reach, unless Windows Firewall blocks them.\n", listen)
-	ok, err := q.yes(fmt.Sprintf("  Add the firewall rule %q, letting them in on TCP port %s?", firewallRule, port), true)
-	if err != nil || !ok {
-		return err
+	default:
+		fmt.Fprintf(stdout, "\nwtfd listens on %s, which other machines can reach, unless Windows Firewall blocks them.\n", listen)
+		ok, err := q.yes(fmt.Sprintf("  Add the firewall rule %q, letting them in on TCP port %s?", firewallRule, port), true)
+		if err != nil || !ok {
+			return err
+		}
 	}
 	netsh(`netsh advfirewall firewall delete rule name="` + firewallRule + `"`) // one from an earlier run
 	if out, err := netsh(add); err != nil {
