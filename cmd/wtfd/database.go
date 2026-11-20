@@ -430,14 +430,21 @@ func checkExisting(ctx context.Context, d *config.Database, stdout io.Writer) er
 	}
 	defer conn.Close(ctx)
 	var version string
-	var accounts int64
+	var hasAccounts bool
 	err = conn.QueryRow(ctx, `
-		SELECT current_setting('server_version'),
-		       CASE WHEN to_regclass('public.account') IS NULL THEN 0
-		            ELSE (SELECT count(*) FROM public.account) END`,
-	).Scan(&version, &accounts)
+		SELECT current_setting('server_version'), to_regclass('public.account') IS NOT NULL`,
+	).Scan(&version, &hasAccounts)
 	if err != nil {
 		return err
+	}
+	// A query of its own, as PostgreSQL looks up every table in a query
+	// before running it, so it fails on an empty database even when that
+	// part of it wouldn't run.
+	var accounts int64
+	if hasAccounts {
+		if err := conn.QueryRow(ctx, "SELECT count(*) FROM public.account").Scan(&accounts); err != nil {
+			return err
+		}
 	}
 	state := "up to date"
 	if result.Pending {
