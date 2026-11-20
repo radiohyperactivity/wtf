@@ -1,15 +1,15 @@
-﻿; The installer of the Windows app, for Inno Setup (scripts/windows-installer.sh
+﻿; The installer of the Windows app, for Inno Setup (scripts/windows-app-installer.sh
 ; builds the app and runs this). It installs for the current user, without
 ; administrator rights, into %LOCALAPPDATA%\Programs\WtF, unless the user
 ; chooses everyone; a new version installs over the one there is.
 ;
-; scripts/windows-installer.sh defines:
+; scripts/windows-app-installer.sh defines:
 ;   AppVersion  the app's version, from app/pubspec.yaml
 ;   SourceDir   the Flutter build, with the C++ runtime copied into it
 ;   OutputDir   where the installer goes
 
 #ifndef AppVersion
-  #error AppVersion is not defined; run scripts/windows-installer.sh
+  #error AppVersion is not defined; run scripts/windows-app-installer.sh
 #endif
 
 [Setup]

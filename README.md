@@ -241,6 +241,21 @@ CREATE TABLE test (id int);       -- ERROR: permission denied for schema public
 
 ## Installing on Windows
 
+### With the installer
+
+`wtf-<version>-windows-setup.exe` sets WtF up with nothing to do in a terminal. It asks for an administrator, and then, on its own pages:
+
+- **The database:** whether it is there already, with its two roles (then their names and passwords), or is to be made (then a PostgreSQL administrator, such as `postgres`, with its password, used only then and not kept, and the names of the database and its roles, whose passwords `wtfd` makes up). When you press Next, it connects with what you typed, so a wrong password or server shows there.
+- **The first account,** for a new database, or one without accounts: its email. Its password is shown at the end, once.
+- **The server:** this computer only, or the network too; the port; where the files go.
+- **The service,** ticked, and the Windows Firewall rule, ticked when it listens on the network.
+
+It then puts the programs in `C:\Program Files\WtF\bin`, and runs `wtfd install` and `wtfd service install` (below) without a window, with the passwords in their environment, never on a command line. The last page shows the address, the first account's password, and what was done, or what went wrong; running the installer again goes on from where it stopped.
+
+**A newer installer upgrades,** asking nothing: it keeps the settings in `wtfd.conf`, unless you tick **Change the settings**, stops the service, replaces the programs, brings the database up to date, and starts the service again. **Uninstalling** (Settings → Apps) removes the programs, the service and the PATH entry, and leaves the data: `C:\ProgramData\WtF` and the database.
+
+### By hand
+
 `wtfd install`, in PowerShell or Windows Terminal opened as an administrator, sets WtF up on the machine, from the folder that has `wtfd.exe` and `wtf.exe`:
 
 ```powershell

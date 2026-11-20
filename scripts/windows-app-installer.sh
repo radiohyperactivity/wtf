@@ -50,5 +50,5 @@ MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' "$iscc" /Q \
     "/DAppVersion=$version" \
     "/DSourceDir=$(cygpath -w "$PWD/$build")" \
     "/DOutputDir=$(cygpath -w "$PWD/dist")" \
-    "$(cygpath -w scripts/windows-installer.iss)"
+    "$(cygpath -w scripts/windows-app-installer.iss)"
 echo "built dist/wtf-app-$version-windows-x64-setup.exe"
