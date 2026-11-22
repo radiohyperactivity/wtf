@@ -196,6 +196,7 @@ class ApiClient {
     this.manageCookie = false,
     this.session,
     this.onSession,
+    this.onRevision,
   }) : _http = httpClient ?? http.Client(),
        _ownsHttp = httpClient == null;
 
@@ -206,6 +207,10 @@ class ApiClient {
 
   /// The API revision of the last answer (API-Revision).
   int? serverRevision;
+
+  /// Called when an answer's API revision is not the one before it: the
+  /// first answer, or the server was updated meanwhile.
+  void Function(int revision)? onRevision;
 
   final http.Client _http;
   final bool _ownsHttp;
@@ -1012,7 +1017,10 @@ class ApiClient {
       );
     }
     final revision = int.tryParse(resp.headers['api-revision'] ?? '');
-    if (revision != null) serverRevision = revision;
+    if (revision != null && revision != serverRevision) {
+      serverRevision = revision;
+      onRevision?.call(revision);
+    }
     if (manageCookie) _noteCookie(resp.headers['set-cookie']);
     if (resp.statusCode >= 400 || resp.statusCode == 304 && !notModifiedOk) {
       throw ApiProblem.fromResponse(resp);

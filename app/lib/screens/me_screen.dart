@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../api/client.dart';
 import '../api/models.dart';
 import '../camera.dart';
 import '../session.dart';
@@ -115,6 +116,15 @@ class MeScreen extends StatelessWidget {
   }
 }
 
+/// "Built 22 Nov 2026, 21:53 · commit 8901f2e of 22 Nov 2026, 19:41": when
+/// a build was made, and from which commit, as far as either is known.
+String _built(DateTime? build, String? commit, DateTime? commitTime) => [
+  build == null ? 'Build date not known' : 'Built ${_when(build)}',
+  if (commit case final c?)
+    'commit ${c.substring(0, c.length < 7 ? c.length : 7)}'
+        '${commitTime == null ? '' : ' of ${_when(commitTime)}'}',
+].join(' · ');
+
 /// "3 Nov 2026, 14:05", in local time.
 String _when(DateTime t) {
   const months = [
@@ -150,17 +160,13 @@ class _VersionsState extends State<_Versions> {
       .client
       .serverBuild();
 
-  /// "0.1.0+1" as "0.1.0 (build 1)".
-  static String _version(String v) {
-    final (name, number) = switch (v.split('+')) {
-      [final n, final b] => (n, b),
-      _ => (v, null),
-    };
-    return number == null ? name : '$name (build $number)';
-  }
+  /// "0.1.0+1" as "0.1.0": the build number after the "+" is for the app
+  /// stores, and the build's time and commit already tell builds apart.
+  static String _version(String v) => v.split('+').first;
 
   @override
   Widget build(BuildContext context) {
+    final revision = context.watch<Session>().serverRevision;
     return FutureBuilder(
       future: _server,
       builder: (context, snap) {
@@ -169,15 +175,18 @@ class _VersionsState extends State<_Versions> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const SectionTitle('Versions'),
+            // Each with when it was built, from which commit, and the API
+            // it has: its version and revision, "1.1" (WTFD.md, "Versions").
             ListTile(
               leading: const Icon(Icons.apps_outlined),
               title: Text(
                 'App ${appVersion == null ? '(a development build)' : _version(appVersion!)}',
               ),
               subtitle: Text(
-                appBuild == null
-                    ? 'Build date not known'
-                    : 'Built ${_when(appBuild!)}',
+                [
+                  _built(appBuild, appCommit, appCommitTime),
+                  'API version: $apiVersion.$apiRevision',
+                ].join('\n'),
               ),
             ),
             ListTile(
@@ -188,18 +197,19 @@ class _VersionsState extends State<_Versions> {
                 _ => 'Server (a development build)',
               }),
               subtitle: Text(
-                snap.hasError
-                    ? errorText(snap.error!)
-                    : server == null
-                    ? 'Asking the server…'
-                    : [
-                        server.build == null
-                            ? 'Build date not known'
-                            : 'Built ${_when(server.build!)}',
-                        if (server.revision case final r?)
-                          'commit ${r.substring(0, r.length < 7 ? r.length : 7)}'
-                              '${server.commit == null ? '' : ' of ${_when(server.commit!)}'}',
-                      ].join(' · '),
+                [
+                  snap.hasError
+                      ? errorText(snap.error!)
+                      : server == null
+                      ? 'Asking the server…'
+                      : _built(server.build, server.revision, server.commit),
+                  // The version is the one the app speaks, which the server
+                  // answers; the revision, the one its answers name.
+                  switch (revision) {
+                    final r? => 'API version: $apiVersion.$r',
+                    null => 'API version: $apiVersion, revision not known yet',
+                  },
+                ].join('\n'),
               ),
             ),
           ],

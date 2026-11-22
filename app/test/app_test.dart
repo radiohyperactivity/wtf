@@ -1436,6 +1436,80 @@ void main() {
     expect(find.text('Saws'), findsOneWidget);
   });
 
+  testWidgets(
+    'different API revisions: a bar until OK, again when one changes',
+    (tester) async {
+      setSize(tester, 1000);
+      final fake = FakeServer();
+      final storage = MemoryStorage();
+      // The app started, with the same storage each time.
+      Future<void> start() async {
+        await tester.pumpWidget(const SizedBox());
+        final session = Session(storage: storage, httpClient: fake.client);
+        await session.login('anna@example.com', 'secret', server: server);
+        await tester.pumpWidget(WtfApp(session: session));
+        await tester.pumpAndSettle();
+      }
+
+      final bar = find.textContaining("The server's API is");
+
+      // The same revision: no bar, and on the Account page the app and the
+      // server each have API version 1.1, under their builds.
+      await start();
+      expect(bar, findsNothing);
+      await tester.tap(find.text('Account'));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Server 0.1.0'),
+        200,
+        scrollable: find.byType(Scrollable).last,
+      );
+      expect(
+        find.text('Build date not known\nAPI version: 1.1'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining(
+          RegExp(r'commit 70ef34d of .*\nAPI version: 1\.1$'),
+        ),
+        findsOneWidget,
+      );
+
+      // The server is updated while the app runs: its next answer warns,
+      // the app being the older one.
+      fake.revision = 2;
+      await tester.tap(find.text('Items'));
+      await tester.pumpAndSettle();
+      await search(tester, 'drill');
+      expect(bar, findsOneWidget);
+      expect(find.textContaining('newer than this app'), findsOneWidget);
+      expect(find.textContaining('Update the app.'), findsOneWidget);
+
+      // OK confirms it, also after a restart.
+      await tester.tap(find.widgetWithText(TextButton, 'OK'));
+      await tester.pumpAndSettle();
+      expect(bar, findsNothing);
+      await start();
+      expect(bar, findsNothing);
+      await tester.tap(find.text('Account'));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.textContaining('API version: 1.2'),
+        200,
+        scrollable: find.byType(Scrollable).last,
+      );
+
+      // Another revision warns again: here an older server.
+      fake.revision = 0;
+      await start();
+      expect(find.textContaining('older than this app'), findsOneWidget);
+      expect(find.textContaining('Update the server (wtfd).'), findsOneWidget);
+
+      // What was confirmed is kept by the server's address.
+      expect(storage.revisionsConfirmed, {'http://wtf.test:8080': '2/1'});
+    },
+  );
+
   testWidgets('the location tree, and a box with compartments', (tester) async {
     setSize(tester, 1000);
     final fake = FakeServer();

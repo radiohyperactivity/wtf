@@ -177,13 +177,20 @@ final serverEvents = StreamTransformer<String, ServerEvent>.fromBind((lines) {
   );
 });
 
-/// This app's version ("0.1.0+1") and when it was built, as
-/// scripts/app-build.sh stamps them; null in a build made without it.
+/// This app's version ("0.1.0+1"), when it was built, and the commit it
+/// was built from (its ID and time), as scripts/app-build.sh stamps them;
+/// null in a build made without it, or where the commit wasn't known.
 const String? appVersion = bool.hasEnvironment('WTF_VERSION')
     ? String.fromEnvironment('WTF_VERSION')
     : null;
 final DateTime? appBuild = DateTime.tryParse(
   const String.fromEnvironment('WTF_BUILD'),
+)?.toLocal();
+const String? appCommit = String.fromEnvironment('WTF_COMMIT') == ''
+    ? null
+    : String.fromEnvironment('WTF_COMMIT');
+final DateTime? appCommitTime = DateTime.tryParse(
+  const String.fromEnvironment('WTF_COMMIT_TIME'),
 )?.toLocal();
 
 /// One of the account's sessions (GET /me/sessions): a device logged in.

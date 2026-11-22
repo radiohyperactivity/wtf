@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../api/client.dart';
 import '../camera.dart';
 import '../session.dart';
 
@@ -85,12 +86,27 @@ class AppShell extends StatelessWidget {
     // While another session is this one's camera, a bar under the screen
     // says so.
     final camera = context.watch<Camera>().cameraClient;
-    final body = camera == null
+    // When the server's API revision and the app's differ, a bar above the
+    // screen says so, until it is confirmed.
+    final session = context.watch<Session>();
+    final revisions = session.revisionWarning;
+    final body = camera == null && !revisions
         ? child
         : Column(
             children: [
-              Expanded(child: child),
-              _CameraBar(camera),
+              if (revisions) _RevisionBar(session.serverRevision!),
+              // Under the bar, the screen leaves no room for the status bar:
+              // the bar does.
+              Expanded(
+                child: revisions
+                    ? MediaQuery.removePadding(
+                        context: context,
+                        removeTop: true,
+                        child: child,
+                      )
+                    : child,
+              ),
+              ?(camera == null ? null : _CameraBar(camera)),
             ],
           );
     if (MediaQuery.sizeOf(context).width < compactWidth) {
@@ -164,6 +180,57 @@ class _CameraBar extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The server's API and the app's are of different revisions (decision
+/// 104): which side to update, until OK confirms it.
+class _RevisionBar extends StatelessWidget {
+  const _RevisionBar(this.server);
+
+  /// The server's revision.
+  final int server;
+
+  @override
+  Widget build(BuildContext context) {
+    final colours = Theme.of(context).colorScheme;
+    final text = server < apiRevision
+        ? "The server's API is older than this app's (revision $server, the "
+              "app's $apiRevision): what the app has that the server lacks "
+              "won't work. Update the server (wtfd)."
+        : "The server's API is newer than this app's (revision $server, the "
+              "app's $apiRevision): the app works, without what the server "
+              "has added since. Update the app.";
+    return Material(
+      color: colours.tertiaryContainer,
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+          child: Row(
+            children: [
+              Icon(
+                Icons.sync_problem_outlined,
+                size: 20,
+                color: colours.onTertiaryContainer,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  text,
+                  style: TextStyle(color: colours.onTertiaryContainer),
+                ),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: () => context.read<Session>().confirmRevisions(),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
         ),
       ),
     );

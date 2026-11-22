@@ -59,7 +59,7 @@ go build -tags webapp ./cmd/wtfd
 |--------|------|
 | `scripts/build.sh` | builds the web app, then `wtf` and `wtfd` (with the web app) for Linux, Windows and macOS, amd64 and arm64, into `dist/<os>-<arch>/`; `NO_WEB_APP=1` leaves the web app out |
 | `scripts/release.sh` | runs `build.sh`, and packs each system's `wtf`, `wtfd`, `LICENSE` and a README (`scripts/release-readme.txt`) into `dist/release/`: `.zip` for Windows, `.tar.gz` for Linux and macOS, with the programs executable |
-| `scripts/app-build.sh` | runs `flutter build` in `app/` with its arguments (`scripts/app-build.sh windows --release`), stamped with the app's version and the time of the build, which the app shows under Account; the other scripts build the app with it |
+| `scripts/app-build.sh` | runs `flutter build` in `app/` with its arguments (`scripts/app-build.sh windows --release`), stamped with the app's version, the time of the build and the commit it was built from (git's `HEAD`, or `WTF_COMMIT` and `WTF_COMMIT_TIME` where there is no repository), which the app shows under Account; the other scripts build the app with it |
 | `scripts/windows-server-installer.sh` | after `release.sh`, on Windows: the server's installer, `dist/release/wtf-<version>-windows-setup.exe`, with `wtfd` and `wtf` for x64 and ARM64; see [The server's installer](#the-servers-installer) |
 | `scripts/windows-app-installer.sh` | builds the Windows app and its installer, `dist/wtf-app-<version>-windows-x64-setup.exe`; see [Windows](#windows) |
 | `scripts/windows-sandbox-test.sh` | after both installers, on Windows: tries them on a clean Windows in Windows Sandbox; see [Trying the installers](#trying-the-installers) |
@@ -97,7 +97,7 @@ Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM
 
 ## The apps
 
-All are built in `app/`, with `flutter build <platform> --release` (or `fvm flutter …`). `scripts/app-build.sh <platform> --release` does the same, and stamps the build with the app's version (`app/pubspec.yaml`) and the time, which the app shows under Account; a build without it says it is a development build. A platform's app can only be built on that platform, except Android's; and only for the machine's own processor, except macOS's, which is built for both Apple silicon and Intel.
+All are built in `app/`, with `flutter build <platform> --release` (or `fvm flutter …`). `scripts/app-build.sh <platform> --release` does the same, and stamps the build with the app's version (`app/pubspec.yaml`), the time and the commit, which the app shows under Account; a build without it says it is a development build. A platform's app can only be built on that platform, except Android's; and only for the machine's own processor, except macOS's, which is built for both Apple silicon and Intel.
 
 ### Web
 

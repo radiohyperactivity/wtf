@@ -8,8 +8,6 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-const _headers = {'content-type': 'application/json', 'api-revision': '1'};
-
 typedef JsonMap = Map<String, dynamic>;
 
 class FakeServer {
@@ -17,6 +15,15 @@ class FakeServer {
 
   /// The role of the account: viewer, user or admin.
   final String role;
+
+  /// The API revision its answers name; changed, as if the server were
+  /// updated.
+  int revision = 1;
+
+  Map<String, String> get _headers => {
+    'content-type': 'application/json',
+    'api-revision': '$revision',
+  };
 
   /// Requests that changed something: "POST /api/v1/stock {…}". Dry runs
   /// too, with ?dry_run=true.

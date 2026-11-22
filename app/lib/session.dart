@@ -28,6 +28,11 @@ abstract class SessionStorage {
   /// for none.
   Future<String?> readCamera();
   Future<void> writeCamera(String? camera);
+
+  /// The API revisions, the server's and the app's ("1/2"), whose
+  /// difference was last confirmed for [server]; null for none.
+  Future<String?> readRevisionsConfirmed(String server);
+  Future<void> writeRevisionsConfirmed(String server, String revisions);
 }
 
 /// The server address and appearance in the settings (in a browser, its
@@ -39,6 +44,9 @@ class DeviceStorage implements SessionStorage {
   static const _themeKey = 'theme';
   static const _colourKey = 'colour';
   static const _cameraKey = 'camera';
+
+  /// Followed by the server's address.
+  static const _revisionsKey = 'revisions-confirmed ';
   final _secure = const FlutterSecureStorage();
 
   @override
@@ -84,6 +92,17 @@ class DeviceStorage implements SessionStorage {
   Future<void> writeToken(String? token) => token == null
       ? _secure.delete(key: _tokenKey)
       : _secure.write(key: _tokenKey, value: token);
+
+  @override
+  Future<String?> readRevisionsConfirmed(String server) async =>
+      (await SharedPreferences.getInstance()).getString(_revisionsKey + server);
+
+  @override
+  Future<void> writeRevisionsConfirmed(String server, String revisions) async =>
+      (await SharedPreferences.getInstance()).setString(
+        _revisionsKey + server,
+        revisions,
+      );
 }
 
 /// Storage for tests.
@@ -131,6 +150,17 @@ class MemoryStorage implements SessionStorage {
 
   @override
   Future<void> writeToken(String? token) async => this.token = token;
+
+  /// By server address.
+  final revisionsConfirmed = <String, String>{};
+
+  @override
+  Future<String?> readRevisionsConfirmed(String server) async =>
+      revisionsConfirmed[server];
+
+  @override
+  Future<void> writeRevisionsConfirmed(String server, String revisions) async =>
+      revisionsConfirmed[server] = revisions;
 }
 
 /// How long a session may sit unused before it ends, as the login offers
@@ -202,6 +232,33 @@ class Session extends ChangeNotifier {
   /// The client of the session. Only valid while someone is logged in.
   ApiClient get client => _client!;
 
+  /// The API revision of the server's last answer; null before the first.
+  int? get serverRevision => _client?.serverRevision;
+
+  /// The revisions as the warning names them: the server's, then the app's.
+  String get _revisions => '$serverRevision/$apiRevision';
+
+  /// The revisions whose difference was confirmed for this server.
+  String? _confirmed;
+
+  /// Whether to warn that the server's API revision and the app's differ:
+  /// they do, and not these two have been confirmed for this server. A
+  /// change of either revision warns again.
+  bool get revisionWarning =>
+      serverRevision != null &&
+      serverRevision != apiRevision &&
+      _confirmed != _revisions;
+
+  /// The warning was read: not shown again for this server until either
+  /// revision changes.
+  Future<void> confirmRevisions() async {
+    final server = this.server;
+    if (server == null) return;
+    _confirmed = _revisions;
+    notifyListeners();
+    await storage.writeRevisionsConfirmed(server.toString(), _revisions);
+  }
+
   /// What this session used and made last, for the forms' defaults; begun
   /// again at every login and logout.
   Recent recent = Recent();
@@ -226,6 +283,7 @@ class Session extends ChangeNotifier {
     try {
       me = await client.me();
       _client = client;
+      _confirmed = await storage.readRevisionsConfirmed(server.toString());
     } on ApiProblem {
       // Not logged in, or the server can't be reached: log in again. A token
       // the server ended is deleted by its answer (see _newClient).
@@ -259,6 +317,7 @@ class Session extends ChangeNotifier {
     _client = client;
     recent = Recent();
     this.server = server;
+    _confirmed = await storage.readRevisionsConfirmed(server.toString());
     if (!isWeb) await storage.writeServer(server.toString());
     notifyListeners();
   }
@@ -312,6 +371,10 @@ class Session extends ChangeNotifier {
       httpClient: _httpClient,
       manageCookie: !isWeb,
       session: token,
+      // A server updated while the app runs may warn now, or no longer.
+      onRevision: (_) {
+        if (identical(client, _client)) notifyListeners();
+      },
       onSession: (token) {
         storage.writeToken(token);
         // The server ended the current session (expired, or the password
