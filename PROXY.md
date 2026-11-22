@@ -1,10 +1,15 @@
 # An HTTPS proxy for WtF
 
-How to put WtF behind nginx on Ubuntu 26.04 LTS, with a free certificate from Let's Encrypt. nginx takes the HTTPS connections from browsers and the apps, and passes the requests on to `wtfd` as plain HTTP.
+How to put WtF behind a proxy with a free certificate from Let's Encrypt. The proxy takes the HTTPS connections from browsers and the apps, and passes the requests on to `wtfd` as plain HTTP.
 
 ```text
-browser, app, wtf  --HTTPS-->  nginx (ports 80 and 443)  --HTTP-->  wtfd (port 8080)
+browser, app, wtf  --HTTPS-->  proxy (ports 80 and 443)  --HTTP-->  wtfd (port 8080)
 ```
+
+There are two ways here; both end with steps 5 and 6:
+
+- **nginx on Ubuntu 26.04 LTS,** with Certbot for the certificate: steps 1 to 4.
+- **Caddy, on Windows or Linux,** which gets and renews the certificate by itself, with a short configuration file: [Caddy instead of steps 1 to 4](#caddy-instead-of-steps-1-to-4). On Windows it can run on the same machine as `wtfd`.
 
 `wtfd` speaks plain HTTP only, and the web app needs HTTPS in practice: browsers keep the secure session cookie, and allow the camera, only over HTTPS. For what `wtfd` expects of a proxy, see "Deployment assumptions" in [WTFD.md](WTFD.md).
 
@@ -12,9 +17,9 @@ Below, `wtf.example.org` stands for your server's name: replace it everywhere.
 
 ## Before you start
 
-- **A machine with Ubuntu 26.04 LTS** and `sudo`. It can be the machine `wtfd` runs on, or another one that can reach it (for example, `wtfd` as a Windows service on another machine on the same network).
+- **A machine for the proxy:** for nginx, one with Ubuntu 26.04 LTS and `sudo`; for Caddy, Windows or Linux, and an administrator. It can be the machine `wtfd` runs on, or another one that can reach it (for example, `wtfd` as a Windows service on another machine on the same network).
 - **A DNS name for it,** `wtf.example.org`, whose A record (and AAAA record, if it has IPv6) points at the machine's public address.
-- **Ports 80 and 443 open to the internet,** forwarded by your router if the machine is behind one. Let's Encrypt checks that you control the name by fetching a file over port 80; the renewals every two months do the same, so port 80 stays open. A machine that the internet can't reach needs the DNS challenge instead; see [A server only on your own network](#a-server-only-on-your-own-network).
+- **Ports 80 and 443 open to the internet,** forwarded by your router if the machine is behind one. Let's Encrypt checks that you control the name by connecting to it, over port 80 for Certbot (Caddy can use either); the renewals every two months do the same, so both stay open. A machine that the internet can't reach needs the DNS challenge instead; see [A server only on your own network](#a-server-only-on-your-own-network).
 
 ## 1. Install nginx and Certbot
 
@@ -167,9 +172,69 @@ server {
 
 The browser then says the connection failed, while plain HTTP by IP address still shows the welcome page.
 
+## Caddy instead of steps 1 to 4
+
+[Caddy](https://caddyserver.com) is a web server and proxy in one program. Given a name, it gets a certificate from Let's Encrypt for it, renews it, and sends plain HTTP on to HTTPS, all by itself.
+
+### On Windows
+
+1. **Get Caddy:** download it for Windows from <https://caddyserver.com/download>, and put `caddy.exe` in a folder of its own, such as `C:\Caddy`.
+2. **Write its configuration,** `C:\Caddy\Caddyfile`, a text file without an extension:
+
+   ```caddyfile
+   # Caddy's own messages go to a file, as a service has no window
+   # (forward slashes, which Caddy reads as it should on Windows).
+   {
+   	log {
+   		output file C:/Caddy/caddy.log
+   	}
+   }
+
+   # WtF over HTTPS, passed on to wtfd on this machine; for wtfd on
+   # another one, its address, such as 192.168.10.20:8080.
+   wtf.example.org {
+   	reverse_proxy 127.0.0.1:8080
+   }
+   ```
+
+3. **Let the internet in** on ports 80 and 443, in an administrator's PowerShell:
+
+   ```powershell
+   New-NetFirewallRule -DisplayName "Caddy" -Direction Inbound -Protocol TCP -LocalPort 80,443 -Action Allow
+   ```
+
+4. **Run it as a service,** started at boot, in the same window:
+
+   ```powershell
+   sc.exe create caddy start= auto binPath= "C:\Caddy\caddy.exe run --config C:\Caddy\Caddyfile"
+   sc.exe start caddy
+   ```
+
+   The service runs as SYSTEM, and keeps the certificate in SYSTEM's profile (`C:\Windows\System32\config\systemprofile\AppData\Roaming\Caddy`). After changing the `Caddyfile`, restart it: `Restart-Service caddy`.
+
+### On Linux
+
+Install Caddy from its own package repository, as [its installation page](https://caddyserver.com/docs/install) shows for each distribution; Ubuntu's own package is years older. The package runs Caddy as a service, with its configuration in `/etc/caddy/Caddyfile`. Replace that file's contents with the site above (without the `log` part: the messages go to the journal), and load it:
+
+```sh
+sudo systemctl reload caddy
+```
+
+### What Caddy does by itself
+
+What nginx needs lines for in step 4, Caddy does without them:
+
+- **`Host`** is passed on as the browser sent it, and **`X-Forwarded-For`** and **`X-Forwarded-Proto`** are set, so the checks and the session cookie in `wtfd` work as with nginx.
+- **Uploads** go straight through, with no size limit of Caddy's own; `wtfd`'s `max-attachment-size` is the limit.
+- **The event stream** is passed on at once, as Caddy does for every `text/event-stream`, and has no time limit.
+
+**A server only on your own network** needs the DNS challenge, as for nginx (below): download Caddy with your DNS provider's module (the download page offers them), and add a `tls` line with the provider's credentials to the site, as the module's documentation shows.
+
+Then go on with step 5.
+
 ## 5. Tell wtfd about the proxy
 
-`wtfd` needs to believe the client's address that nginx passes on, which it does only for the proxies named in `trusted-proxies`. Its config file is `/etc/wtf/wtfd.conf` on Linux and `%ProgramData%\WtF\wtfd.conf` on Windows (see "Configuration" in [WTFD.md](WTFD.md)).
+`wtfd` needs to believe the client's address that the proxy passes on, which it does only for the proxies named in `trusted-proxies`. Its config file is `/etc/wtf/wtfd.conf` on Linux and `%ProgramData%\WtF\wtfd.conf` on Windows (see "Configuration" in [WTFD.md](WTFD.md)).
 
 **wtfd on the same machine:** it listens on this machine only, and the proxy reaches it as `127.0.0.1`:
 
@@ -232,4 +297,5 @@ The plugin's documentation says what goes in the credentials file (mode 600). Th
 | `403`, "Cross-site request", when logging in or saving | The `Host` that reaches `wtfd` isn't the name in the browser. Check `proxy_set_header Host $host;`. On a port other than 443, use `$http_host`, which keeps the port. |
 | The sessions under Account show the proxy's address | `trusted-proxies` in `wtfd.conf` doesn't name the address the proxy connects from, or `wtfd` hasn't been restarted since. |
 | The browser refuses the connection: `SSL_ERROR_UNRECOGNIZED_NAME_ALERT` (Firefox) or `ERR_SSL_UNRECOGNIZED_NAME_ALERT` (Chrome) | nginx has no HTTPS site for the name in the address, and the default HTTPS site refuses it, as intended for addresses by IP. If it was the server's name, it isn't the `server_name` of WtF's HTTPS site: check for `wtf.example.org` left unreplaced, or a typo. `sudo nginx -T \| grep server_name` lists the names nginx has. |
+| Caddy gets no certificate | `C:\Caddy\caddy.log` (Windows) or `journalctl -u caddy` (Linux) says why. Usually the same as for Certbot, below. |
 | Certbot fails with "unauthorized" or a timeout | Let's Encrypt couldn't fetch the check over port 80: the DNS name doesn't point at this machine, or port 80 isn't open or forwarded to it. |

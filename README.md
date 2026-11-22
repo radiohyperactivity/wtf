@@ -35,6 +35,8 @@ The examples use these names:
 
 Follow the installation instructions for your platform at <https://www.postgresql.org/download/>. WtF needs **PostgreSQL 18 or newer**, built with ICU (the usual packages are), so use the newest release available.
 
+**Backing the database up** is the PostgreSQL administrator's job, as for any other database on the server; [BACKUP.md](BACKUP.md) says what WtF needs of it.
+
 The rest of this section assumes an interactive `psql` session as a superuser (usually `postgres`), connected to the `template1` database:
 
 ```sh
@@ -198,7 +200,7 @@ By default it listens on `127.0.0.1:8080`, for a reverse proxy on the same machi
 
 Instead of the environment variable, the password can come from PostgreSQL's password file, as for every PostgreSQL client: `~/.pgpass` (mode 600), `%APPDATA%\postgresql\pgpass.conf` on Windows, or the file `PGPASSFILE` names. To run `wtfd` as a service, see [Running as a service](#running-as-a-service).
 
-**TLS is recommended but not required:** passwords travel to `wtfd` and on to PostgreSQL, which hashes them. Whether to use HTTPS at the proxy and `hostssl` / `--database-sslmode require` for the database connection is the administrator's decision. [PROXY.md](PROXY.md) shows how to set up nginx with a Let's Encrypt certificate on Ubuntu.
+**TLS is recommended but not required:** passwords travel to `wtfd` and on to PostgreSQL, which hashes them. Whether to use HTTPS at the proxy and `hostssl` / `--database-sslmode require` for the database connection is the administrator's decision. [PROXY.md](PROXY.md) shows how to set up nginx on Ubuntu, or Caddy on Windows or Linux, with a Let's Encrypt certificate.
 
 ### 8. Create the first account
 
@@ -303,66 +305,7 @@ See [CLI.md](CLI.md).
 
 ## Backups
 
-A database dump contains everything in `wtf`: the schema, the data, the grants and `wtfd`'s bookkeeping. Roles are global to the server and not part of a dump. They are recreated with steps 2 and 4 of the setup.
-
-### Making a backup
-
-```sh
-pg_dump --host=localhost --username=wtf_dba --dbname=wtf \
-        --format=custom --file="wtf-$(date +%F).dump"
-```
-
-- **`--username=wtf_dba`**: the DBA role owns every object, so it can read everything. `wtf_api` couldn't, because it can't read the tables.
-- **`--format=custom`**: a compressed archive for `pg_restore`, which can restore everything or only selected parts. Plain SQL (`--format=plain`) is easier to read but less flexible.
-- **Password:** set `PGPASSWORD`, or better, use a password file (`~/.pgpass`, one line `localhost:5432:wtf:wtf_dba:<password>`, mode 600). `pg_dump` reads it automatically, and the password stays out of scripts and process lists.
-- **Version:** use a `pg_dump` at least as new as the server (18). An older `pg_dump` refuses to dump a newer server.
-
-The dump is consistent: it is taken in a single snapshot, while `wtfd serve` keeps running.
-
-**Scheduled backups**, e.g. daily at 03:00 with 30 days kept (cron of a user with a `~/.pgpass`):
-
-```cron
-0 3 * * *  pg_dump -h localhost -U wtf_dba -d wtf -Fc -f /var/backups/wtf/wtf-$(date +\%F).dump && find /var/backups/wtf -name 'wtf-*.dump' -mtime +30 -delete
-```
-
-Copy the dumps to another machine as well; a backup on the same disk doesn't survive that disk.
-
-### Attachment files
-
-Attachment contents live in the files directory (`--files-directory`), not in the database, so back that directory up as well. Files are stored under their content hash and never change, so incremental copies are cheap:
-
-```sh
-rsync -a /var/lib/wtf/files/ backup-host:/backups/wtf/files/
-```
-
-Take the database dump first and copy the files afterwards. Then every file the dump refers to is in the copy. Files that arrive in between are harmless; `wtfd gc` removes any that nothing references.
-
-Run `wtfd gc` regularly (e.g. nightly) to remove files that no attachment refers to any more (see [WTFD.md](WTFD.md)).
-
-**A delete is final.** WtF keeps no deleted things and no history, so a backup is the way back from a mistake. That is also why the copy of the files directory above has no `--delete`: the files of deleted attachments stay in the backup after `wtfd gc` removes them from the server. Keep it that way.
-
-### Restoring
-
-Restore into a new, empty database prepared exactly like the original, so that ownership and grants come out right:
-
-1. **Prepare the database**, as a superuser: steps 3 and 4 of the setup, with a new database name such as `wtf_restored` (or `wtf` after dropping or renaming the old one). The roles from step 2 must exist.
-2. **Restore it** as `wtf_dba`:
-
-   ```sh
-   pg_restore --host=localhost --username=wtf_dba --dbname=wtf_restored \
-              --single-transaction --exit-on-error wtf-2026-10-24.dump
-   ```
-
-   - **`--single-transaction`**: the restore either completes fully or leaves the database empty.
-   - **`--exit-on-error`**: stop at the first error instead of carrying on.
-3. **Restore the attachment files** into the files directory, e.g. with `rsync` from the backup.
-4. **Check it:** `wtfd schema --database-name wtf_restored --dry-run` must report "up to date". After that, `wtfd serve` can use it.
-
-Test a restore now and then. A backup that has never been restored is only a hope.
-
-### Getting one thing back
-
-To get back something deleted by mistake, without losing what changed since, restore the backup *beside* the live database, as `wtf_restored` (steps 1 and 2 above), and look the thing up there, e.g. with `psql` as `wtf_dba`. Then enter it again through the app or the CLI, or copy its rows across by hand. Its attachments' files are in the backup of the files directory, under their hash. Drop `wtf_restored` afterwards.
+A backup of WtF is the database and the files directory, taken together. The database is backed up by the PostgreSQL administrator, as any other database on the server; the files directory by whoever runs `wtfd`. A delete in WtF is final, so a backup is the only way back from a mistake. [BACKUP.md](BACKUP.md) shows how to make one, and how to restore it.
 
 ## Tests
 

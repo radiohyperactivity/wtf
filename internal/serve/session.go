@@ -104,9 +104,8 @@ var unauthenticated = &problem{
 	Detail: "Log in with POST " + apiPrefix + "/login, which sets the session cookie \"" + sessionCookie + "\", and send it with every request.",
 }
 
-// login: POST /login {email, password, client, max_idle}, to the tenant of
-// the request's hostname. client is what the client calls itself ("WtF on
-// Pixel 9"), and may be null; max_idle is how long, in seconds, the session
+// login: POST /login {email, password, client, max_idle}. client is what the
+// client calls itself ("WtF on Pixel 9"), and may be null; max_idle is how long, in seconds, the session
 // may sit unused before it expires, or null for never. Both are required.
 func (s *server) login(w http.ResponseWriter, r *http.Request) error {
 	args, err := collect(r, []param{body(
