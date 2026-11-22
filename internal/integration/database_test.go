@@ -28,6 +28,7 @@ type testDatabase struct {
 	dba       *pgxpool.Pool // the schema owner
 	api       *pgxpool.Pool // the API role, as wtfd serve connects
 	dbaConfig *pgx.ConnConfig
+	apiConfig *pgx.ConnConfig // the API role, as gc connects
 	apiUser   string
 }
 
@@ -105,7 +106,7 @@ func openDatabase() (*testDatabase, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	return &testDatabase{dba: dba, api: api, dbaConfig: dbaConfig, apiUser: settings.APIUser}, "", nil
+	return &testDatabase{dba: dba, api: api, dbaConfig: dbaConfig, apiConfig: apiConfig.ConnConfig, apiUser: settings.APIUser}, "", nil
 }
 
 // sqlState returns the SQLSTATE of a database error, or "" for none.

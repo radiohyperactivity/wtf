@@ -286,6 +286,12 @@ func runInstall(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fail(err)
 	}
+	if len(old) == 0 {
+		// A new server removes unused files and expired sessions every
+		// night. An existing file keeps what it has: no gc line there
+		// means the administrator runs wtfd gc themselves.
+		settings = append(settings, config.Setting{Key: "gc", Value: "02:00"})
+	}
 	if err := writeFileAtomic(configPath, []byte(config.UpdateFile(string(old), configHeader, settings))); err != nil {
 		return fail(err)
 	}

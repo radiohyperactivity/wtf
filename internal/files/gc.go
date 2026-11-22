@@ -8,51 +8,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
-
-// hashesUsed is the hashes of the files in use: the photos of the items,
-// stock rows and locations, and the values of the attachment attributes of
-// the items and stock rows. One read of them, once per run.
-const hashesUsed = `
-	SELECT i.photo FROM public.item i WHERE i.photo IS NOT NULL
-	UNION
-	SELECT s.photo FROM public.stock s WHERE s.photo IS NOT NULL
-	UNION
-	SELECT l.photo FROM public.location l WHERE l.photo IS NOT NULL
-	UNION
-	SELECT e.value
-	FROM public.item i
-	JOIN public.class c ON c.id = i.class
-	CROSS JOIN LATERAL jsonb_each_text(i.values) e
-	WHERE c.attributes -> e.key ->> 'type' = 'attachment'
-	UNION
-	SELECT e.value
-	FROM public.stock s
-	JOIN public.item i  ON i.id = s.item
-	JOIN public.class c ON c.id = i.class
-	CROSS JOIN LATERAL jsonb_each_text(s.values) e
-	WHERE c.attributes -> e.key ->> 'type' = 'attachment'`
-
-// hashUsed tells whether the file with hash $1 is in use: as a photo,
-// or as any value of an item or stock row (a text value that happens to be
-// the hash keeps the file too, which errs on the safe side). The check
-// before a removal, under the file's lock.
-const hashUsed = `SELECT
-	EXISTS (SELECT 1 FROM public.item i
-	        WHERE i.photo = $1 OR EXISTS (SELECT 1 FROM jsonb_each_text(i.values) e WHERE e.value = $1))
-	OR EXISTS (SELECT 1 FROM public.stock s
-	           WHERE s.photo = $1 OR EXISTS (SELECT 1 FROM jsonb_each_text(s.values) e WHERE e.value = $1))
-	OR EXISTS (SELECT 1 FROM public.location l WHERE l.photo = $1)`
-
-// expiredSessions removes the expired sessions: those that sat
-// unused for longer than their max_idle.
-const expiredSessions = `DELETE FROM public.session
-	WHERE max_idle IS NOT NULL AND last_used <= now() - max_idle`
 
 // GCOptions configures GC.
 type GCOptions struct {
-	ConnConfig *pgx.ConnConfig // connection as the schema owner (DBA role)
+	ConnConfig *pgx.ConnConfig // connection as the API role
 	Store      *Store
 	MinAge     time.Duration // files younger than this are never removed
 	DryRun     bool
@@ -66,7 +26,9 @@ type GCResult struct {
 	Sessions int64 // expired sessions
 }
 
-// GC removes files that nothing references:
+// GC removes files that nothing references, with the database functions
+// for it (attachment.gc_hashes_used, attachment.gc_unused and
+// account.gc_sessions), which the API role may call:
 //
 //   - files on disk whose hash no photo or attachment value has: what had them was deleted or given another file, or an upload's
 //     database change failed;
@@ -86,14 +48,7 @@ func GC(ctx context.Context, o GCOptions) (GCResult, error) {
 	defer conn.Close(context.Background())
 
 	var result GCResult
-	if o.DryRun {
-		err = conn.QueryRow(ctx, "SELECT count(*) FROM public.session WHERE max_idle IS NOT NULL AND last_used <= now() - max_idle").
-			Scan(&result.Sessions)
-	} else {
-		var tag pgconn.CommandTag
-		tag, err = conn.Exec(ctx, expiredSessions)
-		result.Sessions = tag.RowsAffected()
-	}
+	err = conn.QueryRow(ctx, "SELECT account.gc_sessions($1)", o.DryRun).Scan(&result.Sessions)
 	if err != nil {
 		return result, fmt.Errorf("expired sessions: %w", err)
 	}
@@ -123,7 +78,7 @@ func gcFiles(ctx context.Context, conn *pgx.Conn, o GCOptions, result *GCResult)
 	}
 
 	// Files on disk that nothing has.
-	rows, err := conn.Query(ctx, hashesUsed)
+	rows, err := conn.Query(ctx, "SELECT attachment.gc_hashes_used()")
 	if err != nil {
 		return err
 	}
@@ -188,15 +143,11 @@ func gcFiles(ctx context.Context, conn *pgx.Conn, o GCOptions, result *GCResult)
 func removeUnreferenced(ctx context.Context, conn *pgx.Conn, store *Store, hash string) (bool, error) {
 	removed := false
 	err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(attachment.file_lock_key($1))", hash); err != nil {
+		var unused bool
+		if err := tx.QueryRow(ctx, "SELECT attachment.gc_unused($1)", hash).Scan(&unused); err != nil {
 			return err
 		}
-		var referenced bool
-		if err := tx.QueryRow(ctx,
-			hashUsed, hash).Scan(&referenced); err != nil {
-			return err
-		}
-		if referenced {
+		if !unused {
 			return nil
 		}
 		if err := store.Remove(hash); err != nil {

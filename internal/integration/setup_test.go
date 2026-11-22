@@ -35,6 +35,7 @@ type environment struct {
 	api       *pgxpool.Pool // the API role, as wtfd serve connects
 	handler   http.Handler
 	dbaConfig *pgx.ConnConfig
+	apiConfig *pgx.ConnConfig // the API role, as gc connects
 	apiUser   string
 	files     *files.Store
 
@@ -97,6 +98,7 @@ func connect(d *testDatabase) (*environment, error) {
 		api:       d.api,
 		handler:   serve.NewHandler(d.api, quiet, 1<<20, store, testMaxAttachment, nil, nil),
 		dbaConfig: d.dbaConfig,
+		apiConfig: d.apiConfig,
 		apiUser:   d.apiUser,
 		files:     store,
 	}

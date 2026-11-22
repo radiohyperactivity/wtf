@@ -487,3 +487,28 @@ BEGIN
     END IF;
 END;
 $$;
+
+-- Removes the sessions that have expired: those unused for longer than
+-- their max_idle. With p_dry_run, only counts them. Returns how many. For
+-- gc ("wtfd gc", and wtfd serve at the time its gc setting names), which
+-- connects as the API role, and takes no request: it is wtfd's own work.
+CREATE FUNCTION account.gc_sessions(p_dry_run boolean)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
+AS $$
+DECLARE
+    v_count bigint;
+BEGIN
+    IF p_dry_run THEN
+        SELECT count(*) INTO v_count
+        FROM public.session s
+        WHERE s.max_idle IS NOT NULL AND s.last_used <= now() - s.max_idle;
+    ELSE
+        DELETE FROM public.session s
+        WHERE s.max_idle IS NOT NULL AND s.last_used <= now() - s.max_idle;
+        GET DIAGNOSTICS v_count = ROW_COUNT;
+    END IF;
+    RETURN v_count;
+END;
+$$;

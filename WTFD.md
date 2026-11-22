@@ -179,7 +179,7 @@ $ WTFD_DBA_DATABASE_PASSWORD=… wtfd schema
 schema: database wtf at version 0, binary has version 1
 schema: applied 0001_schema.sql
 schema: rebuilt 11 repeatable scripts (130 functions)
-schema: granted EXECUTE on 51 functions to wtf_api
+schema: granted EXECUTE on 54 functions to wtf_api
 schema: up to date at version 1
 ```
 
@@ -215,6 +215,8 @@ In addition to the database flags in [Configuration](#configuration):
 | `--max-attachment-size`            | `WTFD_MAX_ATTACHMENT_SIZE`           | `104857600`      | Largest accepted file, in bytes (100 MiB). Uploads and downloads get 15 minutes instead of the normal timeouts. |
 | `--web-root`                       | `WTFD_WEB_ROOT`                      | (none)           | Directory of the web app, a Flutter web build; served outside `/api` (see "The web app"). It must contain `index.html`. |
 | `--trusted-proxies`                | `WTFD_TRUSTED_PROXIES`               | (none)           | The reverse proxies, as addresses or networks separated by commas (`127.0.0.1, 10.0.0.0/8`), whose `X-Forwarded-For` is believed for the client's address. Without it, the address is the connection's. |
+| `--gc`                             | `WTFD_GC`                            | (none)           | The time of day, such as `02:00`, at which `serve` runs gc every day (see [The `gc` action](#the-gc-action)), in this machine's time zone. Empty or `manual` for never, leaving it to `wtfd gc`. |
+| `--min-age`                        | `WTFD_GC_MIN_AGE`                    | `1h`             | As for `gc` |
 | `--verbose`                        | –                                    | off              | Debug logging |
 
 The password comes from `WTFD_API_DATABASE_PASSWORD`.
@@ -513,7 +515,7 @@ At the end, when there is no `wtfd` service yet, it offers to set one up, as `wt
 
 `uninstall` asks first (on a terminal), then stops the service, takes the account's access away (while the account still exists to be named), removes the service, the firewall rule and the Event Log source, and leaves the programs, the settings, the data and the log's entries.
 
-**The passwords:** for now, the service can read all of `pgpass.conf`, the DBA's password too. Whether `serve` should have only the API role's, and how `wtfd gc` is run on a schedule, is still open.
+**The passwords:** the service can read all of `pgpass.conf`, the DBA's password too, though it needs only the API role's: `serve`, and gc with it (`gc = 02:00`), connect as the API role. Both passwords stay in the one file, which only administrators and the service can read.
 
 ## The `gc` action
 
@@ -524,12 +526,14 @@ wtfd gc --files-directory /var/lib/wtf/files --dry-run   # report only
 wtfd gc --files-directory /var/lib/wtf/files
 ```
 
-It connects as the DBA role, reads the hashes in use once (the photos of items, stock rows and locations, and the values of the attachment attributes of items and stock rows), and removes two kinds of file:
+It connects as the API role, as `serve` does, through three functions for gc that the API role may call, and only gc does (`attachment.gc_hashes_used`, `attachment.gc_unused` and `account.gc_sessions`; see [API.md](API.md)). It reads the hashes in use once (the photos of items, stock rows and locations, and the values of the attachment attributes of items and stock rows), and removes two kinds of file:
 
 - files whose hash nothing has;
 - abandoned uploads in the `tmp` directory.
 
-Files younger than `--min-age` (env `WTFD_GC_MIN_AGE`, default `1h`) are never removed, so uploads in progress are safe. Each removal takes the file's advisory lock (`attachment.file_lock_key`), the same one an upload holds while it puts the file in place and records it, and checks again that nothing references the file. `--dry-run` reports what would be removed, and `--verbose` logs every removed file. Run it from cron or a systemd timer, e.g. nightly.
+Files younger than `--min-age` (env `WTFD_GC_MIN_AGE`, default `1h`) are never removed, so uploads in progress are safe. Each removal takes the file's advisory lock (`attachment.file_lock_key`), the same one an upload holds while it puts the file in place and records it, and checks again that nothing references the file. `--dry-run` reports what would be removed, and `--verbose` logs every removed file.
+
+**Every night:** the setting `gc = 02:00` in `wtfd.conf` (or `--gc`) makes `serve` run gc every day at that time, in the machine's time zone, and log what it removed. `serve` looks at the clock once a minute, so a machine that was asleep at the time runs it when it wakes, and on the night the clocks go forward past the time, it runs an hour later. Without the setting, or with `gc =` or `gc = manual`, nothing runs it by itself: run `wtfd gc` from cron, a systemd timer or Task Scheduler instead. On Windows, `wtfd install` and the installer write `gc = 02:00` into a new `wtfd.conf`; one that is there already keeps what it has.
 
 ## Open questions
 

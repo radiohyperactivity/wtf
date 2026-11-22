@@ -23,6 +23,7 @@ import (
 	"os/signal"
 	"slices"
 	"syscall"
+	"time"
 
 	"github.com/radiohyperactivity/wtf/db"
 	"github.com/radiohyperactivity/wtf/internal/admin"
@@ -156,6 +157,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) int {
 	file := config.RegisterFile(fs)
 	settings := config.RegisterServe(fs)
 	filesDir := config.RegisterFiles(fs)
+	gcSettings := config.RegisterGC(fs)
 	verbose := fs.Bool("verbose", false, "debug logging")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -170,7 +172,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) int {
 	if !applyConfig(file, fs, stderr) {
 		return exitUsage
 	}
-	if err := errors.Join(database.Validate(), settings.Validate(), filesDir.Validate()); err != nil {
+	if err := errors.Join(database.Validate(), settings.Validate(), filesDir.Validate(), gcSettings.Validate()); err != nil {
 		fmt.Fprintf(stderr, "wtfd serve: %v\n", err)
 		return exitUsage
 	}
@@ -179,7 +181,8 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) int {
 	if *verbose {
 		level = slog.LevelDebug
 	}
-	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: level})).With("action", "serve")
+	handler := slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: level})
+	log := slog.New(handler).With("action", "serve")
 	if file.Read {
 		log.Info("settings", "config", file.Path)
 	}
@@ -212,6 +215,34 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) int {
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// gc every day, at the time the gc setting names.
+	if hour, minute, ok := settings.GCTime(); ok {
+		connConfig, err := database.ConnConfig(database.APIUser, os.Getenv(config.APIPasswordEnv), "wtfd serve gc")
+		if err != nil {
+			log.Error("failed", "error", err)
+			return exitFailure
+		}
+		// gc's messages are marked as gc's, as those of wtfd gc are.
+		gcLog := slog.New(handler).With("action", "gc")
+		// The zone's name and its offset now, such as "CET +01:00": Go
+		// calls the machine's own zone just "Local".
+		log.Info("gc every day", "at", fmt.Sprintf("%02d:%02d", hour, minute),
+			"time_zone", time.Now().Format("MST -07:00"))
+		go files.Daily(ctx, hour, minute, func(ctx context.Context) {
+			result, err := files.GC(ctx, files.GCOptions{
+				ConnConfig: connConfig,
+				Store:      store,
+				MinAge:     gcSettings.MinAge,
+				Logger:     gcLog,
+			})
+			if err != nil {
+				gcLog.Error("failed", "error", err)
+				return
+			}
+			gcLog.Info("removed", "files", result.Files, "bytes", result.Bytes, "expired_sessions", result.Sessions)
+		})
+	}
 
 	err = serve.Run(ctx, serve.Options{
 		ConnString:         database.ConnString(database.APIUser, os.Getenv(config.APIPasswordEnv), "wtfd serve"),
@@ -265,7 +296,7 @@ func runGC(args []string, stderr io.Writer) int {
 	}
 	log := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: level})).With("action", "gc")
 
-	connConfig, err := database.ConnConfig(database.DBAUser, os.Getenv(config.DBAPasswordEnv), "wtfd gc")
+	connConfig, err := database.ConnConfig(database.APIUser, os.Getenv(config.APIPasswordEnv), "wtfd gc")
 	if err != nil {
 		log.Error("invalid connection settings", "error", err)
 		return exitUsage

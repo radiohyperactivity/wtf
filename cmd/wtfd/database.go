@@ -82,7 +82,7 @@ func runDatabase(args []string, stdin *os.File, stdout, stderr io.Writer) int {
 		for _, line := range c.pgpassLines(c.generated...) {
 			fmt.Fprintln(stdout, "  "+line)
 		}
-		fmt.Fprintln(stdout, "wtfd serve needs only the API role's; the DBA's is for wtfd schema, gc and account.")
+		fmt.Fprintln(stdout, "wtfd serve and gc need only the API role's; the DBA's is for wtfd schema and account.")
 	}
 	return code
 }

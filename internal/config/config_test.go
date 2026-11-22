@@ -54,3 +54,26 @@ func TestInvalidEnvironment(t *testing.T) {
 		t.Error("expected an error for a non-numeric port")
 	}
 }
+
+func TestParseGCTime(t *testing.T) {
+	for _, c := range []struct {
+		value        string
+		hour, minute int
+		ok, err      bool
+	}{
+		{value: ""},
+		{value: "manual"},
+		{value: "02:00", hour: 2, ok: true},
+		{value: "23:59", hour: 23, minute: 59, ok: true},
+		{value: "2:30", hour: 2, minute: 30, ok: true},
+		{value: "24:00", err: true},
+		{value: "02:60", err: true},
+		{value: "2am", err: true},
+		{value: "never", err: true},
+	} {
+		hour, minute, ok, err := parseGCTime(c.value)
+		if hour != c.hour || minute != c.minute || ok != c.ok || (err != nil) != c.err {
+			t.Errorf("parseGCTime(%q) = %d, %d, %v, %v", c.value, hour, minute, ok, err)
+		}
+	}
+}

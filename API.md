@@ -98,7 +98,7 @@ page       { rows, more, next }
 
 ## Function index
 
-The 51 functions the API calls, and the routes that call them (under `/api/v1`). `wtfd`'s own work (the operator's accounts, `gc`) uses the tables directly, as the schema owner ([WTFD.md](WTFD.md)).
+The 51 functions the API calls, and the routes that call them (under `/api/v1`). Three more are for gc, which connects as the API role too, and take no request, as gc is `wtfd`'s own work: `attachment.gc_hashes_used()`, the hashes of the files in use; `attachment.gc_unused(p_hash)`, which takes the file's lock, as an upload does, and tells whether nothing uses it; and `account.gc_sessions(p_dry_run)`, which removes the expired sessions, or counts them. The operator's accounts (`wtfd account`) use the tables directly, as the schema owner ([WTFD.md](WTFD.md)).
 
 | Function | Returns | Route |
 |----------|---------|-------|

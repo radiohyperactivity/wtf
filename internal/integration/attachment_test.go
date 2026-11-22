@@ -183,7 +183,7 @@ func TestFiles(t *testing.T) {
 	e.expect(t, 200, "PATCH", item, obj("values", obj("Page", nil), "photo", nil))
 	gc := func(dryRun bool) files.GCResult {
 		result, err := files.GC(context.Background(), files.GCOptions{
-			ConnConfig: e.dbaConfig,
+			ConnConfig: e.apiConfig,
 			Store:      e.files,
 			DryRun:     dryRun,
 			Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),

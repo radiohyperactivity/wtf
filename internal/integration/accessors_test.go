@@ -161,8 +161,8 @@ func TestFunctionCatalogue(t *testing.T) {
 			t.Errorf("helpers with settings of their own: %v", bad)
 		}
 		n := d.value(t, `SELECT count(*)`+ours+` AND p.prosecdef`)
-		if n != int64(51) {
-			t.Errorf("%v functions for the API, want 51", n)
+		if n != int64(54) {
+			t.Errorf("%v functions for the API, want 54", n)
 		}
 	})
 
@@ -178,11 +178,16 @@ func TestFunctionCatalogue(t *testing.T) {
 		}
 	})
 
+	// But the schema's version, and gc's, which is wtfd's own work, not a
+	// user's.
 	t.Run("each takes the request first", func(t *testing.T) {
 		if bad := strings_(`SELECT p.oid::regprocedure::text` + ours + `
 			AND p.prosecdef
 			AND (p.pronargs = 0 OR p.proargtypes[0] <> 'public.request'::regtype)
-			AND p.oid <> 'meta.schema_version()'::regprocedure`); len(bad) > 0 {
+			AND p.oid NOT IN ('meta.schema_version()'::regprocedure,
+			                  'attachment.gc_hashes_used()'::regprocedure,
+			                  'attachment.gc_unused(text)'::regprocedure,
+			                  'account.gc_sessions(boolean)'::regprocedure)`); len(bad) > 0 {
 			t.Errorf("without the request first: %v", bad)
 		}
 	})

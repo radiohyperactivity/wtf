@@ -225,6 +225,9 @@ type Serve struct {
 	// whose X-Forwarded-For header is believed for the client's address;
 	// parsed by serve.ParseTrustedProxies.
 	TrustedProxies string
+	// GC is the time of day, such as 02:00, at which serve runs gc every
+	// day, in this machine's time zone; "" or "manual" for never (GCTime).
+	GC string
 
 	env env
 }
@@ -244,7 +247,28 @@ func RegisterServe(fs *flag.FlagSet) *Serve {
 		"largest accepted attachment in bytes (env WTFD_MAX_ATTACHMENT_SIZE)")
 	fs.StringVar(&s.TrustedProxies, "trusted-proxies", s.env.string("WTFD_TRUSTED_PROXIES", ""),
 		"reverse proxies whose X-Forwarded-For is believed, as addresses or networks separated by commas; none if empty (env WTFD_TRUSTED_PROXIES)")
+	fs.StringVar(&s.GC, "gc", s.env.string("WTFD_GC", ""),
+		"run gc every day at this time, such as 02:00, in this machine's time zone; empty or manual for never, leaving it to wtfd gc (env WTFD_GC)")
 	return s
+}
+
+// GCTime is the time of day of the gc setting, and whether there is one.
+func (s *Serve) GCTime() (hour, minute int, ok bool) {
+	hour, minute, ok, _ = parseGCTime(s.GC)
+	return hour, minute, ok
+}
+
+// parseGCTime reads a time of day such as 02:00 (24 hours), or "" or
+// "manual" for none.
+func parseGCTime(value string) (hour, minute int, ok bool, err error) {
+	if value == "" || value == "manual" {
+		return 0, 0, false, nil
+	}
+	t, err := time.Parse("15:04", value)
+	if err != nil {
+		return 0, 0, false, fmt.Errorf("--gc %q: give a time of day such as 02:00, or manual", value)
+	}
+	return t.Hour(), t.Minute(), true, nil
 }
 
 // Validate reports invalid settings, including invalid environment values.
@@ -262,6 +286,9 @@ func (s *Serve) Validate() error {
 		return errors.New("--max-request-body-size must be at least 1")
 	case s.MaxAttachmentSize < 1:
 		return errors.New("--max-attachment-size must be at least 1")
+	}
+	if _, _, _, err := parseGCTime(s.GC); err != nil {
+		return err
 	}
 	if s.WebRoot != "" {
 		if _, err := os.Stat(filepath.Join(s.WebRoot, "index.html")); err != nil {

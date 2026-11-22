@@ -180,3 +180,63 @@ BEGIN
     RETURN jsonb_build_object('hash', v_hash, 'name', coalesce(p_attribute, 'Photo'));
 END;
 $$;
+
+-- ---------------------------------------------------------------------------
+-- Functions for gc
+-- ---------------------------------------------------------------------------
+-- "wtfd gc", and wtfd serve at the time its gc setting names, remove the
+-- files nothing has any more. They connect as the API role, which can't read
+-- the tables, so these do it for them. They take no request: gc is wtfd's
+-- own work, not a user's.
+
+-- The hashes of the files in use: the photos of the items, stock rows and
+-- locations, and the values of the attachment attributes of the items and
+-- stock rows. Read once per run.
+CREATE FUNCTION attachment.gc_hashes_used()
+RETURNS SETOF text
+LANGUAGE sql STABLE
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
+AS $$
+    SELECT i.photo FROM public.item i WHERE i.photo IS NOT NULL
+    UNION
+    SELECT s.photo FROM public.stock s WHERE s.photo IS NOT NULL
+    UNION
+    SELECT l.photo FROM public.location l WHERE l.photo IS NOT NULL
+    UNION
+    SELECT e.value
+    FROM public.item i
+    JOIN public.class c ON c.id = i.class
+    CROSS JOIN LATERAL jsonb_each_text(i.values) e
+    WHERE c.attributes -> e.key ->> 'type' = 'attachment'
+    UNION
+    SELECT e.value
+    FROM public.stock s
+    JOIN public.item i  ON i.id = s.item
+    JOIN public.class c ON c.id = i.class
+    CROSS JOIN LATERAL jsonb_each_text(s.values) e
+    WHERE c.attributes -> e.key ->> 'type' = 'attachment';
+$$;
+
+-- Locks file hash p_hash (hex) until the end of the transaction, as an
+-- upload does, and tells whether nothing uses it: as a photo, or as any
+-- value of an item or stock row (a text value that happens to be the hash
+-- keeps the file too, which errs on the safe side). wtfd removes the file
+-- before the transaction ends, so no upload can start using it meanwhile.
+CREATE FUNCTION attachment.gc_unused(p_hash text)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
+AS $$
+BEGIN
+    IF p_hash IS NULL OR p_hash !~ '^[0-9a-f]{64}$' THEN
+        PERFORM error.invalid('A file hash is 64 hexadecimal digits');
+    END IF;
+    PERFORM pg_advisory_xact_lock(attachment.file_lock_key(p_hash));
+    RETURN NOT (
+        EXISTS (SELECT 1 FROM public.item i
+                WHERE i.photo = p_hash OR EXISTS (SELECT 1 FROM jsonb_each_text(i.values) e WHERE e.value = p_hash))
+        OR EXISTS (SELECT 1 FROM public.stock s
+                   WHERE s.photo = p_hash OR EXISTS (SELECT 1 FROM jsonb_each_text(s.values) e WHERE e.value = p_hash))
+        OR EXISTS (SELECT 1 FROM public.location l WHERE l.photo = p_hash));
+END;
+$$;
