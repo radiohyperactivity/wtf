@@ -132,16 +132,33 @@ Values newValues(List<ValueInput> inputs) => {
     if (i.text.isNotEmpty) i.attribute.name: i.parse(),
 };
 
+/// The last of [inputs] that is typed into, not chosen from a list: Enter
+/// there saves the form, as Enter in a list chooses from it. Null when all
+/// are lists, or there are none.
+ValueInput? lastTyped(List<ValueInput> inputs) => inputs
+    .where((i) => i.attribute.type != 'choice' && i.attribute.type != 'boolean')
+    .lastOrNull;
+
 /// The input for one attribute, labelled with its name unless [label] says
 /// otherwise.
 class ValueField extends StatefulWidget {
-  const ValueField(this.input, {super.key, this.label, this.helper});
+  const ValueField(
+    this.input, {
+    super.key,
+    this.label,
+    this.helper,
+    this.onSubmitted,
+  });
 
   final ValueInput input;
   final String? label;
 
   /// Under the field; a date's format comes first.
   final String? helper;
+
+  /// Enter in the last field of a form: saves. Null for the other fields,
+  /// where Enter goes on to the next one.
+  final VoidCallback? onSubmitted;
 
   @override
   State<ValueField> createState() => _ValueFieldState();
@@ -195,13 +212,22 @@ class _ValueFieldState extends State<ValueField> {
     }
   }
 
+  // The buttons in a field are left out of Tab's order, which goes from
+  // field to field; they are for the mouse and the finger.
   Widget? get _backButton => input.canGoBack
-      ? IconButton(
-          icon: const Icon(Icons.settings_backup_restore),
-          tooltip: 'Back to the default (${input.attribute.defaultText})',
-          onPressed: () => setState(input.goBack),
+      ? ExcludeFocus(
+          child: IconButton(
+            icon: const Icon(Icons.settings_backup_restore),
+            tooltip: 'Back to the default (${input.attribute.defaultText})',
+            onPressed: () => setState(input.goBack),
+          ),
         )
       : null;
+
+  TextInputAction get _action =>
+      widget.onSubmitted == null ? TextInputAction.next : TextInputAction.done;
+
+  void _submitted(String _) => widget.onSubmitted?.call();
 
   @override
   Widget build(BuildContext context) {
@@ -276,28 +302,32 @@ class _ValueFieldState extends State<ValueField> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 ?_backButton,
-                IconButton(
-                  icon: const Icon(Icons.calendar_today),
-                  tooltip: 'Choose a date',
-                  onPressed: () async {
-                    DateTime? initial;
-                    try {
-                      initial = DateTime.parse(parseDate(input.text));
-                    } on Object {
-                      initial = null;
-                    }
-                    final d = await showDatePicker(
-                      context: context,
-                      initialDate: initial ?? DateTime.now(),
-                      firstDate: DateTime(1900),
-                      lastDate: DateTime(2200),
-                    );
-                    if (d != null) input.controller.text = formatDate(d);
-                  },
+                ExcludeFocus(
+                  child: IconButton(
+                    icon: const Icon(Icons.calendar_today),
+                    tooltip: 'Choose a date',
+                    onPressed: () async {
+                      DateTime? initial;
+                      try {
+                        initial = DateTime.parse(parseDate(input.text));
+                      } on Object {
+                        initial = null;
+                      }
+                      final d = await showDatePicker(
+                        context: context,
+                        initialDate: initial ?? DateTime.now(),
+                        firstDate: DateTime(1900),
+                        lastDate: DateTime(2200),
+                      );
+                      if (d != null) input.controller.text = formatDate(d);
+                    },
+                  ),
                 ),
               ],
             ),
           ),
+          textInputAction: _action,
+          onFieldSubmitted: _submitted,
           autovalidateMode: AutovalidateMode.onUserInteraction,
           validator: (_) => input.validate(),
         );
@@ -305,6 +335,8 @@ class _ValueFieldState extends State<ValueField> {
         return TextFormField(
           controller: input.controller,
           decoration: decoration,
+          textInputAction: _action,
+          onFieldSubmitted: _submitted,
           keyboardType: switch (a.type) {
             'url' => TextInputType.url,
             'integer' || 'decimal' => const TextInputType.numberWithOptions(
@@ -329,11 +361,20 @@ class AmountField extends StatelessWidget {
     required this.controller,
     this.unit,
     this.emptyMeans = 'uncounted',
+    this.focusNode,
+    this.autofocus = false,
+    this.onSubmitted,
   });
 
   final TextEditingController controller;
   final String? unit;
   final String emptyMeans;
+  final FocusNode? focusNode;
+  final bool autofocus;
+
+  /// Enter, when this is the form's last field: saves. Null: Enter goes on
+  /// to the next field.
+  final VoidCallback? onSubmitted;
 
   /// The amount for the API; null when empty.
   static Decimal? parse(TextEditingController controller, String? unit) =>
@@ -344,6 +385,12 @@ class AmountField extends StatelessWidget {
   @override
   Widget build(BuildContext context) => TextFormField(
     controller: controller,
+    focusNode: focusNode,
+    autofocus: autofocus,
+    textInputAction: onSubmitted == null
+        ? TextInputAction.next
+        : TextInputAction.done,
+    onFieldSubmitted: (_) => onSubmitted?.call(),
     decoration: InputDecoration(
       labelText: 'Amount',
       suffixText: unit ?? 'pieces',

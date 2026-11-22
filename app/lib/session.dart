@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'api/client.dart';
 import 'api/models.dart';
 import 'client_name.dart' if (dart.library.js_interop) 'client_name_web.dart';
+import 'recent.dart';
 
 /// Where the native apps keep the server address and the session token, and
 /// every app (the web app too) the appearance and the session it is the
@@ -201,6 +202,10 @@ class Session extends ChangeNotifier {
   /// The client of the session. Only valid while someone is logged in.
   ApiClient get client => _client!;
 
+  /// What this session used and made last, for the forms' defaults; begun
+  /// again at every login and logout.
+  Recent recent = Recent();
+
   /// Continues the session of the last start, if it's still valid.
   Future<void> restore() async {
     themeMode =
@@ -252,6 +257,7 @@ class Session extends ChangeNotifier {
     }
     _client?.close();
     _client = client;
+    recent = Recent();
     this.server = server;
     if (!isWeb) await storage.writeServer(server.toString());
     notifyListeners();
@@ -269,6 +275,7 @@ class Session extends ChangeNotifier {
     client?.close();
     _client = null;
     me = null;
+    recent = Recent();
     if (!isWeb) await storage.writeToken(null);
     notifyListeners();
   }
@@ -279,6 +286,7 @@ class Session extends ChangeNotifier {
   void ended() {
     if (me == null) return;
     me = null;
+    recent = Recent();
     if (!isWeb) storage.writeToken(null);
     notifyListeners();
   }

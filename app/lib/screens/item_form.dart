@@ -7,6 +7,7 @@ import '../api/input.dart';
 import '../api/models.dart';
 import '../session.dart';
 import '../widgets/common.dart';
+import '../widgets/form_keys.dart';
 import '../widgets/pickers.dart';
 import '../widgets/select_keys.dart';
 import '../widgets/value_fields.dart';
@@ -57,7 +58,19 @@ class _ItemFormState extends State<_ItemForm> {
   final _form = GlobalKey<FormState>();
   late final _name = TextEditingController(text: widget.item?.name ?? '');
   late final _unit = TextEditingController(text: widget.item?.unit ?? '');
-  late String? _classId = widget.item?.cls.id ?? _usable(widget.classId);
+  final _nameFocus = FocusNode();
+
+  // A new item's class: the one the form was opened for (from a class's
+  // screen, say), else the one this session last added an item in or made,
+  // whichever came later.
+  late String? _classId =
+      widget.item?.cls.id ??
+      _usable(widget.classId) ??
+      context.read<Session>().recent.itemClass((id) => _usable(id) != null);
+
+  // Whether the unit was typed into: until it is, a new item's unit is the
+  // one last given to an item of its class.
+  bool _unitTyped = false;
   ClassDetail? _class;
   List<ValueInput> _inputs = [];
   bool _loadingValues = false;
@@ -81,6 +94,7 @@ class _ItemFormState extends State<_ItemForm> {
   void dispose() {
     _name.dispose();
     _unit.dispose();
+    _nameFocus.dispose();
     for (final i in _inputs) {
       i.dispose();
     }
@@ -92,6 +106,9 @@ class _ItemFormState extends State<_ItemForm> {
   Future<void> _loadValues() async {
     final classId = _classId;
     if (classId == null) return;
+    if (!_editing && !_unitTyped) {
+      _unit.text = context.read<Session>().recent.unit(classId) ?? '';
+    }
     setState(() {
       _loadingValues = true;
       _valuesError = null;
@@ -142,6 +159,8 @@ class _ItemFormState extends State<_ItemForm> {
     if (id == null || id == _classId) return;
     setState(() => _classId = id);
     _loadValues();
+    // On to the name, as Tab would have gone.
+    if (!_editing && _name.text.isEmpty) _nameFocus.requestFocus();
   }
 
   /// The values the item has that the chosen class has no attribute for:
@@ -158,7 +177,9 @@ class _ItemFormState extends State<_ItemForm> {
 
   String? get _unitText => _unit.text.trim().isEmpty ? null : _unit.text.trim();
 
-  Future<void> _save() async {
+  /// Saves; with [another], a new item's stock form leads to the form for
+  /// the next new item, instead of to the item's screen.
+  Future<void> _save({bool another = false}) async {
     if (_busy || _loadingValues || _classId == null) {
       if (_classId == null) {
         showError(context, const InputError('Choose a class.'));
@@ -170,7 +191,7 @@ class _ItemFormState extends State<_ItemForm> {
     try {
       final item = widget.item;
       if (item == null) {
-        await _create();
+        await _create(another: another);
       } else {
         await _update(item);
       }
@@ -181,28 +202,22 @@ class _ItemFormState extends State<_ItemForm> {
     }
   }
 
-  Future<void> _create() async {
+  /// Creates the item, and goes on to its stock: where it is, and how many.
+  /// Back on the stock form adds none. Then comes the item's screen, or with
+  /// [another], the form for the next item.
+  Future<void> _create({required bool another}) async {
+    final classId = _classId!;
     final item = await _client.createItem(
-      classId: _classId!,
+      classId: classId,
       name: _name.text.trim(),
       unit: _unitText,
       values: newValues(_inputs),
     );
     if (!mounted) return;
-    // As in the CLI: asked once, after the item was created.
-    final addStock = await confirm(
-      context,
-      title: 'Add stock for ${item.name}?',
-      message: 'Say where it is, and how many.',
-      action: 'Add stock',
-      destructive: false,
-    );
-    if (!mounted) return;
-    // With stock, the stock form comes first and then shows the item.
+    context.read<Session>().recent.itemAdded(classId, _unitText);
+    final then = another ? '/items/new' : '/items/${item.code}';
     context.pushReplacement(
-      addStock
-          ? '/stock/new?item=${item.id}&then=${Uri.encodeComponent('/items/${item.code}')}'
-          : '/items/${item.code}',
+      '/stock/new?item=${item.id}&then=${Uri.encodeComponent(then)}',
     );
   }
 
@@ -234,6 +249,11 @@ class _ItemFormState extends State<_ItemForm> {
       appBar: AppBar(
         title: Text(_editing ? 'Edit ${widget.item!.name}' : 'New item'),
         actions: [
+          if (!_editing)
+            AnotherButton(
+              label: 'Create and add another',
+              onPressed: _busy ? null : _saveAnother,
+            ),
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: FilledButton(
@@ -245,103 +265,127 @@ class _ItemFormState extends State<_ItemForm> {
       ),
       body: Readable(
         maxWidth: 640,
-        child: Form(
-          key: _form,
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              InputDecorator(
-                decoration: const InputDecoration(
-                  labelText: 'Class',
-                  border: OutlineInputBorder(),
-                ),
-                child: PickerKeys(
-                  open: _chooseClass,
-                  child: InkWell(
-                    onTap: _chooseClass,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            _classId == null
-                                ? 'Choose a class'
-                                : widget.classes.pathOf(_classId),
+        child: FormKeys(
+          save: _save,
+          saveAnother: _editing ? null : _saveAnother,
+          child: Form(
+            key: _form,
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                InputDecorator(
+                  decoration: const InputDecoration(
+                    labelText: 'Class',
+                    border: OutlineInputBorder(),
+                  ),
+                  child: PickerKeys(
+                    open: _chooseClass,
+                    child: InkWell(
+                      onTap: _chooseClass,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _classId == null
+                                  ? 'Choose a class'
+                                  : widget.classes.pathOf(_classId),
+                            ),
                           ),
-                        ),
-                        const Icon(Icons.arrow_drop_down),
-                      ],
+                          const Icon(Icons.arrow_drop_down),
+                        ],
+                      ),
                     ),
                   ),
                 ),
-              ),
-              if (dropped.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(
-                    'In this class it has no ${dropped.join(', ')}: '
-                    'saving removes ${dropped.length == 1 ? 'that value' : 'those values'}.',
+                if (dropped.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      'In this class it has no ${dropped.join(', ')}: '
+                      'saving removes ${dropped.length == 1 ? 'that value' : 'those values'}.',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _name,
+                  focusNode: _nameFocus,
+                  autofocus: !_editing && _classId != null,
+                  textInputAction: TextInputAction.next,
+                  decoration: const InputDecoration(
+                    labelText: 'Name',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (v) =>
+                      (v ?? '').trim().isEmpty ? 'Enter a name' : null,
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _unit,
+                  onChanged: (_) => _unitTyped = true,
+                  // The last field typed into when the class has no values
+                  // to type.
+                  textInputAction: lastTyped(_inputs) == null
+                      ? TextInputAction.done
+                      : TextInputAction.next,
+                  onFieldSubmitted: (_) {
+                    if (lastTyped(_inputs) == null) _save();
+                  },
+                  decoration: const InputDecoration(
+                    labelText: 'Unit of its stock',
+                    hintText: 'm, kg, l …',
+                    helperText:
+                        'What its stock is counted in, a label; empty: pieces, '
+                        'counted one by one',
+                    helperMaxLines: 2,
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                if (_valuesError != null) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    errorText(_valuesError!),
                     style: TextStyle(
                       color: Theme.of(context).colorScheme.error,
                     ),
                   ),
-                ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _name,
-                autofocus: !_editing && _classId != null,
-                decoration: const InputDecoration(
-                  labelText: 'Name',
-                  border: OutlineInputBorder(),
-                ),
-                validator: (v) =>
-                    (v ?? '').trim().isEmpty ? 'Enter a name' : null,
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _unit,
-                decoration: const InputDecoration(
-                  labelText: 'Unit of its stock',
-                  hintText: 'm, kg, l …',
-                  helperText:
-                      'What its stock is counted in, a label; empty: pieces, '
-                      'counted one by one',
-                  helperMaxLines: 2,
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              if (_valuesError != null) ...[
-                const SizedBox(height: 16),
-                Text(
-                  errorText(_valuesError!),
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-                TextButton(
-                  onPressed: _loadValues,
-                  child: const Text('Try again'),
-                ),
-              ],
-              if (_loadingValues)
-                const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: LinearProgressIndicator(),
-                ),
-              if (_inputs.isNotEmpty) ...[
-                const SectionTitle('Values'),
-                if (_editing)
-                  const EmptyNote(
-                    "Clear a value to remove it. Files are uploaded on the item's screen.",
+                  TextButton(
+                    onPressed: _loadValues,
+                    child: const Text('Try again'),
                   ),
-                for (final i in _inputs)
-                  Padding(
-                    key: ValueKey(i.attribute.name),
-                    padding: const EdgeInsets.only(top: 12),
-                    child: ValueField(i),
+                ],
+                if (_loadingValues)
+                  const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: LinearProgressIndicator(),
                   ),
+                if (_inputs.isNotEmpty) ...[
+                  const SectionTitle('Values'),
+                  if (_editing)
+                    const EmptyNote(
+                      "Clear a value to remove it. Files are uploaded on the item's screen.",
+                    ),
+                  for (final i in _inputs)
+                    Padding(
+                      key: ValueKey(i.attribute.name),
+                      padding: const EdgeInsets.only(top: 12),
+                      child: ValueField(
+                        i,
+                        onSubmitted: identical(i, lastTyped(_inputs))
+                            ? _save
+                            : null,
+                      ),
+                    ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
     );
   }
+
+  void _saveAnother() => _save(another: true);
 }

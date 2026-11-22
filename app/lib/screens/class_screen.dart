@@ -8,6 +8,7 @@ import '../api/models.dart';
 import '../session.dart';
 import '../widgets/common.dart';
 import '../widgets/files.dart';
+import '../widgets/form_keys.dart';
 import '../widgets/select_keys.dart';
 import '../widgets/value_fields.dart' show inputText;
 import 'model_import.dart';
@@ -556,138 +557,163 @@ Future<bool> showAttributeDialog(
             ),
             content: SizedBox(
               width: 440,
-              child: Form(
-                key: form,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (current == null) ...[
-                        TextFormField(
-                          controller: name,
-                          autofocus: true,
-                          decoration: const InputDecoration(labelText: 'Name'),
-                          validator: (v) => attributeNameProblem(v ?? ''),
-                        ),
-                        const SizedBox(height: 12),
-                        SelectKeys<String>(
-                          options: [
-                            for (final t in attributeTypes) (t, typeLabel(t)),
-                          ],
-                          value: type,
-                          onChanged: (t) => setState(() => type = t),
-                          child: DropdownButtonFormField<String>(
-                            initialValue: type,
+              child: FormKeys(
+                save: save,
+                child: Form(
+                  key: form,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (current == null) ...[
+                          TextFormField(
+                            controller: name,
+                            autofocus: true,
+                            textInputAction: TextInputAction.next,
                             decoration: const InputDecoration(
-                              labelText: 'Type',
-                              helperText: "It can't be changed afterwards.",
+                              labelText: 'Name',
                             ),
-                            items: [
-                              for (final t in attributeTypes)
-                                DropdownMenuItem(
-                                  value: t,
-                                  child: Text(typeLabel(t)),
-                                ),
+                            validator: (v) => attributeNameProblem(v ?? ''),
+                          ),
+                          const SizedBox(height: 12),
+                          SelectKeys<String>(
+                            options: [
+                              for (final t in attributeTypes) (t, typeLabel(t)),
                             ],
-                            onChanged: (t) => setState(() => type = t!),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        const Text('Values on'),
-                        const SizedBox(height: 4),
-                        SegmentedButton<String>(
-                          segments: const [
-                            ButtonSegment(value: 'item', label: Text('Item')),
-                            ButtonSegment(
-                              value: 'stock',
-                              label: Text('Stock row'),
+                            value: type,
+                            onChanged: (t) => setState(() => type = t),
+                            child: DropdownButtonFormField<String>(
+                              initialValue: type,
+                              decoration: const InputDecoration(
+                                labelText: 'Type',
+                                helperText: "It can't be changed afterwards.",
+                              ),
+                              items: [
+                                for (final t in attributeTypes)
+                                  DropdownMenuItem(
+                                    value: t,
+                                    child: Text(typeLabel(t)),
+                                  ),
+                              ],
+                              onChanged: (t) => setState(() => type = t!),
                             ),
-                          ],
-                          selected: {scope},
-                          onSelectionChanged: (s) =>
-                              setState(() => scope = s.single),
-                        ),
-                      ] else
-                        Text(
-                          '${typeLabel(type)}, on ${scope == 'stock' ? 'each stock row' : 'the item'}.',
-                        ),
-                      if (type == 'choice' && current == null)
-                        TextFormField(
-                          controller: choices,
-                          minLines: 2,
-                          maxLines: 6,
-                          decoration: const InputDecoration(
-                            labelText: 'Choices',
-                            helperText: 'One per line, or separated by commas',
                           ),
-                          validator: (v) => _splitList(v ?? '').isEmpty
-                              ? 'At least one choice'
-                              : null,
-                          onChanged: (_) => setState(() {}),
-                        ),
-                      if (number)
-                        TextFormField(
-                          controller: unit,
-                          decoration: const InputDecoration(
-                            labelText: 'Unit',
-                            hintText: 'mm, kg, MHz …',
-                            helperText:
-                                'A label after the numbers; nothing converts',
+                          const SizedBox(height: 12),
+                          const Text('Values on'),
+                          const SizedBox(height: 4),
+                          SegmentedButton<String>(
+                            segments: const [
+                              ButtonSegment(value: 'item', label: Text('Item')),
+                              ButtonSegment(
+                                value: 'stock',
+                                label: Text('Stock row'),
+                              ),
+                            ],
+                            selected: {scope},
+                            onSelectionChanged: (s) =>
+                                setState(() => scope = s.single),
                           ),
-                        ),
-                      if (type == 'attachment')
-                        TextFormField(
-                          controller: media,
-                          decoration: const InputDecoration(
-                            labelText: 'File types',
-                            hintText: 'application/pdf, image/*',
-                            helperText: 'Empty: any',
+                        ] else
+                          Text(
+                            '${typeLabel(type)}, on ${scope == 'stock' ? 'each stock row' : 'the item'}.',
                           ),
-                        )
-                      else
-                        TextFormField(
-                          controller: defaultValue,
-                          decoration: InputDecoration(
-                            labelText: 'Default',
-                            suffixText: number ? unit.text.trim() : null,
-                            helperText:
-                                'For items (or stock rows) without a value of '
-                                'their own. Empty: none',
-                            helperMaxLines: 2,
+                        if (type == 'choice' && current == null)
+                          TextFormField(
+                            controller: choices,
+                            minLines: 2,
+                            maxLines: 6,
+                            decoration: const InputDecoration(
+                              labelText: 'Choices',
+                              helperText:
+                                  'One per line, or separated by commas',
+                            ),
+                            validator: (v) => _splitList(v ?? '').isEmpty
+                                ? 'At least one choice'
+                                : null,
+                            onChanged: (_) => setState(() {}),
                           ),
-                          validator: (_) {
-                            try {
-                              parsedDefault();
-                              return null;
-                            } on InputError catch (e) {
-                              return e.message;
-                            }
-                          },
-                        ),
-                      if (current != null)
-                        TextFormField(
-                          controller: order,
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: 'Order',
-                            helperText: 'Its place among the attributes, smallest first',
+                        if (number)
+                          TextFormField(
+                            controller: unit,
+                            textInputAction: TextInputAction.next,
+                            decoration: const InputDecoration(
+                              labelText: 'Unit',
+                              hintText: 'mm, kg, MHz …',
+                              helperText:
+                                  'A label after the numbers; nothing converts',
+                            ),
                           ),
-                          validator: (v) =>
-                              int.tryParse((v ?? '').trim()) == null
-                              ? 'An integer'
-                              : null,
+                        if (type == 'attachment')
+                          TextFormField(
+                            controller: media,
+                            // The last field of a new attribute: Enter saves.
+                            textInputAction: current == null
+                                ? TextInputAction.done
+                                : TextInputAction.next,
+                            onFieldSubmitted: (_) {
+                              if (current == null) save();
+                            },
+                            decoration: const InputDecoration(
+                              labelText: 'File types',
+                              hintText: 'application/pdf, image/*',
+                              helperText: 'Empty: any',
+                            ),
+                          )
+                        else
+                          TextFormField(
+                            controller: defaultValue,
+                            // The last field of a new attribute: Enter saves.
+                            textInputAction: current == null
+                                ? TextInputAction.done
+                                : TextInputAction.next,
+                            onFieldSubmitted: (_) {
+                              if (current == null) save();
+                            },
+                            decoration: InputDecoration(
+                              labelText: 'Default',
+                              suffixText: number ? unit.text.trim() : null,
+                              helperText:
+                                  'For items (or stock rows) without a value of '
+                                  'their own. Empty: none',
+                              helperMaxLines: 2,
+                            ),
+                            validator: (_) {
+                              try {
+                                parsedDefault();
+                                return null;
+                              } on InputError catch (e) {
+                                return e.message;
+                              }
+                            },
+                          ),
+                        if (current != null)
+                          TextFormField(
+                            controller: order,
+                            keyboardType: TextInputType.number,
+                            // The last field when editing: Enter saves.
+                            textInputAction: TextInputAction.done,
+                            onFieldSubmitted: (_) => save(),
+                            decoration: const InputDecoration(
+                              labelText: 'Order',
+                              helperText: 'Its place among the attributes, smallest first',
+                            ),
+                            validator: (v) =>
+                                int.tryParse((v ?? '').trim()) == null
+                                ? 'An integer'
+                                : null,
+                          ),
+                        SwitchTile(
+                          title: const Text('Required'),
+                          subtitle: const Text(
+                            'Every item (or stock row) has a value; without a '
+                            'default, those that lack one stop it.',
+                          ),
+                          value: required,
+                          onChanged: (v) => setState(() => required = v),
                         ),
-                      SwitchTile(
-                        title: const Text('Required'),
-                        subtitle: const Text(
-                          'Every item (or stock row) has a value; without a '
-                          'default, those that lack one stop it.',
-                        ),
-                        value: required,
-                        onChanged: (v) => setState(() => required = v),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),

@@ -466,7 +466,8 @@ class FakeServer {
   late final MockClient _answer = MockClient((req) async {
     final path = req.url.path.replaceFirst('/api/v1', '');
     final q = req.url.queryParameters;
-    final method = req.method;
+    // HEAD is answered as GET is, as by Go's ServeMux: a read, no change.
+    final method = req.method == 'HEAD' ? 'GET' : req.method;
     final dryRun = q['dry_run'] == 'true';
     if (method != 'GET' && path != '/login' && path != '/me/target') {
       changes.add(
@@ -580,6 +581,15 @@ class FakeServer {
         return _json({'version': 1, 'tree': _tree(locations, null)});
       case ('GET', ['classes', final id]):
         return _json(classJson(id));
+      case ('POST', ['classes']):
+        final c = {
+          'id': _id('c'),
+          'name': body!['name'],
+          'parent': body['parent'],
+          'container': body['container'] == true,
+        };
+        classes.add(c);
+        return _json(classJson(c['id'] as String), 201);
       case ('GET', ['locations', final id]):
         return _json(locationJson(id));
 

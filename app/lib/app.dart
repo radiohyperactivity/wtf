@@ -1,6 +1,8 @@
 // The app: its screens, their URLs, and its look.
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
@@ -41,10 +43,12 @@ class _WtfAppState extends State<WtfApp> {
   void initState() {
     super.initState();
     _camera.attach(_router);
+    if (_desktop) HardwareKeyboard.instance.addHandler(_onKey);
   }
 
   @override
   void dispose() {
+    if (_desktop) HardwareKeyboard.instance.removeHandler(_onKey);
     _camera.dispose();
     _router.dispose();
     super.dispose();
@@ -66,9 +70,54 @@ class _WtfAppState extends State<WtfApp> {
           darkTheme: appTheme(widget.session.colour, Brightness.dark),
           themeMode: widget.session.themeMode,
           routerConfig: _router,
+          builder: (context, child) => Actions(
+            actions: {EditableTextTapOutsideIntent: _tapOutside},
+            child: child!,
+          ),
         ),
       ),
     );
+  }
+
+  /// A tap outside a text field ends typing in it, on phones too, where
+  /// Flutter keeps the field, and the keyboard, by default: the keyboard
+  /// would otherwise hide the bottom of the screen until something was
+  /// searched or saved.
+  final _tapOutside = CallbackAction<EditableTextTapOutsideIntent>(
+    onInvoke: (intent) {
+      intent.focusNode.unfocus();
+      return null;
+    },
+  );
+
+  /// The desktop apps have keys of their own: Ctrl+N (⌘+N on a Mac) for a
+  /// new item. A browser keeps those keys for itself, and phones have none.
+  static bool get _desktop =>
+      !kIsWeb &&
+      switch (defaultTargetPlatform) {
+        TargetPlatform.windows ||
+        TargetPlatform.macOS ||
+        TargetPlatform.linux => true,
+        _ => false,
+      };
+
+  /// Ctrl+N, or ⌘+N on a Mac: a new item, from wherever the app is, for an
+  /// account that may add items. Not while the app is another session's
+  /// camera, and not again on the new item's form.
+  bool _onKey(KeyEvent event) {
+    if (event is! KeyDownEvent || event.logicalKey != LogicalKeyboardKey.keyN) {
+      return false;
+    }
+    final keys = HardwareKeyboard.instance;
+    final mac = defaultTargetPlatform == TargetPlatform.macOS;
+    final command = mac ? keys.isMetaPressed : keys.isControlPressed;
+    if (!command || keys.isShiftPressed || keys.isAltPressed) return false;
+    if (!widget.session.canWriteItems || _camera.pairing != null) {
+      return false;
+    }
+    final here = _router.routerDelegate.currentConfiguration.uri.path;
+    if (here != '/items/new') _router.push('/items/new');
+    return true;
   }
 }
 

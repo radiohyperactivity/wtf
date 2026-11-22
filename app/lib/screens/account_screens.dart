@@ -202,6 +202,7 @@ Future<Account?> showAccountDialog(BuildContext context, {Account? current}) {
                       controller: email,
                       autofocus: current == null,
                       keyboardType: TextInputType.emailAddress,
+                      textInputAction: TextInputAction.next,
                       decoration: const InputDecoration(labelText: 'Email'),
                     ),
                     const SizedBox(height: 8),
@@ -256,6 +257,9 @@ Future<Account?> showAccountDialog(BuildContext context, {Account? current}) {
                         controller: password,
                         obscureText: true,
                         autofillHints: const [AutofillHints.newPassword],
+                        // The last field: Enter saves.
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: (_) => save(),
                         decoration: InputDecoration(
                           labelText: current == null
                               ? 'Password'

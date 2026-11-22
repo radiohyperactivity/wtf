@@ -174,7 +174,7 @@ These are decisions I made without you, recorded for review. You asked me to cop
     - **Values:** clearing one removes it, so the class default applies again. A required value without a default can't be cleared.
     - **Existing values:** they appear as shown elsewhere (`18 V`, `32 KiB`), which reads back to the same number. So saving without changes sends nothing.
 12. **New items.**
-    - **Stock afterwards:** as in the CLI (decision 43), the app asks once "Add stock for …?". Yes opens the stock form, and the item's screen follows.
+    - **Stock afterwards:** the stock form follows Create at once, and the item's screen follows it; Back there adds no stock. *Until decision 93 the app asked "Add stock for …?" first, as the CLI does (decision 43).*
     - **Units:** a new item can have any unit, or none: it is counted. An existing item can only change to another unit of the same quantity, and only if it has one (CLI decision 41).
 13. **Moving stock.**
     - **How much:** an empty quantity moves all of it. Uncounted rows can only move whole, so they get no quantity field.
@@ -199,7 +199,7 @@ These are decisions I made without you, recorded for review. You asked me to cop
 
 19. **Not built:**
     - **Wide screens:** the plan has lists and details side by side, and the tree always visible. For now wide screens get the narrow layout, centred, with the rail.
-    - **Keyboard shortcuts:** `/` to search and `Ctrl+N` for a new item.
+    - **Keyboard shortcuts:** `/` to search. (`Ctrl+N` came with decision 97, in the desktop apps only.)
     - **CI:** the job that runs `flutter analyze`, the tests and the web build. GitHub's runners need Flutter installed, either by a ready-made action such as `subosito/flutter-action` or by a script of ours. That is your choice.
 
 ### Tests
@@ -481,3 +481,25 @@ Built for the API as the plan of 2 November 2026 left it ([2026-11-02-attributes
     - **Also fixed:** stopping the event stream didn't close its connection, as the code reading the events kept it open; it now does, so a phone that goes to the background closes it.
 
 92. **Locations have a photo,** as items and stock rows have (your request): on the location's screen, chosen, taken or removed from its menu (**Photo…**), for admins, who set up the locations (your choice). The location tree and the locations inside a location show it small. A stock row without a photo of its own shows its location's in the item's list of stock rows (your choice); in a location's list of stock, where they all have the same location, it shows its item's photo as before. On the server, migration `0003` adds the column, `PUT /locations/{id}/photo` uploads one, and `wtf file put <location code> photo FILE` does it from the CLI.
+
+### Entering many things in a row
+
+Comfort for entering items and stock one after another (your requests).
+
+93. **The stock form follows a new item at once** (your choice): no "Add stock for …?" any more. Back on it adds no stock and shows the item, as adding would have.
+94. **Forms start where the last one left off,** from what this session did, kept in memory only (your choice): a new session, or the app started again, begins with none, and the server isn't asked what is new, so classes and locations made elsewhere don't count.
+    - **A new item's class** is the last class made, if it was made after the last item was added, else the class of that item.
+    - **New stock's location** is the last location made, if it was made after stock was last added, else the location stock was last added to.
+    - **A new item's unit** is the one last given to an item of its class; typed over, it stays as typed when the class changes.
+    - **What the form was opened for comes first:** New item on a class's screen, or with a class chosen in the search, takes that class; Add stock on a location's screen takes that location. A remembered class or location that is gone, or is a container, gives way to the other one, or to none.
+    - **Focus** starts on Name, or on Amount, when the class or location is filled in; choosing one in its picker goes on there too.
+95. **Save and add another** (your idea): **Create and add another** on the new-item form, and **Add and add another** on the stock form, beside the main button: an icon with a tooltip on phones, words on wider screens. After an item, its stock form comes first, then the form for the next item. After stock, the form opens again: for more of the same item when it was opened from the item, for the next item at the same location when from a location.
+96. **Enter and Tab go through a form in order** (your request):
+    - **Enter** in a field goes on to the next; in the last field you type into, it saves. A list to choose from (a choice, yes/no) takes Enter for choosing, so Enter saves in the last field before it, and the list keeps its value or default.
+    - **Ctrl+Enter** (⌘+Enter on a Mac) saves from any field, and with Shift saves and adds another.
+    - **Tab** goes from field to field: the small buttons inside fields (Back to the default, the calendar, Clear) are left out, being for the mouse and the finger.
+    - **The orders:** new item: class, name, unit, the values in the class's order. Stock: item, location, amount, the stock values. Class or location: name (Enter saves), parent, container, a grid's columns and rows (Enter in rows saves). Attribute: name, type, values on, then the fields its type has. Also the password change, a new account and logging in.
+97. **Ctrl+N** (⌘+N on a Mac) opens a new item from anywhere, in the desktop apps only (your choice): browsers keep the key for a new window, and phones have no keyboard for it. Not for viewers, and not while the app is another session's camera.
+98. **The keyboard on phones** (your find on the iPhone): the search field no longer takes the focus when the app starts on iOS or Android, as an app or in the browser, so the keyboard waits for a tap; on computers it still does, ready to type. A tap outside a text field now puts the keyboard away, as Flutter does on computers but not, by default, on phones, where the keyboard otherwise hid the bottom bar until something was searched or saved.
+99. **An attachment shows what its file is** (your request): a small picture when it is an image (JPEG, PNG, GIF, WebP or BMP), else its type's icon (decision 55), such as a PDF's. The app asks `wtfd` for the file's type without downloading it (a HEAD request, which the server answers as a GET without the content) and keeps the answer by the file's hash. Until it knows, and if it can't, the attribute's icon shows, as before. *Decision 41's small images were lost when attachments became attribute values (decision 75).*
+100. **Tests:** 69 in all, with the session's memory of what was used and made, one item after another with class, unit and location carried over and Enter saving, a class made just now becoming the next item's, and the keyboard on a phone.

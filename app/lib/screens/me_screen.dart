@@ -404,6 +404,7 @@ Future<void> _changePassword(BuildContext context) async {
                         obscureText: true,
                         autofocus: true,
                         autofillHints: const [AutofillHints.password],
+                        textInputAction: TextInputAction.next,
                         decoration: const InputDecoration(
                           labelText: 'Current password',
                         ),
@@ -415,6 +416,7 @@ Future<void> _changePassword(BuildContext context) async {
                         controller: next,
                         obscureText: true,
                         autofillHints: const [AutofillHints.newPassword],
+                        textInputAction: TextInputAction.next,
                         decoration: const InputDecoration(
                           labelText: 'New password',
                         ),
@@ -426,6 +428,7 @@ Future<void> _changePassword(BuildContext context) async {
                         controller: again,
                         obscureText: true,
                         autofillHints: const [AutofillHints.newPassword],
+                        textInputAction: TextInputAction.done,
                         decoration: const InputDecoration(
                           labelText: 'New password again',
                         ),

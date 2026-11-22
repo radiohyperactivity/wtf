@@ -7,6 +7,7 @@ import '../api/input.dart';
 import '../api/models.dart';
 import '../session.dart';
 import '../widgets/common.dart';
+import '../widgets/form_keys.dart';
 import '../widgets/pickers.dart';
 import '../widgets/select_keys.dart';
 import '../widgets/value_fields.dart';
@@ -91,8 +92,15 @@ class _StockFormState extends State<_StockForm> {
         : formatNumber(widget.stock!.amount!),
   );
   late ItemDetail? _item = widget.item;
+
+  // New stock's location: the one the form was opened for (from a
+  // location's screen, say), else the one this session last added stock to
+  // or made, whichever came later.
   late String? _locationId =
-      widget.stock?.location ?? _usable(widget.locationId);
+      widget.stock?.location ??
+      _usable(widget.locationId) ??
+      context.read<Session>().recent.stockLocation((id) => _usable(id) != null);
+  final _amountFocus = FocusNode();
   List<ValueInput> _inputs = [];
   bool _loading = false;
   Object? _loadError;
@@ -114,6 +122,7 @@ class _StockFormState extends State<_StockForm> {
   @override
   void dispose() {
     _amount.dispose();
+    _amountFocus.dispose();
     for (final i in _inputs) {
       i.dispose();
     }
@@ -172,10 +181,25 @@ class _StockFormState extends State<_StockForm> {
       title: 'Location',
       forUse: true,
     );
-    if (id != null) setState(() => _locationId = id);
+    if (id == null) return;
+    setState(() => _locationId = id);
+    // On to the amount, as Tab would have gone.
+    if (_item != null && _amount.text.isEmpty) _amountFocus.requestFocus();
   }
 
-  Future<void> _save() async {
+  /// Where to go after adding: the page the form was told to go on to (the
+  /// new item's screen, or the form for the next new item), if it is one of
+  /// this app's.
+  String? get _then {
+    final then = widget.then;
+    return then != null && then.startsWith('/') && !then.startsWith('//')
+        ? then
+        : null;
+  }
+
+  /// Saves; with [another], new stock is followed by the form again, for
+  /// more of the same item at the same place.
+  Future<void> _save({bool another = false}) async {
     if (_busy || _loading) return;
     final item = _item;
     final location = _locationId;
@@ -199,12 +223,26 @@ class _StockFormState extends State<_StockForm> {
           values: newValues(_inputs),
         );
         if (mounted) {
+          context.read<Session>().recent.stockAdded(location);
           showMessage(
             context,
             'Added ${item.name} at ${widget.locations.pathOf(location)}.',
           );
-          final then = widget.then;
-          if (then != null && then.startsWith('/') && !then.startsWith('//')) {
+          final then = _then;
+          if (another) {
+            // The item stays if the form was opened for it (from its
+            // screen); from a location's, the next item is chosen.
+            context.pushReplacement(
+              Uri(
+                path: '/stock/new',
+                queryParameters: {
+                  if (widget.item != null) 'item': item.id,
+                  'location': location,
+                  'then': ?then,
+                },
+              ).toString(),
+            );
+          } else if (then != null) {
             context.pushReplacement(then);
           } else {
             context.pop(created);
@@ -232,113 +270,151 @@ class _StockFormState extends State<_StockForm> {
   @override
   Widget build(BuildContext context) {
     final item = _item;
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          _editing ? 'Edit stock ${widget.stock!.code}' : 'Add stock',
-        ),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: FilledButton(
-              onPressed: _busy ? null : _save,
-              child: Text(_editing ? 'Save' : 'Add'),
-            ),
+    final then = _then;
+    // After a new item, back adds no stock and goes on as adding would: to
+    // the item's screen, or the form for the next item.
+    return PopScope(
+      canPop: then == null,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && then != null) context.pushReplacement(then);
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(
+            _editing ? 'Edit stock ${widget.stock!.code}' : 'Add stock',
           ),
-        ],
-      ),
-      body: Readable(
-        maxWidth: 640,
-        child: Form(
-          key: _form,
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              // The item of an existing row is changed with care elsewhere
-              // (as in the CLI, where `stock set --item` does it).
-              InputDecorator(
-                decoration: const InputDecoration(
-                  labelText: 'Item',
-                  border: OutlineInputBorder(),
-                ),
-                child: PickerKeys(
-                  open: _editing || widget.item != null ? null : _chooseItem,
-                  child: InkWell(
-                    onTap: _editing || widget.item != null ? null : _chooseItem,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            item == null
-                                ? 'Choose an item'
-                                : '${item.name}  (${item.code})',
-                          ),
+          actions: [
+            if (!_editing)
+              AnotherButton(
+                label: 'Add and add another',
+                onPressed: _busy ? null : _saveAnother,
+              ),
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: FilledButton(
+                onPressed: _busy ? null : _save,
+                child: Text(_editing ? 'Save' : 'Add'),
+              ),
+            ),
+          ],
+        ),
+        body: Readable(
+          maxWidth: 640,
+          child: FormKeys(
+            save: _save,
+            saveAnother: _editing ? null : _saveAnother,
+            child: Form(
+              key: _form,
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  // The item of an existing row is changed with care elsewhere
+                  // (as in the CLI, where `stock set --item` does it).
+                  InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Item',
+                      border: OutlineInputBorder(),
+                    ),
+                    child: PickerKeys(
+                      open: _editing || widget.item != null
+                          ? null
+                          : _chooseItem,
+                      child: InkWell(
+                        onTap: _editing || widget.item != null
+                            ? null
+                            : _chooseItem,
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                item == null
+                                    ? 'Choose an item'
+                                    : '${item.name}  (${item.code})',
+                              ),
+                            ),
+                            if (!_editing && widget.item == null)
+                              const Icon(Icons.arrow_drop_down),
+                          ],
                         ),
-                        if (!_editing && widget.item == null)
-                          const Icon(Icons.arrow_drop_down),
-                      ],
+                      ),
                     ),
                   ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              InputDecorator(
-                decoration: const InputDecoration(
-                  labelText: 'Location',
-                  border: OutlineInputBorder(),
-                ),
-                child: PickerKeys(
-                  open: _chooseLocation,
-                  child: InkWell(
-                    onTap: _chooseLocation,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            _locationId == null
-                                ? 'Choose a location'
-                                : widget.locations.pathOf(_locationId),
-                          ),
+                  const SizedBox(height: 16),
+                  InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Location',
+                      border: OutlineInputBorder(),
+                    ),
+                    child: PickerKeys(
+                      open: _chooseLocation,
+                      child: InkWell(
+                        onTap: _chooseLocation,
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                _locationId == null
+                                    ? 'Choose a location'
+                                    : widget.locations.pathOf(_locationId),
+                              ),
+                            ),
+                            const Icon(Icons.arrow_drop_down),
+                          ],
                         ),
-                        const Icon(Icons.arrow_drop_down),
-                      ],
+                      ),
                     ),
                   ),
-                ),
+                  if (item != null) ...[
+                    const SizedBox(height: 16),
+                    AmountField(
+                      controller: _amount,
+                      unit: item.unit,
+                      focusNode: _amountFocus,
+                      // Ready to type, when the item and place are known.
+                      autofocus: !_editing && _locationId != null,
+                      onSubmitted: lastTyped(_inputs) == null ? _save : null,
+                    ),
+                  ],
+                  if (_loadError != null) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      errorText(_loadError!),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _loadItem,
+                      child: const Text('Try again'),
+                    ),
+                  ],
+                  if (_loading)
+                    const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: LinearProgressIndicator(),
+                    ),
+                  if (_inputs.isNotEmpty) ...[
+                    const SectionTitle('Stock values'),
+                    for (final i in _inputs)
+                      Padding(
+                        key: ValueKey(i.attribute.name),
+                        padding: const EdgeInsets.only(top: 12),
+                        child: ValueField(
+                          i,
+                          onSubmitted: identical(i, lastTyped(_inputs))
+                              ? _save
+                              : null,
+                        ),
+                      ),
+                  ],
+                ],
               ),
-              if (item != null) ...[
-                const SizedBox(height: 16),
-                AmountField(controller: _amount, unit: item.unit),
-              ],
-              if (_loadError != null) ...[
-                const SizedBox(height: 16),
-                Text(
-                  errorText(_loadError!),
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-                TextButton(
-                  onPressed: _loadItem,
-                  child: const Text('Try again'),
-                ),
-              ],
-              if (_loading)
-                const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: LinearProgressIndicator(),
-                ),
-              if (_inputs.isNotEmpty) ...[
-                const SectionTitle('Stock values'),
-                for (final i in _inputs)
-                  Padding(
-                    key: ValueKey(i.attribute.name),
-                    padding: const EdgeInsets.only(top: 12),
-                    child: ValueField(i),
-                  ),
-              ],
-            ],
+            ),
           ),
         ),
       ),
     );
   }
+
+  void _saveAnother() => _save(another: true);
 }

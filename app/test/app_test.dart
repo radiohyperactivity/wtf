@@ -326,7 +326,10 @@ void main() {
   ) async {
     setSize(tester, 1000);
     await startApp(tester, FakeServer());
-    // From the search field to Class, then a letter.
+    // From the search field to Class, then a letter. Tests run as on
+    // Android, where the search field doesn't take the focus by itself.
+    await tester.tap(find.byType(TextField).first);
+    await tester.pumpAndSettle();
     await tester.sendKeyEvent(LogicalKeyboardKey.tab);
     await tester.pumpAndSettle();
     await tester.sendKeyEvent(LogicalKeyboardKey.keyD);
@@ -1271,10 +1274,12 @@ void main() {
       '"unit":null,"values":{"Voltage":18}}',
     );
 
-    // Asked once, as in the CLI.
-    expect(find.text('Add stock for Impact driver?'), findsOneWidget);
-    await tester.tap(find.text('Cancel'));
+    // Its stock comes next; back adds none, and shows the item.
+    expect(find.widgetWithText(AppBar, 'Add stock'), findsOneWidget);
+    expect(find.textContaining('Impact driver  ('), findsOneWidget);
+    await tester.tap(find.byTooltip('Back'));
     await tester.pumpAndSettle();
+    expect(find.widgetWithText(AppBar, 'Add stock'), findsNothing);
     expect(find.text('Impact driver'), findsWidgets);
     expect(find.text('No stock.'), findsOneWidget);
     // The default it was given.
@@ -1297,9 +1302,8 @@ void main() {
     await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
     expect(fake.changes.single, contains('"unit":"m"'));
-    await tester.tap(find.text('Add stock'));
-    await tester.pumpAndSettle();
 
+    // Its stock form follows at once.
     await tester.tap(find.text('Choose a location'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Garage/Shelf 2'));
@@ -1320,6 +1324,108 @@ void main() {
     expect(find.text('Drill cable'), findsWidgets);
     expect(find.text('2.5 m'), findsOneWidget);
     expect(find.text('2026-11-01'), findsOneWidget);
+  });
+
+  testWidgets('one item after another: class, unit and location carry over', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    await startApp(tester, fake);
+    await tester.tap(find.text('New item'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Choose a class'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Tools/Drills'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('Name'), 'Drill cable');
+    await tester.enterText(field('Unit of its stock'), 'm');
+    await tester.enterText(field('Voltage *'), '230');
+    await tester.tap(find.text('Create and add another'));
+    await tester.pumpAndSettle();
+
+    // Its stock, then the next item's form.
+    await tester.tap(find.text('Choose a location'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Garage/Shelf 2'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('Amount'), '2.5 m');
+    await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(AppBar, 'New item'), findsOneWidget);
+
+    // The class and unit of the last item; ready for the name.
+    expect(find.text('Tools/Drills'), findsOneWidget);
+    expect(
+      tester.widget<TextFormField>(field('Unit of its stock')).controller!.text,
+      'm',
+    );
+    final name = tester.widget<EditableText>(
+      find.descendant(of: field('Name'), matching: find.byType(EditableText)),
+    );
+    expect(name.focusNode.hasFocus, isTrue);
+    await tester.enterText(field('Name'), 'Extension cable');
+    await tester.enterText(field('Voltage *'), '230');
+    // Enter in the last field typed into, Manual, creates it.
+    await tester.enterText(field('Manual'), '');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(fake.changes.last, contains('"name":"Extension cable"'));
+    expect(fake.changes.last, contains('"unit":"m"'));
+
+    // Its stock goes where the last went.
+    expect(find.text('Garage/Shelf 2'), findsOneWidget);
+    await tester.enterText(field('Amount'), '10');
+    // Enter in Bought, the last field, adds it.
+    await tester.enterText(field('Bought'), '');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(fake.changes.last, contains('"location":"l-shelf2","amount":10'));
+    expect(find.text('Extension cable'), findsWidgets);
+  });
+
+  testWidgets('on a phone, the keyboard comes only when asked for', (
+    tester,
+  ) async {
+    // Tests run as on Android.
+    setSize(tester, 400);
+    await startApp(tester, FakeServer());
+    EditableText search() => tester.widget<EditableText>(
+      find.descendant(
+        of: find.byType(TextField).first,
+        matching: find.byType(EditableText),
+      ),
+    );
+    // Not at the start: the search field waits for a tap.
+    expect(search().focusNode.hasFocus, isFalse);
+    await tester.tap(find.byType(TextField).first);
+    await tester.pumpAndSettle();
+    expect(search().focusNode.hasFocus, isTrue);
+    // A tap outside it puts the keyboard away.
+    await tester.tapAt(const Offset(200, 500));
+    await tester.pumpAndSettle();
+    expect(search().focusNode.hasFocus, isFalse);
+  });
+
+  testWidgets('a class made just now is the next item\'s', (tester) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    await startApp(tester, fake);
+    await tester.tap(find.text('Admin'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Classes'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New class'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('Name'), 'Saws');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Items'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New item'));
+    await tester.pumpAndSettle();
+    expect(find.text('Saws'), findsOneWidget);
   });
 
   testWidgets('the location tree, and a box with compartments', (tester) async {

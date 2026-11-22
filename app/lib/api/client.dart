@@ -599,6 +599,26 @@ class ApiClient {
     );
   }
 
+  /// A file's media type, as the server finds it in the content, without
+  /// downloading it: a HEAD request. Kept by the file's hash, whose content
+  /// never changes, so each file is asked about once.
+  Future<String> fileType(FileRef f) async {
+    final known = _fileTypes[f.hash];
+    if (known != null) return known;
+    final resp = await _send(http.Request('HEAD', fileUrl(f)));
+    final type = (resp.headers['content-type'] ?? '')
+        .split(';')
+        .first
+        .trim()
+        .toLowerCase();
+    return _fileTypes[f.hash] = type;
+  }
+
+  /// The media type of the file with [hash], if [fileType] has found it.
+  String? knownFileType(String hash) => _fileTypes[hash];
+
+  final _fileTypes = <String, String>{};
+
   /// Where a file's content is. The hash makes a new file a new address, so
   /// that no cache shows the old one. Native apps send [authHeaders] with it.
   Uri fileUrl(FileRef f) => server

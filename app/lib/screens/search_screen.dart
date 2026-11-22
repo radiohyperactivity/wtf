@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -37,6 +38,11 @@ class _ItemSearchScreenState extends State<ItemSearchScreen> {
   StreamSubscription<TreeKind>? _treeChanges;
 
   ApiClient get _client => context.read<Session>().client;
+
+  /// iOS and Android, as an app or in their browsers.
+  static bool get _touch =>
+      defaultTargetPlatform == TargetPlatform.iOS ||
+      defaultTargetPlatform == TargetPlatform.android;
 
   @override
   void initState() {
@@ -147,18 +153,23 @@ class _ItemSearchScreenState extends State<ItemSearchScreen> {
     final session = context.watch<Session>();
     final query = TextField(
       controller: _query,
-      autofocus: true,
+      // Ready to type on a computer. Not on a phone or tablet, where the
+      // keyboard would come up over the screen at every start.
+      autofocus: !_touch,
       textInputAction: TextInputAction.search,
       decoration: InputDecoration(
         prefixIcon: const Icon(Icons.search),
         hintText: 'Name, class, value or label code',
         border: const OutlineInputBorder(),
+        // Out of Tab's order, which goes from field to field.
         suffixIcon: _query.text.isEmpty
             ? null
-            : IconButton(
-                icon: const Icon(Icons.clear),
-                tooltip: 'Clear',
-                onPressed: () => setState(_query.clear),
+            : ExcludeFocus(
+                child: IconButton(
+                  icon: const Icon(Icons.clear),
+                  tooltip: 'Clear',
+                  onPressed: () => setState(_query.clear),
+                ),
               ),
       ),
       onChanged: (_) => setState(() {}),

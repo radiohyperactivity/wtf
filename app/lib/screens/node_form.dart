@@ -8,6 +8,7 @@ import '../api/models.dart';
 import '../api/input.dart';
 import '../session.dart';
 import '../widgets/common.dart';
+import '../widgets/form_keys.dart';
 import '../widgets/pickers.dart';
 import '../widgets/select_keys.dart';
 
@@ -186,6 +187,7 @@ class _NodeFormState extends State<_NodeForm> {
             grid: grid,
             confirm: confirmed,
           );
+          if (mounted) context.read<Session>().recent.locationMade(l.id);
           target = '/locations/${l.code}';
         } else {
           final c = await client.createClass(
@@ -193,6 +195,7 @@ class _NodeFormState extends State<_NodeForm> {
             parentId: _parent,
             container: _container,
           );
+          if (mounted) context.read<Session>().recent.classMade(c.id);
           target = '/classes/${c.id}';
         }
         if (mounted) context.pushReplacement(target);
@@ -239,105 +242,117 @@ class _NodeFormState extends State<_NodeForm> {
       ),
       body: Readable(
         maxWidth: 640,
-        child: Form(
-          key: _form,
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              TextFormField(
-                controller: _name,
-                autofocus: !editing,
-                decoration: const InputDecoration(
-                  labelText: 'Name',
-                  border: OutlineInputBorder(),
+        child: FormKeys(
+          save: _save,
+          child: Form(
+            key: _form,
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                TextFormField(
+                  controller: _name,
+                  autofocus: !editing,
+                  decoration: const InputDecoration(
+                    labelText: 'Name',
+                    border: OutlineInputBorder(),
+                  ),
+                  textInputAction: TextInputAction.done,
+                  onFieldSubmitted: (_) => _save(),
+                  validator: (v) {
+                    final name = (v ?? '').trim();
+                    if (name.isEmpty) return 'Enter a name';
+                    if (name.contains('/')) {
+                      return 'Names can\'t contain "/": it separates the parts of a path';
+                    }
+                    return null;
+                  },
                 ),
-                textInputAction: TextInputAction.done,
-                onFieldSubmitted: (_) => _save(),
-                validator: (v) {
-                  final name = (v ?? '').trim();
-                  if (name.isEmpty) return 'Enter a name';
-                  if (name.contains('/')) {
-                    return 'Names can\'t contain "/": it separates the parts of a path';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 16),
-              InputDecorator(
-                decoration: const InputDecoration(
-                  labelText: 'Parent',
-                  border: OutlineInputBorder(),
-                ),
-                child: PickerKeys(
-                  open: _chooseParent,
-                  child: InkWell(
-                    onTap: _chooseParent,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            _parent == null
-                                ? '(top level)'
-                                : widget.tree.pathOf(_parent),
+                const SizedBox(height: 16),
+                InputDecorator(
+                  decoration: const InputDecoration(
+                    labelText: 'Parent',
+                    border: OutlineInputBorder(),
+                  ),
+                  child: PickerKeys(
+                    open: _chooseParent,
+                    child: InkWell(
+                      onTap: _chooseParent,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _parent == null
+                                  ? '(top level)'
+                                  : widget.tree.pathOf(_parent),
+                            ),
                           ),
-                        ),
-                        const Icon(Icons.arrow_drop_down),
-                      ],
+                          const Icon(Icons.arrow_drop_down),
+                        ],
+                      ),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              SwitchTile(
-                title: const Text('Container'),
-                subtitle: Text(
-                  _locations
-                      ? 'Holds only other locations, no stock (a box of compartments, say).'
-                      : 'Holds only other classes, no items.',
-                ),
-                value: _container || _grid,
-                onChanged: _grid ? null : (v) => setState(() => _container = v),
-              ),
-              if (_locations && !editing) ...[
+                const SizedBox(height: 8),
                 SwitchTile(
-                  title: const Text('Compartment grid'),
-                  subtitle: const Text(
-                    'Also creates a compartment for every cell, named like spreadsheet cells: '
-                    'columns A, B, …, rows 1, 2, …',
+                  title: const Text('Container'),
+                  subtitle: Text(
+                    _locations
+                        ? 'Holds only other locations, no stock (a box of compartments, say).'
+                        : 'Holds only other classes, no items.',
                   ),
-                  value: _grid,
-                  onChanged: (v) => setState(() => _grid = v),
+                  value: _container || _grid,
+                  onChanged: _grid
+                      ? null
+                      : (v) => setState(() => _container = v),
                 ),
-                if (_grid) ...[
-                  Row(
-                    children: [
-                      Expanded(child: _number(_columns, 'Columns')),
-                      const Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 12),
-                        child: Text('×'),
-                      ),
-                      Expanded(child: _number(_rows, 'Rows')),
-                    ],
+                if (_locations && !editing) ...[
+                  SwitchTile(
+                    title: const Text('Compartment grid'),
+                    subtitle: const Text(
+                      'Also creates a compartment for every cell, named like spreadsheet cells: '
+                      'columns A, B, …, rows 1, 2, …',
+                    ),
+                    value: _grid,
+                    onChanged: (v) => setState(() => _grid = v),
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    grid == null
-                        ? 'A grid has at least 1 column and 1 row.'
-                        : '${grid.$1 * grid.$2} compartments, A1 … ${columnLabel(grid.$1)}${grid.$2}. '
-                              'The location becomes a container, so stock goes into the compartments.',
-                  ),
+                  if (_grid) ...[
+                    Row(
+                      children: [
+                        Expanded(child: _number(_columns, 'Columns')),
+                        const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 12),
+                          child: Text('×'),
+                        ),
+                        Expanded(child: _number(_rows, 'Rows')),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      grid == null
+                          ? 'A grid has at least 1 column and 1 row.'
+                          : '${grid.$1 * grid.$2} compartments, A1 … ${columnLabel(grid.$1)}${grid.$2}. '
+                                'The location becomes a container, so stock goes into the compartments.',
+                    ),
+                  ],
                 ],
               ],
-            ],
+            ),
           ),
         ),
       ),
     );
   }
 
+  /// A grid's columns or rows; Enter in the rows, the last field, saves.
   Widget _number(TextEditingController controller, String label) =>
       TextFormField(
         controller: controller,
+        textInputAction: identical(controller, _rows)
+            ? TextInputAction.done
+            : TextInputAction.next,
+        onFieldSubmitted: (_) {
+          if (identical(controller, _rows)) _save();
+        },
         decoration: InputDecoration(
           labelText: label,
           border: const OutlineInputBorder(),

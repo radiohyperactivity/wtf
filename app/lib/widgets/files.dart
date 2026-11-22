@@ -526,6 +526,70 @@ Future<bool> editPhoto(
   }
 }
 
+/// The images every app can show: anything else gets its type's icon.
+const _showable = {
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+  'image/bmp',
+};
+
+/// An attachment's file in a list: a small picture of it when it is an
+/// image, else its type's icon (a PDF's, a spreadsheet's…). Until its type
+/// is known, and if it can't be, [fallback], the attribute's icon.
+class _FileLeading extends StatefulWidget {
+  const _FileLeading(this.file, {required this.fallback});
+
+  final FileRef file;
+  final IconData fallback;
+
+  @override
+  State<_FileLeading> createState() => _FileLeadingState();
+}
+
+class _FileLeadingState extends State<_FileLeading> {
+  String? _type;
+
+  @override
+  void initState() {
+    super.initState();
+    _find();
+  }
+
+  @override
+  void didUpdateWidget(_FileLeading old) {
+    super.didUpdateWidget(old);
+    if (old.file.hash != widget.file.hash) _find();
+  }
+
+  Future<void> _find() async {
+    final client = context.read<Session>().client;
+    final hash = widget.file.hash;
+    _type = client.knownFileType(hash);
+    if (_type != null) return;
+    try {
+      final type = await client.fileType(widget.file);
+      if (mounted && hash == widget.file.hash) setState(() => _type = type);
+    } on Object {
+      // The attribute's icon stays: the file opens, or says why not, when
+      // tapped.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final type = _type;
+    if (type != null && _showable.contains(type)) {
+      return PhotoOrIcon(widget.file, icon: widget.fallback);
+    }
+    return PhotoOrIcon(
+      null,
+      icon: type == null || type.isEmpty ? widget.fallback : typeIcon(type),
+    );
+  }
+}
+
 /// An attachment attribute of the item or stock row at [owner]: its file,
 /// if it has one, to open or save; with [onChanged] (when the account may
 /// change it), to upload, replace or remove ([remove] sends the PATCH that
@@ -573,7 +637,9 @@ class FileValueTile extends StatelessWidget {
         ? null
         : 'Takes ${attribute.media.join(', ')}';
     return ListTile(
-      leading: PhotoOrIcon(null, icon: attributeIcon(attribute)),
+      leading: file == null
+          ? PhotoOrIcon(null, icon: attributeIcon(attribute))
+          : _FileLeading(file, fallback: attributeIcon(attribute)),
       title: Text(attribute.name),
       subtitle: Text(
         file == null ? ['No file', ?takes].join('. ') : 'Tap to open',
