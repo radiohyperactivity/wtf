@@ -2,12 +2,15 @@
 // the attachment attributes of items and stock rows (api/attachment.md). Showing, opening, saving, uploading and
 // removing them.
 
+import 'dart:ui' as ui;
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
+import '../api/client.dart';
 import '../api/models.dart';
 import '../session.dart';
 import 'common.dart';
@@ -17,7 +20,9 @@ import 'open_native.dart' if (dart.library.js_interop) 'open_native_web.dart';
 /// A photo, loaded from the API with the session. With [decode] it is
 /// decoded to fit that box (in logical pixels, an infinite side being no
 /// limit) instead of at full size, so a phone photo shown small doesn't
-/// take tens of megabytes of memory.
+/// take tens of megabytes of memory; and when both sides are known, the
+/// server sends a thumbnail that size, so it isn't downloaded at full size
+/// either. The native apps keep what they download (file_cache.dart).
 class FileImage extends StatelessWidget {
   const FileImage(
     this.file, {
@@ -35,21 +40,28 @@ class FileImage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final client = context.read<Session>().client;
-    ImageProvider image = NetworkImage(
-      client.fileUrl(file).toString(),
-      headers: client.authHeaders,
-    );
-    if (decode case final box?) {
-      final ratio = MediaQuery.devicePixelRatioOf(context);
-      int? pixels(double side) => side.isFinite ? (side * ratio).ceil() : null;
-      if (pixels(box.width) != null || pixels(box.height) != null) {
-        image = ResizeImage(
-          image,
-          width: pixels(box.width),
-          height: pixels(box.height),
-          policy: ResizeImagePolicy.fit,
-        );
-      }
+    final ratio = MediaQuery.devicePixelRatioOf(context);
+    int? pixels(double side) => side.isFinite ? (side * ratio).ceil() : null;
+    final box = decode;
+    final width = box == null ? null : pixels(box.width);
+    final height = box == null ? null : pixels(box.height);
+    // A thumbnail fits in a square: the longer of the box's sides.
+    final thumbnail = width != null && height != null
+        ? (width > height ? width : height)
+        : null;
+    ImageProvider image = kIsWeb
+        ? NetworkImage(
+            client.fileUrl(file, size: thumbnail).toString(),
+            headers: client.authHeaders,
+          )
+        : ApiImage(client, file, thumbnail);
+    if (width != null || height != null) {
+      image = ResizeImage(
+        image,
+        width: width,
+        height: height,
+        policy: ResizeImagePolicy.fit,
+      );
     }
     return Image(
       image: image,
@@ -63,6 +75,50 @@ class FileImage extends StatelessWidget {
       ),
     );
   }
+}
+
+/// A file's image, or its thumbnail of [size], read through
+/// [ApiClient.fileBytes]: from this device when kept, else downloaded with
+/// the session. Content that can't be decoded is forgotten, so that a
+/// damaged copy isn't shown again.
+@immutable
+class ApiImage extends ImageProvider<ApiImage> {
+  const ApiImage(this.client, this.file, this.size);
+
+  final ApiClient client;
+  final FileRef file;
+  final int? size;
+
+  /// The address it is downloaded from.
+  String get url => client.fileUrl(file, size: size).toString();
+
+  @override
+  Future<ApiImage> obtainKey(ImageConfiguration configuration) =>
+      SynchronousFuture(this);
+
+  @override
+  ImageStreamCompleter loadImage(ApiImage key, ImageDecoderCallback decode) =>
+      MultiFrameImageStreamCompleter(
+        codec: _load(decode),
+        scale: 1,
+        debugLabel: url,
+      );
+
+  Future<ui.Codec> _load(ImageDecoderCallback decode) async {
+    final bytes = await client.fileBytes(file, size: size);
+    try {
+      return await decode(await ui.ImmutableBuffer.fromUint8List(bytes));
+    } on Object {
+      await client.forgetFile(file, size: size);
+      rethrow;
+    }
+  }
+
+  @override
+  bool operator ==(Object other) => other is ApiImage && other.url == url;
+
+  @override
+  int get hashCode => url.hashCode;
 }
 
 /// An image with a thin border, so one whose background is just off the

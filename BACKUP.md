@@ -59,6 +59,7 @@ robocopy C:\ProgramData\WtF\files \\backup-host\backups\wtf\files /E
 ```
 
 - **Database first, files afterwards:** then every file the dump refers to is in the copy. Files that arrive in between are harmless; `wtfd gc` removes any that nothing references.
+- **The thumbnails can be left out:** the `thumbnails` directory holds small copies of photos for the apps' lists, which `wtfd` makes again when they are missing. Leave it out with `--exclude /thumbnails/` for `rsync`, or `/XD thumbnails` for `robocopy`.
 - **No deleting in the copy:** no `--delete` for `rsync`, no `/MIR` or `/PURGE` for `robocopy`. The files of deleted attachments then stay in the backup after `wtfd gc` removes them from the server, for a restore of an older dump.
 
 ## Restoring

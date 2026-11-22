@@ -1983,6 +1983,11 @@
       "get": {
         "summary": "The item photo",
         "operationId": "itemPhotoGet",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ThumbnailSize"
+          }
+        ],
         "responses": {
           "200": {
             "$ref": "#/components/responses/File"
@@ -2037,6 +2042,11 @@
       "get": {
         "summary": "The file of an attachment attribute",
         "operationId": "itemFileGet",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ThumbnailSize"
+          }
+        ],
         "responses": {
           "200": {
             "$ref": "#/components/responses/File"
@@ -2088,6 +2098,11 @@
       "get": {
         "summary": "The stock photo",
         "operationId": "stockPhotoGet",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ThumbnailSize"
+          }
+        ],
         "responses": {
           "200": {
             "$ref": "#/components/responses/File"
@@ -2139,6 +2154,11 @@
       "get": {
         "summary": "The location photo",
         "operationId": "locationPhotoGet",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ThumbnailSize"
+          }
+        ],
         "responses": {
           "200": {
             "$ref": "#/components/responses/File"
@@ -2193,6 +2213,11 @@
       "get": {
         "summary": "The file of an attachment attribute",
         "operationId": "stockFileGet",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ThumbnailSize"
+          }
+        ],
         "responses": {
           "200": {
             "$ref": "#/components/responses/File"
@@ -2287,6 +2312,15 @@
         "schema": {
           "type": "boolean",
           "default": false
+        }
+      },
+      "ThumbnailSize": {
+        "name": "size",
+        "in": "query",
+        "description": "Pixels: an image comes as its thumbnail, scaled to fit in a box this size on a side, rounded up to 128, 256, 512 or 1024, as JPEG (PNG when it has transparency), turned upright as its Exif orientation says. A file there is no thumbnail of (not a JPEG, PNG, GIF, WebP or BMP image, or as small already), or a size larger than 1024, comes as it is.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1
         }
       },
       "Limit": {

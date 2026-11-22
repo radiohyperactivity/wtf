@@ -240,7 +240,7 @@ func runServe(ctx context.Context, args []string, stderr io.Writer) int {
 				gcLog.Error("failed", "error", err)
 				return
 			}
-			gcLog.Info("removed", "files", result.Files, "bytes", result.Bytes, "expired_sessions", result.Sessions)
+			gcLog.Info("removed", "files", result.Files, "bytes", result.Bytes, "left_thumbnails", result.Thumbnails, "expired_sessions", result.Sessions)
 		})
 	}
 
@@ -325,7 +325,7 @@ func runGC(args []string, stderr io.Writer) int {
 	if *dryRun {
 		verb = "would remove"
 	}
-	log.Info(verb, "files", result.Files, "bytes", result.Bytes, "expired_sessions", result.Sessions)
+	log.Info(verb, "files", result.Files, "bytes", result.Bytes, "left_thumbnails", result.Thumbnails, "expired_sessions", result.Sessions)
 	return exitOK
 }
 

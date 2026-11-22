@@ -18,7 +18,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // ErrTooLarge is returned by Stage when the content exceeds the limit.
@@ -29,6 +32,11 @@ var hashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // Store is the files directory.
 type Store struct {
 	dir string
+
+	// Thumbnails being made, and room for the few made at a time: each takes
+	// a core, and the memory of its image.
+	making singleflight.Group
+	makers chan struct{}
 }
 
 // Open opens the files directory, creating it if needed.
@@ -36,7 +44,7 @@ func Open(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return nil, fmt.Errorf("files directory: %w", err)
 	}
-	return &Store{dir: dir}, nil
+	return &Store{dir: dir, makers: make(chan struct{}, min(4, max(1, runtime.NumCPU()/2)))}, nil
 }
 
 // Dir is the directory's path.
@@ -61,7 +69,8 @@ func (s *Store) OpenFile(hash string) (*os.File, error) {
 	return os.Open(p)
 }
 
-// Remove deletes a stored file. A missing file is not an error.
+// Remove deletes a stored file, and its thumbnails. A missing file is not
+// an error.
 func (s *Store) Remove(hash string) error {
 	p, err := s.path(hash)
 	if err != nil {
@@ -70,7 +79,7 @@ func (s *Store) Remove(hash string) error {
 	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	return nil
+	return s.removeThumbnails(hash)
 }
 
 // ModTime returns the modification time of a stored file, and false if it
@@ -171,7 +180,7 @@ func (s *Store) Walk(fn func(hash string, modTime time.Time) error) error {
 			return err
 		}
 		if d.IsDir() {
-			if p != s.dir && d.Name() == "tmp" {
+			if p != s.dir && (d.Name() == "tmp" || d.Name() == thumbnailDir) {
 				return filepath.SkipDir
 			}
 			return nil

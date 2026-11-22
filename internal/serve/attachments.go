@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"mime"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -165,11 +166,23 @@ func sniff(head []byte) string {
 // found from its first bytes, as at upload. Only content types that can't
 // run scripts in a browser are shown inline; everything else is a download.
 // A file's content never changes, so it can be cached for good.
+//
+// With ?size=N, an image comes as its thumbnail: scaled to fit in a box of
+// N pixels on a side (rounded up to one of files.ThumbnailSizes). A file
+// there is no thumbnail of, or N larger than those sizes, comes as it is.
 func (s *server) download(kind string, attribute bool) handlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		name := arg{name: "p_attribute", typ: "text"}
 		if attribute {
 			name.value = r.PathValue("attribute")
+		}
+		size := 0
+		if v := r.URL.Query().Get("size"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 {
+				return invalidInput("size must be a positive whole number of pixels, not %q", v)
+			}
+			size = n
 		}
 		args, err := collect(r, []param{constant("p_kind", "text", kind), path("p_owner", "id")})
 		if err != nil {
@@ -187,7 +200,13 @@ func (s *server) download(kind string, attribute bool) handlerFunc {
 			return err
 		}
 
-		f, err := s.files.OpenFile(a.Hash)
+		etag := a.Hash
+		f, box, err := s.thumbnail(a.Hash, size)
+		if f != nil {
+			etag += "-" + strconv.Itoa(box)
+		} else if err == nil {
+			f, err = s.files.OpenFile(a.Hash)
+		}
 		if errors.Is(err, fs.ErrNotExist) {
 			s.log.Error("file missing", "kind", kind, "id", r.PathValue("id"), "sha256", a.Hash)
 			return &problem{
@@ -217,13 +236,37 @@ func (s *server) download(kind string, attribute bool) handlerFunc {
 		h.Set("Content-Type", contentType)
 		h.Set("Content-Disposition", mime.FormatMediaType(disposition,
 			map[string]string{"filename": mediatype.DownloadName(a.Name, contentType)}))
-		h.Set("ETag", `"`+a.Hash+`"`)
+		h.Set("ETag", `"`+etag+`"`)
 		h.Set("Cache-Control", "private, max-age=31536000, immutable")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Content-Security-Policy", "sandbox")
 		http.ServeContent(w, r, "", time.Time{}, f)
 		return nil
 	}
+}
+
+// thumbnail opens the thumbnail of the file with hash for a request of
+// size pixels (0: none asked for), and says its box size. It returns no
+// file, and no error, when
+// the file itself is to be sent: there is no thumbnail of it, or size is
+// larger than thumbnails are; and the file's error when it is missing.
+func (s *server) thumbnail(hash string, size int) (*os.File, int, error) {
+	box, ok := files.ThumbnailSize(size)
+	if size == 0 || !ok {
+		return nil, 0, nil
+	}
+	f, err := s.files.Thumbnail(hash, box)
+	switch {
+	case err == nil:
+		return f, box, nil
+	case errors.Is(err, files.ErrNoThumbnail):
+		return nil, 0, nil
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, 0, err
+	}
+	// The file is still there to send as it is.
+	s.log.Warn("thumbnail failed", "sha256", hash, "size", box, "error", err)
+	return nil, 0, nil
 }
 
 // inlineSafe reports whether a content type may be shown inline: images

@@ -29,6 +29,7 @@ The routes are under the item, stock row or location: `/items/{id}`, `/stock/{id
   - **Name:** the attribute's name ("Photo" for the photo), with an extension for the type: a manual as `application/pdf` downloads as `Manual.pdf`.
   - **Inline or not:** images (except SVG), PDF and plain text are sent `inline`; everything else as a download (`Content-Disposition: attachment`). Downloads also carry `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox`, so an uploaded HTML file can't run as a page on the API's hostname.
   - **Caching:** the `ETag` is the content hash, the content never changes, and `Range` requests work.
+  - **Thumbnails:** `?size=N` asks for an image scaled to fit in a box of N pixels on a side, for a list, where a photo of several megabytes would be shown a few dozen pixels wide. N is rounded up to 128, 256, 512 or 1024, so a file has at most four thumbnails. A thumbnail is JPEG (PNG when the image has transparency), turned upright as the photo's Exif orientation says, and its `ETag` is the hash and the size (`"<hash>-128"`). `wtfd` makes it when first asked and keeps it in the `thumbnails` directory of the files directory; `wtfd gc` removes a file's thumbnails with it. A file there is no thumbnail of comes as it is: not a JPEG, PNG, GIF, WebP or BMP image, already that small, larger than 64 megapixels, or damaged; so does any N larger than 1024.
 
 ## Stock rows
 

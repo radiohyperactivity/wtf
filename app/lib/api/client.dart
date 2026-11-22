@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
+import 'file_cache.dart' if (dart.library.js_interop) 'file_cache_web.dart';
 import 'input.dart';
 import 'models.dart';
 
@@ -621,9 +622,34 @@ class ApiClient {
 
   /// Where a file's content is. The hash makes a new file a new address, so
   /// that no cache shows the old one. Native apps send [authHeaders] with it.
-  Uri fileUrl(FileRef f) => server
+  /// With [size], an image comes as its thumbnail, scaled to fit in a box of
+  /// that many pixels on a side (rounded up by the server; api/attachment.md).
+  Uri fileUrl(FileRef f, {int? size}) => server
       .resolve('$apiPath${f.path}')
-      .replace(queryParameters: {'v': f.hash});
+      .replace(
+        queryParameters: {'v': f.hash, if (size != null) 'size': '$size'},
+      );
+
+  /// A file's content, or with [size] its thumbnail, from the files kept on
+  /// this device when it is there (file_cache.dart), else downloaded and
+  /// kept.
+  Future<Uint8List> fileBytes(FileRef f, {int? size}) async {
+    final kept = await cachedFile(f.hash, size ?? 0);
+    if (kept != null) return kept;
+    final resp = await _send(
+      http.Request('GET', fileUrl(f, size: size))..headers['Accept'] = '*/*',
+    );
+    await cacheFile(f.hash, size ?? 0, resp.bodyBytes);
+    return resp.bodyBytes;
+  }
+
+  /// Forgets the kept copy of a file, or its thumbnail of [size], whose
+  /// content couldn't be shown: it is downloaded again next time.
+  Future<void> forgetFile(FileRef f, {int? size}) =>
+      forgetCachedFile(f.hash, size ?? 0);
+
+  /// Forgets every file kept on this device: at logout.
+  Future<void> forgetFiles() => forgetCachedFiles();
 
   // --- Locations ---
 

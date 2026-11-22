@@ -75,7 +75,7 @@ cmd/wtfd/main.go               action dispatch, configuration
 internal/config/               flags + environment variables
 internal/schema/               the schema action (migration runner)
 internal/serve/                the serve action (REST API)
-internal/files/                file store and the gc action
+internal/files/                file store, thumbnails and the gc action
 internal/admin/                the account and database actions
 internal/webapp/               the web app built into wtfd (build tag webapp)
 openapi/openapi.json           OpenAPI description, embedded and served at /api/v1/openapi
@@ -526,10 +526,11 @@ wtfd gc --files-directory /var/lib/wtf/files --dry-run   # report only
 wtfd gc --files-directory /var/lib/wtf/files
 ```
 
-It connects as the API role, as `serve` does, through three functions for gc that the API role may call, and only gc does (`attachment.gc_hashes_used`, `attachment.gc_unused` and `account.gc_sessions`; see [API.md](API.md)). It reads the hashes in use once (the photos of items, stock rows and locations, and the values of the attachment attributes of items and stock rows), and removes two kinds of file:
+It connects as the API role, as `serve` does, through three functions for gc that the API role may call, and only gc does (`attachment.gc_hashes_used`, `attachment.gc_unused` and `account.gc_sessions`; see [API.md](API.md)). It reads the hashes in use once (the photos of items, stock rows and locations, and the values of the attachment attributes of items and stock rows), and removes these kinds of file:
 
-- files whose hash nothing has;
-- abandoned uploads in the `tmp` directory.
+- files whose hash nothing has, with their thumbnails;
+- abandoned uploads in the `tmp` directory;
+- thumbnails in the `thumbnails` directory whose file is gone, which removing a file leaves only when removing its thumbnails failed (not with `--dry-run`).
 
 Files younger than `--min-age` (env `WTFD_GC_MIN_AGE`, default `1h`) are never removed, so uploads in progress are safe. Each removal takes the file's advisory lock (`attachment.file_lock_key`), the same one an upload holds while it puts the file in place and records it, and checks again that nothing references the file. `--dry-run` reports what would be removed, and `--verbose` logs every removed file.
 

@@ -21,9 +21,10 @@ type GCOptions struct {
 
 // GCResult reports what GC removed, or with DryRun, would remove.
 type GCResult struct {
-	Files    int
-	Bytes    int64
-	Sessions int64 // expired sessions
+	Files      int
+	Bytes      int64
+	Thumbnails int   // of files removed before, which removing them left
+	Sessions   int64 // expired sessions
 }
 
 // GC removes files that nothing references, with the database functions
@@ -33,6 +34,8 @@ type GCResult struct {
 //   - files on disk whose hash no photo or attachment value has: what had them was deleted or given another file, or an upload's
 //     database change failed;
 //   - abandoned uploads in the tmp directory;
+//   - thumbnails whose file is gone (a file's thumbnails go with it, so
+//     these are left only when removing them failed);
 //   - and, in the database, the expired sessions.
 //
 // Files younger than MinAge are left alone, so uploads in progress are safe.
@@ -116,6 +119,14 @@ func gcFiles(ctx context.Context, conn *pgx.Conn, o GCOptions, result *GCResult)
 		if err := remove(c.hash, c.size); err != nil {
 			return err
 		}
+	}
+
+	if !o.DryRun {
+		n, _, err := store.RemoveOrphanThumbnails()
+		if err != nil {
+			return err
+		}
+		result.Thumbnails = n
 	}
 
 	// Abandoned uploads.

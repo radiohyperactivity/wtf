@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -116,6 +118,16 @@ func TestFiles(t *testing.T) {
 	if rec := e.raw("GET", item+"/photo", "If-None-Match", rec.Header().Get("ETag")); rec.Code != 304 {
 		t.Errorf("If-None-Match: %d, want 304", rec.Code)
 	}
+	// Thumbnails: what isn't an image wtfd can scale comes as it is, and a
+	// size must be a number.
+	if rec := e.raw("GET", item+"/photo?size=96"); rec.Code != 200 || !bytes.Equal(rec.Body.Bytes(), pngBytes) {
+		t.Errorf("a thumbnail of what can't have one: %d, %d bytes", rec.Code, rec.Body.Len())
+	}
+	if rec := e.raw("GET", item+"/photo?size=big"); rec.Code != 400 {
+		t.Errorf("size=big: %d, want 400", rec.Code)
+	}
+	thumbnails(t, e, "/locations/"+van+"/photo")
+
 	if rec := e.raw("GET", item+"/files/Manual"); rec.Header().Get("Content-Type") != "application/pdf" ||
 		rec.Header().Get("Content-Disposition") != `inline; filename=Manual.pdf` {
 		t.Errorf("the manual: %v", rec.Header())
@@ -205,5 +217,42 @@ func TestFiles(t *testing.T) {
 	}
 	if rec := e.raw("GET", stock+"/photo"); rec.Code != http.StatusOK {
 		t.Errorf("download after gc: %d", rec.Code)
+	}
+}
+
+// thumbnails puts a photo at path, 600 by 400, and checks its thumbnails:
+// ?size=N fits it in the box of the thumbnail size N is rounded up to, as
+// JPEG, with an ETag of its own; a size larger than thumbnails are gets
+// the photo itself.
+func thumbnails(t *testing.T, e *environment, path string) {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 600, 400))
+	for i := range img.Pix {
+		img.Pix[i] = 200
+	}
+	var photo bytes.Buffer
+	if err := jpeg.Encode(&photo, img, nil); err != nil {
+		t.Fatal(err)
+	}
+	e.upload(t, 200, path, "photo.jpg", "", photo.Bytes())
+	whole := e.raw("GET", path)
+
+	rec := e.raw("GET", path+"?size=100")
+	if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("thumbnail: %d, %v", rec.Code, rec.Header())
+	}
+	small, err := jpeg.DecodeConfig(rec.Body)
+	if err != nil || small.Width != 128 || small.Height != 85 {
+		t.Errorf("thumbnail: %d×%d, %v; want 128×85", small.Width, small.Height, err)
+	}
+	etag := rec.Header().Get("ETag")
+	if etag == whole.Header().Get("ETag") || !strings.HasSuffix(etag, `-128"`) {
+		t.Errorf("the thumbnail's ETag %s, the photo's %s", etag, whole.Header().Get("ETag"))
+	}
+	if again := e.raw("GET", path+"?size=128", "If-None-Match", etag); again.Code != 304 {
+		t.Errorf("the same thumbnail again: %d, want 304", again.Code)
+	}
+	if rec := e.raw("GET", path+"?size=2000"); !bytes.Equal(rec.Body.Bytes(), photo.Bytes()) {
+		t.Errorf("larger than thumbnails: %d bytes, want the photo's %d", rec.Body.Len(), photo.Len())
 	}
 }

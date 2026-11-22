@@ -467,6 +467,14 @@ void main() {
     await startApp(tester, fake);
     await search(tester, 'drill');
     expect(find.byType(FileImage), findsOneWidget);
+    // A small photo is a thumbnail: 48 wide, the box twice that.
+    final small = tester.widget<Image>(
+      find.descendant(of: find.byType(FileImage), matching: find.byType(Image)),
+    );
+    expect(
+      ((small.image as ResizeImage).imageProvider as ApiImage).url,
+      endsWith('?v=hash-front&size=96'),
+    );
     await tester.tap(find.text('Cordless drill'));
     await tester.pumpAndSettle();
     expect(find.text('Values'), findsNothing);
@@ -476,8 +484,8 @@ void main() {
     expect(photo.top, lessThan(tester.getRect(find.text('Voltage')).bottom));
 
     // Images are decoded for the size they're shown at: the photo at most
-    // as wide as its box, here 240 by 320. Its address changes with its
-    // content.
+    // as wide as its box, here 240 by 320, and downloaded as a thumbnail
+    // that fits in it. Its address changes with its content.
     final image = tester.widget<Image>(
       find.descendant(
         of: find.byType(ObjectPhoto),
@@ -487,8 +495,8 @@ void main() {
     final big = image.image as ResizeImage;
     expect((big.width, big.height), (240, 320));
     expect(
-      (big.imageProvider as NetworkImage).url,
-      'http://wtf.test:8080/api/v1/items/i-drill/photo?v=hash-front',
+      (big.imageProvider as ApiImage).url,
+      'http://wtf.test:8080/api/v1/items/i-drill/photo?v=hash-front&size=320',
     );
 
     // Narrow: the photo as wide as the screen, under the values and above

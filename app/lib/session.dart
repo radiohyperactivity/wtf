@@ -272,6 +272,9 @@ class Session extends ChangeNotifier {
       // The session ends on the server once it has sat unused long enough,
       // or can be ended from another device (Account → Sessions).
     }
+    // The photos seen go too, so that whoever logs in next doesn't find
+    // them on this device.
+    await client?.forgetFiles();
     client?.close();
     _client = null;
     me = null;
