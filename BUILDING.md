@@ -62,6 +62,7 @@ go build -tags webapp ./cmd/wtfd
 | `scripts/app-build.sh` | runs `flutter build` in `app/` with its arguments (`scripts/app-build.sh windows --release`), stamped with the app's version and the time of the build, which the app shows under Account; the other scripts build the app with it |
 | `scripts/windows-server-installer.sh` | after `release.sh`, on Windows: the server's installer, `dist/release/wtf-<version>-windows-setup.exe`, with `wtfd` and `wtf` for x64 and ARM64; see [The server's installer](#the-servers-installer) |
 | `scripts/windows-app-installer.sh` | builds the Windows app and its installer, `dist/wtf-app-<version>-windows-x64-setup.exe`; see [Windows](#windows) |
+| `scripts/windows-sandbox-test.sh` | after both installers, on Windows: tries them on a clean Windows in Windows Sandbox; see [Trying the installers](#trying-the-installers) |
 | `scripts/test.sh` | what CI checks: `gofmt`, `go vet` for every system, and the tests |
 | `scripts/ios-signing-setup.sh`, `scripts/ios-device.sh` | sign the iOS app for devices over SSH, build it, and install it; see [iOS](#ios) |
 | `scripts/android-signing-setup.sh`, `scripts/android-device.sh` | make the Android app's signing key, build the app, and install it by cable or Wi-Fi; see [Android](#android) |
@@ -77,6 +78,22 @@ scripts/windows-server-installer.sh
 ```
 
 It makes `dist/release/wtf-<version>-windows-setup.exe` beside the zips, from `scripts/windows-server-installer.iss`, with [Inno Setup](https://jrsoftware.org/isinfo.php) 6.3 or newer (`ISCC` names its `ISCC.exe` when it isn't where Inno Setup installs it). It takes `wtfd` and `wtf` from `dist/windows-amd64` and `dist/windows-arm64`, and installs the ones for the machine's processor. README.md ("Installing on Windows") says what it does. It isn't signed, so Windows says "Unknown publisher" when it asks for an administrator, and SmartScreen warns about it at first: **More info → Run anyway**.
+
+**Without a window,** for scripts: `/VERYSILENT /SUPPRESSMSGBOXES /LOG=setup.log`, with the answers as parameters (`/database=new|existing`, `/dbhost=`, `/account=`, `/listen=local|network`, `/firewall=yes|no`, and the others the top of `ApplyParameters` in the `.iss` lists) and the passwords in the environment variables `wtfd` reads (`WTFD_ADMIN_DATABASE_PASSWORD` for a new database; `WTFD_DBA_DATABASE_PASSWORD` and `WTFD_API_DATABASE_PASSWORD` for one there already). Nothing is tried before installing; the log ends with "WtF is set up." or says what failed. Without parameters, an upgrade keeps its settings, as it does with the pages.
+
+### Trying the installers
+
+```sh
+scripts/windows-sandbox-test.sh [--start-app]
+```
+
+runs both installers on a clean Windows, in [Windows Sandbox](https://learn.microsoft.com/windows/security/application-security/application-isolation/windows-sandbox/), which is thrown away afterwards. In the sandbox, `scripts/windows-sandbox-test.ps1` installs and uninstalls the app (and with `--start-app` starts it, to see that it opens), runs a PostgreSQL of its own, and installs the server without a window: a first install with a new database, an upgrade, uninstalling, an existing database with an account and one without, and a wrong password; after each, it checks the service, `/api/health`, the settings, the firewall rule, the PATH and the access to `pgpass.conf`. It prints what it found, and leaves it, with the installers' logs, in `dist/sandbox-test/`. PostgreSQL's programs are downloaded once, into `local/sandbox/`. It doesn't try the pages, only what the installers do, and only on x64.
+
+Windows Sandbox must be turned on once, in an administrator's PowerShell, and Windows restarted:
+
+```powershell
+Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM
+```
 
 ## The apps
 

@@ -58,9 +58,6 @@ Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 ; ARM64 too. The same file as above, so it is stored once.
 Source: "{#DistDir}\windows-amd64\wtfd.exe"; DestName: "wtfd-check.exe"; Flags: dontcopy
 
-[UninstallRun]
-Filename: "{app}\bin\wtfd.exe"; Parameters: "service uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "ServiceUninstall"
-
 [UninstallDelete]
 ; What wtfd install moved aside when it replaced a running program.
 Type: files; Name: "{app}\bin\*.old-*"
@@ -239,7 +236,10 @@ begin
     WizardForm.NextButton.Enabled := True;
   end;
   if not Result then
-    MsgBox(Trim(Output), mbError, MB_OK);
+  begin
+    Log('wtfd database check failed: ' + Trim(Output));
+    SuppressibleMsgBox(Trim(Output), mbError, MB_OK, IDOK);
+  end;
 end;
 
 { The pages }
@@ -299,6 +299,66 @@ begin
   FilesEdit.Parent := ServerPage.Surface;
   FilesEdit.Top := Browse.Top + (Browse.Height - FilesEdit.Height) div 2;
   FilesEdit.Width := Browse.Left - ScaleX(8);
+end;
+
+{ Param is a parameter of the installer's command line, such as
+  /dbhost=db.example.org, or Default when it isn't given. }
+function Param(Name, Default: String): String;
+begin
+  Result := ExpandConstant('{param:' + Name + '|}');
+  if Result = '' then
+    Result := Default;
+end;
+
+{ ApplyParameters gives the pages the answers on the command line, for
+  installing without a window (/VERYSILENT), where nobody sees the pages:
+
+    /database=new|existing  set the database up; on an upgrade, the settings
+                            change too, otherwise they are kept
+    /dbhost= /dbport= /dbname= /dbauser= /apiuser= /adminuser=
+    /account=               the first account's email
+    /listen=local|network   /port=  /files=
+    /service=yes|no         /firewall=yes|no
+
+  The passwords come from the environment, from the variables wtfd reads:
+  WTFD_ADMIN_DATABASE_PASSWORD for a new database, and
+  WTFD_DBA_DATABASE_PASSWORD and WTFD_API_DATABASE_PASSWORD for one that is
+  there already. Nothing is tried before installing, as on the pages:
+  wtfd install says what is wrong, in the log (/LOG=). }
+procedure ApplyParameters;
+var
+  Database: String;
+begin
+  Database := Param('database', '');
+  if Database <> '' then
+  begin
+    if Upgrade then
+      UpgradePage.Values[0] := True;
+    DatabasePage.Values[0] := Database <> 'new';
+    DatabasePage.Values[1] := Database = 'new';
+  end;
+  NewServerPage.Values[0] := Param('dbhost', NewServerPage.Values[0]);
+  NewServerPage.Values[1] := Param('dbport', NewServerPage.Values[1]);
+  NewServerPage.Values[2] := Param('adminuser', NewServerPage.Values[2]);
+  NewServerPage.Values[3] := GetEnv('WTFD_ADMIN_DATABASE_PASSWORD');
+  NewNamesPage.Values[0] := Param('dbname', NewNamesPage.Values[0]);
+  NewNamesPage.Values[1] := Param('dbauser', NewNamesPage.Values[1]);
+  NewNamesPage.Values[2] := Param('apiuser', NewNamesPage.Values[2]);
+  ExistingServerPage.Values[0] := Param('dbhost', ExistingServerPage.Values[0]);
+  ExistingServerPage.Values[1] := Param('dbport', ExistingServerPage.Values[1]);
+  ExistingServerPage.Values[2] := Param('dbname', ExistingServerPage.Values[2]);
+  ExistingRolesPage.Values[0] := Param('dbauser', ExistingRolesPage.Values[0]);
+  ExistingRolesPage.Values[1] := GetEnv('WTFD_DBA_DATABASE_PASSWORD');
+  ExistingRolesPage.Values[2] := Param('apiuser', ExistingRolesPage.Values[2]);
+  ExistingRolesPage.Values[3] := GetEnv('WTFD_API_DATABASE_PASSWORD');
+  AccountPage.Values[0] := Param('account', '');
+  if Param('listen', '') <> '' then
+    NetworkRadio.Checked := Param('listen', '') = 'network';
+  LocalRadio.Checked := not NetworkRadio.Checked;
+  PortEdit.Text := Param('port', PortEdit.Text);
+  FilesEdit.Text := Param('files', FilesEdit.Text);
+  ServicePage.Values[0] := Param('service', 'yes') = 'yes';
+  ServicePage.Values[1] := NetworkRadio.Checked and (Param('firewall', 'no') = 'yes');
 end;
 
 procedure InitializeWizard;
@@ -393,6 +453,9 @@ begin
   ServicePage.Values[0] := True;
 
   ResultPage := CreateOutputMsgMemoPage(wpInstalling, 'Finished', '', '', '');
+
+  if WizardSilent then
+    ApplyParameters;
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
@@ -430,7 +493,7 @@ begin
   N := StrToIntDef(Trim(Port), 0);
   Result := (N >= 1) and (N <= 65535);
   if not Result then
-    MsgBox('The port is a number from 1 to 65535.', mbError, MB_OK);
+    SuppressibleMsgBox('The port is a number from 1 to 65535.', mbError, MB_OK, IDOK);
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -459,14 +522,14 @@ begin
   begin
     Result := Pos('@', AccountPage.Values[0]) > 1;
     if not Result then
-      MsgBox('Give the first account''s email address.', mbError, MB_OK);
+      SuppressibleMsgBox('Give the first account''s email address.', mbError, MB_OK, IDOK);
   end
   else if CurPageID = ServerPage.ID then
   begin
     Result := ValidPort(PortEdit.Text);
     if Result and (Trim(FilesEdit.Text) = '') then
     begin
-      MsgBox('Choose where WtF keeps its files.', mbError, MB_OK);
+      SuppressibleMsgBox('Choose where WtF keeps its files.', mbError, MB_OK, IDOK);
       Result := False;
     end;
   end;
@@ -560,8 +623,10 @@ begin
     else
       Params := Params + ' --database existing';
     Params := Params + DatabaseFlags + Flag('listen', Listen) + Flag('files-directory', Trim(FilesEdit.Text));
-    if not ShouldSkipPage(AccountPage.ID) then
-      Params := Params + Flag('first-account', Trim(AccountPage.Values[0]));
+    if not ShouldSkipPage(AccountPage.ID) and (Trim(AccountPage.Values[0]) <> '') then
+      Params := Params + Flag('first-account', Trim(AccountPage.Values[0]))
+    else if not NewDatabase and (Accounts > 0) then
+      Log(Format('The database has accounts already (%d), so no first account is made.', [Accounts]));
     SetDatabasePasswords;
   end;
   Step('Setting WtF up, and its database…', Params);
@@ -637,6 +702,12 @@ begin
     Text := Text + 'The server: ' + Address + #13#10#13#10 + 'What was done:' + #13#10#13#10;
   end;
   ResultPage.RichEditViewer.Text := Text + StepLog;
+  { For installing without a window, where the log (/LOG=) is all there is. }
+  Log(StepLog);
+  if Failed then
+    Log('WtF isn''t set up: a step failed.')
+  else
+    Log('WtF is set up.');
 end;
 
 { Uninstalling }
@@ -678,6 +749,17 @@ end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
+  { The service goes before the programs. wtfd service uninstall runs
+    through RunWtfd, whose output is read through a pipe: with a console of
+    its own, even a hidden one, wtfd asks whether to go ahead, and waits for
+    an answer nobody can give. }
+  if CurUninstallStep = usUninstall then
+  begin
+    if RunWtfd(ExpandConstant('{app}\bin\wtfd.exe'), 'service uninstall') <> 0 then
+      Log('wtfd service uninstall failed.');
+    Log(Output);
+    Exit;
+  end;
   if CurUninstallStep <> usPostUninstall then
     Exit;
   RemoveFromPath(ExpandConstant('{app}\bin'));
