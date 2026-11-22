@@ -388,6 +388,39 @@
                       }
                     ],
                     "description": "Values for its item attributes; the others get their class's defaults. Files are uploaded afterwards."
+                  },
+                  "stock": {
+                    "type": [
+                      "object",
+                      "null"
+                    ],
+                    "description": "Its first stock row, made with it in the same transaction, as POST /stock makes one: both are made, or, when either is refused, neither. Leave it out, or null, for no stock. The answer's `stock` has the row.",
+                    "additionalProperties": false,
+                    "properties": {
+                      "location": {
+                        "$ref": "#/components/schemas/Uuid"
+                      },
+                      "amount": {
+                        "type": [
+                          "number",
+                          "null"
+                        ],
+                        "description": "In the item's unit, whole for pieces; null: present but not counted."
+                      },
+                      "values": {
+                        "allOf": [
+                          {
+                            "$ref": "#/components/schemas/Values"
+                          }
+                        ],
+                        "description": "Values for its stock attributes; the others get their class's defaults."
+                      }
+                    },
+                    "required": [
+                      "location",
+                      "amount",
+                      "values"
+                    ]
                   }
                 },
                 "required": [

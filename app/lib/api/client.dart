@@ -18,6 +18,10 @@ const apiRevision = 1;
 
 const sessionCookie = 'wtf_session';
 
+/// A new item's first stock row, made with it (POST /items, `stock`):
+/// where, how many (null: not counted), and its stock values.
+typedef NewStock = ({String locationId, Decimal? amount, Values values});
+
 /// An API error: the server's problem details, or one the client makes up
 /// itself (types [ApiProblem.oldServer] and [ApiProblem.unreachable]).
 class ApiProblem implements Exception {
@@ -447,16 +451,30 @@ class ApiClient {
   /// [unit] is what its stock is counted in (null: pieces); [values] are by
   /// attribute name, in the API's types (see parseValue). The attributes
   /// not given get their defaults.
+  /// POST /items. With [stock], the item's first stock row is made with it,
+  /// in the same transaction: both, or neither.
   Future<ItemDetail> createItem({
     required String classId,
     required String name,
     String? unit,
     Values values = const {},
+    NewStock? stock,
   }) async => ItemDetail.fromJson(
     await _call(
       'POST',
       '/items',
-      body: {'class': classId, 'name': name, 'unit': unit, 'values': values},
+      body: {
+        'class': classId,
+        'name': name,
+        'unit': unit,
+        'values': values,
+        if (stock != null)
+          'stock': {
+            'location': stock.locationId,
+            'amount': stock.amount,
+            'values': stock.values,
+          },
+      },
     ) as Json,
   );
 

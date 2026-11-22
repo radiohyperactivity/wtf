@@ -4,8 +4,8 @@
 // elsewhere (another device, the CLI) aren't counted.
 
 /// The class of the last item added and the last class made, the location
-/// stock was last added to and the last location made, and the unit last
-/// given to an item of each class.
+/// stock was last added to and the last location made, the unit last given
+/// to an item of each class, and whether the last new item had stock.
 class Recent {
   // Each choice is numbered in the order it was made: the default is the
   // later of the two.
@@ -15,6 +15,10 @@ class Recent {
   _Choice? _stockLocation;
   _Choice? _newLocation;
   final Map<String, String> _units = {};
+
+  /// Whether the new-item form makes the item's first stock row with it:
+  /// as it was set for the last item added; at first, yes.
+  bool addStock = true;
 
   /// An item was added in class [id], with stock counted in [unit] (null:
   /// pieces).

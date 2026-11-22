@@ -143,7 +143,7 @@ The 51 functions the API calls, and the routes that call them (under `/api/v1`).
 | `stock.delete(p_stock)` | void | `DELETE /stock/{id}` |
 | `item.list(p_class, p_search, p_where, p_limit, p_after)` | page of items (list form) | `GET /items` |
 | `item.get(p_item)` | item | `GET /items/{id}` |
-| `item.create(p_class, p_name, p_unit, p_values)` | item | `POST /items` |
+| `item.create(p_class, p_name, p_unit, p_values, p_stock)` | item, with its first stock row when `p_stock` is given | `POST /items` |
 | `item.patch(p_item, p_patch)` | item | `PATCH /items/{id}` |
 | `item.delete(p_item)` | void | `DELETE /items/{id}` |
 | `attachment.lock(p_hash)` | void | `PUT /{kind}/{id}/photo`, `PUT /{kind}/{id}/files/{attribute}` (multipart; wtfd stores the file between the two calls) |

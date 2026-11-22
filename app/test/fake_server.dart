@@ -767,6 +767,24 @@ class FakeServer {
           'defaulted': defaulted,
         };
         items.add(item);
+        // Its first stock row, with it.
+        if (body['stock'] case final Map<String, dynamic> first) {
+          final (values, defaulted) = _newValues(
+            body['class'] as String,
+            'stock',
+            first['values'] as Map?,
+          );
+          stock.add({
+            'id': _id('s'),
+            'code': _code('1E'),
+            'item': item['id'],
+            'location': first['location'],
+            'amount': first['amount'],
+            'photo': null,
+            'values': values,
+            'defaulted': defaulted,
+          });
+        }
         return _json(itemJson(item['id'] as String), 201);
       case ('PATCH', ['items', final id]):
         final item = items.firstWhere((i) => i['id'] == id);

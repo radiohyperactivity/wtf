@@ -254,7 +254,6 @@ GoRouter buildRouter(Session session, Camera camera) => GoRouter(
           builder: (context, state) => StockFormScreen(
             itemId: state.uri.queryParameters['item'],
             locationId: state.uri.queryParameters['location'],
-            then: state.uri.queryParameters['then'],
           ),
         ),
         GoRoute(

@@ -74,6 +74,9 @@ func (s *server) routes() []route {
 			field{key: "name", name: "p_name", typ: "text"},
 			field{key: "unit", name: "p_unit", typ: "text"},
 			field{key: "values", name: "p_values", typ: "jsonb"},
+			// The item's first stock row, made with it; optional, as it came
+			// after the rest.
+			field{key: "stock", name: "p_stock", typ: "jsonb", optional: true},
 		))},
 		{"GET /items/{id}", s.read("item.get", path("p_item", "id"))},
 		{"PATCH /items/{id}", s.update("item.patch", path("p_item", "id"), patch("p_patch"))},

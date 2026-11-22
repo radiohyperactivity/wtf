@@ -17,20 +17,11 @@ import '../widgets/value_fields.dart';
 /// location and amount (empty: uncounted), then the values of the class's
 /// stock attributes.
 class StockFormScreen extends StatelessWidget {
-  const StockFormScreen({
-    super.key,
-    this.code,
-    this.itemId,
-    this.locationId,
-    this.then,
-  });
+  const StockFormScreen({super.key, this.code, this.itemId, this.locationId});
 
   final String? code;
   final String? itemId;
   final String? locationId;
-
-  /// Where to go after adding, instead of back (after a new item, its screen).
-  final String? then;
 
   @override
   Widget build(BuildContext context) {
@@ -59,7 +50,6 @@ class StockFormScreen extends StatelessWidget {
         item: data.$2,
         locations: data.$3,
         locationId: locationId,
-        then: then,
       ),
     );
   }
@@ -71,14 +61,12 @@ class _StockForm extends StatefulWidget {
     required this.item,
     required this.locations,
     this.locationId,
-    this.then,
   });
 
   final Stock? stock;
   final ItemDetail? item;
   final Tree locations;
   final String? locationId;
-  final String? then;
 
   @override
   State<_StockForm> createState() => _StockFormState();
@@ -187,16 +175,6 @@ class _StockFormState extends State<_StockForm> {
     if (_item != null && _amount.text.isEmpty) _amountFocus.requestFocus();
   }
 
-  /// Where to go after adding: the page the form was told to go on to (the
-  /// new item's screen, or the form for the next new item), if it is one of
-  /// this app's.
-  String? get _then {
-    final then = widget.then;
-    return then != null && then.startsWith('/') && !then.startsWith('//')
-        ? then
-        : null;
-  }
-
   /// Saves; with [another], new stock is followed by the form again, for
   /// more of the same item at the same place.
   Future<void> _save({bool another = false}) async {
@@ -228,7 +206,6 @@ class _StockFormState extends State<_StockForm> {
             context,
             'Added ${item.name} at ${widget.locations.pathOf(location)}.',
           );
-          final then = _then;
           if (another) {
             // The item stays if the form was opened for it (from its
             // screen); from a location's, the next item is chosen.
@@ -238,12 +215,9 @@ class _StockFormState extends State<_StockForm> {
                 queryParameters: {
                   if (widget.item != null) 'item': item.id,
                   'location': location,
-                  'then': ?then,
                 },
               ).toString(),
             );
-          } else if (then != null) {
-            context.pushReplacement(then);
           } else {
             context.pop(created);
           }
@@ -270,145 +244,134 @@ class _StockFormState extends State<_StockForm> {
   @override
   Widget build(BuildContext context) {
     final item = _item;
-    final then = _then;
-    // After a new item, back adds no stock and goes on as adding would: to
-    // the item's screen, or the form for the next item.
-    return PopScope(
-      canPop: then == null,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && then != null) context.pushReplacement(then);
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(
-            _editing ? 'Edit stock ${widget.stock!.code}' : 'Add stock',
-          ),
-          actions: [
-            if (!_editing)
-              AnotherButton(
-                label: 'Add and add another',
-                onPressed: _busy ? null : _saveAnother,
-              ),
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: FilledButton(
-                onPressed: _busy ? null : _save,
-                child: Text(_editing ? 'Save' : 'Add'),
-              ),
-            ),
-          ],
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          _editing ? 'Edit stock ${widget.stock!.code}' : 'Add stock',
         ),
-        body: Readable(
-          maxWidth: 640,
-          child: FormKeys(
-            save: _save,
-            saveAnother: _editing ? null : _saveAnother,
-            child: Form(
-              key: _form,
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  // The item of an existing row is changed with care elsewhere
-                  // (as in the CLI, where `stock set --item` does it).
-                  InputDecorator(
-                    decoration: const InputDecoration(
-                      labelText: 'Item',
-                      border: OutlineInputBorder(),
-                    ),
-                    child: PickerKeys(
-                      open: _editing || widget.item != null
+        actions: [
+          if (!_editing)
+            AnotherButton(
+              label: 'Add and add another',
+              onPressed: _busy ? null : _saveAnother,
+            ),
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: FilledButton(
+              onPressed: _busy ? null : _save,
+              child: Text(_editing ? 'Save' : 'Add'),
+            ),
+          ),
+        ],
+      ),
+      body: Readable(
+        maxWidth: 640,
+        child: FormKeys(
+          save: _save,
+          saveAnother: _editing ? null : _saveAnother,
+          child: Form(
+            key: _form,
+            child: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                // The item of an existing row is changed with care elsewhere
+                // (as in the CLI, where `stock set --item` does it).
+                InputDecorator(
+                  decoration: const InputDecoration(
+                    labelText: 'Item',
+                    border: OutlineInputBorder(),
+                  ),
+                  child: PickerKeys(
+                    open: _editing || widget.item != null ? null : _chooseItem,
+                    child: InkWell(
+                      onTap: _editing || widget.item != null
                           ? null
                           : _chooseItem,
-                      child: InkWell(
-                        onTap: _editing || widget.item != null
-                            ? null
-                            : _chooseItem,
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                item == null
-                                    ? 'Choose an item'
-                                    : '${item.name}  (${item.code})',
-                              ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              item == null
+                                  ? 'Choose an item'
+                                  : '${item.name}  (${item.code})',
                             ),
-                            if (!_editing && widget.item == null)
-                              const Icon(Icons.arrow_drop_down),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  InputDecorator(
-                    decoration: const InputDecoration(
-                      labelText: 'Location',
-                      border: OutlineInputBorder(),
-                    ),
-                    child: PickerKeys(
-                      open: _chooseLocation,
-                      child: InkWell(
-                        onTap: _chooseLocation,
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                _locationId == null
-                                    ? 'Choose a location'
-                                    : widget.locations.pathOf(_locationId),
-                              ),
-                            ),
+                          ),
+                          if (!_editing && widget.item == null)
                             const Icon(Icons.arrow_drop_down),
-                          ],
-                        ),
+                        ],
                       ),
                     ),
                   ),
-                  if (item != null) ...[
-                    const SizedBox(height: 16),
-                    AmountField(
-                      controller: _amount,
-                      unit: item.unit,
-                      focusNode: _amountFocus,
-                      // Ready to type, when the item and place are known.
-                      autofocus: !_editing && _locationId != null,
-                      onSubmitted: lastTyped(_inputs) == null ? _save : null,
-                    ),
-                  ],
-                  if (_loadError != null) ...[
-                    const SizedBox(height: 16),
-                    Text(
-                      errorText(_loadError!),
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
+                ),
+                const SizedBox(height: 16),
+                InputDecorator(
+                  decoration: const InputDecoration(
+                    labelText: 'Location',
+                    border: OutlineInputBorder(),
+                  ),
+                  child: PickerKeys(
+                    open: _chooseLocation,
+                    child: InkWell(
+                      onTap: _chooseLocation,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _locationId == null
+                                  ? 'Choose a location'
+                                  : widget.locations.pathOf(_locationId),
+                            ),
+                          ),
+                          const Icon(Icons.arrow_drop_down),
+                        ],
                       ),
                     ),
-                    TextButton(
-                      onPressed: _loadItem,
-                      child: const Text('Try again'),
-                    ),
-                  ],
-                  if (_loading)
-                    const Padding(
-                      padding: EdgeInsets.all(16),
-                      child: LinearProgressIndicator(),
-                    ),
-                  if (_inputs.isNotEmpty) ...[
-                    const SectionTitle('Stock values'),
-                    for (final i in _inputs)
-                      Padding(
-                        key: ValueKey(i.attribute.name),
-                        padding: const EdgeInsets.only(top: 12),
-                        child: ValueField(
-                          i,
-                          onSubmitted: identical(i, lastTyped(_inputs))
-                              ? _save
-                              : null,
-                        ),
-                      ),
-                  ],
+                  ),
+                ),
+                if (item != null) ...[
+                  const SizedBox(height: 16),
+                  AmountField(
+                    controller: _amount,
+                    unit: item.unit,
+                    focusNode: _amountFocus,
+                    // Ready to type, when the item and place are known.
+                    autofocus: !_editing && _locationId != null,
+                    onSubmitted: lastTyped(_inputs) == null ? _save : null,
+                  ),
                 ],
-              ),
+                if (_loadError != null) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    errorText(_loadError!),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _loadItem,
+                    child: const Text('Try again'),
+                  ),
+                ],
+                if (_loading)
+                  const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: LinearProgressIndicator(),
+                  ),
+                if (_inputs.isNotEmpty) ...[
+                  const SectionTitle('Stock values'),
+                  for (final i in _inputs)
+                    Padding(
+                      key: ValueKey(i.attribute.name),
+                      padding: const EdgeInsets.only(top: 12),
+                      child: ValueField(
+                        i,
+                        onSubmitted: identical(i, lastTyped(_inputs))
+                            ? _save
+                            : null,
+                      ),
+                    ),
+                ],
+              ],
             ),
           ),
         ),

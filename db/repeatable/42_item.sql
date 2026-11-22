@@ -400,14 +400,20 @@ $$;
 -- gives no value). Every attribute it isn't given a value for gets its
 -- class's default, if it has one, and follows it; a required one without
 -- a default must be given. Files are uploaded afterwards. p_unit is what its
--- stock is counted in, a label ("m"); NULL for pieces. Returns the item as
--- item.get does.
+-- stock is counted in, a label ("m"); NULL for pieces.
+--
+-- With p_stock, {"location": <id>, "amount": <number or null>, "values":
+-- {...}}, its first stock row is made with it, as stock.create makes one,
+-- in the same transaction: both are made, or, when either is refused,
+-- neither. NULL for no stock. Returns the item as item.get does, with its
+-- stock.
 CREATE FUNCTION item.create(
     p_request public.request,
     p_class   uuid,
     p_name    text,
     p_unit    text,
-    p_values  jsonb
+    p_values  jsonb,
+    p_stock   jsonb DEFAULT NULL
 ) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
@@ -420,6 +426,18 @@ DECLARE
     v_checked record;
     v_item    public.item;
 BEGIN
+    IF p_stock IS NOT NULL THEN
+        IF jsonb_typeof(p_stock) <> 'object' THEN
+            PERFORM error.invalid('stock must be a JSON object, or null for none');
+        END IF;
+        PERFORM util.check_patch(p_stock, ARRAY['location', 'amount', 'values'], ARRAY['location']);
+        IF NOT (p_stock ? 'location' AND p_stock ? 'amount' AND p_stock ? 'values') THEN
+            PERFORM error.invalid('stock needs location, amount and values (amount may be null: not counted)');
+        END IF;
+        IF jsonb_typeof(p_stock -> 'amount') NOT IN ('number', 'null') THEN
+            PERFORM error.invalid('stock''s amount must be a number, or null for not counted');
+        END IF;
+    END IF;
     v_class := item.class_for_write(p_class);
     PERFORM item.refuse_files(v_class, 'item', v_values);
     v_checked := class.check_values(v_values, '{}', v_class.attributes, 'item', true);
@@ -432,6 +450,10 @@ BEGIN
             v_checked.new_values, v_checked.new_defaulted,
             class.search_text(v_name, class.path_text(p_class), v_checked.new_values, v_class.attributes))
     RETURNING * INTO v_item;
+    IF p_stock IS NOT NULL THEN
+        PERFORM stock.create(p_request, v_item.id, (p_stock ->> 'location')::uuid,
+                             (p_stock ->> 'amount')::numeric, p_stock -> 'values');
+    END IF;
     RETURN item.detail_json(v_item);
 END;
 $$;

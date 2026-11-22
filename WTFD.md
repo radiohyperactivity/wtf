@@ -379,7 +379,7 @@ Every route calls one function ([API.md](API.md) has them all); a body's fields 
 | `POST /classes/{id}/attributes/{attribute}/choices/{choice}/rename` | `class.choice_rename` | `{choice}`; `?dry_run=true` |
 | `DELETE /classes/{id}/attributes/{attribute}/choices/{choice}` | `class.choice_remove` | `?dry_run=true` |
 | `GET /items` | `item.list` | `?class=&search=&where=&limit=&after=` (`where`: JSON, see [api/item.md](api/item.md)) |
-| `POST /items` | `item.create` | `{class, name, unit, values}` |
+| `POST /items` | `item.create` | `{class, name, unit, values}`, and optionally `stock`: `{location, amount, values}`, its first stock row, made in the same transaction |
 | `GET /items/{id}` | `item.get` | |
 | `PATCH /items/{id}` | `item.patch` | patch object |
 | `DELETE /items/{id}` | `item.delete` | |

@@ -1272,8 +1272,21 @@ void main() {
     expect(find.textContaining('nothing converts'), findsOneWidget);
     expect(fake.changes, isEmpty);
 
-    // With the unit's own label, or without, it is the same.
+    // With the unit's own label, or without, it is the same. Add stock is
+    // on at first, and wants a location, none being known yet.
     await tester.enterText(field('Voltage *'), '18 V');
+    await tester.tap(find.text('Create'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Choose a location for its stock'),
+      findsOneWidget,
+    );
+    expect(fake.changes, isEmpty);
+
+    // Without stock: the item alone, and its screen.
+    await tester.ensureVisible(find.text('Add stock'));
+    await tester.tap(find.text('Add stock'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
     expect(
@@ -1281,20 +1294,14 @@ void main() {
       'POST /api/v1/items {"class":"c-drills","name":"Impact driver",'
       '"unit":null,"values":{"Voltage":18}}',
     );
-
-    // Its stock comes next; back adds none, and shows the item.
-    expect(find.widgetWithText(AppBar, 'Add stock'), findsOneWidget);
-    expect(find.textContaining('Impact driver  ('), findsOneWidget);
-    await tester.tap(find.byTooltip('Back'));
-    await tester.pumpAndSettle();
-    expect(find.widgetWithText(AppBar, 'Add stock'), findsNothing);
+    expect(find.widgetWithText(AppBar, 'New item'), findsNothing);
     expect(find.text('Impact driver'), findsWidgets);
     expect(find.text('No stock.'), findsOneWidget);
     // The default it was given.
     expect(find.text('Red  (default)'), findsOneWidget);
   });
 
-  testWidgets('add an item counted in metres, then its stock', (tester) async {
+  testWidgets('add an item counted in metres, with its stock', (tester) async {
     setSize(tester, 1000);
     final fake = FakeServer();
     await startApp(tester, fake);
@@ -1307,90 +1314,122 @@ void main() {
     await tester.enterText(field('Name'), 'Drill cable');
     await tester.enterText(field('Unit of its stock'), 'm');
     await tester.enterText(field('Voltage *'), '230');
-    await tester.tap(find.text('Create'));
-    await tester.pumpAndSettle();
-    expect(fake.changes.single, contains('"unit":"m"'));
 
-    // Its stock form follows at once.
+    // Its stock on the same form, in the item's unit.
+    await tester.ensureVisible(find.text('Choose a location'));
     await tester.tap(find.text('Choose a location'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Garage/Shelf 2'));
     await tester.pumpAndSettle();
     await tester.enterText(field('Amount'), '2.5 m');
     await tester.enterText(field('Bought'), '2026-11-01');
-    await tester.tap(find.widgetWithText(FilledButton, 'Add'));
+    await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
 
+    // One request, both together.
     expect(
-      fake.changes.last,
-      endsWith(
-        '{"item":"i-new0","location":"l-shelf2","amount":2.5,'
-        '"values":{"Bought":"2026-11-01"}}',
-      ),
+      fake.changes.single,
+      'POST /api/v1/items {"class":"c-drills","name":"Drill cable",'
+      '"unit":"m","values":{"Voltage":230},"stock":{"location":"l-shelf2",'
+      '"amount":2.5,"values":{"Bought":"2026-11-01"}}}',
     );
     // Then the item's screen shows it.
+    expect(find.widgetWithText(AppBar, 'New item'), findsNothing);
     expect(find.text('Drill cable'), findsWidgets);
     expect(find.text('2.5 m'), findsOneWidget);
     expect(find.text('2026-11-01'), findsOneWidget);
   });
 
-  testWidgets('one item after another: class, unit and location carry over', (
-    tester,
-  ) async {
-    setSize(tester, 1000);
-    final fake = FakeServer();
-    await startApp(tester, fake);
-    await tester.tap(find.text('New item'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Choose a class'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Tools/Drills'));
-    await tester.pumpAndSettle();
-    await tester.enterText(field('Name'), 'Drill cable');
-    await tester.enterText(field('Unit of its stock'), 'm');
-    await tester.enterText(field('Voltage *'), '230');
-    await tester.tap(find.text('Create and add another'));
-    await tester.pumpAndSettle();
+  testWidgets(
+    'one item after another: class, unit, stock and location carry over',
+    (tester) async {
+      setSize(tester, 1000);
+      final fake = FakeServer();
+      await startApp(tester, fake);
+      await tester.tap(find.text('New item'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Choose a class'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Tools/Drills'));
+      await tester.pumpAndSettle();
+      await tester.enterText(field('Name'), 'Drill cable');
+      await tester.enterText(field('Unit of its stock'), 'm');
+      await tester.enterText(field('Voltage *'), '230');
+      await tester.ensureVisible(find.text('Choose a location'));
+      await tester.tap(find.text('Choose a location'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Garage/Shelf 2'));
+      await tester.pumpAndSettle();
+      await tester.enterText(field('Amount'), '2.5 m');
+      await tester.tap(find.text('Create and add another'));
+      await tester.pumpAndSettle();
+      expect(fake.changes.single, contains('"stock":{"location":"l-shelf2"'));
 
-    // Its stock, then the next item's form.
-    await tester.tap(find.text('Choose a location'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Garage/Shelf 2'));
-    await tester.pumpAndSettle();
-    await tester.enterText(field('Amount'), '2.5 m');
-    await tester.tap(find.widgetWithText(FilledButton, 'Add'));
-    await tester.pumpAndSettle();
-    expect(find.widgetWithText(AppBar, 'New item'), findsOneWidget);
+      // The next item's form: the class and unit of the last item, its stock
+      // at the same place; ready for the name.
+      expect(find.widgetWithText(AppBar, 'New item'), findsOneWidget);
+      expect(find.text('Tools/Drills'), findsOneWidget);
+      expect(
+        tester
+            .widget<TextFormField>(field('Unit of its stock'))
+            .controller!
+            .text,
+        'm',
+      );
+      expect(find.text('Garage/Shelf 2'), findsOneWidget);
+      expect(
+        tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
+        isTrue,
+      );
+      final name = tester.widget<EditableText>(
+        find.descendant(of: field('Name'), matching: find.byType(EditableText)),
+      );
+      expect(name.focusNode.hasFocus, isTrue);
+      await tester.enterText(field('Name'), 'Extension cable');
+      await tester.enterText(field('Voltage *'), '230');
+      // Enter in Manual, the item's last field, goes on: the stock's fields
+      // come after it.
+      await tester.enterText(field('Manual'), '');
+      await tester.testTextInput.receiveAction(TextInputAction.next);
+      await tester.pumpAndSettle();
+      expect(fake.changes, hasLength(1));
+      await tester.enterText(field('Amount'), '10');
+      // Enter in Bought, the stock's last field, creates both.
+      await tester.enterText(field('Bought'), '');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(fake.changes.last, contains('"name":"Extension cable"'));
+      expect(fake.changes.last, contains('"unit":"m"'));
+      expect(fake.changes.last, contains('"location":"l-shelf2","amount":10'));
+      expect(find.text('Extension cable'), findsWidgets);
 
-    // The class and unit of the last item; ready for the name.
-    expect(find.text('Tools/Drills'), findsOneWidget);
-    expect(
-      tester.widget<TextFormField>(field('Unit of its stock')).controller!.text,
-      'm',
-    );
-    final name = tester.widget<EditableText>(
-      find.descendant(of: field('Name'), matching: find.byType(EditableText)),
-    );
-    expect(name.focusNode.hasFocus, isTrue);
-    await tester.enterText(field('Name'), 'Extension cable');
-    await tester.enterText(field('Voltage *'), '230');
-    // Enter in the last field typed into, Manual, creates it.
-    await tester.enterText(field('Manual'), '');
-    await tester.testTextInput.receiveAction(TextInputAction.done);
-    await tester.pumpAndSettle();
-    expect(fake.changes.last, contains('"name":"Extension cable"'));
-    expect(fake.changes.last, contains('"unit":"m"'));
-
-    // Its stock goes where the last went.
-    expect(find.text('Garage/Shelf 2'), findsOneWidget);
-    await tester.enterText(field('Amount'), '10');
-    // Enter in Bought, the last field, adds it.
-    await tester.enterText(field('Bought'), '');
-    await tester.testTextInput.receiveAction(TextInputAction.done);
-    await tester.pumpAndSettle();
-    expect(fake.changes.last, contains('"location":"l-shelf2","amount":10'));
-    expect(find.text('Extension cable'), findsWidgets);
-  });
+      // Add stock turned off stays off for the next new item; Enter in the
+      // item's last field then creates it.
+      clearMessages(tester);
+      await tester.tap(find.text('Items'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('New item'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Add stock'));
+      await tester.tap(find.text('Add stock'));
+      await tester.pumpAndSettle();
+      await tester.enterText(field('Name'), 'Hook');
+      await tester.enterText(field('Voltage *'), '12');
+      await tester.enterText(field('Manual'), '');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(fake.changes.last, isNot(contains('"stock"')));
+      clearMessages(tester);
+      await tester.tap(find.text('Items'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('New item'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
+        isFalse,
+      );
+    },
+  );
 
   testWidgets('on a phone, the keyboard comes only when asked for', (
     tester,

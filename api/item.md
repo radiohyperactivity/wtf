@@ -8,7 +8,7 @@ The SQL is in [`db/repeatable/42_item.sql`](../db/repeatable/42_item.sql). Value
 
 - **`unit`** is what its stock is counted in, a label such as `"m"`; null for pieces, whose amounts are whole.
 - **`photo`** is the hash of its photo's file, or null ([attachment.md](attachment.md)).
-- **`item.create(p_class, p_name, p_unit, p_values)`** makes an item; its class can't be a container.
+- **`item.create(p_class, p_name, p_unit, p_values, p_stock)`** makes an item; its class can't be a container. With `p_stock`, `{"location": …, "amount": …, "values": {…}}`, it also makes the item's first stock row, as `stock.create` does, in the same transaction: both are made, or, when either is refused, neither. The apps make a new item's stock with it this way (APP.md, decision 107). `p_stock` is optional (null: no stock), having come after the rest, while its own three fields are all required, as for `stock.create`.
 - **`item.patch(p_item, p_patch)`** changes `class`, `name`, `unit` (null: pieces, refused while a stock amount isn't whole), `photo` (null only: a photo is uploaded), and the values (`values` and `default`, [attribute.md](attribute.md)), in one transaction. In another class, its values and its stock rows' values are checked against the new class, and those that follow a default take the new class's.
 
 ## Lists

@@ -209,6 +209,43 @@ func TestStock(t *testing.T) {
 	if n := len(get(t, item, "stock").([]any)); n != 3 {
 		t.Errorf("item get has %d stock rows, want 3", n)
 	}
+
+	// An item made with its first stock row, in one request: the answer is
+	// the item with it.
+	made := e.expect(t, 201, "POST", "/items", obj("class", classID, "name", "Bolt",
+		"stock", obj("location", garage, "amount", 5, "values", obj("Serial", "SN-9")))).body
+	if rows := get(t, made, "stock").([]any); len(rows) != 1 || num(t, rows[0], "amount") != 5 ||
+		str(t, rows[0], "values", "Serial") != "SN-9" || str(t, rows[0], "location") != garage {
+		t.Errorf("an item with its stock: %v", get(t, made, "stock"))
+	}
+	// Uncounted, and without stock (null, as leaving it out).
+	made = e.expect(t, 201, "POST", "/items", obj("class", classID, "name", "Nut",
+		"stock", obj("location", attic, "amount", nil, "values", obj()))).body
+	if rows := get(t, made, "stock").([]any); len(rows) != 1 || get(t, rows[0], "amount") != nil {
+		t.Errorf("an item with uncounted stock: %v", get(t, made, "stock"))
+	}
+	made = e.expect(t, 201, "POST", "/items", obj("class", classID, "name", "Washer", "stock", nil)).body
+	if rows := get(t, made, "stock").([]any); len(rows) != 0 {
+		t.Errorf("an item with stock null: %v", rows)
+	}
+
+	// Refused stock refuses the item too: nothing is made.
+	e.expect(t, 422, "POST", "/items", obj("class", classID, "name", "Rivet",
+		"stock", obj("location", garage, "amount", 1.5, "values", obj())))
+	e.expect(t, 422, "POST", "/items", obj("class", classID, "name", "Rivet",
+		"stock", obj("location", "00000000-0000-0000-0000-000000000000", "amount", 1, "values", obj())))
+	for _, bad := range []map[string]any{
+		obj("location", garage, "amount", 1),                              // no values
+		obj("location", nil, "amount", 1, "values", obj()),                // no location
+		obj("location", garage, "amount", "1", "values", obj()),           // not a number
+		obj("location", garage, "amount", 1, "values", obj(), "count", 1), // unknown
+	} {
+		e.expect(t, 400, "POST", "/items", obj("class", classID, "name", "Rivet", "stock", bad))
+	}
+	e.expect(t, 400, "POST", "/items", obj("class", classID, "name", "Rivet", "stock", "garage"))
+	if rows := get(t, e.expect(t, 200, "GET", "/items?search=rivet", nil).body, "rows").([]any); len(rows) != 0 {
+		t.Errorf("a refused item was made: %v", rows)
+	}
 }
 
 func TestTreeVersions(t *testing.T) {

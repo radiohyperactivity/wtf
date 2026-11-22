@@ -14,8 +14,9 @@ import '../widgets/value_fields.dart';
 
 /// Adds an item (in [classId], if given), or edits the item with [code].
 /// Like `wtf item add` and `wtf item edit`: class, name, what its stock is
-/// counted in, then the class's attributes. Saving an item is one request,
-/// its fields and values together.
+/// counted in, then the class's attributes. A new item's first stock row is
+/// on the same form, and saved with it, in one request: where it is, how
+/// many, and its stock values (decision 107).
 class ItemFormScreen extends StatelessWidget {
   const ItemFormScreen({super.key, this.code, this.classId});
 
@@ -26,28 +27,42 @@ class ItemFormScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final client = context.read<Session>().client;
     final code = this.code;
-    return Loader<(ItemDetail?, Tree)>(
+    return Loader<(ItemDetail?, Tree, Tree?)>(
       title: code == null ? 'New item' : 'Edit item',
       load: () async {
         final classes = await client.tree(TreeKind.classes);
-        if (code == null) return (null, classes);
+        if (code == null) {
+          return (null, classes, await client.tree(TreeKind.locations));
+        }
         final target = await client.code(code);
         if (target is! CodeItem) {
           throw InputError('There is no item with the code $code.');
         }
-        return (target.item, classes);
+        return (target.item, classes, null);
       },
-      builder: (context, data, _) =>
-          _ItemForm(item: data.$1, classes: data.$2, classId: classId),
+      builder: (context, data, _) => _ItemForm(
+        item: data.$1,
+        classes: data.$2,
+        locations: data.$3,
+        classId: classId,
+      ),
     );
   }
 }
 
 class _ItemForm extends StatefulWidget {
-  const _ItemForm({required this.item, required this.classes, this.classId});
+  const _ItemForm({
+    required this.item,
+    required this.classes,
+    required this.locations,
+    this.classId,
+  });
 
   final ItemDetail? item;
   final Tree classes;
+
+  /// For a new item's stock; null when editing.
+  final Tree? locations;
   final String? classId;
 
   @override
@@ -58,7 +73,9 @@ class _ItemFormState extends State<_ItemForm> {
   final _form = GlobalKey<FormState>();
   late final _name = TextEditingController(text: widget.item?.name ?? '');
   late final _unit = TextEditingController(text: widget.item?.unit ?? '');
+  final _amount = TextEditingController();
   final _nameFocus = FocusNode();
+  final _amountFocus = FocusNode();
 
   // A new item's class: the one the form was opened for (from a class's
   // screen, say), else the one this session last added an item in or made,
@@ -68,11 +85,19 @@ class _ItemFormState extends State<_ItemForm> {
       _usable(widget.classId) ??
       context.read<Session>().recent.itemClass((id) => _usable(id) != null);
 
+  // A new item's stock: whether to add it, as for the last item this
+  // session added; and where, as for new stock on its own form.
+  late bool _addStock = context.read<Session>().recent.addStock;
+  late String? _locationId = context.read<Session>().recent.stockLocation(
+    (id) => _usableLocation(id) != null,
+  );
+
   // Whether the unit was typed into: until it is, a new item's unit is the
   // one last given to an item of its class.
   bool _unitTyped = false;
   ClassDetail? _class;
   List<ValueInput> _inputs = [];
+  List<ValueInput> _stockInputs = [];
   bool _loadingValues = false;
   Object? _valuesError;
   bool _busy = false;
@@ -84,6 +109,10 @@ class _ItemFormState extends State<_ItemForm> {
   String? _usable(String? id) =>
       id != null && widget.classes[id]?.container == false ? id : null;
 
+  /// A location stock can be at: not a container.
+  String? _usableLocation(String? id) =>
+      id != null && widget.locations?[id]?.container == false ? id : null;
+
   @override
   void initState() {
     super.initState();
@@ -94,15 +123,18 @@ class _ItemFormState extends State<_ItemForm> {
   void dispose() {
     _name.dispose();
     _unit.dispose();
+    _amount.dispose();
     _nameFocus.dispose();
-    for (final i in _inputs) {
+    _amountFocus.dispose();
+    for (final i in [..._inputs, ..._stockInputs]) {
       i.dispose();
     }
     super.dispose();
   }
 
-  /// The attribute inputs of the chosen class. Text typed for an attribute
-  /// the new class has too is kept.
+  /// The attribute inputs of the chosen class: the item's, and for a new
+  /// item its stock row's. Text typed for an attribute the new class has
+  /// too is kept.
   Future<void> _loadValues() async {
     final classId = _classId;
     if (classId == null) return;
@@ -114,9 +146,18 @@ class _ItemFormState extends State<_ItemForm> {
       _valuesError = null;
     });
     try {
-      final typed = {
-        for (final i in _inputs) i.attribute.name: i.controller.text,
+      Map<String, String> typed(List<ValueInput> inputs) => {
+        for (final i in inputs) i.attribute.name: i.controller.text,
       };
+      void keep(List<ValueInput> inputs, Map<String, String> typed) {
+        for (final i in inputs) {
+          final text = typed[i.attribute.name];
+          if (text != null) i.controller.text = text;
+        }
+      }
+
+      final typedItem = typed(_inputs);
+      final typedStock = typed(_stockInputs);
       final cls = await _client.cls(classId);
       final item = widget.item;
       final inputs = valueInputs(
@@ -125,15 +166,17 @@ class _ItemFormState extends State<_ItemForm> {
         values: item?.values ?? const {},
         defaulted: item?.defaulted ?? const {},
       );
-      for (final i in inputs) {
-        final text = typed[i.attribute.name];
-        if (text != null) i.controller.text = text;
-      }
+      final stockInputs = _editing
+          ? <ValueInput>[]
+          : valueInputs(cls, stock: true);
+      keep(inputs, typedItem);
+      keep(stockInputs, typedStock);
       if (!mounted || classId != _classId) return;
-      final old = _inputs;
+      final old = [..._inputs, ..._stockInputs];
       setState(() {
         _class = cls;
         _inputs = inputs;
+        _stockInputs = stockInputs;
       });
       // The old fields are still drawn once more.
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -163,6 +206,20 @@ class _ItemFormState extends State<_ItemForm> {
     if (!_editing && _name.text.isEmpty) _nameFocus.requestFocus();
   }
 
+  Future<void> _chooseLocation([String query = '']) async {
+    final id = await pickNode(
+      context,
+      TreeKind.locations,
+      query: query,
+      title: 'Location',
+      forUse: true,
+    );
+    if (id == null) return;
+    setState(() => _locationId = id);
+    // On to the amount, as Tab would have gone.
+    if (_amount.text.isEmpty) _amountFocus.requestFocus();
+  }
+
   /// The values the item has that the chosen class has no attribute for:
   /// moving it there removes them.
   List<String> get _dropped {
@@ -177,8 +234,18 @@ class _ItemFormState extends State<_ItemForm> {
 
   String? get _unitText => _unit.text.trim().isEmpty ? null : _unit.text.trim();
 
-  /// Saves; with [another], a new item's stock form leads to the form for
-  /// the next new item, instead of to the item's screen.
+  /// Whether the form makes a stock row with the new item.
+  bool get _withStock => !_editing && _addStock;
+
+  /// The field Enter saves in: the last one typed into, of the parts in use
+  /// (a list to choose from takes Enter for choosing). The amount's
+  /// controller stands for the amount, the unit's for the unit.
+  Object get _lastField => _withStock
+      ? lastTyped(_stockInputs) ?? _amount
+      : lastTyped(_inputs) ?? _unit;
+
+  /// Saves; with [another], the form for the next new item follows instead
+  /// of the item's screen.
   Future<void> _save({bool another = false}) async {
     if (_busy || _loadingValues || _classId == null) {
       if (_classId == null) {
@@ -187,6 +254,15 @@ class _ItemFormState extends State<_ItemForm> {
       return;
     }
     if (!_form.currentState!.validate()) return;
+    if (_withStock && _locationId == null) {
+      showError(
+        context,
+        const InputError(
+          'Choose a location for its stock, or turn off Add stock.',
+        ),
+      );
+      return;
+    }
     setState(() => _busy = true);
     try {
       final item = widget.item;
@@ -202,23 +278,38 @@ class _ItemFormState extends State<_ItemForm> {
     }
   }
 
-  /// Creates the item, and goes on to its stock: where it is, and how many.
-  /// Back on the stock form adds none. Then comes the item's screen, or with
-  /// [another], the form for the next item.
+  /// Creates the item, with its first stock row when Add stock is on: both
+  /// in one request, so both are made, or neither. Then comes the item's
+  /// screen, or with [another], the form for the next item.
   Future<void> _create({required bool another}) async {
     final classId = _classId!;
+    final unit = _unitText;
+    final location = _withStock ? _locationId : null;
     final item = await _client.createItem(
       classId: classId,
       name: _name.text.trim(),
-      unit: _unitText,
+      unit: unit,
       values: newValues(_inputs),
+      stock: location == null
+          ? null
+          : (
+              locationId: location,
+              amount: AmountField.parse(_amount, unit),
+              values: newValues(_stockInputs),
+            ),
     );
     if (!mounted) return;
-    context.read<Session>().recent.itemAdded(classId, _unitText);
-    final then = another ? '/items/new' : '/items/${item.code}';
-    context.pushReplacement(
-      '/stock/new?item=${item.id}&then=${Uri.encodeComponent(then)}',
+    final recent = context.read<Session>().recent
+      ..itemAdded(classId, unit)
+      ..addStock = _addStock;
+    if (location != null) recent.stockAdded(location);
+    showMessage(
+      context,
+      location == null
+          ? 'Created ${item.name}.'
+          : 'Created ${item.name}, at ${widget.locations!.pathOf(location)}.',
     );
+    context.pushReplacement(another ? '/items/new' : '/items/${item.code}');
   }
 
   Future<void> _update(ItemDetail item) async {
@@ -245,6 +336,7 @@ class _ItemFormState extends State<_ItemForm> {
   @override
   Widget build(BuildContext context) {
     final dropped = _dropped;
+    final last = _lastField;
     return Scaffold(
       appBar: AppBar(
         title: Text(_editing ? 'Edit ${widget.item!.name}' : 'New item'),
@@ -324,14 +416,13 @@ class _ItemFormState extends State<_ItemForm> {
                 const SizedBox(height: 16),
                 TextFormField(
                   controller: _unit,
-                  onChanged: (_) => _unitTyped = true,
-                  // The last field typed into when the class has no values
-                  // to type.
-                  textInputAction: lastTyped(_inputs) == null
+                  // The amount's unit follows what is typed here.
+                  onChanged: (_) => setState(() => _unitTyped = true),
+                  textInputAction: identical(last, _unit)
                       ? TextInputAction.done
                       : TextInputAction.next,
                   onFieldSubmitted: (_) {
-                    if (lastTyped(_inputs) == null) _save();
+                    if (identical(_lastField, _unit)) _save();
                   },
                   decoration: const InputDecoration(
                     labelText: 'Unit of its stock',
@@ -373,18 +464,83 @@ class _ItemFormState extends State<_ItemForm> {
                       padding: const EdgeInsets.only(top: 12),
                       child: ValueField(
                         i,
-                        onSubmitted: identical(i, lastTyped(_inputs))
-                            ? _save
-                            : null,
+                        onSubmitted: identical(i, last) ? _save : null,
                       ),
                     ),
                 ],
+                if (!_editing) ..._stockSection(last),
               ],
             ),
           ),
         ),
       ),
     );
+  }
+
+  /// A new item's first stock row: Add stock, then where, how many, and its
+  /// stock values; greyed out and left out of Tab's order while Add stock is
+  /// off.
+  List<Widget> _stockSection(Object last) {
+    final on = _addStock;
+    final locations = widget.locations!;
+    return [
+      const SectionTitle('Stock'),
+      SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('Add stock'),
+        subtitle: const Text(
+          'Its first stock row, saved with it: where it is, and how many',
+        ),
+        value: on,
+        onChanged: (v) => setState(() => _addStock = v),
+      ),
+      const SizedBox(height: 8),
+      InputDecorator(
+        decoration: const InputDecoration(
+          labelText: 'Location',
+          border: OutlineInputBorder(),
+        ).copyWith(enabled: on),
+        child: PickerKeys(
+          open: on ? _chooseLocation : null,
+          child: InkWell(
+            onTap: on ? _chooseLocation : null,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _locationId == null
+                        ? 'Choose a location'
+                        : locations.pathOf(_locationId),
+                    style: on
+                        ? null
+                        : TextStyle(color: Theme.of(context).disabledColor),
+                  ),
+                ),
+                const Icon(Icons.arrow_drop_down),
+              ],
+            ),
+          ),
+        ),
+      ),
+      const SizedBox(height: 16),
+      AmountField(
+        controller: _amount,
+        unit: _unitText,
+        focusNode: _amountFocus,
+        enabled: on,
+        onSubmitted: identical(last, _amount) ? _save : null,
+      ),
+      for (final i in _stockInputs)
+        Padding(
+          key: ValueKey(('stock', i.attribute.name)),
+          padding: const EdgeInsets.only(top: 12),
+          child: ValueField(
+            i,
+            enabled: on,
+            onSubmitted: identical(i, last) ? _save : null,
+          ),
+        ),
+    ];
   }
 
   void _saveAnother() => _save(another: true);
