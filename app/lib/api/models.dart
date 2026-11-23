@@ -92,9 +92,16 @@ class CameraPairing {
 /// What a session has open that a photo can be for (GET /me/camera, PUT
 /// /me/target): an item, a stock row or a location ([type], [id] and
 /// [name]), or a new one not saved yet ([waiting]: its type); none of them
-/// for nothing.
+/// for nothing. With [form], the one there is open in its edit form. A
+/// photo for a form, new or not, goes into the form (decision 117).
 class CameraTarget {
-  const CameraTarget({this.type, this.id, this.name, this.waiting});
+  const CameraTarget({
+    this.type,
+    this.id,
+    this.name,
+    this.waiting,
+    this.form = false,
+  });
 
   const CameraTarget.waiting(String type) : this(waiting: type);
 
@@ -103,6 +110,7 @@ class CameraTarget {
     id: json['id'] as String?,
     name: json['name'] as String?,
     waiting: json['waiting'] as String?,
+    form: json['form'] as bool? ?? false,
   );
 
   static const none = CameraTarget();
@@ -111,15 +119,24 @@ class CameraTarget {
   final String? id;
   final String? name;
   final String? waiting;
+  final bool form;
 
   /// Whether a photo can be taken for it.
-  bool get ready => id != null;
+  bool get ready => id != null || waiting != null;
+
+  /// Whether a photo for it goes into a form on the computer.
+  bool get toForm => waiting != null || form;
+
+  /// The same one, open in its edit form.
+  CameraTarget inForm() =>
+      CameraTarget(type: type, id: id, name: name, form: true);
 
   Json toJson() => {
     'type': ?type,
     'id': ?id,
     'name': ?name,
     'waiting': ?waiting,
+    if (form) 'form': true,
   };
 
   /// "item", "stock row" or "location", for a type.
@@ -135,14 +152,15 @@ class CameraTarget {
       other.type == type &&
       other.id == id &&
       other.name == name &&
-      other.waiting == waiting;
+      other.waiting == waiting &&
+      other.form == form;
 
   @override
-  int get hashCode => Object.hash(type, id, name, waiting);
+  int get hashCode => Object.hash(type, id, name, waiting, form);
 }
 
-/// One event of GET /me/events: its name (camera, changed, ended) and its
-/// data.
+/// One event of GET /me/events: its name (camera, changed, photo, ended)
+/// and its data.
 class ServerEvent {
   const ServerEvent(this.name, this.data);
 
@@ -401,6 +419,7 @@ class TreeNode {
     this.parent,
     this.container = false,
     this.photo,
+    this.stockPhotos = false,
     this.children = const [],
   });
 
@@ -411,6 +430,7 @@ class TreeNode {
     parent: json['parent'] as String?,
     container: json['container'] as bool? ?? false,
     photo: FileRef.photo('/locations/${json['id']}', json['photo']),
+    stockPhotos: json['stock_photos'] as bool? ?? false,
     children: [for (final c in _list(json['children'])) TreeNode.fromJson(c)],
   );
 
@@ -426,6 +446,10 @@ class TreeNode {
 
   /// Locations only.
   final FileRef? photo;
+
+  /// Locations only: whether the stock rows there may have a photo of their
+  /// own (decision 116).
+  final bool stockPhotos;
   final List<TreeNode> children;
 
   /// Set by [Tree]: the names from the root, joined by "/".
@@ -637,6 +661,7 @@ class Location {
     this.parent,
     this.container = false,
     this.photo,
+    this.stockPhotos = false,
     this.path = const [],
   });
 
@@ -647,6 +672,7 @@ class Location {
     parent: json['parent'] as String?,
     container: json['container'] as bool? ?? false,
     photo: FileRef.photo('/locations/${json['id']}', json['photo']),
+    stockPhotos: json['stock_photos'] as bool? ?? false,
     path: _refs(json['path']),
   );
 
@@ -656,6 +682,9 @@ class Location {
   final String? parent;
   final bool container;
   final FileRef? photo;
+
+  /// Whether the stock rows there may have a photo of their own.
+  final bool stockPhotos;
   final List<NamedRef> path;
 
   String get pathText => path.map((p) => p.name).join('/');

@@ -225,6 +225,13 @@ func (e *env) editLocation(id string) error {
 	if err := e.editTreeFields(p, ix, "location", l.Name, l.Parent, l.Container, completeLocations); err != nil {
 		return err
 	}
+	photos, err := e.yesNoField("Stock photos (its stock rows may have one)", l.StockPhotos)
+	if err != nil {
+		return err
+	}
+	if photos != l.StockPhotos {
+		p.patch["stock_photos"] = photos
+	}
 	if err := e.apply(p); err != nil {
 		return err
 	}

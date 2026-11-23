@@ -656,12 +656,14 @@ Future<bool> _fetchAndUpload(
 
 /// The photo of the item, stock row or location at [owner] (/items/{id},
 /// /stock/{id} or /locations/{id}): choose an image, take one or fetch one
-/// from an address, or remove it. True when it changed.
+/// from an address, or remove it; with [canAdd] false (a stock row where its
+/// location takes no stock photos), only remove it. True when it changed.
 Future<bool> editPhoto(
   BuildContext context, {
   required String owner,
   required bool hasPhoto,
   required Future<void> Function() remove,
+  bool canAdd = true,
 }) async {
   final client = context.read<Session>().client;
   final camera = canTakePhoto(context);
@@ -672,7 +674,7 @@ Future<bool> editPhoto(
         mainAxisSize: MainAxisSize.min,
         children: [
           // There is one photo: each way of giving one replaces it.
-          if (hasPhoto)
+          if (hasPhoto && canAdd)
             ListTile(
               dense: true,
               title: Text(
@@ -680,18 +682,19 @@ Future<bool> editPhoto(
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
-          ListTile(
-            leading: const Icon(Icons.image_outlined),
-            title: const Text('Choose a photo'),
-            onTap: () => Navigator.pop(context, 'choose'),
-          ),
-          if (camera)
+          if (canAdd)
+            ListTile(
+              leading: const Icon(Icons.image_outlined),
+              title: const Text('Choose a photo'),
+              onTap: () => Navigator.pop(context, 'choose'),
+            ),
+          if (camera && canAdd)
             ListTile(
               leading: const Icon(Icons.photo_camera_outlined),
               title: const Text('Take a photo'),
               onTap: () => Navigator.pop(context, 'take'),
             ),
-          if (canFetchUrl)
+          if (canFetchUrl && canAdd)
             ListTile(
               leading: const Icon(Icons.link),
               title: const Text('From a URL'),
@@ -1027,10 +1030,19 @@ Future<List<String>> uploadFormFiles(
 /// a menu to choose a file, take a photo, fetch one from an address, or
 /// remove it. A tap chooses a file.
 class FormFileTile extends StatefulWidget {
-  const FormFileTile(this.file, {super.key, this.enabled = true});
+  const FormFileTile(
+    this.file, {
+    super.key,
+    this.enabled = true,
+    this.canAdd = true,
+  });
 
   final FormFile file;
   final bool enabled;
+
+  /// False where no file may be given, only the one there removed: a stock
+  /// row's photo where its location takes none.
+  final bool canAdd;
 
   @override
   State<FormFileTile> createState() => _FormFileTileState();
@@ -1094,7 +1106,8 @@ class _FormFileTileState extends State<FormFileTile> {
     };
     final icon = f.isPhoto ? Icons.photo_outlined : attributeIcon(f.attribute!);
     final current = f.current;
-    final camera = f.takesImages && canTakePhoto(context);
+    final add = widget.canAdd;
+    final camera = add && f.takesImages && canTakePhoto(context);
     return ListTile(
       contentPadding: EdgeInsets.zero,
       enabled: widget.enabled,
@@ -1110,7 +1123,7 @@ class _FormFileTileState extends State<FormFileTile> {
           : PhotoOrIcon(null, icon: icon),
       title: Text(f.label),
       subtitle: Text(subtitle),
-      onTap: _choose,
+      onTap: add ? _choose : null,
       trailing: PopupMenuButton<String>(
         tooltip: f.label,
         enabled: widget.enabled,
@@ -1122,13 +1135,14 @@ class _FormFileTileState extends State<FormFileTile> {
           _ => _remove(),
         },
         itemBuilder: (context) => [
-          PopupMenuItem(
-            value: 'choose',
-            child: Text(f.isPhoto ? 'Choose a photo…' : 'Choose a file…'),
-          ),
+          if (add)
+            PopupMenuItem(
+              value: 'choose',
+              child: Text(f.isPhoto ? 'Choose a photo…' : 'Choose a file…'),
+            ),
           if (camera)
             const PopupMenuItem(value: 'take', child: Text('Take a photo…')),
-          if (canFetchUrl)
+          if (canFetchUrl && add)
             const PopupMenuItem(value: 'url', child: Text('Fetch from URL…')),
           if (f.changed && current != null)
             PopupMenuItem(value: 'keep', child: Text('Keep the current $what')),

@@ -84,7 +84,9 @@ type location struct {
 	Parent    *string `json:"parent"`
 	Container bool    `json:"container"`
 	Photo     *string `json:"photo"`
-	Path      []ref   `json:"path"`
+	// Whether the stock rows there may have a photo of their own.
+	StockPhotos bool  `json:"stock_photos"`
+	Path        []ref `json:"path"`
 }
 
 // values are an item's or a stock row's values, by attribute name.

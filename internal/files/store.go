@@ -164,6 +164,12 @@ func (st *Staged) Place() error {
 	return os.Rename(st.temp, final)
 }
 
+// Open opens the staged file for reading, while it is still in the tmp
+// directory.
+func (st *Staged) Open() (*os.File, error) {
+	return os.Open(st.temp)
+}
+
 // Discard removes the staged file, if it is still in the tmp directory.
 func (st *Staged) Discard() {
 	_ = os.Remove(st.temp)

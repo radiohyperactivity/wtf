@@ -60,68 +60,17 @@ func (s *server) store(w http.ResponseWriter, r *http.Request, kind, target, att
 	if attribute != "" {
 		name.value = attribute
 	}
-	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(transferTimeout))
-	// The session is checked before anything is written to the files
-	// directory: nothing is kept for a request without a valid session.
-	if _, err := s.callJSON(r.Context(), "account.me", nil); err != nil {
+	staged, err := s.stage(w, r)
+	if err != nil {
 		return "", err
 	}
-	who := callerOf(r.Context())
-
-	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if mediaType != "multipart/form-data" {
-		return "", &problem{
-			Type:   "/problems/unsupported-media-type",
-			Title:  "Unsupported media type",
-			Status: http.StatusUnsupportedMediaType,
-			Detail: "Uploads must be multipart/form-data with a \"file\" part.",
-		}
-	}
-	parts, err := r.MultipartReader()
-	if err != nil {
-		return "", invalidInput("malformed multipart body: %v", err)
-	}
-
-	var (
-		staged *files.Staged
-		placed bool
-	)
+	placed := false
 	defer func() {
-		if staged != nil && !placed {
+		if !placed {
 			staged.Discard()
 		}
 	}()
-
-	for {
-		part, err := parts.NextPart()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return "", invalidInput("malformed multipart body: %v", err)
-		}
-		if part.FormName() != "file" {
-			return "", invalidInput("unknown part %q; an upload has one part, \"file\"", part.FormName())
-		}
-		if staged != nil {
-			return "", invalidInput("only one \"file\" part is allowed")
-		}
-		staged, err = s.files.Stage(part, s.maxAttachment)
-		if errors.Is(err, files.ErrTooLarge) {
-			return "", &problem{
-				Type:   "/problems/body-too-large",
-				Title:  "File too large",
-				Status: http.StatusRequestEntityTooLarge,
-				Detail: "A file may be at most " + strconv.FormatInt(s.maxAttachment, 10) + " bytes.",
-			}
-		}
-		if err != nil {
-			return "", err
-		}
-	}
-	if staged == nil {
-		return "", invalidInput("a \"file\" part is required")
-	}
+	who := callerOf(r.Context())
 	contentType := sniff(staged.Head)
 
 	// One transaction of its own: the file's lock (which "wtfd gc" takes
@@ -148,6 +97,72 @@ func (s *server) store(w http.ResponseWriter, r *http.Request, kind, target, att
 	})
 	// A placed but unused file is removed by "wtfd gc".
 	return result, err
+}
+
+// stage stores the request's upload, the one part "file" of a
+// multipart/form-data body, in the files' tmp directory, after checking
+// the session: nothing is kept for a request without a valid session. The
+// caller places or discards it.
+func (s *server) stage(w http.ResponseWriter, r *http.Request) (*files.Staged, error) {
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(transferTimeout))
+	if _, err := s.callJSON(r.Context(), "account.me", nil); err != nil {
+		return nil, err
+	}
+
+	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if mediaType != "multipart/form-data" {
+		return nil, &problem{
+			Type:   "/problems/unsupported-media-type",
+			Title:  "Unsupported media type",
+			Status: http.StatusUnsupportedMediaType,
+			Detail: "Uploads must be multipart/form-data with a \"file\" part.",
+		}
+	}
+	parts, err := r.MultipartReader()
+	if err != nil {
+		return nil, invalidInput("malformed multipart body: %v", err)
+	}
+
+	var staged *files.Staged
+	kept := false
+	defer func() {
+		if staged != nil && !kept {
+			staged.Discard()
+		}
+	}()
+
+	for {
+		part, err := parts.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, invalidInput("malformed multipart body: %v", err)
+		}
+		if part.FormName() != "file" {
+			return nil, invalidInput("unknown part %q; an upload has one part, \"file\"", part.FormName())
+		}
+		if staged != nil {
+			return nil, invalidInput("only one \"file\" part is allowed")
+		}
+		staged, err = s.files.Stage(part, s.maxAttachment)
+		if errors.Is(err, files.ErrTooLarge) {
+			return nil, &problem{
+				Type:   "/problems/body-too-large",
+				Title:  "File too large",
+				Status: http.StatusRequestEntityTooLarge,
+				Detail: "A file may be at most " + strconv.FormatInt(s.maxAttachment, 10) + " bytes.",
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	if staged == nil {
+		return nil, invalidInput("a \"file\" part is required")
+	}
+	kept = true
+	return staged, nil
 }
 
 // sniff is the media type of a file, from its first bytes (at most 512):

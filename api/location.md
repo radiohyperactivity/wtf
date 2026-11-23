@@ -6,6 +6,8 @@ The SQL is in [`db/repeatable/40_location.sql`](../db/repeatable/40_location.sql
 
 `location.list(p_known_version)` is the location tree, flat, which `wtfd` nests (`GET /locations`, with `ETag` and `If-None-Match`); its version is `meta.location_version`. `location.get` is a location with its code and path. `location.create` and `location.patch` take `name`, `parent` and `container`; a move below itself is refused. A location's `photo` is the hash of its photo's file, or null ([attachment.md](attachment.md)), in the tree too; `location.patch` removes it with `{"photo": null}`. Both are for admins.
 
+**`stock_photos`** says whether the stock rows at a location may have a photo of their own: `false` for every location there was when it came (migration `0005`). `location.create` takes it optionally (`p_stock_photos`; in `POST /locations`, `"stock_photos": true`): left out, a new location has its parent's, and one at the top has none; the compartments of a grid have their box's. Afterwards each location is changed on its own, with `location.patch` (`true` or `false`, not null): its locations keep theirs. Where it is false, `attachment.set` refuses a stock row's photo (23514, 422), from the upload route and from a phone's camera alike; a photo a row has stays, also when it moves there or the location turns it off. It is in the tree and in every answer that shows a location.
+
 ## Stock rows
 
 A stock row is an item at a location, with:

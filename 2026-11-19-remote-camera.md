@@ -25,8 +25,8 @@ Following a session made the phone show the PC's screen. That needed an event st
 3. **One photo per item, stock row and location** *(yours)*. A new photo replaces the one there was.
 4. **Locations get a photo** *(yours)*, as items and stock rows have: a new column, its upload route, and the photo on the location screen, set from its menu as for items, by admins only *(yours)*. A stock row without a photo of its own shows its location's in the item's list of stock rows *(yours)*.
 5. **What a photo can be for:** an item, a stock row or a location that the desktop shows, or edits in its form.
-6. **A new item, stock row or location that isn't saved yet:** the shutter is off, and the phone says "Save the item on the PC first" *(yours)* (or the stock row, or the location).
-7. **Nothing open on the desktop** that a photo can be for (a list, a search, Admin): the shutter is off, and the phone says "Open an item on the PC" *(yours)*.
+6. ~~**A new item, stock row or location that isn't saved yet:** the shutter is off, and the phone says "Save the item on the PC first" *(yours)* (or the stock row, or the location).~~ *Since 23 November 2026 (APP.md decision 117), a photo for a form, new or to edit, goes into the form, and is uploaded with the rest when it is saved.*
+7. **Nothing open on the desktop** that a photo can be for (a list, a search, Admin): the shutter is off, and the phone says "Open an item on the computer" *(yours; "computer" since 23 November 2026, as a Mac isn't a PC)*.
 8. **The desktop doesn't lose what you've typed** when the photo arrives. The item, stock row and location screens load again; forms don't, and have no photo of their own (it is set from the screen's menu). A form saves only the fields you changed, so it doesn't undo the photo.
 9. **The desktop shows that it has a camera,** "Camera: WtF on iPhone", so you know photos will arrive.
 

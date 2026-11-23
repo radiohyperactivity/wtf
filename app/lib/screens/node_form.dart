@@ -6,8 +6,10 @@ import 'package:provider/provider.dart';
 import '../api/client.dart';
 import '../api/models.dart';
 import '../api/input.dart';
+import '../camera.dart';
 import '../session.dart';
 import '../widgets/common.dart';
+import '../widgets/files.dart';
 import '../widgets/form_keys.dart';
 import '../widgets/pickers.dart';
 import '../widgets/select_keys.dart';
@@ -30,6 +32,8 @@ class _Node {
     this.parent,
     this.container = false,
     this.code,
+    this.photo,
+    this.stockPhotos = false,
   });
 
   final String id;
@@ -37,10 +41,16 @@ class _Node {
   final String? parent;
   final bool container;
   final String? code;
+
+  /// Locations only.
+  final FileRef? photo;
+  final bool stockPhotos;
 }
 
 /// Adds or edits a location or class, like `wtf location add|edit`: name,
-/// parent and container; a new location may get a compartment grid.
+/// parent and container; a new location may get a compartment grid. A
+/// location also has its photo, uploaded once it is saved (decision 115),
+/// and whether its stock rows may have photos (decision 116).
 class NodeFormScreen extends StatelessWidget {
   const NodeFormScreen(this.args, {super.key});
 
@@ -70,6 +80,8 @@ class NodeFormScreen extends StatelessWidget {
               parent: l.parent,
               container: l.container,
               code: l.code,
+              photo: l.photo,
+              stockPhotos: l.stockPhotos,
             ),
             tree,
           );
@@ -114,11 +126,40 @@ class _NodeFormState extends State<_NodeForm> {
   bool _grid = false;
   bool _busy = false;
 
+  // A location's photo, and whether its stock rows may have photos: a new
+  // one's as its parent's until changed here.
+  late final _photo = FormFile.photo(current: widget.node?.photo);
+  late bool? _stockPhotos = widget.node?.stockPhotos;
+
+  bool get _stockPhotosShown =>
+      _stockPhotos ??
+      (_parent == null ? false : widget.tree[_parent]?.stockPhotos ?? false);
+
   bool get _locations => widget.args.kind == TreeKind.locations;
   String get _noun => _locations ? 'location' : 'class';
 
+  /// Stops this form taking the camera's photos; a location's form only.
+  VoidCallback? _untake;
+
+  @override
+  void initState() {
+    super.initState();
+    // A photo the phone takes for a location's form is its photo
+    // (decision 117).
+    if (_locations) {
+      _untake = context.read<Camera>().takePhotosForForm(
+        (photo) => setState(() {
+          _photo
+            ..picked = photo
+            ..removing = false;
+        }),
+      );
+    }
+  }
+
   @override
   void dispose() {
+    _untake?.call();
     _name.dispose();
     _columns.dispose();
     _rows.dispose();
@@ -186,8 +227,15 @@ class _NodeFormState extends State<_NodeForm> {
             container: _container,
             grid: grid,
             confirm: confirmed,
+            stockPhotos: _stockPhotos,
           );
-          if (mounted) context.read<Session>().recent.locationMade(l.id);
+          final failed = await uploadFormFiles(client, '/locations/${l.id}', [
+            _photo,
+          ]);
+          if (mounted) {
+            context.read<Session>().recent.locationMade(l.id);
+            _sayNotUploaded('Created ${l.name}', failed);
+          }
           target = '/locations/${l.code}';
         } else {
           final c = await client.createClass(
@@ -205,13 +253,20 @@ class _NodeFormState extends State<_NodeForm> {
         if (name != node.name) 'name': name,
         if (_parent != node.parent) 'parent': _parent,
         if (_container != node.container) 'container': _container,
+        if (_locations && _stockPhotosShown != node.stockPhotos)
+          'stock_photos': _stockPhotosShown,
       };
-      if (changes.isEmpty) {
+      if (_locations) addFileRemovals(changes, [_photo]);
+      if (changes.isEmpty && !_photo.changed) {
         if (mounted) context.pop(false);
         return;
       }
       if (_locations) {
-        await client.patchLocation(node.id, changes);
+        if (changes.isNotEmpty) await client.patchLocation(node.id, changes);
+        final failed = await uploadFormFiles(client, '/locations/${node.id}', [
+          _photo,
+        ]);
+        if (mounted) _sayNotUploaded('Saved', failed);
       } else {
         await client.patchClass(node.id, changes);
       }
@@ -221,6 +276,19 @@ class _NodeFormState extends State<_NodeForm> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// Says which files weren't uploaded, and why, when any weren't; they can
+  /// be uploaded again on the location's screen.
+  void _sayNotUploaded(String done, List<String> failed) {
+    if (failed.isEmpty) return;
+    showError(
+      context,
+      InputError(
+        "$done, but its photo wasn't uploaded: ${failed.join('; ')}. "
+        'Upload it on its screen.',
+      ),
+    );
   }
 
   @override
@@ -292,6 +360,10 @@ class _NodeFormState extends State<_NodeForm> {
                     ),
                   ),
                 ),
+                if (_locations) ...[
+                  const SizedBox(height: 8),
+                  FormFileTile(_photo),
+                ],
                 const SizedBox(height: 8),
                 SwitchTile(
                   title: const Text('Container'),
@@ -305,6 +377,19 @@ class _NodeFormState extends State<_NodeForm> {
                       ? null
                       : (v) => setState(() => _container = v),
                 ),
+                if (_locations)
+                  SwitchTile(
+                    title: const Text('Photos of stock'),
+                    subtitle: Text(
+                      editing
+                          ? 'Stock rows here may have a photo of their own. '
+                                'Turned off, those they have stay.'
+                          : 'Stock rows here may have a photo of their own. '
+                                'At first as its parent; compartments as their box.',
+                    ),
+                    value: _stockPhotosShown,
+                    onChanged: (v) => setState(() => _stockPhotos = v),
+                  ),
                 if (_locations && !editing) ...[
                   SwitchTile(
                     title: const Text('Compartment grid'),

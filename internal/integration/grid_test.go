@@ -108,3 +108,47 @@ func TestNaturalOrder(t *testing.T) {
 	check("classes", names(get(t, e.expect(t, 200, "GET", "/classes", nil).body, "tree", 0, "children"), "name"))
 	check("items", names(get(t, e.expect(t, 200, "GET", "/items?class="+class, nil).body, "rows"), "name"))
 }
+
+// TestLocationStockPhotos covers whether a location takes stock photos:
+// off by default, a new location's parent's unless given, the compartments
+// of a grid as their box, and each changed on its own afterwards.
+func TestLocationStockPhotos(t *testing.T) {
+	e := setup(t)
+	e.reset(t)
+
+	top := e.expect(t, 201, "POST", "/locations", obj("name", "Garage", "container", true)).body
+	if get(t, top, "stock_photos") != false {
+		t.Errorf("a new location at the top: %v", top)
+	}
+	garage := str(t, top, "id")
+	e.expect(t, 200, "PATCH", "/locations/"+garage, obj("stock_photos", true))
+	shelf := e.expect(t, 201, "POST", "/locations", obj("name", "Shelf", "parent", garage)).body
+	if get(t, shelf, "stock_photos") != true {
+		t.Errorf("a new location takes its parent's: %v", shelf)
+	}
+	own := e.expect(t, 201, "POST", "/locations", obj("name", "Bench", "parent", garage, "stock_photos", false)).body
+	if get(t, own, "stock_photos") != false {
+		t.Errorf("a new location given its own: %v", own)
+	}
+	e.expect(t, 201, "POST", "/locations", obj("name", "Box", "parent", garage, "grid", obj("columns", 2, "rows", 1)))
+	tree := e.expect(t, 200, "GET", "/locations", nil).body
+	var box any
+	for _, n := range get(t, tree, "tree", 0, "children").([]any) {
+		if str(t, n, "name") == "Box" {
+			box = n
+		}
+	}
+	for _, c := range get(t, box, "children").([]any) {
+		if get(t, c, "stock_photos") != true {
+			t.Errorf("a compartment takes its box's: %v", c)
+		}
+	}
+
+	// Changed on its own: the shelf below keeps its own.
+	e.expect(t, 200, "PATCH", "/locations/"+garage, obj("stock_photos", false))
+	if got := e.expect(t, 200, "GET", "/locations/"+str(t, shelf, "id"), nil).body; get(t, got, "stock_photos") != true {
+		t.Errorf("the shelf after its parent changed: %v", got)
+	}
+	e.expect(t, 400, "PATCH", "/locations/"+garage, obj("stock_photos", nil))
+	e.expect(t, 400, "PATCH", "/locations/"+garage, obj("stock_photos", "yes"))
+}

@@ -116,6 +116,25 @@ func TestCLIStockRules(t *testing.T) {
 	contains(t, c.ok("class", "stock", "Cables", "--inherit", "--yes"), "in pieces (the default)")
 }
 
+// Whether a location's stock rows may have photos, from the CLI: as its
+// parent at first, --stock-photos on add and set, and the edit form.
+func TestCLIStockPhotos(t *testing.T) {
+	e := setup(t)
+	e.reset(t)
+	c := e.cli(t)
+
+	c.ok("location", "add", "Garage", "--container", "--stock-photos", "yes")
+	contains(t, c.ok("location", "add", "Garage/Shelf"), "Stock photos:  yes")
+	if out := c.ok("location", "add", "Garage/Bench", "--stock-photos", "no"); strings.Contains(out, "Stock photos") {
+		t.Errorf("a location without stock photos says nothing of them:\n%s", out)
+	}
+	if out := c.ok("location", "set", "Garage/Shelf", "--stock-photos", "no"); strings.Contains(out, "Stock photos") {
+		t.Errorf("after --stock-photos no:\n%s", out)
+	}
+	_, stderr := c.run(2, "", "location", "set", "Garage/Shelf", "--stock-photos", "maybe")
+	contains(t, stderr, "--stock-photos must be yes or no")
+}
+
 func TestCLI(t *testing.T) {
 	e := setup(t)
 	e.reset(t)

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../api/client.dart';
 import '../api/input.dart';
 import '../api/models.dart';
+import '../camera.dart';
 import '../session.dart';
 import '../widgets/common.dart';
 import '../widgets/files.dart';
@@ -105,18 +106,47 @@ class _StockFormState extends State<_StockForm> {
   ApiClient get _client => context.read<Session>().client;
   bool get _editing => widget.stock != null;
 
+  /// Whether the chosen location takes stock photos (decision 116).
+  bool get _photosHere =>
+      _locationId != null &&
+      (widget.locations[_locationId]?.stockPhotos ?? false);
+
   /// A location stock can be at: not a container.
   String? _usable(String? id) =>
       id != null && widget.locations[id]?.container == false ? id : null;
+
+  /// Stops this form taking the camera's photos.
+  late final VoidCallback _untake;
 
   @override
   void initState() {
     super.initState();
     if (_item != null) _loadItem();
+    // A photo the phone takes for this form is the stock row's, where its
+    // location takes one (decisions 116 and 117).
+    _untake = context.read<Camera>().takePhotosForForm((photo) {
+      if (!_photosHere) {
+        showError(
+          context,
+          InputError(
+            _locationId == null
+                ? 'Choose a location first: the photo is for its stock row.'
+                : 'Stock at ${widget.locations.pathOf(_locationId)} has no photos of its own.',
+          ),
+        );
+        return;
+      }
+      setState(() {
+        _photo
+          ..picked = photo
+          ..removing = false;
+      });
+    });
   }
 
   @override
   void dispose() {
+    _untake();
     _amount.dispose();
     _amountFocus.dispose();
     for (final i in _inputs) {
@@ -221,6 +251,9 @@ class _StockFormState extends State<_StockForm> {
       return;
     }
     if (!_form.currentState!.validate()) return;
+    // A photo only where the location takes one; the one there may still
+    // be removed.
+    if (!_photosHere) _photo.picked = null;
     setState(() => _busy = true);
     try {
       // As its class counts its stock: no amount when it doesn't.
@@ -414,10 +447,11 @@ class _StockFormState extends State<_StockForm> {
                     padding: EdgeInsets.all(16),
                     child: LinearProgressIndicator(),
                   ),
-                const SizedBox(height: 8),
-                FormFileTile(_photo),
+                if (_photosHere || _photo.current != null) ...[
+                  const SizedBox(height: 8),
+                  FormFileTile(_photo, canAdd: _photosHere),
+                ],
                 if (_inputs.isNotEmpty || _files.isNotEmpty) ...[
-                  const SectionTitle('Stock values'),
                   // In the class's order: an input for a value, a line for
                   // a file.
                   for (final a

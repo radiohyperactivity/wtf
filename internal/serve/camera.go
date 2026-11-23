@@ -4,11 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/radiohyperactivity/wtf/internal/files"
 )
 
 // The phone as a remote camera (2026-11-19-remote-camera.md): a session, on
@@ -61,14 +65,21 @@ func (st *stream) end() {
 
 // target is what a desktop has open that a photo can be for: an item, a
 // stock row or a location (Type "item", "stock" or "location", its ID and
-// its Name), or a new one that isn't saved yet (Waiting: its type). The
-// zero target is nothing a photo can be for.
+// its Name), or a new one that isn't saved yet (Waiting: its type). Form
+// says that one is open in a form, to edit. A photo for a form, new or
+// not, is held for the desktop, which puts it in the form, to upload with
+// the rest when saved. The zero target is nothing a photo can be for.
 type target struct {
 	Type    string `json:"type,omitempty"`
 	ID      string `json:"id,omitempty"`
 	Name    string `json:"name,omitempty"`
 	Waiting string `json:"waiting,omitempty"`
+	Form    bool   `json:"form,omitempty"`
 }
+
+// toForm says whether a photo for t goes to a form on the desktop, rather
+// than straight to what it is for.
+func (t target) toForm() bool { return t.Waiting != "" || t.Form }
 
 // targetPaths are the API paths of the types of target.
 var targetPaths = map[string]string{"item": "/items/", "stock": "/stock/", "location": "/locations/"}
@@ -89,6 +100,7 @@ type cameras struct {
 	of      map[string]*camera          // phone → its camera
 	phones  map[string]map[string]bool  // desktop → its phones
 	target  map[string]target           // desktop → what it has open, once it said
+	held    map[string]*files.Staged    // desktop → a photo for its form, not fetched yet
 	streams map[string]map[*stream]bool // session → its open streams
 	swept   time.Time                   // when old cameras were last looked for
 	closed  bool                        // wtfd is shutting down
@@ -100,6 +112,7 @@ func newCameras() *cameras {
 		of:      map[string]*camera{},
 		phones:  map[string]map[string]bool{},
 		target:  map[string]target{},
+		held:    map[string]*files.Staged{},
 		streams: map[string]map[*stream]bool{},
 		now:     time.Now,
 	}
@@ -173,6 +186,7 @@ func (c *cameras) stop(phone string) {
 	if len(c.phones[cam.desktop]) == 0 {
 		delete(c.phones, cam.desktop)
 		delete(c.target, cam.desktop)
+		c.drop(cam.desktop)
 	}
 	c.send(cam.desktop, c.cameraEvent(cam.desktop))
 }
@@ -221,6 +235,41 @@ func (c *cameras) lookup(phone, desktop string) (t target, ok bool) {
 	}
 	cam.seen = c.now()
 	return c.target[desktop], true
+}
+
+// drop discards the photo held for desktop, if any; the lock is held.
+func (c *cameras) drop(desktop string) {
+	if st := c.held[desktop]; st != nil {
+		st.Discard()
+		delete(c.held, desktop)
+	}
+}
+
+// hold keeps photo for the form open on the desktop that phone is the
+// camera for, instead of one held before, and tells the desktop (photo).
+// False when phone is no camera (any more); the photo is then discarded.
+func (c *cameras) hold(phone string, photo *files.Staged) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cam := c.of[phone]
+	if cam == nil {
+		photo.Discard()
+		return false
+	}
+	c.drop(cam.desktop)
+	c.held[cam.desktop] = photo
+	c.send(cam.desktop, eventData("photo", map[string]string{"client": cam.phoneClient}))
+	return true
+}
+
+// take hands over the photo held for desktop, which is no longer held:
+// nil when there is none.
+func (c *cameras) take(desktop string) *files.Staged {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	st := c.held[desktop]
+	delete(c.held, desktop)
+	return st
 }
 
 // changed tells the desktop that session is the camera for, if any, that
@@ -384,24 +433,42 @@ func (s *server) cameraLook(w http.ResponseWriter, r *http.Request) error {
 }
 
 // cameraPhoto: PUT /me/camera/photo?session=<id>, a photo for what the
-// desktop session has open as it arrives, uploaded as its photo. Answers
-// the target it went to; 409 when there is none. The desktop is told
-// (changed).
+// desktop session has open as it arrives, uploaded as its photo; for a
+// form there, new or not, held for the desktop, which is told (photo) and
+// fetches it (cameraHeld). Answers the target it went to; 409 when there is
+// none. The desktop is told of an upload (changed).
 func (s *server) cameraPhoto(w http.ResponseWriter, r *http.Request) error {
 	_, t, err := s.cameraTarget(r)
 	if err != nil {
 		return err
 	}
-	if t.ID == "" {
-		detail := "Nothing is open there that a photo can be for."
-		if t.Waiting != "" {
-			detail = "What is open there isn't saved yet."
+	if t.toForm() {
+		staged, err := s.stage(w, r)
+		if err != nil {
+			return err
 		}
+		if !strings.HasPrefix(sniff(staged.Head), "image/") {
+			staged.Discard()
+			return invalidInput("A photo must be an image, and this is %s", sniff(staged.Head))
+		}
+		if !s.cameras.hold(sessionID(callerOf(r.Context()).token), staged) {
+			return &problem{
+				Type:   "/problems/wrong-state",
+				Title:  "Not possible in this state",
+				Status: http.StatusConflict,
+				Detail: "This is no longer the camera there.",
+			}
+		}
+		data, _ := json.Marshal(t)
+		writeJSON(w, http.StatusOK, data)
+		return nil
+	}
+	if t.ID == "" {
 		return &problem{
 			Type:   "/problems/wrong-state",
 			Title:  "Not possible in this state",
 			Status: http.StatusConflict,
-			Detail: detail,
+			Detail: "Nothing is open there that a photo can be for.",
 		}
 	}
 	if _, err := s.store(w, r, t.Type, t.ID, ""); err != nil {
@@ -413,8 +480,38 @@ func (s *server) cameraPhoto(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// cameraHeld: GET /me/camera/photo, the photo this session's camera took
+// for its form, once: it is no longer held afterwards. 404 when there is
+// none.
+func (s *server) cameraHeld(w http.ResponseWriter, r *http.Request) error {
+	if _, err := s.callJSON(r.Context(), "account.me", nil); err != nil {
+		return err
+	}
+	photo := s.cameras.take(sessionID(callerOf(r.Context()).token))
+	if photo == nil {
+		return &problem{
+			Type:   "/problems/not-found",
+			Title:  "Not found",
+			Status: http.StatusNotFound,
+			Detail: "No photo from the camera is waiting.",
+		}
+	}
+	defer photo.Discard()
+	f, err := photo.Open()
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	w.Header().Set("Content-Type", sniff(photo.Head))
+	w.Header().Set("Content-Length", strconv.FormatInt(photo.Size, 10))
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, f)
+	return nil
+}
+
 // targetReport: PUT /me/target, what this session's app has open: {type,
-// id, name}, {waiting}, or {}. Kept only when the session has a camera;
+// id, name}, {waiting}, or {}; with form true, it is open in a form. Kept only when the session has a camera;
 // without the database, as for cameraStop. The answer is the same either
 // way.
 func (s *server) targetReport(w http.ResponseWriter, r *http.Request) error {
@@ -424,6 +521,12 @@ func (s *server) targetReport(w http.ResponseWriter, r *http.Request) error {
 	}
 	var t target
 	for key, raw := range object {
+		if key == "form" {
+			if json.Unmarshal(raw, &t.Form) != nil {
+				return invalidInput("field %q is true or false", key)
+			}
+			continue
+		}
 		var value string
 		if json.Unmarshal(raw, &value) != nil {
 			return invalidInput("field %q is a string", key)
@@ -443,9 +546,11 @@ func (s *server) targetReport(w http.ResponseWriter, r *http.Request) error {
 	}
 	switch {
 	case t.Waiting != "":
-		if _, ok := targetPaths[t.Waiting]; !ok || t.Type != "" || t.ID != "" || t.Name != "" {
+		if _, ok := targetPaths[t.Waiting]; !ok || t.Type != "" || t.ID != "" || t.Name != "" || t.Form {
 			return invalidInput("waiting is item, stock or location, on its own")
 		}
+	case t.Form && t.Type == "":
+		return invalidInput("form goes with type, id and name")
 	case t.Type != "" || t.ID != "" || t.Name != "":
 		if _, ok := targetPaths[t.Type]; !ok {
 			return invalidInput("type is item, stock or location")

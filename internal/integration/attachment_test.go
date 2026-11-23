@@ -140,9 +140,15 @@ func TestFiles(t *testing.T) {
 		t.Errorf("a text attribute's file: %d, want 404", rec.Code)
 	}
 
-	// Stock rows: a split takes the photo along, and the same content is
-	// stored once.
+	// Stock rows: a photo only where the location takes them; a split
+	// takes the photo along, also to a location that doesn't, and the same
+	// content is stored once.
 	stock := "/stock/" + stockID
+	refused := e.upload(t, 422, stock+"/photo", "front.png", "", pngBytes).body
+	if !strings.Contains(str(t, refused, "detail"), `Stock at "Garage" has no photos of its own`) {
+		t.Errorf("a stock photo where the location takes none: %v", refused)
+	}
+	e.expect(t, 200, "PATCH", "/locations/"+garage, obj("stock_photos", true))
 	if got := e.upload(t, 200, stock+"/photo", "front.png", "", pngBytes).body; str(t, got, "photo") != pngHash {
 		t.Errorf("the same content: %v", got)
 	}

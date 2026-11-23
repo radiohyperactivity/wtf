@@ -138,6 +138,7 @@ func (s *server) routes() []route {
 		{"PUT /me/camera", s.cameraFor},
 		{"DELETE /me/camera", s.cameraStop},
 		{"GET /me/camera", s.cameraLook},
+		{"GET /me/camera/photo", s.cameraHeld},
 		{"PUT /me/target", s.targetReport},
 		{"GET /me/events", s.events},
 		{"GET /accounts", s.read("account.list")},
@@ -196,9 +197,10 @@ func flag(name, key string) param {
 	}
 }
 
-// locationBody takes POST /locations' body apart: name, parent and
-// container, and grid ({columns, rows, confirm}, or null for none) into
-// p_columns, p_rows and p_confirm.
+// locationBody takes POST /locations' body apart: name, parent,
+// container, stock_photos (optional: its parent's when left out), and grid
+// ({columns, rows, confirm}, or null for none) into p_columns, p_rows and
+// p_confirm.
 func locationBody() param {
 	return func(r *http.Request) ([]arg, error) {
 		object, err := readObject(r)
@@ -214,6 +216,7 @@ func locationBody() param {
 			{key: "name", name: "p_name", typ: "text"},
 			{key: "parent", name: "p_parent", typ: "uuid"},
 			{key: "container", name: "p_container", typ: "boolean"},
+			{key: "stock_photos", name: "p_stock_photos", typ: "boolean", optional: true},
 		})
 		if err != nil {
 			return nil, err

@@ -130,6 +130,7 @@ class StockScreen extends StatelessWidget {
                             context,
                             owner: owner,
                             hasPhoto: stock.photo != null,
+                            canAdd: place?.stockPhotos ?? false,
                             remove: () =>
                                 client.patchStock(stock.id, {'photo': null}),
                           )) {
@@ -142,10 +143,13 @@ class StockScreen extends StatelessWidget {
                       }
                     },
                     itemBuilder: (context) => [
-                      const PopupMenuItem(
-                        value: 'photo',
-                        child: Text('Photo…'),
-                      ),
+                      // Where the location takes stock photos, or to
+                      // remove the one it has (decision 116).
+                      if ((place?.stockPhotos ?? false) || stock.photo != null)
+                        const PopupMenuItem(
+                          value: 'photo',
+                          child: Text('Photo…'),
+                        ),
                       if (stock.amount != null)
                         const PopupMenuItem(
                           value: 'merge',

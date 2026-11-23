@@ -8,7 +8,8 @@ CREATE SCHEMA location;
 -- ---------------------------------------------------------------------------
 
 -- A location as the API shows it. Its code is for its label; photo is its
--- file's hash, or null.
+-- file's hash, or null; stock_photos says whether the stock rows there may
+-- have a photo of their own.
 CREATE FUNCTION location.json(p_location public.location)
 RETURNS jsonb
 LANGUAGE sql IMMUTABLE AS $$
@@ -17,8 +18,9 @@ LANGUAGE sql IMMUTABLE AS $$
         'code',      util.code_text(p_location.code),
         'name',      p_location.name,
         'parent',    p_location.parent,
-        'container', p_location.container,
-        'photo',     p_location.photo
+        'container',    p_location.container,
+        'photo',        p_location.photo,
+        'stock_photos', p_location.stock_photos
     );
 $$;
 
@@ -119,13 +121,17 @@ $$;
 -- sibling's already (letter case ignored). A container holds only other
 -- locations, never stock.
 --
+-- p_stock_photos says whether the stock rows there may have a photo of
+-- their own; when NULL, as its parent says (false at the top).
+--
 -- p_columns and p_rows (both NULL for none) also create a compartment below
 -- it for every cell of a grid of that many columns and rows, named like the
 -- cells of a spreadsheet: columns A, B, …, Z, AA, … and rows 1 … R, so 8 × 5
 -- gives A1 … H5, with codes in that order. A location with a grid is a
 -- container. Nothing about the grid is stored; the compartments are
--- ordinary locations. A grid that creates more than 1000 locations must be
--- confirmed with p_confirm, so that a typo can't flood the tree. Returns the
+-- ordinary locations, which take stock photos when it does. A grid that
+-- creates more than 1000 locations must be confirmed with p_confirm, so
+-- that a typo can't flood the tree. Returns the
 -- location as location.get does. For admins.
 CREATE FUNCTION location.create(
     p_request   public.request,
@@ -134,7 +140,8 @@ CREATE FUNCTION location.create(
     p_container boolean,
     p_columns   integer,
     p_rows      integer,
-    p_confirm   boolean
+    p_confirm   boolean,
+    p_stock_photos boolean DEFAULT NULL
 ) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
@@ -144,6 +151,7 @@ DECLARE
     v_name     text := util.trim_and_check_path_name(p_name, 'location');
     v_code     bigint;
     v_location public.location;
+    v_photos   boolean := p_stock_photos;
 BEGIN
     IF p_container IS NULL THEN
         PERFORM error.invalid('Say whether the location is a container');
@@ -151,6 +159,9 @@ BEGIN
     IF p_parent IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.location l
                                             WHERE l.id = p_parent) THEN
         PERFORM error.bad_reference('location', p_parent);
+    END IF;
+    IF v_photos IS NULL THEN
+        v_photos := coalesce((SELECT l.stock_photos FROM public.location l WHERE l.id = p_parent), false);
     END IF;
     PERFORM location.check_sibling_name(p_parent, v_name, NULL);
     IF (p_columns IS NULL) <> (p_rows IS NULL) THEN
@@ -164,14 +175,14 @@ BEGIN
     END IF;
 
     v_code := util.take_codes(1 + coalesce(p_columns * p_rows, 0));
-    INSERT INTO public.location (code, name, parent, container)
-    VALUES (v_code, v_name, p_parent, p_container OR p_columns IS NOT NULL)
+    INSERT INTO public.location (code, name, parent, container, stock_photos)
+    VALUES (v_code, v_name, p_parent, p_container OR p_columns IS NOT NULL, v_photos)
     RETURNING * INTO v_location;
 
     -- The compartments, coded in the order of the cells: A1, A2, …, B1, …
     -- With no grid, generate_series(1, NULL) gives no rows.
-    INSERT INTO public.location (code, name, parent, container)
-    SELECT v_code + g.n, g.name, v_location.id, false
+    INSERT INTO public.location (code, name, parent, container, stock_photos)
+    SELECT v_code + g.n, g.name, v_location.id, false, v_photos
     FROM (SELECT util.column_label(c) || r AS name, row_number() OVER (ORDER BY c, r) AS n
           FROM generate_series(1, p_columns) c CROSS JOIN generate_series(1, p_rows) r) g;
 
@@ -181,8 +192,9 @@ END;
 $$;
 
 -- Changes the fields of a location that p_patch has:
--- name, parent (null: to the top), container and photo (null only: a photo
--- is uploaded). Moving a location takes everything in and below it along.
+-- name, parent (null: to the top), container, photo (null only: a photo
+-- is uploaded) and stock_photos (true or false; turned off, the stock rows
+-- there keep the photos they have). Moving a location takes everything in and below it along.
 -- A move into one of its own locations is refused, and so is becoming a
 -- container while it has stock. Returns the location as location.get does.
 -- For admins.
@@ -197,7 +209,12 @@ DECLARE
     v_name     text;
     v_parent   uuid;
 BEGIN
-    PERFORM util.check_patch(p_patch, ARRAY['name', 'parent', 'container', 'photo'], ARRAY['name', 'container']);
+    PERFORM util.check_patch(p_patch, ARRAY['name', 'parent', 'container', 'photo', 'stock_photos'],
+                             ARRAY['name', 'container', 'stock_photos']);
+    -- A boolean, not text PostgreSQL would read as one ("yes").
+    IF p_patch ? 'stock_photos' AND jsonb_typeof(p_patch -> 'stock_photos') <> 'boolean' THEN
+        PERFORM error.invalid('stock_photos is true or false');
+    END IF;
     IF p_patch ? 'photo' AND jsonb_typeof(p_patch -> 'photo') <> 'null' THEN
         PERFORM error.invalid('A photo is uploaded; photo can only be set to null here, which removes it');
     END IF;
@@ -239,7 +256,8 @@ BEGIN
     SET name      = v_name,
         parent    = v_parent,
         container = coalesce((p_patch ->> 'container')::boolean, l.container),
-        photo     = CASE WHEN p_patch ? 'photo' THEN NULL ELSE l.photo END
+        photo     = CASE WHEN p_patch ? 'photo' THEN NULL ELSE l.photo END,
+        stock_photos = coalesce((p_patch ->> 'stock_photos')::boolean, l.stock_photos)
     WHERE l.id = p_location
     RETURNING * INTO v_location;
     PERFORM util.bump_version('location');

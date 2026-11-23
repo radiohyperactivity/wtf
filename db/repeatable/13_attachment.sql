@@ -56,8 +56,9 @@ $$;
 -- 'location', p_owner): as its photo when p_attribute is NULL, which must be
 -- an image; otherwise as the value of attachment attribute p_attribute of
 -- its class, which must take p_media_type when it lists the media types it
--- takes (a location has only a photo). A file that is there already is
--- replaced. Returns the item, stock row or location as its get does. For
+-- takes (a location has only a photo). A stock row has a photo only where
+-- its location takes stock photos (location.stock_photos). A file that is
+-- there already is replaced. Returns the item, stock row or location as its get does. For
 -- users; a location's photo for admins, who set up the locations.
 CREATE FUNCTION attachment.set(
     p_request    public.request,
@@ -111,6 +112,12 @@ BEGIN
         IF p_kind = 'item' THEN
             UPDATE public.item i SET photo = v_hash WHERE i.id = p_owner;
             RETURN (SELECT item.detail_json(i) FROM public.item i WHERE i.id = p_owner);
+        END IF;
+        -- Only where its location takes stock photos.
+        IF NOT (SELECT l.stock_photos FROM public.location l WHERE l.id = (v_locked.stock_row).location) THEN
+            PERFORM error.not_allowed(format('Stock at "%s" has no photos of its own; an admin can change that on the location',
+                                             (SELECT l.name FROM public.location l
+                                              WHERE l.id = (v_locked.stock_row).location)));
         END IF;
         UPDATE public.stock s SET photo = v_hash WHERE s.id = p_owner;
         RETURN (SELECT stock.detail_json(s) FROM public.stock s WHERE s.id = p_owner);

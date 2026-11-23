@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../api/client.dart';
 import '../api/input.dart';
 import '../api/models.dart';
+import '../camera.dart';
 import '../session.dart';
 import '../widgets/common.dart';
 import '../widgets/files.dart';
@@ -119,14 +120,26 @@ class _ItemFormState extends State<_ItemForm> {
   String? _usableLocation(String? id) =>
       id != null && widget.locations?[id]?.container == false ? id : null;
 
+  /// Stops this form taking the camera's photos.
+  late final VoidCallback _untake;
+
   @override
   void initState() {
     super.initState();
     if (_classId != null) _loadValues();
+    // A photo the phone takes for this form is the item's (decision 117).
+    _untake = context.read<Camera>().takePhotosForForm(
+      (photo) => setState(() {
+        _photo
+          ..picked = photo
+          ..removing = false;
+      }),
+    );
   }
 
   @override
   void dispose() {
+    _untake();
     _name.dispose();
     _amount.dispose();
     _nameFocus.dispose();
@@ -260,6 +273,11 @@ class _ItemFormState extends State<_ItemForm> {
   /// Whether the stock row has an amount field: its class counts its stock.
   bool get _counted => _rule.counting != Counting.none;
 
+  /// Whether the chosen location takes stock photos (decision 116).
+  bool get _stockPhotosHere =>
+      _locationId != null &&
+      (widget.locations?[_locationId]?.stockPhotos ?? false);
+
   /// Whether the form makes a stock row with the new item.
   bool get _withStock => !_editing && _addStock;
 
@@ -326,7 +344,9 @@ class _ItemFormState extends State<_ItemForm> {
               values: newValues(_stockInputs),
             ),
     );
-    // Its files, now that it has somewhere to go.
+    // Its files, now that it has somewhere to go; the stock row's photo
+    // only where its location takes one.
+    if (!_stockPhotosHere) _stockPhoto.picked = null;
     final failed = [
       ...await uploadFormFiles(_client, '/items/${item.id}', [
         _photo,
@@ -497,9 +517,10 @@ class _ItemFormState extends State<_ItemForm> {
                     child: LinearProgressIndicator(),
                   ),
                 if (_inputs.isNotEmpty || _files.isNotEmpty) ...[
-                  const SectionTitle('Values'),
-                  if (_editing && _inputs.isNotEmpty)
+                  if (_editing && _inputs.isNotEmpty) ...[
+                    const SizedBox(height: 16),
                     const EmptyNote('Clear a value to remove it.'),
+                  ],
                   ..._valueFields(_inputs, _files, last, stock: false),
                 ],
                 if (!_editing) ..._stockSection(last),
@@ -570,8 +591,10 @@ class _ItemFormState extends State<_ItemForm> {
           onSubmitted: identical(last, _amount) ? _save : null,
         ),
       ],
-      const SizedBox(height: 8),
-      FormFileTile(_stockPhoto, enabled: on),
+      if (_stockPhotosHere) ...[
+        const SizedBox(height: 8),
+        FormFileTile(_stockPhoto, enabled: on),
+      ],
       ..._valueFields(
         _stockInputs,
         _stockFiles,

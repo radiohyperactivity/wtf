@@ -294,6 +294,34 @@ class ApiClient {
     ) as Json,
   );
 
+  /// GET /me/camera/photo: the photo this session's camera took for its
+  /// form, held until fetched once; null when none is waiting.
+  Future<Download?> cameraHeldPhoto() async {
+    final req = http.Request('GET', server.resolve('$apiPath/me/camera/photo'))
+      ..headers['Accept'] = '*/*';
+    try {
+      final resp = await _send(req);
+      final type = (resp.headers['content-type'] ?? '').split(';').first.trim();
+      return (
+        name: 'Photo${_extensions[type] ?? ''}',
+        type: type,
+        bytes: resp.bodyBytes,
+      );
+    } on ApiProblem catch (e) {
+      if (e.status == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// The file extensions of the image types a camera's photo comes in.
+  static const _extensions = {
+    'image/jpeg': '.jpg',
+    'image/png': '.png',
+    'image/gif': '.gif',
+    'image/webp': '.webp',
+    'image/bmp': '.bmp',
+  };
+
   /// PUT /me/target: what this app has open that a photo could be for.
   Future<void> putTarget(CameraTarget target) =>
       _call('PUT', '/me/target', body: target.toJson());
@@ -687,6 +715,7 @@ class ApiClient {
     bool container = false,
     (int columns, int rows)? grid,
     bool confirm = false,
+    bool? stockPhotos,
   }) async => Location.fromJson(
     await _call(
       'POST',
@@ -695,6 +724,7 @@ class ApiClient {
         'name': name,
         'parent': parentId,
         'container': container,
+        'stock_photos': ?stockPhotos,
         'grid': grid == null
             ? null
             : {

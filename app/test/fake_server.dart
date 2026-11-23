@@ -47,6 +47,10 @@ class FakeServer {
   /// That session has logged out: GET /me/camera and photos are 404.
   bool cameraGone = false;
 
+  /// A photo the camera took for this session's form, until fetched
+  /// (GET /me/camera/photo); the phone's photos for a form land here.
+  List<int>? heldPhoto;
+
   /// The open event streams (GET /me/events).
   final List<StreamController<List<int>>> _streams = [];
 
@@ -564,8 +568,22 @@ class FakeServer {
       case ('GET', ['me', 'camera']):
         if (cameraGone) return _problem(404, 'Not found');
         return _json(cameraTarget);
+      case ('GET', ['me', 'camera', 'photo']):
+        final photo = heldPhoto;
+        heldPhoto = null;
+        if (photo == null) return _problem(404, 'Not found');
+        return http.Response.bytes(
+          photo,
+          200,
+          headers: {..._headers, 'content-type': 'image/png'},
+        );
       case ('PUT', ['me', 'camera', 'photo']):
         if (cameraGone) return _problem(404, 'Not found');
+        // For a form there, new or not: held for it.
+        if (cameraTarget['waiting'] != null || cameraTarget['form'] == true) {
+          heldPhoto = [1, 2, 3];
+          return _json(cameraTarget);
+        }
         final id = cameraTarget['id'];
         if (id == null) return _problem(409, 'Not possible in this state');
         final rows = switch (cameraTarget['type']) {
@@ -867,6 +885,14 @@ class FakeServer {
         final row = (kind == 'items' ? items : stock).firstWhere(
           (r) => r['id'] == id,
         );
+        // A stock row's photo only where its location takes them.
+        if (kind == 'stock' &&
+            locations.firstWhere(
+                  (l) => l['id'] == row['location'],
+                )['stock_photos'] !=
+                true) {
+          return _problem(422, 'Rule violation', 'No photos of stock there');
+        }
         row['photo'] = 'hash-${_nextId++}';
         return _json(kind == 'items' ? itemJson(id) : stockJson(id));
       case ('PUT', [final kind, final id, 'files', final name]):
@@ -1082,7 +1108,13 @@ class FakeServer {
         });
       case ('PATCH', ['locations', final id]):
         final l = locations.firstWhere((l) => l['id'] == id);
-        for (final k in ['name', 'parent', 'container', 'photo']) {
+        for (final k in [
+          'name',
+          'parent',
+          'container',
+          'photo',
+          'stock_photos',
+        ]) {
           if (body!.containsKey(k)) l[k] = body[k];
         }
         return _json(locationJson(id));
@@ -1103,6 +1135,13 @@ class FakeServer {
           'name': body!['name'],
           'parent': body['parent'],
           'container': body['grid'] != null || body['container'] == true,
+          // As its parent's unless given.
+          'stock_photos':
+              body['stock_photos'] ??
+              locations
+                  .where((p) => p['id'] == body['parent'])
+                  .firstOrNull?['stock_photos'] ??
+              false,
         };
         locations.add(l);
         final grid = body['grid'] as Map?;
@@ -1115,6 +1154,7 @@ class FakeServer {
                 'name': '${String.fromCharCode(65 + c)}$r',
                 'parent': l['id'],
                 'container': false,
+                'stock_photos': l['stock_photos'],
               });
             }
           }

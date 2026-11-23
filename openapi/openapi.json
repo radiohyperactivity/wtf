@@ -1597,9 +1597,30 @@
       }
     },
     "/me/camera/photo": {
+      "get": {
+        "summary": "Fetch the photo this session's camera took for its form",
+        "description": "When the camera's photo was for a form (a new item, stock row or location, or one open to edit), wtfd holds it for this session, which is told on GET /me/events (photo), and fetches it here, once: it puts it in the form, to upload with the rest when saved. 404 when none is waiting. Held in wtfd's tmp directory, not in the database; a new photo replaces one not fetched yet, and the camera ending discards it.",
+        "operationId": "cameraPhotoGet",
+        "responses": {
+          "200": {
+            "description": "The photo, of its media type (found from its first bytes).",
+            "content": {
+              "image/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
       "put": {
         "summary": "Upload a photo for what the other session has open",
-        "description": "Uploaded as the photo of the item, stock row or location the session this one is the camera for has open as it arrives (409 when nothing is, or when it isn't saved yet). It must be an image; a location's photo is for admins. That session is told on GET /me/events (changed).",
+        "description": "Uploaded as the photo of the item, stock row or location the session this one is the camera for has open as it arrives (409 when nothing is). When that is a form, new or to edit (waiting, or form true), the photo is held for that session instead, which fetches it with GET /me/camera/photo and puts it in the form. It must be an image; a location's photo is for admins, and a stock row's only where its location takes stock photos. That session is told on GET /me/events (changed, or photo when held).",
         "operationId": "cameraPhotoPut",
         "parameters": [
           {
@@ -1678,7 +1699,7 @@
       "get": {
         "summary": "The session's event stream",
         "operationId": "events",
-        "description": "Server-sent events, as long as the client keeps the request open. `camera` {client}: a session, on a phone say, has become this one's camera, and its app calls itself client; also at once when the stream opens. `camera` {}: it has none any more. `changed` {path}: the session that is this one's camera changed what is at that path (relative to /api/v1), as by uploading a photo. `ended` {}: this session has ended (checked every 5 minutes). A comment line comes every 30 seconds when there is nothing else.",
+        "description": "Server-sent events, as long as the client keeps the request open. `camera` {client}: a session, on a phone say, has become this one's camera, and its app calls itself client; also at once when the stream opens. `camera` {}: it has none any more. `changed` {path}: the session that is this one's camera changed what is at that path (relative to /api/v1), as by uploading a photo. `photo` {client}: that session took a photo for this one's form, waiting at GET /me/camera/photo. `ended` {}: this session has ended (checked every 5 minutes). A comment line comes every 30 seconds when there is nothing else.",
         "responses": {
           "200": {
             "description": "The stream.",
@@ -2484,6 +2505,10 @@
                   "default": false,
                   "description": "Holds only other classes (no items) or locations (no stock)."
                 },
+                "stock_photos": {
+                  "type": "boolean",
+                  "description": "Locations only: whether the stock rows there may have a photo of their own. Optional: its parent's when left out, false at the top."
+                },
                 "grid": {
                   "oneOf": [
                     {
@@ -2545,6 +2570,10 @@
                 "photo": {
                   "type": "null",
                   "description": "Locations only: null removes the photo; a photo is uploaded."
+                },
+                "stock_photos": {
+                  "type": "boolean",
+                  "description": "Locations only: whether the stock rows there may have a photo of their own. Turned off, they keep the photos they have."
                 }
               }
             }
@@ -2918,6 +2947,10 @@
               "stock",
               "location"
             ]
+          },
+          "form": {
+            "type": "boolean",
+            "description": "With type, id and name: it is open in a form, to edit, so a photo goes to the form. Optional."
           }
         }
       },
@@ -2957,6 +2990,10 @@
               }
             ],
             "description": "Location trees only."
+          },
+          "stock_photos": {
+            "type": "boolean",
+            "description": "Location trees only: whether the stock rows there may have a photo of their own."
           },
           "children": {
             "type": "array",
@@ -3089,6 +3126,10 @@
                 "type": "null"
               }
             ]
+          },
+          "stock_photos": {
+            "type": "boolean",
+            "description": "Whether the stock rows there may have a photo of their own; an upload of one is refused (422) where not."
           },
           "path": {
             "type": "array",

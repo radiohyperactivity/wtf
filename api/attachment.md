@@ -7,7 +7,7 @@ An item or a stock row has files in two ways:
 - **a photo**, in its `photo` column, which must be an image;
 - **the file of an attachment attribute** of its class ([attribute.md](attribute.md)), as that value: a datasheet, a manual, a receipt. Only the attachments a class defines can be uploaded, one file each, of the media types the attribute lists, if it lists any.
 
-A location has a photo too, and no other files. The apps show it for a stock row there without a photo of its own. Classes have no files.
+A stock row has a photo only where its location takes stock photos (`stock_photos`, [location.md](location.md)). A location has a photo too, and no other files. The apps show it for a stock row there without a photo of its own. Classes have no files.
 
 ## The model
 
@@ -22,7 +22,7 @@ A location has a photo too, and no other files. The apps show it for a stock row
 
 ## Uploading and downloading
 
-The routes are under the item, stock row or location: `/items/{id}`, `/stock/{id}` or `/locations/{id}` (the photo only). A phone that is the camera for another session uploads to `PUT /me/camera/photo`, which puts the photo on what that session has open (WTFD.md, "The phone as a remote camera").
+The routes are under the item, stock row or location: `/items/{id}`, `/stock/{id}` or `/locations/{id}` (the photo only). A phone that is the camera for another session uploads to `PUT /me/camera/photo`, which puts the photo on what that session has open, or, when that is a form, holds it for that session to fetch with `GET /me/camera/photo` and put in the form (WTFD.md, "The phone as a remote camera").
 
 - **Upload:** `PUT …/photo`, or `PUT …/files/{attribute}`, with a `multipart/form-data` body of one `file` part. It answers the item, stock row or location. The size limit is `--max-attachment-size` (100 MiB by default). A photo that isn't an image is refused (400); a file of a type the attribute doesn't take is refused (422).
 - **Download:** `GET …/photo`, or `GET …/files/{attribute}`.

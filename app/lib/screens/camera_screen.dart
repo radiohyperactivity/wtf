@@ -119,14 +119,25 @@ class _TargetCard extends StatelessWidget {
         title: Text(why, style: text.titleMedium),
       );
     } else {
+      final kind = CameraTarget.kind(target.waiting ?? target.type);
       content = ListTile(
-        leading: Icon(switch (target.type) {
+        leading: Icon(switch (target.waiting ?? target.type) {
           'stock' => Icons.inventory_2_outlined,
           'location' => Icons.place_outlined,
           _ => Icons.category_outlined,
         }),
-        title: Text(target.name ?? '', style: text.titleLarge),
-        subtitle: Text('The photo of this ${CameraTarget.kind(target.type)}'),
+        title: Text(
+          target.waiting != null ? 'A new $kind' : target.name ?? '',
+          style: text.titleLarge,
+        ),
+        // A form takes it, and saves it with the rest (decision 117).
+        subtitle: Text(
+          target.waiting != null
+              ? 'Its photo, on its form; sent when it is saved'
+              : target.form
+              ? 'The photo of this $kind, on its form; sent when it is saved'
+              : 'The photo of this $kind',
+        ),
       );
     }
     return Card.outlined(
@@ -192,7 +203,15 @@ class _LastShot extends StatelessWidget {
             children: [
               Icon(Icons.check_circle_outline, color: colours.primary),
               const SizedBox(width: 8),
-              Expanded(child: Text('Added to ${to.name ?? 'it'}')),
+              Expanded(
+                child: Text(
+                  to.waiting != null
+                      ? 'In the form of the new ${CameraTarget.kind(to.waiting)}'
+                      : to.form
+                      ? 'In the form of ${to.name ?? 'it'}'
+                      : 'Added to ${to.name ?? 'it'}',
+                ),
+              ),
             ],
           ),
       ],

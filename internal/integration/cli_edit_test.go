@@ -73,8 +73,8 @@ func TestCLIEdit(t *testing.T) {
 	contains(t, out, "Amount:    8", "Garage/Shelf")
 
 	// Location form.
-	out, _ = c.interact([]string{clear + "Shelf A\r", "\r", "\r"}, false, "location", "edit", "Garage/Shelf")
-	contains(t, out, "Path:  Garage/Shelf A")
+	out, _ = c.interact([]string{clear + "Shelf A\r", "\r", "\r", clear + "yes\r"}, false, "location", "edit", "Garage/Shelf")
+	contains(t, out, "Stock photos:  yes", "Path:          Garage/Shelf A")
 
 	// Account form: a user, keeping the email and the password.
 	c.run(0, "secret-password\n", "account", "add", "editor@test.local", "--password")
@@ -83,7 +83,7 @@ func TestCLIEdit(t *testing.T) {
 	c.ok("account", "delete", "editor@test.local")
 
 	// --edit on add opens the form for the new object.
-	out, _ = c.interact([]string{"\r", "\r", clear + "yes\r"}, false, "location", "add", "Cellar", "--edit")
+	out, _ = c.interact([]string{"\r", "\r", clear + "yes\r", "\r"}, false, "location", "add", "Cellar", "--edit")
 	contains(t, out, "Container:  yes")
 	// With --edit, item add ends with the form: no question about stock.
 	out, prompts = c.interact([]string{"\r", "\r", clear + "3\r", "\r"},

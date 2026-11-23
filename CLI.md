@@ -381,3 +381,7 @@ Built with the refactored API ([API.md](API.md), API revision 1 again; 2026-10-3
 77. **`wtf item add` and `wtf item set` lose `--unit` and `--no-unit`,** and the edit form its unit field: an item's unit is its class's. `wtf item get` still shows it, from the class.
 78. **`wtf class stock <class> --counting none|optional|required [--unit U]`** gives a class its own rule for counting its items' stock, and **`--inherit`** makes it inherit its parent's again. It does a dry run first: when the change would count stock with an amount in another unit (nothing converts), it asks on a terminal, and needs `--yes` elsewhere. `--dry-run` only says what it would do; the answer says how many rows were counted in another unit. `wtf class get` shows the rule as `Stock:  counted, optional, in m (from Tools)`.
 79. **After `item add`, the stock offered follows the class's rule:** no amount asked for when nothing is counted, and one that must be given when it is required.
+
+### Photos of stock, by location (23 November 2026)
+
+80. **`wtf location add` and `wtf location set` take `--stock-photos yes|no`:** whether the stock rows at the location may have a photo of their own. Left out on `add`, a new location has its parent's (none at the top). `wtf location get` says "Stock photos: yes" where they may, and nothing where they may not; the location's edit form asks for it after Container.

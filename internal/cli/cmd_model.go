@@ -46,22 +46,26 @@ func treeCommand(kind, path string) command {
 func nodeAddCommand(kind, path string, resolve func(*env, string) (string, error), show func(*env, json.RawMessage) error) command {
 	plural := map[string]string{"class": "classes", "location": "locations"}[kind]
 	usage := "<name or path> [--parent P] [--create-parents] [--container] [--edit]"
+	flags := map[string]param{"parent": arg("Parent", kindCompleters[kind])}
 	if kind == "location" {
-		usage = "<name or path> [--parent P] [--create-parents] [--container | --grid COLUMNSxROWS [--yes]] [--edit]"
+		usage = "<name or path> [--parent P] [--create-parents] [--container | --grid COLUMNSxROWS [--yes]] [--stock-photos yes|no] [--edit]"
+		flags["stock-photos"] = arg("Stock photos", words("yes", "no"))
 	}
 	return command{
 		name:    "add",
 		args:    usage,
 		summary: "Create a " + kind + `. A path ("A/B/C") creates C under A/B, offering to create missing parents.`,
 		params:  []param{arg("Name", parentPaths(kindCompleters[kind]))},
-		flags:   map[string]param{"parent": arg("Parent", kindCompleters[kind])},
+		flags:   flags,
 		setup: func(fs *flag.FlagSet) func(*env, []string) error {
 			parent := fs.String("parent", "", "the parent "+kind+"; a path in the name is then below it")
 			parents := fs.Bool("create-parents", false, "create missing parents without asking")
 			container := fs.Bool("container", false, "make it a container: it holds only other "+plural+", "+map[string]string{"class": "no items", "location": "no stock"}[kind])
 			editAfter := fs.Bool("edit", false, "open the new "+kind+" in the edit form")
 			grid, yes := new(string), new(bool)
+			var stockPhotos optString
 			if kind == "location" {
+				fs.Var(&stockPhotos, "stock-photos", "yes: its stock rows may have a photo of their own; no: they may not (default: as its parent)")
 				grid = fs.String("grid", "", "also create compartments named like spreadsheet cells: COLUMNSxROWS, e.g. 8x5 for A1 … H5 (makes it a container)")
 				yes = fs.Bool("yes", false, "don't ask before creating more than 1000 locations (needed in scripts)")
 			}
@@ -72,6 +76,10 @@ func nodeAddCommand(kind, path string, resolve func(*env, string) (string, error
 					}
 				}
 				if err := wantArgs(args, 1, 1); err != nil {
+					return err
+				}
+				photos, err := optYesNo(stockPhotos, "--stock-photos")
+				if err != nil {
 					return err
 				}
 				var columns, rows int
@@ -141,6 +149,9 @@ func nodeAddCommand(kind, path string, resolve func(*env, string) (string, error
 					}
 				}
 				body := newNode(kind, name, parentID, *container)
+				if photos != nil {
+					body["stock_photos"] = *photos
+				}
 				if columns > 0 {
 					body["grid"] = object{"columns": columns, "rows": rows, "confirm": confirmed}
 				}
@@ -273,20 +284,31 @@ func parentPaths(c completer) completer {
 
 // nodeSetCommand renames or moves a class or location.
 func nodeSetCommand(kind, prefix string, resolve func(*env, string) (string, error), show func(*env, json.RawMessage) error) command {
+	args := "<" + kind + "> [--name N] [--parent P|none] [--container yes|no]"
+	summary := "Rename a " + kind + ", move it under another parent (none: make it a root), or (un)mark it as a container."
+	flags := map[string]param{
+		"parent":    arg("Parent", kindCompleters[kind]),
+		"container": arg("Container", words("yes", "no")),
+	}
+	if kind == "location" {
+		args += " [--stock-photos yes|no]"
+		summary = "Rename a location, move it under another parent (none: make it a root), (un)mark it as a container, or say whether its stock rows may have photos."
+		flags["stock-photos"] = arg("Stock photos", words("yes", "no"))
+	}
 	return command{
 		name:    "set",
-		args:    "<" + kind + "> [--name N] [--parent P|none] [--container yes|no]",
-		summary: "Rename a " + kind + ", move it under another parent (none: make it a root), or (un)mark it as a container.",
+		args:    args,
+		summary: summary,
 		params:  []param{objectParam(kind)},
-		flags: map[string]param{
-			"parent":    arg("Parent", kindCompleters[kind]),
-			"container": arg("Container", words("yes", "no")),
-		},
+		flags:   flags,
 		setup: func(fs *flag.FlagSet) func(*env, []string) error {
-			var name, parent, container optString
+			var name, parent, container, stockPhotos optString
 			fs.Var(&name, "name", "new name")
 			fs.Var(&parent, "parent", "new parent, or none")
 			fs.Var(&container, "container", "yes: holds only other nodes; no: may hold items or stock")
+			if kind == "location" {
+				fs.Var(&stockPhotos, "stock-photos", "yes: its stock rows may have a photo of their own; no: they may not (those they have stay)")
+			}
 			return func(e *env, args []string) error {
 				if err := wantArgs(args, 1, 1); err != nil {
 					return err
@@ -313,6 +335,13 @@ func nodeSetCommand(kind, prefix string, resolve func(*env, string) (string, err
 						return usagef("--container must be yes or no")
 					}
 					body["container"] = b
+				}
+				photos, err := optYesNo(stockPhotos, "--stock-photos")
+				if err != nil {
+					return err
+				}
+				if photos != nil {
+					body["stock_photos"] = *photos
 				}
 				if len(body) == 0 {
 					return usagef("nothing to change")
@@ -376,6 +405,7 @@ func (e *env) printLocationJSON(data json.RawMessage) error {
 		"Code", l.Code,
 		"Name", l.Name,
 		"Container", yesNo(l.Container),
+		"Stock photos", yesNo(l.StockPhotos),
 		"Path", pathNames(l.Path),
 		"Photo", photoText(l.Photo),
 		"Id", l.ID)
@@ -924,6 +954,18 @@ func columnLabel(n int) string {
 		n /= 26
 	}
 	return label
+}
+
+// optYesNo is a yes or no flag's value, nil when it isn't given.
+func optYesNo(o optString, flag string) (*bool, error) {
+	if !o.set {
+		return nil, nil
+	}
+	b, ok := parseYesNo(o.value)
+	if !ok {
+		return nil, usagef("%s must be yes or no", flag)
+	}
+	return &b, nil
 }
 
 // newNode is the body that creates a class or location: every field, as

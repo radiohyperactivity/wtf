@@ -14,6 +14,7 @@ import 'package:wtf/screens/model_import.dart';
 import 'package:wtf/screens/search_screen.dart';
 import 'package:wtf/session.dart';
 import 'package:wtf/theme.dart';
+import 'package:wtf/widgets/common.dart' show SwitchTile;
 import 'package:wtf/widgets/files.dart';
 import 'package:wtf/widgets/link.dart';
 
@@ -675,6 +676,8 @@ void main() {
     setSize(tester, 1000);
     final fake = FakeServer();
     (fake.items.first['values'] as Map)['Datasheet'] = 'hash-old';
+    fake.locations.firstWhere((l) => l['id'] == 'l-shelf1')['stock_photos'] =
+        true;
     var broken = false;
     pickUploadFile = ({bool image = false}) async => (
       'front.png',
@@ -737,6 +740,73 @@ void main() {
         'Upload it on its screen.',
       ),
       findsOneWidget,
+    );
+  });
+
+  testWidgets('stock photos only where the location takes them', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    await startApp(tester, fake);
+    final router = GoRouter.of(tester.element(find.byType(Scaffold).first));
+
+    // Shelf 1 takes none: the stock row's menu has no Photo, nor its form.
+    router.go('/stock/1C00');
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(AppBar),
+        matching: find.byType(PopupMenuButton<String>),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Photo…'), findsNothing);
+    await tester.tapAt(Offset.zero);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Edit'));
+    await tester.pumpAndSettle();
+    expect(find.text('Photo'), findsNothing);
+
+    // An admin turns them on for the shelf, on its form.
+    router.go('/locations/1A01');
+    await tester.pumpAndSettle();
+    await menu(tester, 'Edit');
+    expect(
+      tester
+          .widget<SwitchTile>(
+            find.widgetWithText(SwitchTile, 'Photos of stock'),
+          )
+          .value,
+      isFalse,
+    );
+    await tester.tap(find.text('Photos of stock'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      'PATCH /api/v1/locations/l-shelf1 {"stock_photos":true}',
+    );
+
+    // Now the stock row has a Photo.
+    router.go('/stock/1C00');
+    await tester.pumpAndSettle();
+    await menu(tester, 'Photo…');
+    expect(find.text('Choose a photo'), findsOneWidget);
+    await tester.tapAt(Offset.zero);
+    await tester.pumpAndSettle();
+
+    // A new location below it starts as it does.
+    router.go('/locations/new?parent=l-shelf1');
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<SwitchTile>(
+            find.widgetWithText(SwitchTile, 'Photos of stock'),
+          )
+          .value,
+      isTrue,
     );
   });
 
@@ -1560,6 +1630,8 @@ void main() {
     // Its class counts in metres; the item has no unit of its own.
     final fake = FakeServer()
       ..ownStock['c-drills'] = {'counting': 'optional', 'unit': 'm'};
+    fake.locations.firstWhere((l) => l['id'] == 'l-shelf2')['stock_photos'] =
+        true;
     pickUploadFile = ({bool image = false}) async =>
         ('reel.png', () async => [1, 2, 3]);
     addTearDown(() => pickUploadFile = ({bool image = false}) async => null);
@@ -2107,7 +2179,7 @@ void main() {
     }
   });
 
-  testWidgets('a phone as the camera for the PC: what for, a photo, stop', (
+  testWidgets('a phone as the camera for a computer: what for, a photo, stop', (
     tester,
   ) async {
     setSize(tester, 400, 1400);
@@ -2142,14 +2214,23 @@ void main() {
       ),
     );
 
-    // Nothing open there, then a new item not saved yet: no photo.
-    expect(find.text('Open an item on the PC'), findsOneWidget);
+    // Nothing open there: no photo. A new item's form: its photo goes into
+    // the form, sent when it is saved.
+    expect(find.text('Open an item on the computer'), findsOneWidget);
     expect(shutter().onPressed, isNull);
     fake.cameraTarget = {'waiting': 'item'};
     await tester.pump(cameraPoll);
     await tester.pumpAndSettle();
-    expect(find.text('Save the item on the PC first'), findsOneWidget);
-    expect(shutter().onPressed, isNull);
+    expect(find.text('A new item'), findsOneWidget);
+    expect(
+      find.text('Its photo, on its form; sent when it is saved'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Take photo'));
+    await tester.pumpAndSettle();
+    expect(fake.heldPhoto, isNotNull);
+    expect(find.text('In the form of the new item'), findsOneWidget);
+    fake.heldPhoto = null;
 
     // A saved item: the photo goes to it.
     fake.cameraTarget = {
@@ -2171,12 +2252,12 @@ void main() {
     expect(fake.items.first['photo'], isNotNull);
     expect(find.text('Added to Cordless drill'), findsOneWidget);
 
-    // The PC moved on before the photo arrived: it says so, and the photo
-    // can be sent again.
+    // The computer moved on before the photo arrived: it says so, and the
+    // photo can be sent again.
     fake.cameraTarget = {};
     await tester.tap(find.text('Take photo'));
     await tester.pumpAndSettle();
-    expect(find.text('Open an item on the PC'), findsNWidgets(2));
+    expect(find.text('Open an item on the computer'), findsNWidgets(2));
     fake.cameraTarget = {
       'type': 'stock',
       'id': 's-1',
@@ -2218,8 +2299,9 @@ void main() {
     expect(fake.openStreams, 1);
   });
 
-  testWidgets('the PC says what it has open once it has a camera, and loads '
-      'again without losing what is typed', (tester) async {
+  testWidgets('the computer says what it has open once it has a camera, '
+      'loads again without losing what is typed, and puts its photo in a '
+      'form', (tester) async {
     setSize(tester, 1000);
     final fake = FakeServer();
     await startApp(tester, fake);
@@ -2241,12 +2323,11 @@ void main() {
     expect(find.text('Hammer drill'), findsWidgets);
     expect(fake.targets.last, {...drill, 'name': 'Hammer drill'});
 
-    // Its form: the same item, so nothing new is said; what is typed
-    // stays, while the item's screen under it loads again.
-    final told = fake.targets.length;
+    // Its form: the same item, in a form, where a photo goes; what is
+    // typed stays, while the item's screen under it loads again.
     await tester.tap(find.byTooltip('Edit'));
     await tester.pumpAndSettle();
-    expect(fake.targets.length, told);
+    expect(fake.targets.last, {...drill, 'name': 'Hammer drill', 'form': true});
     await tester.enterText(field('Name'), 'Typed name');
     fake.items.first['name'] = 'Another name';
     fake.sendEvent('changed', {'path': '/items/i-drill/photo'});
@@ -2255,13 +2336,26 @@ void main() {
       tester.widget<TextFormField>(field('Name')).controller!.text,
       'Typed name',
     );
-    expect(fake.targets.last, {...drill, 'name': 'Another name'});
+    expect(fake.targets.last, {...drill, 'name': 'Another name', 'form': true});
 
-    // A new item isn't saved yet; a list is nothing a photo is for.
+    // A photo the phone took for the form is the item's there, sent when
+    // it is saved.
+    fake.heldPhoto = [1, 2, 3];
+    fake.sendEvent('photo', {'client': 'WtF on iPhone'});
+    await tester.pumpAndSettle();
+    expect(find.text('Photo.png, sent when saved'), findsOneWidget);
+    expect(fake.heldPhoto, isNull);
+
+    // A new item isn't saved yet: its form takes the photo too. A list is
+    // nothing a photo is for.
     final router = GoRouter.of(tester.element(find.byType(Scaffold).first));
     router.go('/items/new');
     await tester.pumpAndSettle();
     expect(fake.targets.last, {'waiting': 'item'});
+    fake.heldPhoto = [1, 2, 3];
+    fake.sendEvent('photo', {'client': 'WtF on iPhone'});
+    await tester.pumpAndSettle();
+    expect(find.text('Photo.png, sent when saved'), findsOneWidget);
     router.go('/locations');
     await tester.pumpAndSettle();
     expect(fake.targets.last, isEmpty);
@@ -2276,7 +2370,7 @@ void main() {
     expect(fake.targets.length, before);
   });
 
-  testWidgets('a camera goes on after a restart, until its PC logs out', (
+  testWidgets('a camera goes on after a restart, until its computer logs out', (
     tester,
   ) async {
     setSize(tester, 400, 1000);

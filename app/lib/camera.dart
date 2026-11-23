@@ -174,11 +174,8 @@ class Camera extends ChangeNotifier {
 
   /// What the phone says when no photo can be taken for [target]
   /// (decisions 6 and 7); null when one can.
-  static String? notReady(CameraTarget target) => target.ready
-      ? null
-      : target.waiting != null
-      ? 'Save the ${CameraTarget.kind(target.waiting)} on the PC first'
-      : 'Open an item on the PC';
+  static String? notReady(CameraTarget target) =>
+      target.ready ? null : 'Open an item on the computer';
 
   /// Asks the server what a photo would be for.
   Future<void> refresh() async {
@@ -389,10 +386,49 @@ class Camera extends ChangeNotifier {
       case 'changed':
         final path = event.data['path'];
         if (path is String) _client?.noteRemoteChange(path);
+      case 'photo':
+        _heldPhoto();
       case 'ended':
         session.ended();
     }
   }
+
+  /// The forms open now that take a photo from the camera, the one on top
+  /// last (decision 117).
+  final _forms = <void Function(PickedFile photo)>[];
+
+  /// While a form is open, a photo the camera takes for it goes to [take];
+  /// call what this returns when the form closes.
+  VoidCallback takePhotosForForm(void Function(PickedFile photo) take) {
+    _forms.add(take);
+    return () => _forms.remove(take);
+  }
+
+  /// Fetches the photo the camera took for the form open here, and puts it
+  /// in the form, to upload with the rest when saved.
+  Future<void> _heldPhoto() async {
+    final client = _client;
+    if (client == null) return;
+    try {
+      final photo = await client.cameraHeldPhoto();
+      if (photo == null) return;
+      final from = cameraClient == null || cameraClient!.isEmpty
+          ? 'the camera'
+          : cameraClient!;
+      if (_forms.isEmpty) {
+        _say('A photo came from $from, but no form here takes it.');
+        return;
+      }
+      final bytes = photo.bytes;
+      _forms.last((photo.name, () async => bytes));
+      _say('A photo from $from is in the form; it is sent when saved.');
+    } catch (e) {
+      _say("The photo from the camera couldn't be fetched: ${errorText(e)}");
+    }
+  }
+
+  void _say(String message) =>
+      messenger.currentState?.showSnackBar(SnackBar(content: Text(message)));
 
   /// This session has a camera, which calls itself [client], or none
   /// (null). With one, the server is told what is open.
@@ -421,7 +457,10 @@ class Camera extends ChangeNotifier {
       here = CameraTarget.waiting(_types[m[1]]!);
     } else if (_openOne.firstMatch(path) case final m?) {
       final shown = _shown;
-      if (shown != null && shown.$1 == '/${m[1]}/${m[2]}') here = shown.$2;
+      if (shown != null && shown.$1 == '/${m[1]}/${m[2]}') {
+        // In its edit form, a photo goes into the form (decision 117).
+        here = path.endsWith('/edit') ? shown.$2.inForm() : shown.$2;
+      }
     }
     if (here != _here) {
       _here = here;

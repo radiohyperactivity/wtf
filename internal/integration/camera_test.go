@@ -138,12 +138,31 @@ func TestCamera(t *testing.T) {
 	}
 	photo(409, pngBytes)
 
-	// A new item not saved yet: still no photo.
+	// A new item not saved yet: the photo is held for the desktop's form,
+	// which is told, and fetches it once. Only an image.
 	e.expect(t, 204, "PUT", "/me/target", obj("waiting", "item"), as(pc)...)
 	if got := e.expect(t, 200, "GET", look, nil, as(phone)...).body; str(t, got, "waiting") != "item" {
 		t.Fatalf("waiting: %v", got)
 	}
-	photo(409, pngBytes)
+	if rec := e.raw("GET", "/me/camera/photo", as(pc)...); rec.Code != 404 {
+		t.Fatalf("no photo held yet: %d", rec.Code)
+	}
+	if got := photo(200, pngBytes).body; str(t, got, "waiting") != "item" {
+		t.Fatalf("photo for the form: %v", got)
+	}
+	expectEvent(t, pcEvents, `photo {"client":"WtF on iPhone"}`)
+	held := e.raw("GET", "/me/camera/photo", as(pc)...)
+	if held.Code != 200 || !bytes.Equal(held.Body.Bytes(), pngBytes) || held.Header().Get("Content-Type") != "image/png" {
+		t.Fatalf("the held photo: %d %v", held.Code, held.Header())
+	}
+	if rec := e.raw("GET", "/me/camera/photo", as(pc)...); rec.Code != 404 {
+		t.Fatalf("fetched twice: %d", rec.Code)
+	}
+	if rec := e.raw("GET", "/me/camera/photo", as(phone)...); rec.Code != 404 {
+		t.Fatalf("another session's photo: %d", rec.Code)
+	}
+	photo(400, pdfBytes)
+	expectNoEvent(t, pcEvents)
 
 	// A saved one: the photo goes to it, and the desktop is told.
 	class := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Camera "+email)).body, "id")
@@ -162,11 +181,33 @@ func TestCamera(t *testing.T) {
 	}
 	photo(400, pdfBytes)
 
+	// The same item open in its edit form: the photo goes to the form, and
+	// the item stays as it is until the form is saved.
+	before := get(t, e.expect(t, 200, "GET", "/items/"+item, nil).body, "photo")
+	e.expect(t, 204, "PUT", "/me/target", obj("type", "item", "id", item, "name", "Drill", "form", true), as(pc)...)
+	photo(200, append(append([]byte(nil), pngBytes...), 'x'))
+	expectEvent(t, pcEvents, `photo {"client":"WtF on iPhone"}`)
+	if got := e.expect(t, 200, "GET", "/items/"+item, nil).body; get(t, got, "photo") != before {
+		t.Fatalf("the item changed: %v", got)
+	}
+	// Not fetched before the camera stops: it is thrown away.
+	e.expect(t, 204, "DELETE", "/me/camera", nil, as(phone)...)
+	expectEvent(t, pcEvents, `camera {}`)
+	if rec := e.raw("GET", "/me/camera/photo", as(pc)...); rec.Code != 404 {
+		t.Fatalf("held after the camera stopped: %d", rec.Code)
+	}
+	e.expect(t, 200, "PUT", "/me/camera", obj("session", pcID), as(phone)...)
+	expectEvent(t, pcEvents, `camera {"client":"WtF on iPhone"}`)
+	e.expect(t, 204, "PUT", "/me/target", drill, as(pc)...)
+
 	// What a desktop says must make sense.
 	e.expect(t, 400, "PUT", "/me/target", obj("type", "thing", "id", item), as(pc)...)
 	e.expect(t, 400, "PUT", "/me/target", obj("type", "item", "id", "x"), as(pc)...)
 	e.expect(t, 400, "PUT", "/me/target", obj("waiting", "item", "type", "item"), as(pc)...)
 	e.expect(t, 400, "PUT", "/me/target", obj("other", "x"), as(pc)...)
+	e.expect(t, 400, "PUT", "/me/target", obj("form", true), as(pc)...)
+	e.expect(t, 400, "PUT", "/me/target", obj("waiting", "item", "form", true), as(pc)...)
+	e.expect(t, 400, "PUT", "/me/target", obj("type", "item", "id", item, "form", "yes"), as(pc)...)
 
 	// Stopping tells the desktop; asking again makes the phone the camera
 	// again, as after a restart of wtfd.
