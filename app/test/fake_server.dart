@@ -32,6 +32,10 @@ class FakeServer {
   /// The body of the login, as sent.
   JsonMap? login;
 
+  /// The account's preferences, as GET /me/preferences answers; a PATCH
+  /// changes them, and tells the open event streams, as wtfd does.
+  final JsonMap preferences = {'add_stock': 'last', 'add_stock_last': true};
+
   // --- The phone as a remote camera ---
 
   /// What the app said it has open (PUT /me/target), not in [changes].
@@ -602,6 +606,18 @@ class FakeServer {
             'set-cookie': 'wtf_session=; Path=/api; Max-Age=0',
           },
         );
+      case ('GET', ['me', 'preferences']):
+        return _json(preferences);
+      case ('PATCH', ['me', 'preferences']):
+        const defaults = {'add_stock': 'last', 'add_stock_last': true};
+        for (final MapEntry(:key, :value) in body!.entries) {
+          if (!defaults.containsKey(key)) {
+            return _problem(400, 'Unknown field');
+          }
+          preferences[key] = value ?? defaults[key];
+        }
+        sendEvent('preferences');
+        return _json(preferences);
       case ('GET', ['me', 'sessions']):
         return _json(sessions);
       case ('DELETE', ['me', 'sessions', final id]):

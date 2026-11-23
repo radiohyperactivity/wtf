@@ -263,6 +263,50 @@ class Session extends ChangeNotifier {
   /// again at every login and logout.
   Recent recent = Recent();
 
+  /// The account's preferences; the defaults while nobody is logged in.
+  Preferences preferences = const Preferences();
+
+  // Each request for the preferences is numbered: only the answer to the
+  // latest is kept, as an earlier one may arrive after it with older ones.
+  int _preferencesAsked = 0;
+
+  /// Asks the server for the account's preferences again: after logging
+  /// in, and when the event stream opens or says they changed (decision
+  /// 118). A server that doesn't answer leaves them as they were.
+  Future<void> refreshPreferences() async {
+    final client = _client;
+    if (client == null) return;
+    final asked = ++_preferencesAsked;
+    try {
+      final answer = await client.preferences();
+      if (asked != _preferencesAsked || !identical(client, _client)) return;
+      preferences = answer;
+      notifyListeners();
+    } catch (_) {
+      // Kept as they were; the next event or connection asks again.
+    }
+  }
+
+  /// Changes the preferences in [patch], by their names in the API. They
+  /// change here at once; if the server refuses, they are asked for again,
+  /// and the error is thrown.
+  Future<void> setPreferences(Json patch, Preferences shown) async {
+    final client = _client;
+    if (client == null) return;
+    preferences = shown;
+    notifyListeners();
+    final asked = ++_preferencesAsked;
+    try {
+      final answer = await client.setPreferences(patch);
+      if (asked != _preferencesAsked || !identical(client, _client)) return;
+      preferences = answer;
+      notifyListeners();
+    } catch (_) {
+      await refreshPreferences();
+      rethrow;
+    }
+  }
+
   /// Continues the session of the last start, if it's still valid.
   Future<void> restore() async {
     themeMode =
@@ -284,6 +328,7 @@ class Session extends ChangeNotifier {
       me = await client.me();
       _client = client;
       _confirmed = await storage.readRevisionsConfirmed(server.toString());
+      await refreshPreferences();
     } on ApiProblem {
       // Not logged in, or the server can't be reached: log in again. A token
       // the server ended is deleted by its answer (see _newClient).
@@ -316,6 +361,8 @@ class Session extends ChangeNotifier {
     _client?.close();
     _client = client;
     recent = Recent();
+    preferences = const Preferences();
+    await refreshPreferences();
     this.server = server;
     _confirmed = await storage.readRevisionsConfirmed(server.toString());
     if (!isWeb) await storage.writeServer(server.toString());
@@ -338,6 +385,7 @@ class Session extends ChangeNotifier {
     _client = null;
     me = null;
     recent = Recent();
+    preferences = const Preferences();
     if (!isWeb) await storage.writeToken(null);
     notifyListeners();
   }
@@ -349,6 +397,7 @@ class Session extends ChangeNotifier {
     if (me == null) return;
     me = null;
     recent = Recent();
+    preferences = const Preferences();
     if (!isWeb) storage.writeToken(null);
     notifyListeners();
   }

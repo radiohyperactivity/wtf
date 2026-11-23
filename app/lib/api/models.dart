@@ -51,6 +51,43 @@ class Me {
   final Role role;
 }
 
+/// Whether the new-item form starts with Add stock on: always, never, or as
+/// for the last item added.
+enum AddStock {
+  on('On'),
+  off('Off'),
+  last('As last time');
+
+  const AddStock(this.label);
+
+  final String label;
+}
+
+/// The account's preferences (GET /me/preferences), which follow it to
+/// every device (ACCOUNTS.md, "Preferences"). The server has every one,
+/// with its default where the user chose none; the defaults here are only
+/// for a server too old to have preferences, or one not asked yet.
+class Preferences {
+  const Preferences({this.addStock = AddStock.last, this.addStockLast = true});
+
+  factory Preferences.fromJson(Json json) => Preferences(
+    addStock: AddStock.values.asNameMap()[json['add_stock']] ?? AddStock.last,
+    addStockLast: json['add_stock_last'] as bool? ?? true,
+  );
+
+  final AddStock addStock;
+
+  /// Whether the last item added had its first stock row made with it.
+  final bool addStockLast;
+
+  /// Whether a new item's form starts with Add stock on.
+  bool get addStockNow => switch (addStock) {
+    AddStock.on => true,
+    AddStock.off => false,
+    AddStock.last => addStockLast,
+  };
+}
+
 /// Which build of wtfd answers (GET /api/health): its version, when it was
 /// built, and the commit it was built from. Each is null when the server
 /// doesn't know it, as with a build made without scripts/build.sh.

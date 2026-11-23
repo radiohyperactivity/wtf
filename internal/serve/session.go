@@ -68,7 +68,7 @@ func (s *server) logout(w http.ResponseWriter, r *http.Request) error {
 	if err := s.remove("account.logout")(w, r); err != nil {
 		return err
 	}
-	s.cameras.forget(sessionID(callerOf(r.Context()).token))
+	s.ended(sessionID(callerOf(r.Context()).token))
 	return nil
 }
 
@@ -82,7 +82,7 @@ func (s *server) sessionLogout(w http.ResponseWriter, r *http.Request) error {
 	if err := s.remove("account.session_logout", pathText("p_session", "id"))(w, r); err != nil {
 		return err
 	}
-	s.cameras.forget(strings.ToLower(r.PathValue("id")))
+	s.ended(strings.ToLower(r.PathValue("id")))
 	return nil
 }
 

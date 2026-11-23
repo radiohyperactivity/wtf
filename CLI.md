@@ -385,3 +385,7 @@ Built with the refactored API ([API.md](API.md), API revision 1 again; 2026-10-3
 ### Photos of stock, by location (23 November 2026)
 
 80. **`wtf location add` and `wtf location set` take `--stock-photos yes|no`:** whether the stock rows at the location may have a photo of their own. Left out on `add`, a new location has its parent's (none at the top). `wtf location get` says "Stock photos: yes" where they may, and nothing where they may not; the location's edit form asks for it after Container.
+
+### Preferences (23 November 2026)
+
+81. **`wtf preferences list`, `set <name> <value>` and `reset <name>`:** the account's preferences, which the apps follow (ACCOUNTS.md, "Preferences"). The CLI knows none of them by name, so a new one needs no new CLI: `set` sends the value as JSON where it is one (`true`, `12`) and as text otherwise (`off`), and the server says what it takes. The CLI follows none of them itself.

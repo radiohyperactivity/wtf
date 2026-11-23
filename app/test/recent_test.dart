@@ -8,7 +8,6 @@ void main() {
     final r = Recent();
     expect(r.itemClass(any), isNull);
     expect(r.stockLocation(any), isNull);
-    expect(r.addStock, isTrue);
   });
 
   test('the class of the last item, unless a class was made since', () {

@@ -180,6 +180,93 @@ BEGIN
 END;
 $$;
 
+-- ---------------------------------------------------------------------------
+-- Preferences (see ACCOUNTS.md, "Preferences")
+-- ---------------------------------------------------------------------------
+
+-- Every preference there is, with its default. An account stores only the
+-- ones its user changed (account.preferences); a new preference is added
+-- here, with its default, and needs no migration. A preference taken out
+-- of here is no longer shown, nor accepted, even where an account still
+-- stores it.
+--
+-- add_stock:      whether the new-item form makes the item's first stock
+--                 row with it: "on", "off", or "last", as for the last item
+--                 added (add_stock_last).
+-- add_stock_last: whether the last item added had its first stock row made
+--                 with it; the apps save it when it changes.
+CREATE FUNCTION account.preference_defaults()
+RETURNS jsonb
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT jsonb_build_object(
+        'add_stock',      'last',
+        'add_stock_last', true
+    );
+$$;
+
+-- The preferences of an account that stores p_stored: every preference
+-- there is, with the stored value where there is one and the default
+-- otherwise. Stored ones no longer known are left out.
+CREATE FUNCTION account.preferences_of(p_stored jsonb)
+RETURNS jsonb
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT jsonb_object_agg(d.key, coalesce(p_stored -> d.key, d.value))
+    FROM jsonb_each(account.preference_defaults()) d;
+$$;
+
+-- The preferences of the account the call is made with.
+CREATE FUNCTION account.preferences(p_request public.request)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
+AS $$
+DECLARE
+    v_session record := util.session(p_request, 'viewer');
+BEGIN
+    RETURN (SELECT account.preferences_of(a.preferences)
+            FROM public.account a WHERE a.id = v_session.account);
+END;
+$$;
+
+-- Changes the preferences p_patch has, of the account the call is made
+-- with; the others stay as they are, so two devices changing different
+-- ones don't undo each other. A null puts one back to its default. Each
+-- value must have its default's JSON type, and some only certain values.
+-- Returns all the preferences, as account.preferences does.
+CREATE FUNCTION account.preferences_patch(p_request public.request, p_patch jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
+AS $$
+DECLARE
+    v_session  record := util.session(p_request, 'viewer');
+    v_defaults jsonb  := account.preference_defaults();
+    v_key      text;
+    v_value    jsonb;
+    v_stored   jsonb;
+BEGIN
+    PERFORM util.check_patch(p_patch, ARRAY(SELECT jsonb_object_keys(v_defaults)), ARRAY[]::text[]);
+    FOR v_key, v_value IN SELECT key, value FROM jsonb_each(p_patch) LOOP
+        CONTINUE WHEN jsonb_typeof(v_value) = 'null';
+        IF jsonb_typeof(v_value) <> jsonb_typeof(v_defaults -> v_key) THEN
+            PERFORM error.invalid(format('Preference %L is a %s', v_key, jsonb_typeof(v_defaults -> v_key)));
+        END IF;
+        IF v_key = 'add_stock' AND NOT v_value <@ '["on", "off", "last"]'::jsonb THEN
+            PERFORM error.invalid('Preference ''add_stock'' is "on", "off" or "last"');
+        END IF;
+    END LOOP;
+
+    -- One statement, so that changes made at the same time from two
+    -- devices are both kept.
+    UPDATE public.account a
+    SET preferences = (a.preferences || jsonb_strip_nulls(p_patch))
+                      - ARRAY(SELECT key FROM jsonb_each(p_patch) WHERE jsonb_typeof(value) = 'null')
+    WHERE a.id = v_session.account
+    RETURNING a.preferences INTO v_stored;
+    RETURN account.preferences_of(v_stored);
+END;
+$$;
+
 -- Changes the password of the account the call is made with, which needs
 -- its current password. With p_end_other_sessions, its other sessions end
 -- too: whoever else was logged in as it has to log in again, with the new

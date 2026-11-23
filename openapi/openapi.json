@@ -1439,6 +1439,68 @@
         "description": "openapi/openapi.json, as application/json, or as application/yaml when Accept asks for YAML (JSON is valid YAML). Served without a session."
       }
     },
+    "/me/preferences": {
+      "get": {
+        "summary": "The logged-in account's preferences",
+        "operationId": "preferences",
+        "description": "Every preference there is: the value the account's user chose, or the default where they chose none. New preferences come with later revisions; a client ignores those it doesn't know.",
+        "responses": {
+          "200": {
+            "description": "The preferences.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Preferences"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Change some of the logged-in account's preferences",
+        "operationId": "preferencesPatch",
+        "description": "Only the preferences given change; null puts one back to its default. An unknown preference, or a value of the wrong type, is refused (400). Every session of the account with an open event stream, this one too, then gets `preferences`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "add_stock": {
+                    "type": ["string", "null"],
+                    "enum": ["on", "off", "last", null]
+                  },
+                  "add_stock_last": {
+                    "type": ["boolean", "null"]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "All the preferences, changed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Preferences"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/me/sessions": {
       "get": {
         "summary": "One's own sessions",
@@ -1699,7 +1761,7 @@
       "get": {
         "summary": "The session's event stream",
         "operationId": "events",
-        "description": "Server-sent events, as long as the client keeps the request open. `camera` {client}: a session, on a phone say, has become this one's camera, and its app calls itself client; also at once when the stream opens. `camera` {}: it has none any more. `changed` {path}: the session that is this one's camera changed what is at that path (relative to /api/v1), as by uploading a photo. `photo` {client}: that session took a photo for this one's form, waiting at GET /me/camera/photo. `ended` {}: this session has ended (checked every 5 minutes). A comment line comes every 30 seconds when there is nothing else.",
+        "description": "Server-sent events, as long as the client keeps the request open. `camera` {client}: a session, on a phone say, has become this one's camera, and its app calls itself client; also at once when the stream opens. `camera` {}: it has none any more. `changed` {path}: the session that is this one's camera changed what is at that path (relative to /api/v1), as by uploading a photo. `photo` {client}: that session took a photo for this one's form, waiting at GET /me/camera/photo. `preferences` {}: the account's preferences changed, from this session or another; GET /me/preferences has them. `ended` {}: this session has ended (checked every 5 minutes). A comment line comes every 30 seconds when there is nothing else.",
         "responses": {
           "200": {
             "description": "The stream.",
@@ -3298,6 +3360,22 @@
               }
             ],
             "description": "Not in GET /stock list rows."
+          }
+        }
+      },
+      "Preferences": {
+        "type": "object",
+        "description": "An account's preferences, each with its default where its user chose none.",
+        "required": ["add_stock", "add_stock_last"],
+        "properties": {
+          "add_stock": {
+            "type": "string",
+            "enum": ["on", "off", "last"],
+            "description": "Whether the new-item form makes the item's first stock row with it: on, off, or as for the last item added (add_stock_last). Default last."
+          },
+          "add_stock_last": {
+            "type": "boolean",
+            "description": "Whether the last item added had its first stock row made with it; the apps set it when it changes. Default true."
           }
         }
       },

@@ -23,5 +23,6 @@ var groups = []group{
 	fileGroup(),
 	accountGroup(),
 	sessionsGroup(),
+	preferencesGroup(),
 	profileGroup(),
 }

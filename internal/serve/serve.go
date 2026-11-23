@@ -47,6 +47,7 @@ type server struct {
 	web           fs.FS
 	trusted       []netip.Prefix
 	started       time.Time // when the handler was made, as the server started
+	hub           *hub      // the open event streams, by session and by account (hub.go)
 	cameras       *cameras  // which phone is the camera for which desktop (camera.go)
 }
 
@@ -84,7 +85,7 @@ func Run(ctx context.Context, o Options) error {
 		ErrorLog:          slog.NewLogLogger(o.Logger.Handler(), slog.LevelWarn),
 	}
 	// Event streams don't end by themselves; Shutdown waits for them.
-	httpServer.RegisterOnShutdown(s.cameras.shutdown)
+	httpServer.RegisterOnShutdown(s.hub.shutdown)
 
 	listener, err := net.Listen("tcp", o.Listen)
 	if err != nil {
@@ -117,8 +118,9 @@ func NewHandler(pool *pgxpool.Pool, log *slog.Logger, maxRequestBodySize int64,
 
 func newServer(pool *pgxpool.Pool, log *slog.Logger, maxRequestBodySize int64,
 	store *files.Store, maxAttachmentSize int64, web fs.FS, trusted []netip.Prefix) *server {
+	h := newHub()
 	return &server{pool: pool, log: log, maxBody: maxRequestBodySize, files: store, maxAttachment: maxAttachmentSize,
-		web: web, trusted: trusted, started: time.Now(), cameras: newCameras()}
+		web: web, trusted: trusted, started: time.Now(), hub: h, cameras: newCameras(h)}
 }
 
 // CheckSchema refuses a database whose schema differs from the scripts in fsys.

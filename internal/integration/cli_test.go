@@ -135,6 +135,21 @@ func TestCLIStockPhotos(t *testing.T) {
 	contains(t, stderr, "--stock-photos must be yes or no")
 }
 
+func TestCLIPreferences(t *testing.T) {
+	e := setup(t)
+	e.reset(t)
+	c := e.cli(t)
+
+	contains(t, c.ok("preferences", "list"), "add_stock       last", "add_stock_last  true")
+	contains(t, c.ok("preferences", "set", "add_stock", "off"), "add_stock       off")
+	contains(t, c.ok("preferences", "set", "add_stock_last", "false"), "add_stock_last  false")
+	contains(t, c.ok("preferences", "reset", "add_stock"), "add_stock       last", "add_stock_last  false")
+	_, stderr := c.run(1, "", "preferences", "set", "colour", "blue")
+	contains(t, stderr, "Unknown field 'colour'")
+	_, stderr = c.run(1, "", "preferences", "set", "add_stock", "true")
+	contains(t, stderr, "Preference 'add_stock' is a string")
+}
+
 func TestCLI(t *testing.T) {
 	e := setup(t)
 	e.reset(t)

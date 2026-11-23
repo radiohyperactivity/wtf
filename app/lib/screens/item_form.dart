@@ -88,9 +88,9 @@ class _ItemFormState extends State<_ItemForm> {
       _usable(widget.classId) ??
       context.read<Session>().recent.itemClass((id) => _usable(id) != null);
 
-  // A new item's stock: whether to add it, as for the last item this
-  // session added; and where, as for new stock on its own form.
-  late bool _addStock = context.read<Session>().recent.addStock;
+  // A new item's stock: whether to add it, as the account's preference says
+  // (decision 118); and where, as for new stock on its own form.
+  late bool _addStock = context.read<Session>().preferences.addStockNow;
   late String? _locationId = context.read<Session>().recent.stockLocation(
     (id) => _usableLocation(id) != null,
   );
@@ -326,6 +326,19 @@ class _ItemFormState extends State<_ItemForm> {
     }
   }
 
+  /// Saves on the account whether this item had stock, when that differs
+  /// from the last item's, for "As last time" on every device (decision
+  /// 118). Not being able to doesn't keep the item from being made.
+  void _rememberAddStock(Session session) {
+    final prefs = session.preferences;
+    if (prefs.addStockLast == _addStock) return;
+    session
+        .setPreferences({
+          'add_stock_last': _addStock,
+        }, Preferences(addStock: prefs.addStock, addStockLast: _addStock))
+        .catchError((Object _) {});
+  }
+
   /// Creates the item, with its first stock row when Add stock is on: both
   /// in one request, so both are made, or neither. Then comes the item's
   /// screen, or with [another], the form for the next item.
@@ -359,10 +372,10 @@ class _ItemFormState extends State<_ItemForm> {
         ]),
     ];
     if (!mounted) return;
-    final recent = context.read<Session>().recent
-      ..itemAdded(classId)
-      ..addStock = _addStock;
+    final session = context.read<Session>();
+    final recent = session.recent..itemAdded(classId);
     if (location != null) recent.stockAdded(location);
+    _rememberAddStock(session);
     final created = location == null
         ? 'Created ${item.name}'
         : 'Created ${item.name}, at ${widget.locations!.pathOf(location)}';

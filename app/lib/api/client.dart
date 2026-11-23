@@ -393,6 +393,16 @@ class ApiClient {
   );
 
   /// The account's sessions, most recently used first.
+  /// GET /me/preferences: the account's preferences.
+  Future<Preferences> preferences() async =>
+      Preferences.fromJson(await _call('GET', '/me/preferences') as Json);
+
+  /// PATCH /me/preferences: changes those in [patch], by their names in the
+  /// API (a null puts one back to its default); answers them all.
+  Future<Preferences> setPreferences(Json patch) async => Preferences.fromJson(
+    await _call('PATCH', '/me/preferences', body: patch) as Json,
+  );
+
   Future<List<SessionInfo>> sessions() async =>
       (await _call('GET', '/me/sessions') as List)
           .cast<Json>()

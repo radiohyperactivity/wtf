@@ -2,12 +2,14 @@ package cli
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -452,6 +454,97 @@ func sessionsGroup() group {
 							fmt.Fprintln(e.stdout, "Session ended.")
 						}
 						return nil
+					}
+				},
+			},
+		},
+	}
+}
+
+// preferencesGroup: the account's preferences, which the apps follow
+// (ACCOUNTS.md, "Preferences"). The CLI knows none of them by name, so a
+// new preference needs no new CLI.
+func preferencesGroup() group {
+	show := func(e *env, data json.RawMessage) error {
+		return e.emit(data, func() error {
+			var prefs map[string]json.RawMessage
+			if err := e.decode(data, &prefs); err != nil {
+				return err
+			}
+			names := make([]string, 0, len(prefs))
+			for name := range prefs {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			t := newTable(e.stdout, "NAME", "VALUE")
+			for _, name := range names {
+				value := string(prefs[name])
+				var text string
+				if json.Unmarshal(prefs[name], &text) == nil {
+					value = text
+				}
+				t.row(name, value)
+			}
+			t.flush()
+			return nil
+		})
+	}
+	return group{
+		name:    "preferences",
+		summary: "Your preferences, which the apps follow on every device",
+		commands: []command{
+			{
+				name:    "list",
+				summary: "List your preferences: each as you set it, or its default.",
+				setup: func(fs *flag.FlagSet) func(*env, []string) error {
+					return func(e *env, args []string) error {
+						if err := wantArgs(args, 0, 0); err != nil {
+							return err
+						}
+						data, err := e.api.Get(e.ctx, "/me/preferences", nil)
+						if err != nil {
+							return err
+						}
+						return show(e, data)
+					}
+				},
+			},
+			{
+				name:    "set",
+				args:    "<name> <value>",
+				summary: "Set one of your preferences: true, false, a number, or text.",
+				setup: func(fs *flag.FlagSet) func(*env, []string) error {
+					return func(e *env, args []string) error {
+						if err := wantArgs(args, 2, 2); err != nil {
+							return err
+						}
+						// JSON where it is (true, 12), text otherwise (off).
+						var value any
+						if json.Unmarshal([]byte(args[1]), &value) != nil {
+							value = args[1]
+						}
+						data, err := e.do(http.MethodPatch, "/me/preferences", map[string]any{args[0]: value})
+						if err != nil {
+							return err
+						}
+						return show(e, data)
+					}
+				},
+			},
+			{
+				name:    "reset",
+				args:    "<name>",
+				summary: "Put one of your preferences back to its default.",
+				setup: func(fs *flag.FlagSet) func(*env, []string) error {
+					return func(e *env, args []string) error {
+						if err := wantArgs(args, 1, 1); err != nil {
+							return err
+						}
+						data, err := e.do(http.MethodPatch, "/me/preferences", map[string]any{args[0]: nil})
+						if err != nil {
+							return err
+						}
+						return show(e, data)
 					}
 				},
 			},

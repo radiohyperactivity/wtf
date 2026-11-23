@@ -79,6 +79,15 @@ Future<void> menu(WidgetTester tester, String entry) async {
 /// The topmost button with [text]: a confirmation's, over a dialog's.
 Finder button(String text) => find.widgetWithText(FilledButton, text).last;
 
+/// Opens the Account screen's tab [name], scrolling the tabs to it where
+/// they don't all fit.
+Future<void> openTab(WidgetTester tester, String name) async {
+  await tester.ensureVisible(find.widgetWithText(Tab, name));
+  await tester.pumpAndSettle();
+  await tester.tap(find.widgetWithText(Tab, name));
+  await tester.pumpAndSettle();
+}
+
 void clearMessages(WidgetTester tester) => tester
     .state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger))
     .clearSnackBars();
@@ -143,10 +152,12 @@ void main() {
     expect(storage.server, 'http://wtf.test:8080');
     expect(storage.token, 'tok');
 
-    // Account: the account, and its sessions, this one marked.
+    // Account: the account; its sessions, this one marked, on a tab of
+    // their own.
     await tester.tap(find.text('Account'));
     await tester.pumpAndSettle();
     expect(find.text('anna@example.com'), findsOneWidget);
+    await openTab(tester, 'Sessions');
     expect(find.text('WtF on Windows (this one)'), findsOneWidget);
     expect(find.text('WtF on Android'), findsOneWidget);
     expect(find.textContaining('from 10.0.0.7'), findsOneWidget);
@@ -159,13 +170,10 @@ void main() {
     expect(find.text('Logged out 1 other session.'), findsOneWidget);
     expect(find.text('WtF on Android'), findsNothing);
 
-    // The versions, at the end: this test's app is built without the
+    // The versions, on the last tab: this test's app is built without the
     // scripts' stamp.
-    await tester.scrollUntilVisible(
-      find.text('Server 0.1.0'),
-      200,
-      scrollable: find.byType(Scrollable).last,
-    );
+    await openTab(tester, 'About');
+    expect(find.text('Server 0.1.0'), findsOneWidget);
     expect(find.text('App (a development build)'), findsOneWidget);
     expect(
       find.textContaining('commit 70ef34d of 18 Nov 2026'),
@@ -175,6 +183,7 @@ void main() {
     // A new password: the other devices are logged out, unless unticked.
     clearMessages(tester);
     await tester.pumpAndSettle();
+    await openTab(tester, 'Account');
     await tester.ensureVisible(find.text('Change password'));
     await tester.tap(find.text('Change password'));
     await tester.pumpAndSettle();
@@ -1029,6 +1038,8 @@ void main() {
 
     await tester.tap(find.text('Account'));
     await tester.pumpAndSettle();
+    await openTab(tester, 'Preferences');
+    expect(find.text('On this device'), findsOneWidget);
     await tester.tap(find.text('Light'));
     await tester.pumpAndSettle();
     expect(mode(), ThemeMode.light);
@@ -1615,9 +1626,16 @@ void main() {
       'POST /api/v1/items {"class":"c-drills","name":"Impact driver",'
       '"values":{"Voltage":18}}',
     );
-    expect(fake.changes, hasLength(2));
-    expect(fake.changes.last, contains('/files/Datasheet'));
-    expect(fake.changes.last, contains('filename="drill.pdf"'));
+    expect(fake.changes, hasLength(3));
+    expect(fake.changes[1], contains('/files/Datasheet'));
+    expect(fake.changes[1], contains('filename="drill.pdf"'));
+    // That it had no stock is kept on the account, for the next item on
+    // any device (decision 118).
+    expect(
+      fake.changes.last,
+      'PATCH /api/v1/me/preferences {"add_stock_last":false}',
+    );
+    expect(fake.preferences['add_stock_last'], isFalse);
     expect(find.widgetWithText(AppBar, 'New item'), findsNothing);
     expect(find.text('Impact driver'), findsWidgets);
     expect(find.text('No stock.'), findsOneWidget);
@@ -1750,7 +1768,12 @@ void main() {
     await tester.enterText(field('Manual'), '');
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pumpAndSettle();
-    expect(fake.changes.last, isNot(contains('"stock"')));
+    expect(
+      fake.changes.lastWhere((c) => c.startsWith('POST /api/v1/items')),
+      isNot(contains('"stock"')),
+    );
+    // Kept on the account, for every device (decision 118).
+    expect(fake.preferences['add_stock_last'], isFalse);
     clearMessages(tester);
     await tester.tap(find.text('Items'));
     await tester.pumpAndSettle();
@@ -1760,6 +1783,73 @@ void main() {
       tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
       isFalse,
     );
+  });
+
+  testWidgets('Add stock with a new item: a preference of the account', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    await startApp(tester, fake);
+    bool addStock() =>
+        tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value;
+    Future<void> newItem() async {
+      clearMessages(tester);
+      await tester.tap(find.text('Items'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('New item'));
+      await tester.pumpAndSettle();
+    }
+
+    // On the Preferences tab, for this account; as last time at first.
+    await tester.tap(find.text('Account'));
+    await tester.pumpAndSettle();
+    await openTab(tester, 'Preferences');
+    expect(find.text('For this account, on every device'), findsOneWidget);
+    expect(
+      find.text('As for the last item added, on any device: on now.'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Off'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      'PATCH /api/v1/me/preferences {"add_stock":"off"}',
+    );
+    expect(
+      find.text('The new-item form starts with Add stock off.'),
+      findsOneWidget,
+    );
+    await newItem();
+    expect(addStock(), isFalse);
+
+    // Another device changes it: this one is told, and asks again.
+    fake.preferences['add_stock'] = 'on';
+    fake.sendEvent('preferences');
+    await tester.pumpAndSettle();
+    await newItem();
+    expect(addStock(), isTrue);
+
+    // As last time, with the last item added on another device.
+    fake.preferences
+      ..['add_stock'] = 'last'
+      ..['add_stock_last'] = false;
+    fake.sendEvent('preferences');
+    await tester.pumpAndSettle();
+    await newItem();
+    expect(addStock(), isFalse);
+  });
+
+  testWidgets('the Account tabs fit a narrow phone, or scroll', (tester) async {
+    setSize(tester, 320, 700);
+    await startApp(tester, FakeServer());
+    await tester.tap(find.text('Account'));
+    await tester.pumpAndSettle();
+    for (final tab in ['About', 'Sessions', 'Preferences', 'Account']) {
+      await openTab(tester, tab);
+    }
+    expect(find.text('anna@example.com'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('a class says how its stock is counted, and the forms follow', (
@@ -1909,11 +1999,7 @@ void main() {
       expect(bar, findsNothing);
       await tester.tap(find.text('Account'));
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.text('Server 0.1.0'),
-        200,
-        scrollable: find.byType(Scrollable).last,
-      );
+      await openTab(tester, 'About');
       expect(
         find.text('Build date not known\nAPI version: 1.1'),
         findsOneWidget,
@@ -1943,11 +2029,8 @@ void main() {
       expect(bar, findsNothing);
       await tester.tap(find.text('Account'));
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.textContaining('API version: 1.2'),
-        200,
-        scrollable: find.byType(Scrollable).last,
-      );
+      await openTab(tester, 'About');
+      expect(find.textContaining('API version: 1.2'), findsOneWidget);
 
       // Another revision warns again: here an older server.
       fake.revision = 0;
@@ -2130,6 +2213,12 @@ void main() {
     expect(find.byTooltip('Edit'), findsNothing);
     // A file attribute without a file isn't listed for them.
     expect(find.text('Datasheet'), findsNothing);
+    // Nor do they get a preference for adding items.
+    await tester.tap(find.text('Account'));
+    await tester.pumpAndSettle();
+    await openTab(tester, 'Preferences');
+    expect(find.text('Add stock with a new item'), findsNothing);
+    expect(find.text('On this device'), findsOneWidget);
   });
 
   testWidgets('users keep items and stock; admins set up the rest', (
@@ -2198,6 +2287,7 @@ void main() {
     // only the camera, and has no event stream.
     await tester.tap(find.text('Account'));
     await tester.pumpAndSettle();
+    await openTab(tester, 'Sessions');
     await tester.tap(find.byTooltip('Be its camera'));
     await tester.pumpAndSettle();
     expect(fake.cameraFor, 'sess-phone');

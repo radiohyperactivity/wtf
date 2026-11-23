@@ -43,6 +43,8 @@ Status: **implemented** ([`0001_schema.sql`](db/migrations/0001_schema.sql), [ap
 | `POST /logout` | `account.logout` (ends the current session) | logged in |
 | `GET /me` | `account.me` → the account with its role | logged in |
 | `PUT /me/password` `{current, new, end_other_sessions}` | `account.password_change`: with `end_other_sessions`, the account's other sessions end | logged in |
+| `GET /me/preferences` | `account.preferences`: the account's preferences, each with its default where unchanged | logged in |
+| `PATCH /me/preferences` `{name: value, …}` | `account.preferences_patch`: changes those given (null: back to the default), and tells every session of the account with an open event stream | logged in |
 | `GET /me/sessions` | `account.session_list`: the account's sessions | logged in |
 | `DELETE /me/sessions/{id}` | `account.session_logout`: ends one of them | logged in |
 | `POST /me/sessions/logout-others` | `account.session_logout_others`: ends all but the current one | logged in |
@@ -65,6 +67,20 @@ Status: **implemented** ([`0001_schema.sql`](db/migrations/0001_schema.sql), [ap
   | `42501` (`insufficient_privilege`) | not allowed | 403 |
   | `P0001` with a lockout message (a custom code) | too many attempts | 429 |
 
+## Preferences
+
+An account has preferences, which its apps follow on every device (APP.md, decision 118); what belongs to one device, such as the app's look, stays on that device.
+
+- **Stored on the account, only where changed:** `account.preferences` is a JSON object (migration `0006`) holding only the preferences the user changed. Every preference there is, with its default, is listed in one place, `account.preference_defaults()`. A new preference is added there and needs no migration: every account has its default until it is changed, and changing a default changes it for everyone who kept it. A preference taken out of the list is no longer shown nor accepted, even where an account still stores it.
+- **Changed one at a time:** `PATCH /me/preferences` changes only the preferences it names, in one statement, so two devices changing different ones at once both keep theirs. A null puts one back to its default. An unknown preference, or a value of another JSON type than its default's, is refused (400); some take only certain values.
+- **Every device hears of a change:** `wtfd` sends `preferences {}` on the event stream of every session of the account that has one open, the one that made the change too (WTFD.md, "The phone as a remote camera", `GET /me/events`). The event has no data: the app asks for the preferences again (`GET /me/preferences`), and keeps only the answer to its latest question, so that an event or answer that arrives late can't bring back older ones. It also asks whenever its stream opens, for what it missed while it was closed.
+- **The preferences there are:**
+
+  | Name | Values | Default | What it does |
+  |------|--------|---------|--------------|
+  | `add_stock` | `"on"`, `"off"`, `"last"` | `"last"` | whether the new-item form starts with Add stock on: always, never, or as for the last item added |
+  | `add_stock_last` | `true`, `false` | `true` | whether the last item added, on any device, had its first stock row made with it; the apps save it when it changes |
+
 ## CLI
 
 Run by the operator as the DBA role:
@@ -83,3 +99,4 @@ Passwords travel from the client to `wtfd`, and from `wtfd` to PostgreSQL, becau
 - **"Log out everywhere":** left out at first, as changing your own password revoked all other sessions. Since the refactor of November 2026, a user sees their sessions and ends them (`/me/sessions`), and a new password asks whether the others end.
 - **Tenants:** dropped once, brought back, and dropped again on 2 November 2026: one database is one installation ([2026-11-02-attributes-in-json.md](2026-11-02-attributes-in-json.md), decisions 36–42).
 - **Deleting an account removes it** (2026-11-01): it was only marked deleted while history referred to it; with history gone, the row goes with its sessions ([2026-11-01-dropping-deleted-and-history.md](2026-11-01-dropping-deleted-and-history.md), decision 12). To shut someone out without deleting them, remove the password.
+- **Preferences on the account, in one JSON column** (23 November 2026, your idea): `account.preferences` holds only what was changed, and the defaults are in one function, so new preferences come without migrations; it needs no table or join of its own, as `account.me` reads that row anyway. A change goes to the account's other devices on their event stream.

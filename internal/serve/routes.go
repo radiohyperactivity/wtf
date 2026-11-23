@@ -132,6 +132,8 @@ func (s *server) routes() []route {
 			field{key: "new", name: "p_new", typ: "text"},
 			field{key: "end_other_sessions", name: "p_end_other_sessions", typ: "boolean"},
 		))},
+		{"GET /me/preferences", s.read("account.preferences")},
+		{"PATCH /me/preferences", s.preferencesPatch},
 		{"GET /me/sessions", s.read("account.session_list")},
 		{"DELETE /me/sessions/{id}", s.sessionLogout},
 		{"POST /me/sessions/logout-others", s.logoutOthers},

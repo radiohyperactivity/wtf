@@ -3,9 +3,10 @@
 // with none. The server isn't asked what is new; classes and locations made
 // elsewhere (another device, the CLI) aren't counted.
 
-/// The class of the last item added and the last class made, the location
-/// stock was last added to and the last location made, and whether the last
-/// new item had stock. (Units are the classes' now, decision 110.)
+/// The class of the last item added and the last class made, and the
+/// location stock was last added to and the last location made. (Units are
+/// the classes' now, decision 110; whether the last new item had stock is
+/// on the account, decision 118.)
 class Recent {
   // Each choice is numbered in the order it was made: the default is the
   // later of the two.
@@ -14,10 +15,6 @@ class Recent {
   _Choice? _newClass;
   _Choice? _stockLocation;
   _Choice? _newLocation;
-
-  /// Whether the new-item form makes the item's first stock row with it:
-  /// as it was set for the last item added; at first, yes.
-  bool addStock = true;
 
   /// An item was added in class [classId].
   void itemAdded(String classId) => _itemClass = _Choice(classId, ++_count);

@@ -161,8 +161,8 @@ func TestFunctionCatalogue(t *testing.T) {
 			t.Errorf("helpers with settings of their own: %v", bad)
 		}
 		n := d.value(t, `SELECT count(*)`+ours+` AND p.prosecdef`)
-		if n != int64(56) {
-			t.Errorf("%v functions for the API, want 56", n)
+		if n != int64(58) {
+			t.Errorf("%v functions for the API, want 58", n)
 		}
 	})
 

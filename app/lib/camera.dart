@@ -335,8 +335,10 @@ class Camera extends ChangeNotifier {
         stream.listen(null).cancel();
         return;
       }
-      // The server says at once when this session has a camera.
+      // The server says at once when this session has a camera. The
+      // preferences may have changed while the stream was closed.
       _camera(null);
+      session.refreshPreferences();
       _events = stream.listen(
         (event) {
           _attempt = 0;
@@ -388,6 +390,8 @@ class Camera extends ChangeNotifier {
         if (path is String) _client?.noteRemoteChange(path);
       case 'photo':
         _heldPhoto();
+      case 'preferences':
+        session.refreshPreferences();
       case 'ended':
         session.ended();
     }

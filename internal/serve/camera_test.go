@@ -33,11 +33,19 @@ func none(t *testing.T, st *stream) {
 	}
 }
 
+// openStream opens an event stream of session, of the account "me", as the
+// stream handler does.
+func openStream(c *cameras, session string) *stream {
+	st := c.hub.open(session, "me")
+	c.opened(session, st)
+	return st
+}
+
 // Which phone is the camera for which desktop, the targets, and the
 // changes, as decisions 10 to 14 of the plan say.
 func TestCameras(t *testing.T) {
-	c := newCameras()
-	pc := c.open("pc")
+	c := newCameras(newHub())
+	pc := openStream(c, "pc")
 	drill := target{Type: "item", ID: "0198a5c4-0000-7000-8000-000000000001", Name: "Drill"}
 
 	// A desktop without a camera keeps no target.
@@ -74,8 +82,8 @@ func TestCameras(t *testing.T) {
 	}
 
 	// A desktop that reconnects hears at once that it has a camera.
-	c.close("pc", pc)
-	pc = c.open("pc")
+	c.hub.close("pc", pc)
+	pc = openStream(c, "pc")
 	if got := next(t, pc); got != `camera {"client":"WtF on iPhone"}` {
 		t.Fatalf("camera on reconnecting: %s", got)
 	}
@@ -92,12 +100,13 @@ func TestCameras(t *testing.T) {
 	// The desktop logs out: nothing is kept, and the phone finds out on its
 	// next request.
 	c.forget("pc")
+	c.hub.end("pc")
 	if !pc.ended || len(c.of) != 0 || len(c.phones) != 0 || len(c.target) != 0 {
 		t.Fatalf("after logging out: %v %v %v", c.of, c.phones, c.target)
 	}
 
 	// Stopping drops the desktop's target, and tells it.
-	laptop := c.open("laptop")
+	laptop := openStream(c, "laptop")
 	c.start("phone", "laptop", "", "WtF on iPhone")
 	next(t, laptop)
 	c.report("laptop", drill)
@@ -114,7 +123,7 @@ func TestCameras(t *testing.T) {
 // asks.
 func TestCamerasExpire(t *testing.T) {
 	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
-	c := newCameras()
+	c := newCameras(newHub())
 	c.now = func() time.Time { return now }
 	c.start("phone", "pc", "", "")
 	c.start("tablet", "pc", "", "")
@@ -122,7 +131,7 @@ func TestCamerasExpire(t *testing.T) {
 	now = now.Add(cameraIdle - time.Minute)
 	c.lookup("tablet", "pc")
 	now = now.Add(2 * time.Minute)
-	c.open("pc") // looks for old cameras
+	openStream(c, "pc") // looks for old cameras
 	if c.of["phone"] != nil || c.of["tablet"] == nil {
 		t.Fatalf("after %v: %v", cameraIdle, c.of)
 	}
@@ -130,12 +139,12 @@ func TestCamerasExpire(t *testing.T) {
 	// Looked for at most every cameraSweep.
 	now = now.Add(cameraSweep - time.Second)
 	c.of["tablet"].seen = now.Add(-2 * cameraIdle)
-	c.open("pc")
+	openStream(c, "pc")
 	if c.of["tablet"] == nil {
 		t.Fatal("looked for old cameras too soon")
 	}
 	now = now.Add(time.Second)
-	c.open("pc")
+	openStream(c, "pc")
 	if c.of["tablet"] != nil {
 		t.Fatal("the tablet's camera is still there")
 	}
@@ -152,11 +161,11 @@ func TestStream(t *testing.T) {
 	s := testServer()
 	var valid atomic.Bool
 	valid.Store(true)
-	check := func() error {
+	check := func() (string, error) {
 		if valid.Load() {
-			return nil
+			return "me", nil
 		}
-		return &problem{Status: http.StatusUnauthorized}
+		return "", &problem{Status: http.StatusUnauthorized}
 	}
 	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r = r.WithContext(context.WithValue(r.Context(), callerKey{}, caller{token: "pc-token"}))
@@ -209,6 +218,8 @@ func TestStream(t *testing.T) {
 	s.cameras.start("phone", pc, "WtF on Windows", "WtF on iPhone")
 	wait("event: camera")
 	wait(`data: {"client":"WtF on iPhone"}`)
+	s.hub.sendAccount("me", eventData("preferences", map[string]string{}))
+	wait("event: preferences")
 
 	valid.Store(false)
 	wait("event: ended")

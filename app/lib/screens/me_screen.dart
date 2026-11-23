@@ -9,108 +9,204 @@ import '../theme.dart';
 import '../widgets/common.dart';
 import '../widgets/files.dart';
 
-/// The logged-in account, like `wtf whoami`: email, server, role;
-/// the appearance; the account's sessions (`wtf sessions list`); changing
-/// the password (`wtf password`) and logging out.
+/// The logged-in account, in four tabs: the account itself, like `wtf
+/// whoami` (email, server, role), with changing the password (`wtf
+/// password`) and logging out; the preferences, the account's (`wtf
+/// preferences`) and this device's; the account's sessions (`wtf sessions
+/// list`); and the versions (decision 119).
 class MeScreen extends StatelessWidget {
   const MeScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final session = context.watch<Session>();
-    final me = session.me;
+    final me = context.select<Session, Me?>((s) => s.me);
     if (me == null) return const SizedBox.shrink(); // logging out
-    return Scaffold(
-      appBar: AppBar(title: const Text('Account')),
-      body: Readable(
-        child: ListView(
+    return DefaultTabController(
+      length: 4,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Account'),
+          // They scroll sideways where the four don't fit, and are centred
+          // where they do; with a little less space around each than
+          // usual, they fit on a phone 360 wide.
+          bottom: const TabBar(
+            isScrollable: true,
+            tabAlignment: TabAlignment.center,
+            labelPadding: EdgeInsets.symmetric(horizontal: 12),
+            tabs: [
+              Tab(text: 'Account'),
+              Tab(text: 'Preferences'),
+              Tab(text: 'Sessions'),
+              Tab(text: 'About'),
+            ],
+          ),
+        ),
+        body: const TabBarView(
           children: [
-            ListTile(
-              leading: const Icon(Icons.email_outlined),
-              title: Text(me.email),
-              subtitle: const Text('Email'),
-            ),
-            if (session.server case final server?)
-              ListTile(
-                leading: const Icon(Icons.dns_outlined),
-                title: Text(server.toString()),
-                subtitle: const Text('Server'),
-              ),
-            ListTile(
-              leading: const Icon(Icons.badge_outlined),
-              title: Text(me.role.label),
-              subtitle: Text('Role: ${me.role.description.toLowerCase()}'),
-            ),
-            const SectionTitle('Appearance on this device'),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: SegmentedButton<ThemeMode>(
-                segments: const [
-                  ButtonSegment(
-                    value: ThemeMode.system,
-                    icon: Icon(Icons.brightness_auto_outlined),
-                    label: Text('Follow system'),
-                  ),
-                  ButtonSegment(
-                    value: ThemeMode.light,
-                    icon: Icon(Icons.light_mode_outlined),
-                    label: Text('Light'),
-                  ),
-                  ButtonSegment(
-                    value: ThemeMode.dark,
-                    icon: Icon(Icons.dark_mode_outlined),
-                    label: Text('Dark'),
-                  ),
-                ],
-                selected: {session.themeMode},
-                onSelectionChanged: (s) => session.setThemeMode(s.single),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: SegmentedButton<AppColour>(
-                segments: [
-                  for (final c in AppColour.values)
-                    ButtonSegment(
-                      value: c,
-                      icon: Icon(
-                        Icons.circle,
-                        color: appTheme(
-                          c,
-                          Theme.of(context).brightness,
-                        ).colorScheme.primary,
-                      ),
-                      label: Text(c.label),
-                    ),
-                ],
-                selected: {session.colour},
-                onSelectionChanged: (s) => session.setColour(s.single),
-              ),
-            ),
-            const _Sessions(),
-            const Divider(),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: () => _changePassword(context),
-                    icon: const Icon(Icons.password),
-                    label: const Text('Change password'),
-                  ),
-                  FilledButton.tonalIcon(
-                    onPressed: session.logout,
-                    icon: const Icon(Icons.logout),
-                    label: const Text('Log out'),
-                  ),
-                ],
-              ),
-            ),
-            const _Versions(),
+            _AccountTab(),
+            _PreferencesTab(),
+            Readable(child: _Sessions()),
+            Readable(child: _Versions()),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Email, server and role; changing the password and logging out.
+class _AccountTab extends StatelessWidget {
+  const _AccountTab();
+
+  @override
+  Widget build(BuildContext context) {
+    final session = context.watch<Session>();
+    final me = session.me;
+    if (me == null) return const SizedBox.shrink();
+    return Readable(
+      child: ListView(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.email_outlined),
+            title: Text(me.email),
+            subtitle: const Text('Email'),
+          ),
+          if (session.server case final server?)
+            ListTile(
+              leading: const Icon(Icons.dns_outlined),
+              title: Text(server.toString()),
+              subtitle: const Text('Server'),
+            ),
+          ListTile(
+            leading: const Icon(Icons.badge_outlined),
+            title: Text(me.role.label),
+            subtitle: Text('Role: ${me.role.description.toLowerCase()}'),
+          ),
+          const Divider(),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () => _changePassword(context),
+                  icon: const Icon(Icons.password),
+                  label: const Text('Change password'),
+                ),
+                FilledButton.tonalIcon(
+                  onPressed: session.logout,
+                  icon: const Icon(Icons.logout),
+                  label: const Text('Log out'),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The account's preferences, the same on every device, and this device's
+/// own: its appearance (decision 118).
+class _PreferencesTab extends StatelessWidget {
+  const _PreferencesTab();
+
+  Future<void> _set(BuildContext context, Json patch, Preferences shown) async {
+    try {
+      await context.read<Session>().setPreferences(patch, shown);
+    } catch (e) {
+      if (context.mounted) showError(context, e);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final session = context.watch<Session>();
+    final prefs = session.preferences;
+    return Readable(
+      child: ListView(
+        children: [
+          // Only users and admins add items.
+          if (session.canWriteItems) ...[
+            const SectionTitle('For this account, on every device'),
+            ListTile(
+              title: const Text('Add stock with a new item'),
+              subtitle: Text(switch (prefs.addStock) {
+                AddStock.on => 'The new-item form starts with Add stock on.',
+                AddStock.off => 'The new-item form starts with Add stock off.',
+                AddStock.last =>
+                  'As for the last item added, on any device: '
+                      '${prefs.addStockLast ? 'on' : 'off'} now.',
+              }),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: SegmentedButton<AddStock>(
+                segments: [
+                  for (final a in AddStock.values)
+                    ButtonSegment(value: a, label: Text(a.label)),
+                ],
+                selected: {prefs.addStock},
+                onSelectionChanged: (s) => _set(
+                  context,
+                  {'add_stock': s.single.name},
+                  Preferences(
+                    addStock: s.single,
+                    addStockLast: prefs.addStockLast,
+                  ),
+                ),
+              ),
+            ),
+          ],
+          const SectionTitle('On this device'),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: SegmentedButton<ThemeMode>(
+              segments: const [
+                ButtonSegment(
+                  value: ThemeMode.system,
+                  icon: Icon(Icons.brightness_auto_outlined),
+                  label: Text('Follow system'),
+                ),
+                ButtonSegment(
+                  value: ThemeMode.light,
+                  icon: Icon(Icons.light_mode_outlined),
+                  label: Text('Light'),
+                ),
+                ButtonSegment(
+                  value: ThemeMode.dark,
+                  icon: Icon(Icons.dark_mode_outlined),
+                  label: Text('Dark'),
+                ),
+              ],
+              selected: {session.themeMode},
+              onSelectionChanged: (s) => session.setThemeMode(s.single),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: SegmentedButton<AppColour>(
+              segments: [
+                for (final c in AppColour.values)
+                  ButtonSegment(
+                    value: c,
+                    icon: Icon(
+                      Icons.circle,
+                      color: appTheme(
+                        c,
+                        Theme.of(context).brightness,
+                      ).colorScheme.primary,
+                    ),
+                    label: Text(c.label),
+                  ),
+              ],
+              selected: {session.colour},
+              onSelectionChanged: (s) => session.setColour(s.single),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -171,8 +267,7 @@ class _VersionsState extends State<_Versions> {
       future: _server,
       builder: (context, snap) {
         final server = snap.data;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        return ListView(
           children: [
             const SectionTitle('Versions'),
             // Each with when it was built, from which commit, and the API
@@ -283,8 +378,7 @@ class _SessionsState extends State<_Sessions> {
       future: _sessions,
       builder: (context, snap) {
         final sessions = snap.data;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+        return ListView(
           children: [
             SectionTitle(
               'Sessions',

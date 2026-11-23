@@ -2,8 +2,6 @@ package serve
 
 import (
 	"encoding/json"
-	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"regexp"
@@ -41,28 +39,6 @@ const maxTargetName = 500
 // token, in hex.
 var sessionIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// event is one server-sent event: its name, and its data, JSON.
-type event struct {
-	name string
-	data []byte
-}
-
-// stream is one open event stream of a session. Events wait in a short
-// queue; a stream that falls that far behind is ended, and its app hears
-// whether it has a camera again when it reconnects.
-type stream struct {
-	events chan event
-	done   chan struct{}
-	ended  bool // done is closed
-}
-
-func (st *stream) end() {
-	if !st.ended {
-		st.ended = true
-		close(st.done)
-	}
-}
-
 // target is what a desktop has open that a photo can be for: an item, a
 // stock row or a location (Type "item", "stock" or "location", its ID and
 // its Name), or a new one that isn't saved yet (Waiting: its type). Form
@@ -91,48 +67,36 @@ type camera struct {
 	seen                         time.Time
 }
 
-// cameras are which phone is the camera for which desktop, what each
-// desktop with a camera has open, and the open event streams, by session
-// id (sessionID). Only desktops with a camera have a target kept, so memory
+// cameras are which phone is the camera for which desktop, and what each
+// desktop with a camera has open, by session id (sessionID); its events go
+// through hub, the open event streams. Only desktops with a camera have a target kept, so memory
 // grows with the cameras, not with the sessions.
 type cameras struct {
-	mu      sync.Mutex
-	of      map[string]*camera          // phone → its camera
-	phones  map[string]map[string]bool  // desktop → its phones
-	target  map[string]target           // desktop → what it has open, once it said
-	held    map[string]*files.Staged    // desktop → a photo for its form, not fetched yet
-	streams map[string]map[*stream]bool // session → its open streams
-	swept   time.Time                   // when old cameras were last looked for
-	closed  bool                        // wtfd is shutting down
-	now     func() time.Time
+	mu     sync.Mutex
+	of     map[string]*camera         // phone → its camera
+	phones map[string]map[string]bool // desktop → its phones
+	target map[string]target          // desktop → what it has open, once it said
+	held   map[string]*files.Staged   // desktop → a photo for its form, not fetched yet
+	swept  time.Time                  // when old cameras were last looked for
+	hub    *hub                       // the open event streams
+	now    func() time.Time
 }
 
-func newCameras() *cameras {
+func newCameras(h *hub) *cameras {
 	return &cameras{
-		of:      map[string]*camera{},
-		phones:  map[string]map[string]bool{},
-		target:  map[string]target{},
-		held:    map[string]*files.Staged{},
-		streams: map[string]map[*stream]bool{},
-		now:     time.Now,
+		of:     map[string]*camera{},
+		phones: map[string]map[string]bool{},
+		target: map[string]target{},
+		held:   map[string]*files.Staged{},
+		hub:    h,
+		now:    time.Now,
 	}
 }
 
-// eventData is v as an event's data.
-func eventData(name string, v any) event {
-	data, _ := json.Marshal(v)
-	return event{name: name, data: data}
-}
-
-// send queues e on every open stream of session; the lock is held.
+// send queues e on every open stream of session; the cameras' lock is
+// held (the hub takes its own after it, never the other way round).
 func (c *cameras) send(session string, e event) {
-	for st := range c.streams[session] {
-		select {
-		case st.events <- e:
-		default:
-			st.end()
-		}
-	}
+	c.hub.send(session, e)
 }
 
 // cameraEvent is the camera event for desktop: the client name of the phone
@@ -200,16 +164,13 @@ func (c *cameras) unpair(phone string) {
 
 // forget drops a session that has ended: its own camera, and the cameras
 // for it, whose phones hear so on their next request, when the database
-// no longer finds it. Its streams end.
+// no longer finds it.
 func (c *cameras) forget(session string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.stop(session)
 	for phone := range c.phones[session] {
 		c.stop(phone)
-	}
-	for st := range c.streams[session] {
-		st.end()
 	}
 }
 
@@ -282,35 +243,14 @@ func (c *cameras) changed(session, path string) {
 	}
 }
 
-// open registers a new event stream of session. A desktop with a camera
-// hears so at once. It is nil when wtfd is shutting down.
-func (c *cameras) open(session string) *stream {
+// opened tells st, a new event stream of session, at once when session is
+// a desktop with a camera; the others of its streams have been told.
+func (c *cameras) opened(session string, st *stream) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
-		return nil
-	}
 	c.sweep()
-	st := &stream{events: make(chan event, 16), done: make(chan struct{})}
-	if c.streams[session] == nil {
-		c.streams[session] = map[*stream]bool{}
-	}
-	c.streams[session][st] = true
 	if len(c.phones[session]) > 0 {
-		// To the new stream only; the others have had it.
-		st.events <- c.cameraEvent(session)
-	}
-	return st
-}
-
-// close unregisters an event stream of session that has ended.
-func (c *cameras) close(session string, st *stream) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	st.end()
-	delete(c.streams[session], st)
-	if len(c.streams[session]) == 0 {
-		delete(c.streams, session)
+		c.hub.sendTo(st, c.cameraEvent(session))
 	}
 }
 
@@ -325,18 +265,6 @@ func (c *cameras) sweep() {
 	for phone, cam := range c.of {
 		if now.Sub(cam.seen) > cameraIdle {
 			c.stop(phone)
-		}
-	}
-}
-
-// shutdown ends every stream, and refuses new ones, as wtfd stops.
-func (c *cameras) shutdown() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.closed = true
-	for _, streams := range c.streams {
-		for st := range streams {
-			st.end()
 		}
 	}
 }
@@ -565,87 +493,6 @@ func (s *server) targetReport(w http.ResponseWriter, r *http.Request) error {
 	s.cameras.report(sessionID(callerOf(r.Context()).token), t)
 	w.WriteHeader(http.StatusNoContent)
 	return nil
-}
-
-// events: GET /me/events, the session's event stream.
-func (s *server) events(w http.ResponseWriter, r *http.Request) error {
-	check := func() error {
-		_, err := s.callJSON(r.Context(), "account.me", nil)
-		return err
-	}
-	return s.stream(w, r, check)
-}
-
-// stream sends the session's events as server-sent events until the client
-// goes, the session is found ended (check, when the stream opens and every
-// streamRecheck), or wtfd shuts down. A quiet stream sends a comment line
-// every streamKeepAlive, so that proxies keep it open.
-func (s *server) stream(w http.ResponseWriter, r *http.Request, check func() error) error {
-	// Before the answer starts, an ended session still gets its 401.
-	if err := check(); err != nil {
-		return err
-	}
-	session := sessionID(callerOf(r.Context()).token)
-	st := s.cameras.open(session)
-	if st == nil {
-		return &problem{
-			Type:   "/problems/unavailable",
-			Title:  "Shutting down",
-			Status: http.StatusServiceUnavailable,
-		}
-	}
-	defer s.cameras.close(session, st)
-
-	// The server's read and write timeouts are for ordinary requests; this
-	// one stays open. Each write gets a deadline of its own instead.
-	rc := http.NewResponseController(w)
-	_ = rc.SetReadDeadline(time.Time{})
-	write := func(text string) bool {
-		_ = rc.SetWriteDeadline(time.Now().Add(streamKeepAlive))
-		if _, err := fmt.Fprint(w, text); err != nil {
-			return false
-		}
-		return rc.Flush() == nil
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("X-Accel-Buffering", "no") // nginx: pass it on as it comes
-	w.WriteHeader(http.StatusOK)
-	if !write(": events\n\n") {
-		return nil
-	}
-
-	keepAlive := time.NewTicker(streamKeepAlive)
-	defer keepAlive.Stop()
-	recheck := time.NewTicker(streamRecheck)
-	defer recheck.Stop()
-	// Once the answer has started, an error can't become a problem any
-	// more: the stream just ends.
-	for {
-		select {
-		case <-r.Context().Done():
-			return nil
-		case <-st.done:
-			return nil
-		case e := <-st.events:
-			if !write(fmt.Sprintf("event: %s\ndata: %s\n\n", e.name, e.data)) {
-				return nil
-			}
-		case <-keepAlive.C:
-			if !write(": keep-alive\n\n") {
-				return nil
-			}
-		case <-recheck.C:
-			err := check()
-			if p, _ := problemFor(err, r.Method); err != nil && p.Status == http.StatusUnauthorized {
-				write("event: ended\ndata: {}\n\n")
-				s.cameras.forget(session)
-				return nil
-			} else if err != nil && !errors.Is(err, r.Context().Err()) {
-				s.log.Warn("event stream: checking the session failed", "error", err)
-			}
-		}
-	}
 }
 
 // cameraChange is whether a successful request changes something the
