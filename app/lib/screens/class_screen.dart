@@ -398,54 +398,6 @@ String? attributeNameProblem(String name) {
   return null;
 }
 
-/// Asks for one line of text; null when cancelled.
-Future<String?> askText(
-  BuildContext context, {
-  required String title,
-  required String label,
-  String initial = '',
-  String? Function(String text)? validate,
-  String action = 'Save',
-}) {
-  final text = TextEditingController(text: initial);
-  final form = GlobalKey<FormState>();
-  void done(BuildContext context) {
-    if (form.currentState!.validate()) Navigator.pop(context, text.text.trim());
-  }
-
-  return showDialog<String>(
-    context: context,
-    builder: (context) => DisposeWith(
-      onDispose: text.dispose,
-      child: AlertDialog(
-        title: Text(title),
-        content: SizedBox(
-          width: 400,
-          child: Form(
-            key: form,
-            child: TextFormField(
-              controller: text,
-              autofocus: true,
-              decoration: InputDecoration(labelText: label),
-              validator: (v) =>
-                  validate?.call(v ?? '') ??
-                  ((v ?? '').trim().isEmpty ? 'Enter some text' : null),
-              onFieldSubmitted: (_) => done(context),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(onPressed: () => done(context), child: Text(action)),
-        ],
-      ),
-    ),
-  );
-}
-
 /// Splits a list typed in a field: one per line, or separated by commas.
 List<String> _splitList(String text) => [
   for (final s in text.split(RegExp(r'[,\n]')))

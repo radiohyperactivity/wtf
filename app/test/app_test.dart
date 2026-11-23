@@ -6,6 +6,7 @@ import 'package:flutter/material.dart' hide FileImage;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:wtf/app.dart';
 import 'package:wtf/camera.dart' show cameraPoll;
@@ -665,6 +666,172 @@ void main() {
       'PATCH /api/v1/items/i-drill {"values":{"Datasheet":null}}',
     );
     expect(find.text('No file. Takes application/pdf'), findsOneWidget);
+  });
+
+  testWidgets('a file and a photo fetched from a URL, by the app', (
+    tester,
+  ) async {
+    setSize(tester, 700);
+    final fake = FakeServer();
+    final fetched = <Uri>[];
+    fetchUrlFile = (url) async {
+      fetched.add(url);
+      if (url.host == 'gone.example') {
+        throw const FetchError('gone.example answered 404 Not Found.');
+      }
+      return (url.pathSegments.last, () async => [1, 2, 3]);
+    };
+    addTearDown(() => fetchUrlFile = fetchFromUrl);
+    await startApp(tester, fake);
+    await openItem(tester, 'Cordless drill');
+
+    // From the file attribute's menu: an address is asked for, and checked.
+    await tester.tap(find.byTooltip('Datasheet'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fetch from URL…'));
+    await tester.pumpAndSettle();
+    expect(find.text('Fetch Datasheet'), findsOneWidget);
+    await tester.enterText(find.byType(TextFormField).last, 'drill.pdf');
+    await tester.tap(button('Fetch'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('An address that starts with https:// or http://'),
+      findsOneWidget,
+    );
+    expect(fetched, isEmpty);
+    await tester.enterText(
+      find.byType(TextFormField).last,
+      ' https://shop.example/files/drill.pdf ',
+    );
+    await tester.tap(button('Fetch'));
+    await tester.pumpAndSettle();
+    expect(fetched, [Uri.parse('https://shop.example/files/drill.pdf')]);
+    expect(
+      fake.changes.last,
+      startsWith('PUT /api/v1/items/i-drill/files/Datasheet'),
+    );
+    expect(fake.changes.last, contains('filename="drill.pdf"'));
+    expect(find.text('Tap to open'), findsOneWidget);
+
+    // What went wrong is said, and nothing is uploaded.
+    clearMessages(tester);
+    final before = fake.changes.length;
+    await tester.tap(find.byTooltip('Datasheet'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fetch from URL…'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byType(TextFormField).last,
+      'https://gone.example/a.pdf',
+    );
+    await tester.tap(button('Fetch'));
+    await tester.pumpAndSettle();
+    expect(find.text('gone.example answered 404 Not Found.'), findsOneWidget);
+    expect(fake.changes.length, before);
+
+    // The photo sheet has it too.
+    clearMessages(tester);
+    await tester.pumpAndSettle();
+    await menu(tester, 'Photo…');
+    await tester.tap(find.text('From a URL'));
+    await tester.pumpAndSettle();
+    expect(find.text('Fetch a photo'), findsOneWidget);
+    await tester.enterText(
+      find.byType(TextFormField).last,
+      'http://shop.example/img/drill.jpg',
+    );
+    await tester.tap(button('Fetch'));
+    await tester.pumpAndSettle();
+    expect(fake.changes.last, startsWith('PUT /api/v1/items/i-drill/photo'));
+    expect(fake.changes.last, contains('filename="drill.jpg"'));
+    expect(find.byType(ObjectPhoto), findsOneWidget);
+  });
+
+  test('fetching from a URL: its name, and what is refused', () async {
+    Future<PickedFile> fetch(
+      String url,
+      http.Response Function(http.Request request) answer,
+    ) => fetchFromUrl(
+      Uri.parse(url),
+      client: MockClient((request) async => answer(request)),
+    );
+    Future<String> refusal(Future<PickedFile> fetching) async {
+      try {
+        await fetching;
+      } on FetchError catch (e) {
+        return e.message;
+      }
+      fail('not refused');
+    }
+
+    // Named after the address's last part, or as the site names it.
+    final pdf = await fetch(
+      'https://shop.example/files/drill%20manual.pdf?v=2',
+      (_) => http.Response.bytes(
+        [1, 2, 3],
+        200,
+        headers: {'content-type': 'application/pdf'},
+      ),
+    );
+    expect(pdf.$1, 'drill manual.pdf');
+    expect(await pdf.$2(), [1, 2, 3]);
+    final named = await fetch(
+      'https://shop.example/download?id=7',
+      (_) => http.Response.bytes(
+        [1],
+        200,
+        headers: {'content-disposition': 'attachment; filename="manual.pdf"'},
+      ),
+    );
+    expect(named.$1, 'manual.pdf');
+    final bare = await fetch(
+      'https://shop.example/',
+      (_) => http.Response.bytes([1], 200),
+    );
+    expect(bare.$1, 'shop.example');
+
+    // A web page, an error, and a file too large are refused, saying why.
+    expect(
+      await refusal(
+        fetch(
+          'https://shop.example/drill',
+          (_) => http.Response(
+            '<html>',
+            200,
+            headers: {'content-type': 'text/html; charset=utf-8'},
+          ),
+        ),
+      ),
+      contains('a web page, not a file'),
+    );
+    expect(
+      await refusal(
+        fetch(
+          'https://shop.example/gone.pdf',
+          (_) => http.Response('', 404, reasonPhrase: 'Not Found'),
+        ),
+      ),
+      startsWith('shop.example answered 404 Not Found'),
+    );
+    expect(
+      await refusal(
+        fetchFromUrl(
+          Uri.parse('https://shop.example/huge.bin'),
+          client: MockClient.streaming(
+            (request, body) async => http.StreamedResponse(
+              const Stream.empty(),
+              200,
+              contentLength: fetchLimit + 1,
+            ),
+          ),
+        ),
+      ),
+      contains('larger than 100 MB'),
+    );
+
+    expect(fetchableUrl('ftp://shop.example/a'), isNull);
+    expect(fetchableUrl('shop.example/a'), isNull);
+    expect(fetchableUrl(' https://shop.example/a '), isNotNull);
   });
 
   test('file icons: by sub-type, else by major type, else a file', () {

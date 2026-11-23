@@ -2,11 +2,14 @@
 // the attachment attributes of items and stock rows (api/attachment.md). Showing, opening, saving, uploading and
 // removing them.
 
+import 'dart:async';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
@@ -515,9 +518,145 @@ Future<bool> _upload(
   }
 }
 
+/// Whether this app can fetch a file from an address on the web: the
+/// native apps; not the web app, as most sites don't let a page of another
+/// site read their files.
+const canFetchUrl = !kIsWeb;
+
+/// Why a file couldn't be fetched from an address, said for people.
+class FetchError implements Exception {
+  const FetchError(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+/// The largest file fetched from an address: what wtfd takes by default
+/// (--max-attachment-size). A larger one would be refused by it anyway.
+const fetchLimit = 100 << 20;
+
+/// The address typed, when it is one a file can be fetched from: http or
+/// https, with a host; else null.
+Uri? fetchableUrl(String text) {
+  final url = Uri.tryParse(text.trim());
+  if (url == null || url.host.isEmpty) return null;
+  if (!url.isScheme('https') && !url.isScheme('http')) return null;
+  return url;
+}
+
+/// Asks for the address of a file; null when cancelled.
+Future<Uri?> askUrl(BuildContext context, {required String title}) async {
+  final text = await askText(
+    context,
+    title: title,
+    label: 'Address, https://…',
+    action: 'Fetch',
+    keyboardType: TextInputType.url,
+    validate: (text) => fetchableUrl(text) == null
+        ? 'An address that starts with https:// or http://'
+        : null,
+  );
+  return text == null ? null : fetchableUrl(text);
+}
+
+/// Fetches the file at [url] with this device, to upload as if chosen from
+/// its disk, named as the site names it, or after the address's last part.
+/// Tests replace it.
+Future<PickedFile> Function(Uri url) fetchUrlFile = fetchFromUrl;
+
+/// [fetchUrlFile], with [client] (tests give one).
+Future<PickedFile> fetchFromUrl(Uri url, {http.Client? client}) async {
+  final http_ = client ?? http.Client();
+  try {
+    final http.StreamedResponse resp;
+    try {
+      resp = await http_
+          .send(http.Request('GET', url))
+          .timeout(const Duration(seconds: 30));
+    } on TimeoutException {
+      throw FetchError("${url.host} didn't answer within 30 seconds.");
+    } on Object {
+      throw FetchError("Can't reach ${url.host}. Check the address.");
+    }
+    if (resp.statusCode != 200) {
+      final reason = resp.reasonPhrase == null ? '' : ' ${resp.reasonPhrase}';
+      throw FetchError(
+        '${url.host} answered ${resp.statusCode}$reason: '
+        'there is no file to fetch at that address.',
+      );
+    }
+    final type = (resp.headers['content-type'] ?? '')
+        .split(';')
+        .first
+        .trim()
+        .toLowerCase();
+    if (type == 'text/html' || type == 'application/xhtml+xml') {
+      throw const FetchError(
+        'That address is a web page, not a file. On the page, copy the '
+        'address of the image or file itself.',
+      );
+    }
+    if ((resp.contentLength ?? 0) > fetchLimit) {
+      throw const FetchError(
+        'That file is larger than ${fetchLimit >> 20} MB, more than a file '
+        'may be.',
+      );
+    }
+    final bytes = BytesBuilder(copy: false);
+    try {
+      await for (final chunk in resp.stream.timeout(
+        const Duration(seconds: 30),
+      )) {
+        bytes.add(chunk);
+        if (bytes.length > fetchLimit) {
+          throw const FetchError(
+            'That file is larger than ${fetchLimit >> 20} MB, more than a '
+            'file may be.',
+          );
+        }
+      }
+    } on TimeoutException {
+      throw FetchError('${url.host} stopped sending the file.');
+    }
+    final last = url.pathSegments.lastWhere(
+      (s) => s.isNotEmpty,
+      orElse: () => url.host,
+    );
+    final name = downloadName(resp.headers['content-disposition']) ?? last;
+    final content = bytes.takeBytes();
+    return (name, () async => content);
+  } finally {
+    if (client == null) http_.close();
+  }
+}
+
+/// Fetches the file at [url], then uploads it with [send], saying so; true
+/// when done.
+Future<bool> _fetchAndUpload(
+  BuildContext context,
+  Uri url,
+  Future<void> Function(String name, List<int> bytes) send,
+) async {
+  final messenger = ScaffoldMessenger.of(context);
+  showMessage(context, 'Fetching from ${url.host}…');
+  final PickedFile file;
+  try {
+    file = await fetchUrlFile(url);
+  } catch (e) {
+    messenger.hideCurrentSnackBar();
+    if (context.mounted) showError(context, e);
+    return false;
+  }
+  messenger.hideCurrentSnackBar();
+  if (!context.mounted) return false;
+  return _upload(context, file, send);
+}
+
 /// The photo of the item, stock row or location at [owner] (/items/{id},
-/// /stock/{id} or /locations/{id}): choose an image or take one, or remove
-/// it. True when it changed.
+/// /stock/{id} or /locations/{id}): choose an image, take one or fetch one
+/// from an address, or remove it. True when it changed.
 Future<bool> editPhoto(
   BuildContext context, {
   required String owner,
@@ -543,6 +682,12 @@ Future<bool> editPhoto(
               title: const Text('Take a photo'),
               onTap: () => Navigator.pop(context, 'take'),
             ),
+          if (canFetchUrl)
+            ListTile(
+              leading: const Icon(Icons.link),
+              title: const Text('From a URL'),
+              onTap: () => Navigator.pop(context, 'url'),
+            ),
           if (hasPhoto)
             ListTile(
               leading: const Icon(Icons.hide_image_outlined),
@@ -565,6 +710,14 @@ Future<bool> editPhoto(
         return await _upload(
           context,
           shot,
+          (name, bytes) => client.uploadPhoto(owner, name: name, bytes: bytes),
+        );
+      case 'url':
+        final url = await askUrl(context, title: 'Fetch a photo');
+        if (url == null || !context.mounted) return false;
+        return await _fetchAndUpload(
+          context,
+          url,
           (name, bytes) => client.uploadPhoto(owner, name: name, bytes: bytes),
         );
       default:
@@ -648,7 +801,7 @@ class _FileLeadingState extends State<_FileLeading> {
 
 /// An attachment attribute of the item or stock row at [owner]: its file,
 /// if it has one, to open or save; with [onChanged] (when the account may
-/// change it), to upload, replace or remove ([remove] sends the PATCH that
+/// change it), to upload, fetch from an address, replace or remove ([remove] sends the PATCH that
 /// does).
 class FileValueTile extends StatelessWidget {
   const FileValueTile({
@@ -679,6 +832,19 @@ class FileValueTile extends StatelessWidget {
     final done = await _upload(
       context,
       file,
+      (name, bytes) =>
+          client.uploadFile(owner, attribute.name, name: name, bytes: bytes),
+    );
+    if (done) onChanged!();
+  }
+
+  Future<void> _fetch(BuildContext context) async {
+    final client = context.read<Session>().client;
+    final url = await askUrl(context, title: 'Fetch ${attribute.name}');
+    if (url == null || !context.mounted) return;
+    final done = await _fetchAndUpload(
+      context,
+      url,
       (name, bytes) =>
           client.uploadFile(owner, attribute.name, name: name, bytes: bytes),
     );
@@ -717,6 +883,8 @@ class FileValueTile extends StatelessWidget {
                     saveFile(context, file!);
                   case 'upload':
                     _choose(context);
+                  case 'url':
+                    _fetch(context);
                   case 'remove':
                     if (!await confirm(
                       context,
@@ -744,6 +912,11 @@ class FileValueTile extends StatelessWidget {
                     value: 'upload',
                     child: Text(file == null ? 'Upload…' : 'Replace…'),
                   ),
+                  if (canFetchUrl)
+                    const PopupMenuItem(
+                      value: 'url',
+                      child: Text('Fetch from URL…'),
+                    ),
                   if (file != null)
                     const PopupMenuItem(
                       value: 'remove',
