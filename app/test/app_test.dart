@@ -539,7 +539,8 @@ void main() {
     clearMessages(tester);
     await tester.pumpAndSettle();
     await menu(tester, 'Photo…');
-    expect(find.text('Another photo'), findsOneWidget);
+    expect(find.text('Replaces the current photo'), findsOneWidget);
+    expect(find.text('Choose a photo'), findsOneWidget);
     await tester.tap(find.text('Remove the photo'));
     await tester.pumpAndSettle();
     expect(fake.changes.last, 'PATCH /api/v1/items/i-drill {"photo":null}');
@@ -666,6 +667,77 @@ void main() {
       'PATCH /api/v1/items/i-drill {"values":{"Datasheet":null}}',
     );
     expect(find.text('No file. Takes application/pdf'), findsOneWidget);
+  });
+
+  testWidgets('photos and files on the edit forms, and one not uploaded', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    (fake.items.first['values'] as Map)['Datasheet'] = 'hash-old';
+    var broken = false;
+    pickUploadFile = ({bool image = false}) async => (
+      'front.png',
+      () async => broken ? throw const FetchError('Gone.') : [1, 2, 3],
+    );
+    addTearDown(() => pickUploadFile = ({bool image = false}) async => null);
+    await startApp(tester, fake);
+    await openItem(tester, 'Cordless drill');
+    await tester.tap(find.byTooltip('Edit'));
+    await tester.pumpAndSettle();
+
+    // The file it has can be removed, and a photo chosen; both are done
+    // when saved, the removal in the change itself.
+    expect(find.text('Has a file'), findsOneWidget);
+    expect(find.text('No photo'), findsOneWidget);
+    await tester.tap(find.byTooltip('Datasheet'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Remove'));
+    await tester.pumpAndSettle();
+    expect(find.text('Removed when saved'), findsOneWidget);
+    await tester.tap(find.byTooltip('Datasheet'));
+    await tester.pumpAndSettle();
+    expect(find.text('Keep the current file'), findsOneWidget);
+    await tester.tap(find.text('Keep the current file'));
+    await tester.pumpAndSettle();
+    expect(find.text('Has a file'), findsOneWidget);
+    await tester.tap(find.byTooltip('Datasheet'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Remove'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Photo'));
+    await tester.pumpAndSettle();
+    expect(find.text('front.png, sent when saved'), findsOneWidget);
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes[fake.changes.length - 2],
+      'PATCH /api/v1/items/i-drill {"values":{"Datasheet":null}}',
+    );
+    expect(fake.changes.last, startsWith('PUT /api/v1/items/i-drill/photo'));
+    expect(find.byType(ObjectPhoto), findsOneWidget);
+
+    // A stock row's photo that can't be sent: the rest is saved, and the
+    // app says what wasn't.
+    clearMessages(tester);
+    broken = true;
+    final before = fake.changes.length;
+    GoRouter.of(tester.element(find.byType(Scaffold).first))
+        .push('/stock/1C00/edit');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Photo'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('Amount'), '3');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(fake.changes.skip(before), ['PATCH /api/v1/stock/s-1 {"amount":3}']);
+    expect(
+      find.text(
+        'Saved, but this file was not uploaded: Photo (Gone.). '
+        'Upload it on its screen.',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('a file and a photo fetched from a URL, by the app', (
@@ -1420,6 +1492,9 @@ void main() {
   testWidgets('add an item with a value, without stock', (tester) async {
     setSize(tester, 1000);
     final fake = FakeServer();
+    pickUploadFile = ({bool image = false}) async =>
+        ('drill.pdf', () async => [1, 2, 3]);
+    addTearDown(() => pickUploadFile = ({bool image = false}) async => null);
     await startApp(tester, fake);
 
     await tester.tap(find.text('New item'));
@@ -1435,7 +1510,12 @@ void main() {
 
     // A required value, in its unit: another one is refused.
     expect(field('Voltage *'), findsOneWidget);
-    expect(find.text('Datasheet'), findsNothing); // uploaded afterwards
+    // A file is chosen on the form too, and sent once the item is made.
+    expect(find.text('No file. Takes application/pdf'), findsOneWidget);
+    await tester.ensureVisible(find.text('Datasheet'));
+    await tester.tap(find.text('Datasheet'));
+    await tester.pumpAndSettle();
+    expect(find.text('drill.pdf, sent when saved'), findsOneWidget);
     await tester.enterText(field('Name'), 'Impact driver');
     await tester.enterText(field('Voltage *'), '18 mV');
     await tester.tap(find.text('Create'));
@@ -1461,10 +1541,13 @@ void main() {
     await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
     expect(
-      fake.changes.single,
+      fake.changes.first,
       'POST /api/v1/items {"class":"c-drills","name":"Impact driver",'
       '"values":{"Voltage":18}}',
     );
+    expect(fake.changes, hasLength(2));
+    expect(fake.changes.last, contains('/files/Datasheet'));
+    expect(fake.changes.last, contains('filename="drill.pdf"'));
     expect(find.widgetWithText(AppBar, 'New item'), findsNothing);
     expect(find.text('Impact driver'), findsWidgets);
     expect(find.text('No stock.'), findsOneWidget);
@@ -1477,6 +1560,9 @@ void main() {
     // Its class counts in metres; the item has no unit of its own.
     final fake = FakeServer()
       ..ownStock['c-drills'] = {'counting': 'optional', 'unit': 'm'};
+    pickUploadFile = ({bool image = false}) async =>
+        ('reel.png', () async => [1, 2, 3]);
+    addTearDown(() => pickUploadFile = ({bool image = false}) async => null);
     await startApp(tester, fake);
     await tester.tap(find.text('New item'));
     await tester.pumpAndSettle();
@@ -1496,12 +1582,21 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(field('Amount'), '2.5 m');
     await tester.enterText(field('Bought'), '2026-11-01');
+    // The stock row's photo, below the item's.
+    await tester.ensureVisible(find.text('Photo').last);
+    await tester.tap(find.text('Photo').last);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
 
-    // One request, both together.
+    // One request, both together; then the row's photo.
+    expect(fake.changes, hasLength(2));
     expect(
-      fake.changes.single,
+      fake.changes.last,
+      matches(RegExp(r'^PUT /api/v1/stock/s-\w+/photo')),
+    );
+    expect(
+      fake.changes.first,
       'POST /api/v1/items {"class":"c-drills","name":"Drill cable",'
       '"values":{"Voltage":230},"stock":{"location":"l-shelf2",'
       '"amount":2.5,"values":{"Bought":"2026-11-01"}}}',

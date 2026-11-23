@@ -7,6 +7,7 @@ import '../api/input.dart';
 import '../api/models.dart';
 import '../session.dart';
 import '../widgets/common.dart';
+import '../widgets/files.dart';
 import '../widgets/form_keys.dart';
 import '../widgets/pickers.dart';
 import '../widgets/select_keys.dart';
@@ -15,7 +16,8 @@ import '../widgets/value_fields.dart';
 /// Adds a stock row (of [itemId] and at [locationId], when given), or edits
 /// the row with [code]. Like `wtf stock add` and `wtf stock edit`: item,
 /// location and amount (empty: uncounted), then the values of the class's
-/// stock attributes.
+/// stock attributes. Its photo and files are chosen on it too, and uploaded
+/// once it is saved (decision 115).
 class StockFormScreen extends StatelessWidget {
   const StockFormScreen({super.key, this.code, this.itemId, this.locationId});
 
@@ -90,6 +92,12 @@ class _StockFormState extends State<_StockForm> {
       context.read<Session>().recent.stockLocation((id) => _usable(id) != null);
   final _amountFocus = FocusNode();
   List<ValueInput> _inputs = [];
+
+  // The row's photo, and the files of its class's stock attachment
+  // attributes, by name.
+  late final _photo = FormFile.photo(current: widget.stock?.photo);
+  Map<String, FormFile> _files = {};
+  ClassDetail? _class;
   bool _loading = false;
   Object? _loadError;
   bool _busy = false;
@@ -135,7 +143,27 @@ class _StockFormState extends State<_StockForm> {
       );
       if (!mounted || item != _item) return;
       final old = _inputs;
-      setState(() => _inputs = inputs);
+      final files = {
+        for (final a in cls.scoped(stock: true))
+          if (a.isFile)
+            a.name: () {
+              final hash = stock?.values[a.name];
+              final current = hash is String
+                  ? FileRef(
+                      owner: '/stock/${stock!.id}',
+                      attribute: a.name,
+                      hash: hash,
+                    )
+                  : null;
+              return _files[a.name]?.again(a, current: current) ??
+                  FormFile.attribute(a, current: current);
+            }(),
+      };
+      setState(() {
+        _class = cls;
+        _inputs = inputs;
+        _files = files;
+      });
       // The old fields are still drawn once more.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         for (final i in old) {
@@ -207,13 +235,20 @@ class _StockFormState extends State<_StockForm> {
           amount: amount,
           values: newValues(_inputs),
         );
+        final failed = await uploadFormFiles(_client, '/stock/${created.id}', [
+          _photo,
+          ..._files.values,
+        ]);
         if (mounted) {
           context.read<Session>().recent.stockAdded(location);
-          showMessage(
-            context,
-            'Added ${item.name} at ${widget.locations.pathOf(location)}.',
-          );
-          if (another) {
+          final added =
+              'Added ${item.name} at ${widget.locations.pathOf(location)}';
+          if (failed.isEmpty) {
+            showMessage(context, '$added.');
+          } else {
+            showError(context, _notUploaded(added, failed));
+          }
+          if (another && failed.isEmpty) {
             // The item stays if the form was opened for it (from its
             // screen); from a location's, the next item is chosen.
             context.pushReplacement(
@@ -236,10 +271,22 @@ class _StockFormState extends State<_StockForm> {
           if (location != stock.location) 'location': location,
           if (!sameNumber(amount, stock.amount)) 'amount': amount,
         });
+      final files = [_photo, ..._files.values];
+      addFileRemovals(changes, files);
       if (changes.isNotEmpty) await _client.patchStock(stock.id, changes);
+      final failed = await uploadFormFiles(
+        _client,
+        '/stock/${stock.id}',
+        files,
+      );
       if (mounted) {
-        showMessage(context, changes.isEmpty ? 'No changes.' : 'Saved.');
-        context.pop(changes.isNotEmpty);
+        final changed = changes.isNotEmpty || files.any((f) => f.changed);
+        if (failed.isEmpty) {
+          showMessage(context, changed ? 'Saved.' : 'No changes.');
+        } else {
+          showError(context, _notUploaded('Saved', failed));
+        }
+        context.pop(changed);
       }
     } catch (e) {
       if (mounted) showError(context, e);
@@ -367,19 +414,30 @@ class _StockFormState extends State<_StockForm> {
                     padding: EdgeInsets.all(16),
                     child: LinearProgressIndicator(),
                   ),
-                if (_inputs.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                FormFileTile(_photo),
+                if (_inputs.isNotEmpty || _files.isNotEmpty) ...[
                   const SectionTitle('Stock values'),
-                  for (final i in _inputs)
-                    Padding(
-                      key: ValueKey(i.attribute.name),
-                      padding: const EdgeInsets.only(top: 12),
-                      child: ValueField(
-                        i,
-                        onSubmitted: identical(i, lastTyped(_inputs))
-                            ? _save
-                            : null,
+                  // In the class's order: an input for a value, a line for
+                  // a file.
+                  for (final a
+                      in _class?.scoped(stock: true) ?? const <Attribute>[])
+                    if (_files[a.name] case final f?)
+                      FormFileTile(f, key: ValueKey(('file', a.name)))
+                    else if (_inputs
+                            .where((i) => i.attribute.name == a.name)
+                            .firstOrNull
+                        case final i?)
+                      Padding(
+                        key: ValueKey(a.name),
+                        padding: const EdgeInsets.only(top: 12),
+                        child: ValueField(
+                          i,
+                          onSubmitted: identical(i, lastTyped(_inputs))
+                              ? _save
+                              : null,
+                        ),
                       ),
-                    ),
                 ],
               ],
             ),
@@ -390,4 +448,11 @@ class _StockFormState extends State<_StockForm> {
   }
 
   void _saveAnother() => _save(another: true);
+
+  /// Says what was saved, and which files weren't uploaded and why; they
+  /// can be uploaded again on the stock row's screen.
+  InputError _notUploaded(String done, List<String> failed) => InputError(
+    "$done, but ${failed.length == 1 ? 'this file was' : 'these files were'} "
+    "not uploaded: ${failed.join('; ')}. Upload ${failed.length == 1 ? 'it' : 'them'} on its screen.",
+  );
 }

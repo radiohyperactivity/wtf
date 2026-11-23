@@ -82,7 +82,7 @@ Every screen has a URL. In the web app it shows in the address bar, and it works
 | `/classes/<id>` | A class: its attributes (add, change, rename, remove, and a choice's choices, each previewed by a dry run), the classes below it and its items. Edit, add a class below, export, delete. |
 | `/classes/new?parent=…`, `/classes/<id>/edit` | Add or edit a class: name, parent, container. How its items' stock is counted is changed on its screen (decision 112). |
 | `/items/1B2C` | An item: its details and values, its photo, its files, stock rows with their locations. A stock row's code shows its item too, as in the CLI. |
-| `/items/new?class=…` | Add an item: class, name, then its attributes in the class's order, and its first stock row (decision 107), counted as its class says (decision 110). |
+| `/items/new?class=…` | Add an item: class, name, photo, then its attributes in the class's order (files too, decision 115), and its first stock row (decision 107), counted as its class says (decision 110). |
 | `/items/1B2C/edit` | Edit an item: name, class, values. |
 | `/stock/1C3D` | A stock row: amount, location, its values and files; move it (all or part), merge it into another row, edit or delete it. |
 | `/stock/new?item=…&location=…` | Add stock: item, location, amount, the values of the stock attributes. |
@@ -541,3 +541,7 @@ Your idea, planned and built on the night of 22 November 2026: [2026-11-22-stock
 ### Files from an address
 
 114. **A file attribute's menu has "Fetch from URL…", and the Photo sheet "From a URL"** (your idea, 23 November 2026). The app asks for an address (http or https), fetches the file itself and uploads it as if chosen from the disk, named as the site names it or after the address's last part; nothing in wtfd or the API changes (your choice: wtfd fetching would let any account make it reach addresses on its own network). A web page instead of a file, an error from the site, no answer within 30 seconds or a file over 100 MB (wtfd's default limit) is refused before anything is uploaded, saying why. The web app hasn't these, as most sites don't let a page of another site read their files.
+
+### Photos and files on the forms
+
+115. **The item and stock forms have the photo and the files too** (your idea, 23 November 2026), new and edit alike. The item's photo comes after its name; its stock row's (on the new-item form) and a stock row's on its own form after the amount; the files of attachment attributes stand among the values, in the class's order. Each is a line saying what it has, or what saving will do ("drill.pdf, sent when saved", "Removed when saved"); a tap chooses a file, and its menu has Choose, Take a photo (where the camera can, for the photo and attributes taking images), Fetch from URL (decision 114), Remove, and Keep the current one. A file can only be uploaded to an item or stock row that exists, so the files are sent one by one right after the item or row is saved; a removal goes in the change itself. That isn't all or nothing, as the item and its stock row are: when a file can't be sent, what was saved stays, and the app says which files weren't uploaded and why, and goes to the item's screen (not to the next new item), where they can be uploaded again.

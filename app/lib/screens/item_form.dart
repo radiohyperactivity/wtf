@@ -7,6 +7,7 @@ import '../api/input.dart';
 import '../api/models.dart';
 import '../session.dart';
 import '../widgets/common.dart';
+import '../widgets/files.dart';
 import '../widgets/form_keys.dart';
 import '../widgets/pickers.dart';
 import '../widgets/select_keys.dart';
@@ -17,6 +18,8 @@ import '../widgets/value_fields.dart';
 /// attributes. A new item's first stock row is on the same form, and saved
 /// with it, in one request: where it is, how many, and its stock values
 /// (decision 107); how many as its class counts its stock (decision 110).
+/// Photos and files are chosen on it too, and uploaded once it is saved
+/// (decision 115).
 class ItemFormScreen extends StatelessWidget {
   const ItemFormScreen({super.key, this.code, this.classId});
 
@@ -94,6 +97,13 @@ class _ItemFormState extends State<_ItemForm> {
   ClassDetail? _class;
   List<ValueInput> _inputs = [];
   List<ValueInput> _stockInputs = [];
+
+  // The item's photo, and its stock row's; the files of the class's
+  // attachment attributes, by name.
+  late final _photo = FormFile.photo(current: widget.item?.photo);
+  final _stockPhoto = FormFile.photo();
+  Map<String, FormFile> _files = {};
+  Map<String, FormFile> _stockFiles = {};
   bool _loadingValues = false;
   Object? _valuesError;
   bool _busy = false;
@@ -165,10 +175,29 @@ class _ItemFormState extends State<_ItemForm> {
       keep(stockInputs, typedStock);
       if (!mounted || classId != _classId) return;
       final old = [..._inputs, ..._stockInputs];
+      // Files chosen for an attribute the new class has too are kept.
+      Map<String, FormFile> files(bool stock, Map<String, FormFile> before) => {
+        for (final a in cls.scoped(stock: stock))
+          if (a.isFile)
+            a.name: () {
+              final hash = stock ? null : item?.values[a.name];
+              final current = hash is String && item != null
+                  ? FileRef(
+                      owner: '/items/${item.id}',
+                      attribute: a.name,
+                      hash: hash,
+                    )
+                  : null;
+              return before[a.name]?.again(a, current: current) ??
+                  FormFile.attribute(a, current: current);
+            }(),
+      };
       setState(() {
         _class = cls;
         _inputs = inputs;
         _stockInputs = stockInputs;
+        _files = files(false, _files);
+        _stockFiles = _editing ? {} : files(true, _stockFiles);
       });
       // The old fields are still drawn once more.
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -297,17 +326,33 @@ class _ItemFormState extends State<_ItemForm> {
               values: newValues(_stockInputs),
             ),
     );
+    // Its files, now that it has somewhere to go.
+    final failed = [
+      ...await uploadFormFiles(_client, '/items/${item.id}', [
+        _photo,
+        ..._files.values,
+      ]),
+      if (location != null && item.stock.isNotEmpty)
+        ...await uploadFormFiles(_client, '/stock/${item.stock.first.id}', [
+          _stockPhoto,
+          ..._stockFiles.values,
+        ]),
+    ];
     if (!mounted) return;
     final recent = context.read<Session>().recent
       ..itemAdded(classId)
       ..addStock = _addStock;
     if (location != null) recent.stockAdded(location);
-    showMessage(
-      context,
-      location == null
-          ? 'Created ${item.name}.'
-          : 'Created ${item.name}, at ${widget.locations!.pathOf(location)}.',
-    );
+    final created = location == null
+        ? 'Created ${item.name}'
+        : 'Created ${item.name}, at ${widget.locations!.pathOf(location)}';
+    if (failed.isEmpty) {
+      showMessage(context, '$created.');
+    } else {
+      // Its screen, where they can be uploaded again.
+      showError(context, _notUploaded(created, failed));
+      another = false;
+    }
     context.pushReplacement(another ? '/items/new' : '/items/${item.code}');
   }
 
@@ -325,11 +370,26 @@ class _ItemFormState extends State<_ItemForm> {
       if (name != item.name) 'name': name,
       if (_classId != item.cls.id) 'class': _classId,
     });
+    final files = [_photo, ..._files.values];
+    addFileRemovals(changes, files);
     if (changes.isNotEmpty) await _client.patchItem(item.id, changes);
+    final failed = await uploadFormFiles(_client, '/items/${item.id}', files);
     if (!mounted) return;
-    showMessage(context, changes.isEmpty ? 'No changes.' : 'Saved.');
-    context.pop(changes.isNotEmpty);
+    final changed = changes.isNotEmpty || files.any((f) => f.changed);
+    if (failed.isEmpty) {
+      showMessage(context, changed ? 'Saved.' : 'No changes.');
+    } else {
+      showError(context, _notUploaded('Saved', failed));
+    }
+    context.pop(changed);
   }
+
+  /// Says what was saved, and which files weren't uploaded and why; they
+  /// can be uploaded again on the item's screen.
+  InputError _notUploaded(String done, List<String> failed) => InputError(
+    "$done, but ${failed.length == 1 ? 'this file was' : 'these files were'} "
+    "not uploaded: ${failed.join('; ')}. Upload ${failed.length == 1 ? 'it' : 'them'} on its screen.",
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -416,6 +476,8 @@ class _ItemFormState extends State<_ItemForm> {
                   validator: (v) =>
                       (v ?? '').trim().isEmpty ? 'Enter a name' : null,
                 ),
+                const SizedBox(height: 8),
+                FormFileTile(_photo),
                 if (_valuesError != null) ...[
                   const SizedBox(height: 16),
                   Text(
@@ -434,21 +496,11 @@ class _ItemFormState extends State<_ItemForm> {
                     padding: EdgeInsets.all(16),
                     child: LinearProgressIndicator(),
                   ),
-                if (_inputs.isNotEmpty) ...[
+                if (_inputs.isNotEmpty || _files.isNotEmpty) ...[
                   const SectionTitle('Values'),
-                  if (_editing)
-                    const EmptyNote(
-                      "Clear a value to remove it. Files are uploaded on the item's screen.",
-                    ),
-                  for (final i in _inputs)
-                    Padding(
-                      key: ValueKey(i.attribute.name),
-                      padding: const EdgeInsets.only(top: 12),
-                      child: ValueField(
-                        i,
-                        onSubmitted: identical(i, last) ? _save : null,
-                      ),
-                    ),
+                  if (_editing && _inputs.isNotEmpty)
+                    const EmptyNote('Clear a value to remove it.'),
+                  ..._valueFields(_inputs, _files, last, stock: false),
                 ],
                 if (!_editing) ..._stockSection(last),
               ],
@@ -518,16 +570,46 @@ class _ItemFormState extends State<_ItemForm> {
           onSubmitted: identical(last, _amount) ? _save : null,
         ),
       ],
-      for (final i in _stockInputs)
-        Padding(
-          key: ValueKey(('stock', i.attribute.name)),
-          padding: const EdgeInsets.only(top: 12),
-          child: ValueField(
-            i,
-            enabled: on,
-            onSubmitted: identical(i, last) ? _save : null,
+      const SizedBox(height: 8),
+      FormFileTile(_stockPhoto, enabled: on),
+      ..._valueFields(
+        _stockInputs,
+        _stockFiles,
+        last,
+        stock: true,
+        enabled: on,
+      ),
+    ];
+  }
+
+  /// The fields of the class's item or stock attributes, in its order: an
+  /// input for a value, a line for a file.
+  List<Widget> _valueFields(
+    List<ValueInput> inputs,
+    Map<String, FormFile> files,
+    Object last, {
+    required bool stock,
+    bool enabled = true,
+  }) {
+    final byName = {for (final i in inputs) i.attribute.name: i};
+    return [
+      for (final a in _class?.scoped(stock: stock) ?? const <Attribute>[])
+        if (files[a.name] case final f?)
+          FormFileTile(
+            f,
+            key: ValueKey((stock, 'file', a.name)),
+            enabled: enabled,
+          )
+        else if (byName[a.name] case final i?)
+          Padding(
+            key: ValueKey((stock, a.name)),
+            padding: const EdgeInsets.only(top: 12),
+            child: ValueField(
+              i,
+              enabled: enabled,
+              onSubmitted: identical(i, last) ? _save : null,
+            ),
           ),
-        ),
     ];
   }
 

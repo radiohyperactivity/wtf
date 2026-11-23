@@ -671,9 +671,18 @@ Future<bool> editPhoto(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // There is one photo: each way of giving one replaces it.
+          if (hasPhoto)
+            ListTile(
+              dense: true,
+              title: Text(
+                'Replaces the current photo',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
           ListTile(
             leading: const Icon(Icons.image_outlined),
-            title: Text(hasPhoto ? 'Another photo' : 'Choose a photo'),
+            title: const Text('Choose a photo'),
             onTap: () => Navigator.pop(context, 'choose'),
           ),
           if (camera)
@@ -925,6 +934,208 @@ class FileValueTile extends StatelessWidget {
                 ],
               ],
             ),
+    );
+  }
+}
+
+/// A photo or an attachment attribute's file on a form (decision 115):
+/// one chosen there, sent once the item or stock row it belongs to is
+/// saved, or the one it has removed. Nothing chosen keeps what there is.
+class FormFile {
+  /// The photo; [current] is the one there now, when editing.
+  FormFile.photo({this.current}) : attribute = null;
+
+  /// The file of [attribute]; [current] is the one there now, when editing.
+  FormFile.attribute(Attribute this.attribute, {this.current});
+
+  /// Null for the photo.
+  final Attribute? attribute;
+  final FileRef? current;
+
+  PickedFile? picked;
+
+  /// Whether saving removes [current].
+  bool removing = false;
+
+  bool get isPhoto => attribute == null;
+  String get label => attribute?.name ?? 'Photo';
+
+  /// Whether saving changes anything.
+  bool get changed => picked != null || removing;
+
+  /// Whether a photo taken with the camera can be it: the photo, or an
+  /// attribute taking images (or any type).
+  bool get takesImages =>
+      isPhoto ||
+      attribute!.media.isEmpty ||
+      attribute!.media.any((m) => m.startsWith('image/'));
+
+  /// The same one, for the class's [attribute] (after another class is
+  /// chosen), keeping what was chosen.
+  FormFile again(Attribute attribute, {FileRef? current}) =>
+      FormFile.attribute(attribute, current: current)
+        ..picked = picked
+        ..removing = removing && current != null;
+}
+
+/// What saving [files] removes, merged into [changes], a PATCH of an item
+/// or a stock row: its photo, and the values of its attachment attributes.
+void addFileRemovals(Json changes, Iterable<FormFile> files) {
+  for (final f in files.where((f) => f.removing)) {
+    if (f.isPhoto) {
+      changes['photo'] = null;
+    } else {
+      final values = {...?changes['values'] as Map<String, Object?>?};
+      values[f.attribute!.name] = null;
+      changes['values'] = values;
+    }
+  }
+}
+
+/// Uploads the files chosen in [files] to the item or stock row at [owner]
+/// (/items/{id} or /stock/{id}), one after the other; what wasn't
+/// uploaded, each with why.
+Future<List<String>> uploadFormFiles(
+  ApiClient client,
+  String owner,
+  Iterable<FormFile> files,
+) async {
+  final failed = <String>[];
+  for (final f in files) {
+    final picked = f.picked;
+    if (picked == null) continue;
+    try {
+      final bytes = await picked.$2();
+      if (f.isPhoto) {
+        await client.uploadPhoto(owner, name: picked.$1, bytes: bytes);
+      } else {
+        await client.uploadFile(
+          owner,
+          f.attribute!.name,
+          name: picked.$1,
+          bytes: bytes,
+        );
+      }
+    } catch (e) {
+      failed.add('${f.label} (${errorText(e)})');
+    }
+  }
+  return failed;
+}
+
+/// A [FormFile]'s line on a form: what it has, or what saving will do, and
+/// a menu to choose a file, take a photo, fetch one from an address, or
+/// remove it. A tap chooses a file.
+class FormFileTile extends StatefulWidget {
+  const FormFileTile(this.file, {super.key, this.enabled = true});
+
+  final FormFile file;
+  final bool enabled;
+
+  @override
+  State<FormFileTile> createState() => _FormFileTileState();
+}
+
+class _FormFileTileState extends State<FormFileTile> {
+  FormFile get _f => widget.file;
+
+  void _pick(PickedFile? picked) {
+    if (picked == null || !mounted) return;
+    setState(() {
+      _f.picked = picked;
+      _f.removing = false;
+    });
+  }
+
+  Future<void> _choose() async =>
+      _pick(await pickUploadFile(image: _f.isPhoto));
+
+  Future<void> _fetch() async {
+    final url = await askUrl(
+      context,
+      title: _f.isPhoto ? 'Fetch a photo' : 'Fetch ${_f.label}',
+    );
+    if (url == null || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    showMessage(context, 'Fetching from ${url.host}…');
+    try {
+      final file = await fetchUrlFile(url);
+      messenger.hideCurrentSnackBar();
+      _pick(file);
+    } catch (e) {
+      messenger.hideCurrentSnackBar();
+      if (mounted) showError(context, e);
+    }
+  }
+
+  void _remove() => setState(() {
+    _f.picked = null;
+    _f.removing = _f.current != null;
+  });
+
+  void _keep() => setState(() {
+    _f.picked = null;
+    _f.removing = false;
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final f = _f;
+    final what = f.isPhoto ? 'photo' : 'file';
+    final media = f.attribute?.media ?? const [];
+    final subtitle = switch (f) {
+      FormFile(picked: (final name, _)) => '$name, sent when saved',
+      FormFile(removing: true) => 'Removed when saved',
+      FormFile(current: _?) => 'Has a $what',
+      _ => [
+        'No $what',
+        if (media.isNotEmpty) 'Takes ${media.join(', ')}',
+      ].join('. '),
+    };
+    final icon = f.isPhoto ? Icons.photo_outlined : attributeIcon(f.attribute!);
+    final current = f.current;
+    final camera = f.takesImages && canTakePhoto(context);
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      enabled: widget.enabled,
+      leading: f.picked != null
+          ? PhotoOrIcon(
+              null,
+              icon: f.isPhoto
+                  ? Icons.add_photo_alternate_outlined
+                  : Icons.upload_file,
+            )
+          : current != null && !f.removing
+          ? _FileLeading(current, fallback: icon)
+          : PhotoOrIcon(null, icon: icon),
+      title: Text(f.label),
+      subtitle: Text(subtitle),
+      onTap: _choose,
+      trailing: PopupMenuButton<String>(
+        tooltip: f.label,
+        enabled: widget.enabled,
+        onSelected: (action) => switch (action) {
+          'choose' => _choose(),
+          'take' => takeCameraPhoto().then(_pick),
+          'url' => _fetch(),
+          'keep' => _keep(),
+          _ => _remove(),
+        },
+        itemBuilder: (context) => [
+          PopupMenuItem(
+            value: 'choose',
+            child: Text(f.isPhoto ? 'Choose a photo…' : 'Choose a file…'),
+          ),
+          if (camera)
+            const PopupMenuItem(value: 'take', child: Text('Take a photo…')),
+          if (canFetchUrl)
+            const PopupMenuItem(value: 'url', child: Text('Fetch from URL…')),
+          if (f.changed && current != null)
+            PopupMenuItem(value: 'keep', child: Text('Keep the current $what')),
+          if (f.picked != null || (current != null && !f.removing))
+            const PopupMenuItem(value: 'remove', child: Text('Remove')),
+        ],
+      ),
     );
   }
 }
