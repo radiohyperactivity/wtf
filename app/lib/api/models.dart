@@ -492,6 +492,50 @@ class Tree {
   }
 }
 
+/// How the stock of a class's items is counted (decision 110).
+enum Counting {
+  /// Not counted: a stock row says it is there, and has no amount.
+  none('Not counted'),
+
+  /// Counted, and an amount may be left out: not counted yet.
+  optional('Counted, the amount optional'),
+
+  /// Counted: every stock row has an amount.
+  required('Counted, the amount required');
+
+  const Counting(this.label);
+
+  final String label;
+
+  static Counting fromJson(Object? v) =>
+      Counting.values.asNameMap()[v] ?? Counting.optional;
+}
+
+/// A class's rule for counting its items' stock: [counting], in [unit]
+/// (null: pieces), and [from], the class whose rule it is (its own id, an
+/// ancestor's, or null for the default: counted, optional, in pieces).
+class StockRule {
+  const StockRule({this.counting = Counting.optional, this.unit, this.from});
+
+  factory StockRule.fromJson(Object? json) {
+    final j = json is Map<String, dynamic> ? json : const <String, dynamic>{};
+    return StockRule(
+      counting: Counting.fromJson(j['counting']),
+      unit: j['unit'] as String?,
+      from: j['from'] as String?,
+    );
+  }
+
+  final Counting counting;
+  final String? unit;
+  final String? from;
+
+  /// "Not counted", "Counted, the amount optional · pieces", "… · m".
+  String get text => counting == Counting.none
+      ? counting.label
+      : '${counting.label} · ${unit ?? 'pieces'}';
+}
+
 class ClassDetail {
   const ClassDetail({
     required this.id,
@@ -500,6 +544,7 @@ class ClassDetail {
     this.container = false,
     this.path = const [],
     this.attributes = const [],
+    this.stock = const StockRule(),
   });
 
   factory ClassDetail.fromJson(Json json) => ClassDetail(
@@ -509,6 +554,7 @@ class ClassDetail {
     container: json['container'] as bool? ?? false,
     path: _refs(json['path']),
     attributes: _list(json['attributes']).map(Attribute.fromJson).toList(),
+    stock: StockRule.fromJson(json['stock']),
   );
 
   final String id;
@@ -520,6 +566,9 @@ class ClassDetail {
   /// Its own and inherited ones: the item attributes, then the stock
   /// attributes, each by order.
   final List<Attribute> attributes;
+
+  /// How its items' stock is counted.
+  final StockRule stock;
 
   String get pathText => path.map((p) => p.name).join('/');
 
@@ -539,6 +588,7 @@ class ClassChange {
     required this.items,
     required this.stock,
     required this.dryRun,
+    this.relabelled = 0,
   });
 
   factory ClassChange.fromJson(Json json) => ClassChange(
@@ -546,12 +596,17 @@ class ClassChange {
     items: json['items'] as int? ?? 0,
     stock: json['stock'] as int? ?? 0,
     dryRun: json['dry_run'] as bool? ?? false,
+    relabelled: json['relabelled'] as int? ?? 0,
   );
 
   final ClassDetail cls;
   final int items;
   final int stock;
   final bool dryRun;
+
+  /// A change of the rule for counting stock: how many stock rows with an
+  /// amount are counted in another unit (nothing converts).
+  final int relabelled;
 
   /// "This rewrites 1,204 items and 3 stock rows.", or that it rewrites
   /// nothing.
@@ -636,6 +691,7 @@ class ItemSummary {
     required this.code,
     required this.name,
     required this.classId,
+    this.counting = Counting.optional,
     this.unit,
     this.photo,
   });
@@ -647,6 +703,7 @@ class ItemSummary {
     classId: json['class'] is Map
         ? (json['class'] as Json)['id'] as String
         : json['class'] as String? ?? '',
+    counting: Counting.fromJson(json['counting']),
     unit: json['unit'] as String?,
     photo: FileRef.photo('/items/${json['id']}', json['photo']),
   );
@@ -656,13 +713,19 @@ class ItemSummary {
   final String name;
   final String classId;
 
-  /// What its stock is counted in, a label ("m"); null for pieces.
+  /// How its stock is counted, and in what: a label ("m"), null for
+  /// pieces. Both its class's.
+  final Counting counting;
   final String? unit;
   final FileRef? photo;
 
-  /// An amount of its stock: "12", "1.5 m", or "uncounted".
-  String amountText(num? amount) =>
-      amount == null ? 'uncounted' : withUnit(amount, unit);
+  /// An amount of its stock: "12", "1.5 m", "uncounted", or, where its
+  /// class doesn't count its stock, "not counted".
+  String amountText(num? amount) => counting == Counting.none
+      ? 'not counted'
+      : amount == null
+      ? 'uncounted'
+      : withUnit(amount, unit);
 }
 
 /// An item in a list (GET /items).
@@ -672,6 +735,7 @@ class ItemListed extends ItemSummary {
     required super.code,
     required super.name,
     required super.classId,
+    super.counting,
     super.unit,
     super.photo,
     this.total = 0,
@@ -686,6 +750,7 @@ class ItemListed extends ItemSummary {
       code: s.code,
       name: s.name,
       classId: s.classId,
+      counting: s.counting,
       unit: s.unit,
       photo: s.photo,
       total: stock['total'] as num? ?? 0,
@@ -697,8 +762,10 @@ class ItemListed extends ItemSummary {
   final num total;
   final bool uncounted;
 
-  /// The total stock: "12", "1.2 m", "3 + uncounted" or "uncounted".
+  /// The total stock: "12", "1.2 m", "3 + uncounted" or "uncounted"; or
+  /// "not counted", or none, where its class doesn't count its stock.
   String get stockText {
+    if (counting == Counting.none) return uncounted ? 'not counted' : '';
     final counted = withUnit(total, unit);
     if (!uncounted) return counted;
     return total == 0 ? 'uncounted' : '$counted + uncounted';
@@ -711,6 +778,7 @@ class ItemDetail extends ItemSummary {
     required super.code,
     required super.name,
     required this.cls,
+    super.counting,
     super.unit,
     super.photo,
     this.values = const {},
@@ -730,6 +798,7 @@ class ItemDetail extends ItemSummary {
         name: cls['name'] as String,
         path: _refs(cls['path']),
       ),
+      counting: s.counting,
       unit: s.unit,
       photo: s.photo,
       values: _values(json['values']),

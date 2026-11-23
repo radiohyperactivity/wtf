@@ -452,11 +452,11 @@ class ApiClient {
   /// attribute name, in the API's types (see parseValue). The attributes
   /// not given get their defaults.
   /// POST /items. With [stock], the item's first stock row is made with it,
-  /// in the same transaction: both, or neither.
+  /// in the same transaction: both, or neither. How its stock is counted is
+  /// its class's.
   Future<ItemDetail> createItem({
     required String classId,
     required String name,
-    String? unit,
     Values values = const {},
     NewStock? stock,
   }) async => ItemDetail.fromJson(
@@ -466,7 +466,6 @@ class ApiClient {
       body: {
         'class': classId,
         'name': name,
-        'unit': unit,
         'values': values,
         if (stock != null)
           'stock': {
@@ -478,9 +477,9 @@ class ApiClient {
     ) as Json,
   );
 
-  /// PATCH /items/{id}: any of name, class, unit (null: pieces), photo
-  /// (null only), values (by name, null removing one) and default (names
-  /// to give their default), in one transaction.
+  /// PATCH /items/{id}: any of name, class, photo (null only), values (by
+  /// name, null removing one) and default (names to give their default), in
+  /// one transaction.
   Future<ItemDetail> patchItem(String id, Json changes) async =>
       ItemDetail.fromJson(
         await _call('PATCH', '/items/$id', body: changes) as Json,
@@ -801,6 +800,27 @@ class ApiClient {
       body: body,
     ) as Json,
   );
+
+  /// PUT /classes/{id}/stock: a rule of the class's own for counting its
+  /// items' stock, in [unit] (null: pieces). The answer says how many
+  /// counted stock rows got another unit ([ClassChange.relabelled]).
+  Future<ClassChange> setClassStock(
+    String classId,
+    Counting counting,
+    String? unit, {
+    bool dryRun = false,
+  }) => _change(
+    'PUT',
+    '/classes/$classId/stock',
+    body: {'counting': counting.name, 'unit': unit},
+    dryRun: dryRun,
+  );
+
+  /// DELETE /classes/{id}/stock: the class inherits its parent's rule again.
+  Future<ClassChange> inheritClassStock(
+    String classId, {
+    bool dryRun = false,
+  }) => _change('DELETE', '/classes/$classId/stock', dryRun: dryRun);
 
   /// Adds an attribute, with the definition [a] gives: its scope, type,
   /// required, unit, default, choices, media types and order.

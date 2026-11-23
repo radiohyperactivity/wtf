@@ -171,8 +171,8 @@ func runPerformance(t *testing.T, n int) string {
 	values := js(obj("Length", 12.5, "Weight", 3, "Note", "a note", "Colour", "Colour 7"))
 	var writes []timing
 	write := func(name string, f func() string) { writes = append(writes, measure(name, runs, f)) }
-	write("item.create, 4 values", func() string { user.must(t, "item.create", p.leaf, "New item", nil, values); return "" })
-	newItem := user.id(t, "item.create", p.leaf, "Patched item", nil, values)
+	write("item.create, 4 values", func() string { user.must(t, "item.create", p.leaf, "New item", values); return "" })
+	newItem := user.id(t, "item.create", p.leaf, "Patched item", values)
 	write("item.patch, name", func() string { user.must(t, "item.patch", newItem, `{"name": "Renamed item"}`); return "" })
 	write("item.patch, two values", func() string {
 		user.must(t, "item.patch", newItem, `{"values": {"Length": 42, "Note": "another"}}`)
@@ -194,7 +194,7 @@ func runPerformance(t *testing.T, n int) string {
 		return "both calls"
 	})
 	write("item.create + item.delete", func() string {
-		item := user.id(t, "item.create", p.leaf, "Short-lived", nil, values)
+		item := user.id(t, "item.create", p.leaf, "Short-lived", values)
 		user.must(t, "item.delete", item)
 		return "both calls"
 	})

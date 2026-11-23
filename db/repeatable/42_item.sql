@@ -8,17 +8,20 @@ CREATE SCHEMA item;
 -- Helpers
 -- ---------------------------------------------------------------------------
 
--- An item as the API shows it. photo is its file's hash, or null.
-CREATE FUNCTION item.json(p_item public.item)
+-- An item as the API shows it, p_class being its class. photo is its
+-- file's hash, or null. counting and unit are its class's rule for counting
+-- its stock, so that whoever shows an amount has them at hand.
+CREATE FUNCTION item.json(p_item public.item, p_class public.class)
 RETURNS jsonb
 LANGUAGE sql IMMUTABLE AS $$
     SELECT jsonb_build_object(
-        'id',    p_item.id,
-        'code',  util.code_text(p_item.code),
-        'name',  p_item.name,
-        'class', p_item.class,
-        'unit',  p_item.unit,
-        'photo', p_item.photo
+        'id',       p_item.id,
+        'code',     util.code_text(p_item.code),
+        'name',     p_item.name,
+        'class',    p_item.class,
+        'counting', p_class.counting,
+        'unit',     p_class.unit,
+        'photo',    p_item.photo
     );
 $$;
 
@@ -28,7 +31,7 @@ $$;
 CREATE FUNCTION item.detail_json(p_item public.item)
 RETURNS jsonb
 LANGUAGE sql STABLE AS $$
-    SELECT item.json(p_item) || jsonb_build_object(
+    SELECT item.json(p_item, c) || jsonb_build_object(
         'class',     jsonb_build_object('id', c.id, 'name', c.name, 'path', class.path_json(c.id)),
         'values',    p_item.values,
         'defaulted', to_jsonb(p_item.defaulted),
@@ -115,13 +118,6 @@ BEGIN
                                          item_row.name));
     END IF;
 END;
-$$;
-
--- p_unit as an item's unit: trimmed, and NULL when empty.
-CREATE FUNCTION item.clean_unit(p_unit text)
-RETURNS text
-LANGUAGE sql IMMUTABLE AS $$
-    SELECT nullif(btrim(p_unit), '');
 $$;
 
 -- Refuses values p_values that an item or stock row of class p_class
@@ -360,12 +356,13 @@ BEGIN
         )
         SELECT jsonb_build_object(
             'rows', coalesce((
-                SELECT jsonb_agg(item.json(i) || jsonb_build_object(
+                SELECT jsonb_agg(item.json(i, c) || jsonb_build_object(
                            'stock', jsonb_build_object('total',     coalesce(t.total, 0),
                                                        'uncounted', coalesce(t.uncounted, false)))
                        ORDER BY p.n)
                 FROM page p
-                JOIN public.item i ON i.id = p.id
+                JOIN public.item i  ON i.id = p.id
+                JOIN public.class c ON c.id = i.class
                 LEFT JOIN totals t ON t.item = p.id
                 WHERE p.n <= p_limit), '[]'),
             'more', EXISTS (SELECT 1 FROM page WHERE n > p_limit),
@@ -399,8 +396,8 @@ $$;
 -- attributes, p_values: {"Length": 100, ...} ({} for none; a JSON null
 -- gives no value). Every attribute it isn't given a value for gets its
 -- class's default, if it has one, and follows it; a required one without
--- a default must be given. Files are uploaded afterwards. p_unit is what its
--- stock is counted in, a label ("m"); NULL for pieces.
+-- a default must be given. Files are uploaded afterwards. How its stock is
+-- counted, and in what, is its class's rule.
 --
 -- With p_stock, {"location": <id>, "amount": <number or null>, "values":
 -- {...}}, its first stock row is made with it, as stock.create makes one,
@@ -411,7 +408,6 @@ CREATE FUNCTION item.create(
     p_request public.request,
     p_class   uuid,
     p_name    text,
-    p_unit    text,
     p_values  jsonb,
     p_stock   jsonb DEFAULT NULL
 ) RETURNS jsonb
@@ -445,8 +441,8 @@ BEGIN
         PERFORM error.not_allowed(format('Item "%s" %s', v_name, v_checked.problem));
     END IF;
 
-    INSERT INTO public.item (code, class, name, unit, values, defaulted, search)
-    VALUES (util.take_codes(1), p_class, v_name, item.clean_unit(p_unit),
+    INSERT INTO public.item (code, class, name, values, defaulted, search)
+    VALUES (util.take_codes(1), p_class, v_name,
             v_checked.new_values, v_checked.new_defaulted,
             class.search_text(v_name, class.path_text(p_class), v_checked.new_values, v_class.attributes))
     RETURNING * INTO v_item;
@@ -458,15 +454,52 @@ BEGIN
 END;
 $$;
 
--- Changes the fields of an item that p_patch has: class, name, unit (null:
--- pieces), photo (null only: a photo is uploaded), and its values: values,
--- {"<name>": <value or null>, ...}, and default, ["<name>", ...], as
--- class.patch_values says. All in one transaction, and checked together.
--- In another class, its values and its stock rows' values are checked
--- against the new class's attributes, and those that follow a default take
--- the new class's; refused if they don't fit. Its unit can't become pieces
--- while a stock row has an amount that isn't whole. Returns the item as
--- item.get does.
+-- Changes the fields of an item that p_patch has: class, name, photo (null
+-- only: a photo is uploaded), and its values: values, {"<name>": <value or
+-- null>, ...}, and default, ["<name>", ...], as class.patch_values says.
+-- All in one transaction, and checked together. In another class, its
+-- values and its stock rows' values are checked against the new class's
+-- attributes, and those that follow a default take the new class's;
+-- refused if they don't fit. Its stock must fit the new class's rule for
+-- counting too: refused when the new class counts in another unit and a
+-- stock row has an amount (nothing converts), or when a row doesn't fit the
+-- rule. Returns the item as item.get does.
+-- Refuses to move item p_item from class p_from to class p_to when its
+-- stock doesn't fit p_to's rule for counting: when p_to counts in another
+-- unit and a stock row has an amount (nothing converts), or when a row has
+-- an amount where p_to counts nothing, none where p_to requires one, or a
+-- part of a piece where p_to counts in pieces.
+CREATE FUNCTION item.check_stock_moves(p_item public.item, p_from public.class, p_to public.class)
+RETURNS void
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    v_counted bigint := (SELECT count(*) FROM public.stock s WHERE s.item = p_item.id AND s.amount IS NOT NULL);
+    v_row     uuid;
+BEGIN
+    IF p_from.unit IS DISTINCT FROM p_to.unit AND v_counted > 0 THEN
+        PERFORM error.not_allowed(format(
+            'Item "%s" has %s stock row(s) counted in %s, and class "%s" counts in %s; nothing converts, '
+            'so change those amounts, or the class''s unit, first',
+            p_item.name, v_counted, coalesce(p_from.unit, 'pieces'), p_to.name, coalesce(p_to.unit, 'pieces')));
+    END IF;
+    IF p_to.counting = 'none' AND v_counted > 0 THEN
+        PERFORM error.not_allowed(format(
+            'Item "%s" has %s stock row(s) with an amount, and class "%s" doesn''t count its stock; '
+            'clear those amounts first', p_item.name, v_counted, p_to.name));
+    END IF;
+    IF p_to.counting = 'required' THEN
+        SELECT s.id INTO v_row FROM public.stock s
+        WHERE s.item = p_item.id AND s.amount IS NULL
+        ORDER BY s.id LIMIT 1;
+        IF FOUND THEN
+            PERFORM error.not_allowed(format(
+                'Class "%s" requires an amount, and %s of item "%s" has none; give it one first',
+                p_to.name, error.row_label('stock', v_row), p_item.name));
+        END IF;
+    END IF;
+END;
+$$;
+
 CREATE FUNCTION item.patch(p_request public.request, p_item uuid, p_patch jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -477,12 +510,11 @@ DECLARE
     v_locked  record;
     v_item    public.item;
     v_class   public.class;
-    v_unit    text;
     v_problem record;
     v_old_class uuid;
     v_changed record;
 BEGIN
-    PERFORM util.check_patch(p_patch, ARRAY['class', 'name', 'unit', 'photo', 'values', 'default'],
+    PERFORM util.check_patch(p_patch, ARRAY['class', 'name', 'photo', 'values', 'default'],
                              ARRAY['class', 'name']);
     IF p_patch ? 'photo' AND jsonb_typeof(p_patch -> 'photo') <> 'null' THEN
         PERFORM error.invalid('A photo is uploaded; photo can only be set to null here, which removes it');
@@ -493,18 +525,12 @@ BEGIN
     v_old_class := v_item.class;
     IF p_patch ? 'class' AND (p_patch ->> 'class')::uuid <> v_item.class THEN
         v_class := item.class_for_write((p_patch ->> 'class')::uuid);
-    END IF;
-    v_unit := CASE WHEN p_patch ? 'unit' THEN item.clean_unit(p_patch ->> 'unit') ELSE v_item.unit END;
-    IF v_unit IS NULL AND v_item.unit IS NOT NULL
-       AND EXISTS (SELECT 1 FROM public.stock s WHERE s.item = p_item AND s.amount <> trunc(s.amount)) THEN
-        PERFORM error.not_allowed(format('Item "%s" has stock amounts that aren''t whole, so it can''t be counted in pieces',
-                                         v_item.name));
+        PERFORM item.check_stock_moves(v_item, v_locked.class_row, v_class);
     END IF;
 
     UPDATE public.item i
     SET class = v_class.id,
         name  = CASE WHEN p_patch ? 'name' THEN util.trim_and_check(p_patch ->> 'name') ELSE i.name END,
-        unit  = v_unit,
         photo = CASE WHEN p_patch ? 'photo' THEN NULL ELSE i.photo END
     WHERE i.id = p_item
     RETURNING * INTO v_item;

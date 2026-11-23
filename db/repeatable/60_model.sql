@@ -7,11 +7,43 @@ CREATE SCHEMA model;
 -- Helpers
 -- ---------------------------------------------------------------------------
 
+-- A class's rule for counting stock in a model file, {counting, unit}, at
+-- p_path (for messages), checked: counting none, optional or required; unit
+-- a label or null (pieces), and null when nothing is counted.
+CREATE FUNCTION model.stock_rule(p_path text, p_stock jsonb, OUT counting public.counting, OUT unit text)
+LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE
+    v_key text;
+BEGIN
+    IF jsonb_typeof(p_stock) <> 'object' THEN
+        PERFORM error.invalid(format('%s: stock must be an object {counting, unit}', p_path));
+    END IF;
+    FOR v_key IN SELECT jsonb_object_keys(p_stock) LOOP
+        IF NOT v_key = ANY (ARRAY['counting', 'unit']) THEN
+            PERFORM error.invalid(format('%s: unknown field %L in stock; allowed: counting, unit', p_path, v_key));
+        END IF;
+    END LOOP;
+    IF NOT coalesce(p_stock ->> 'counting' IN ('none', 'optional', 'required'), false) THEN
+        PERFORM error.invalid(format('%s: stock''s counting must be none, optional or required', p_path));
+    END IF;
+    IF jsonb_typeof(p_stock -> 'unit') NOT IN ('string', 'null') THEN
+        PERFORM error.invalid(format('%s: stock''s unit must be a label, or null for pieces', p_path));
+    END IF;
+    counting := (p_stock ->> 'counting')::public.counting;
+    unit := nullif(btrim(p_stock ->> 'unit'), '');
+    IF counting = 'none' AND unit IS NOT NULL THEN
+        PERFORM error.invalid(format('%s: stock that isn''t counted has no unit', p_path));
+    END IF;
+END;
+$$;
+
 -- Imports p_nodes, a list of classes of a model file, below class p_parent
 -- (NULL: at the top). p_path names where they are, for
 -- messages ("MCU/ARM"). A class that is there already, by name (letter case
 -- ignored), is imported into: it gets the attributes it hasn't got; an
--- attribute it has already must be the same, or the import is refused.
+-- attribute it has already must be the same, or the import is refused, and
+-- so must its rule for counting stock, when the file gives one. A class
+-- that is added gets the file's rule as its own, or inherits.
 -- Counts what it adds and what was there already in p_report, {classes:
 -- {added, existing}, attributes: {added, existing}}, and adds every class
 -- that was there already and got attributes to p_changed, whose items and
@@ -35,6 +67,8 @@ DECLARE
     v_attr    text;
     v_def     jsonb;
     v_order   integer;
+    v_counting public.counting;
+    v_unit     text;
 BEGIN
     IF p_nodes IS NULL OR jsonb_typeof(p_nodes) = 'null' THEN
         RETURN;
@@ -44,12 +78,12 @@ BEGIN
     END IF;
     FOR v_node IN SELECT n FROM jsonb_array_elements(p_nodes) n LOOP
         IF jsonb_typeof(v_node) <> 'object' THEN
-            PERFORM error.invalid(format('%sa class must be an object {name, container, attributes, classes}',
+            PERFORM error.invalid(format('%sa class must be an object {name, container, stock, attributes, classes}',
                                          coalesce(p_path || ': ', '')));
         END IF;
         FOR v_key IN SELECT jsonb_object_keys(v_node) LOOP
-            IF NOT v_key = ANY (ARRAY['name', 'container', 'attributes', 'classes']) THEN
-                PERFORM error.invalid(format('%sunknown field %L in a class; allowed: name, container, attributes, classes',
+            IF NOT v_key = ANY (ARRAY['name', 'container', 'stock', 'attributes', 'classes']) THEN
+                PERFORM error.invalid(format('%sunknown field %L in a class; allowed: name, container, stock, attributes, classes',
                                              coalesce(p_path || ': ', ''), v_key));
             END IF;
         END LOOP;
@@ -64,6 +98,11 @@ BEGIN
         IF jsonb_typeof(v_node -> 'attributes') NOT IN ('object', 'null') THEN
             PERFORM error.invalid(format('%s: attributes must be an object, by name', v_path));
         END IF;
+        v_counting := NULL;
+        v_unit := NULL;
+        IF v_node ? 'stock' AND jsonb_typeof(v_node -> 'stock') <> 'null' THEN
+            SELECT r.counting, r.unit INTO v_counting, v_unit FROM model.stock_rule(v_path, v_node -> 'stock') r;
+        END IF;
 
         SELECT c.* INTO v_class
         FROM public.class c
@@ -71,10 +110,23 @@ BEGIN
         FOR UPDATE;
         v_added := NOT FOUND;
         IF v_added THEN
-            INSERT INTO public.class (parent, name, container, attributes)
-            VALUES (p_parent, v_name, coalesce((v_node ->> 'container')::boolean, false),
-                    coalesce((SELECT p.attributes FROM public.class p WHERE p.id = p_parent), '{}'))
+            INSERT INTO public.class (parent, name, container, attributes, counting, unit, stock_from)
+            SELECT p_parent, v_name, coalesce((v_node ->> 'container')::boolean, false),
+                   coalesce(p.attributes, '{}'), coalesce(p.counting, 'optional'), p.unit, p.stock_from
+            FROM (SELECT 1) one
+            LEFT JOIN public.class p ON p.id = p_parent
             RETURNING * INTO v_class;
+            IF v_counting IS NOT NULL THEN
+                UPDATE public.class c
+                SET counting = v_counting, unit = v_unit, stock_from = c.id
+                WHERE c.id = v_class.id
+                RETURNING * INTO v_class;
+            END IF;
+        ELSIF v_counting IS NOT NULL
+              AND (v_class.counting <> v_counting OR v_class.unit IS DISTINCT FROM v_unit) THEN
+            PERFORM error.duplicate(format(
+                '%s: the class counts its stock %s already, and the file says %s',
+                v_path, model.rule_words(v_class.counting, v_class.unit), model.rule_words(v_counting, v_unit)));
         END IF;
         p_report := jsonb_set(p_report, ARRAY['classes', CASE WHEN v_added THEN 'added' ELSE 'existing' END],
                               to_jsonb((p_report -> 'classes' ->> CASE WHEN v_added THEN 'added' ELSE 'existing' END)::integer + 1));
@@ -120,6 +172,15 @@ BEGIN
 END;
 $$;
 
+-- A rule for counting stock in words, for messages: "not counted",
+-- "counted, optional, in pieces", "counted, required, in m".
+CREATE FUNCTION model.rule_words(p_counting public.counting, p_unit text)
+RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT CASE p_counting WHEN 'none' THEN 'not counted'
+                ELSE format('counted, %s, in %s', p_counting, coalesce(p_unit, 'pieces')) END;
+$$;
+
 -- Imports model file p_data (seed/model-format.md) below class p_parent (NULL: at the top), and returns what it added and
 -- what was there already: {classes: {added, existing}, attributes: {added,
 -- existing}, items, stock, dry_run}, items and stock being how many rows
@@ -145,8 +206,10 @@ BEGIN
     IF p_data IS NULL OR jsonb_typeof(p_data) <> 'object' OR p_data ->> 'format' IS DISTINCT FROM 'wtf-model' THEN
         PERFORM error.invalid('This is not a model file: it needs "format": "wtf-model"');
     END IF;
-    IF p_data -> 'version' IS DISTINCT FROM '2' THEN
-        PERFORM error.invalid(format('This model file is of version %s; this WtF reads version 2',
+    -- Version 2 had no rules for counting stock, as units were the items';
+    -- it reads as version 3 without them.
+    IF p_data -> 'version' IS DISTINCT FROM '3' AND p_data -> 'version' IS DISTINCT FROM '2' THEN
+        PERFORM error.invalid(format('This model file is of version %s; this WtF reads versions 2 and 3',
                                      coalesce(p_data ->> 'version', '(none)')));
     END IF;
     FOR v_key IN SELECT jsonb_object_keys(p_data) LOOP
@@ -182,9 +245,11 @@ END;
 $$;
 
 -- Class p_class with the classes below it, as a model file has them: {name,
--- container, attributes, classes}, its attributes by name without the
--- class that defines them. With p_all, all the class's attributes, the
--- inherited ones too (for the top of an export); otherwise its own.
+-- container, stock, attributes, classes}, its attributes by name without
+-- the class that defines them, and stock its rule for counting stock,
+-- {counting, unit}, when its own. With p_all, all the class's attributes,
+-- the inherited ones too, and its rule when inherited too (for the top of
+-- an export); otherwise its own.
 CREATE FUNCTION model.class_json(p_class uuid, p_all boolean)
 RETURNS jsonb
 LANGUAGE plpgsql STABLE AS $$
@@ -195,6 +260,8 @@ BEGIN
     RETURN jsonb_strip_nulls(jsonb_build_object(
         'name',       v_class.name,
         'container',  v_class.container,
+        'stock',      CASE WHEN v_class.stock_from = v_class.id OR p_all AND v_class.stock_from IS NOT NULL
+                           THEN jsonb_build_object('counting', v_class.counting, 'unit', v_class.unit) END,
         'attributes', (SELECT coalesce(jsonb_object_agg(e.key, e.value - 'class'), '{}')
                        FROM jsonb_each(v_class.attributes) e
                        WHERE p_all OR e.value ->> 'class' = v_class.id::text),
@@ -244,7 +311,7 @@ BEGIN
     END IF;
     RETURN jsonb_build_object(
         'format',  'wtf-model',
-        'version', 2,
+        'version', 3,
         'meta',    jsonb_build_object('name', v_name),
         'classes', jsonb_build_array(model.class_json(p_class, true)));
 END;

@@ -197,7 +197,7 @@ func fieldArgs(object map[string]json.RawMessage, fields []field) ([]arg, error)
 // sqlType is the type the field's argument is cast to.
 func (f field) sqlType() string {
 	switch f.typ {
-	case "datatype", "role", "scope":
+	case "counting", "datatype", "role", "scope":
 		return "public." + f.typ
 	case "seconds":
 		return "interval"

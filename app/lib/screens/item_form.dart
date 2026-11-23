@@ -13,10 +13,10 @@ import '../widgets/select_keys.dart';
 import '../widgets/value_fields.dart';
 
 /// Adds an item (in [classId], if given), or edits the item with [code].
-/// Like `wtf item add` and `wtf item edit`: class, name, what its stock is
-/// counted in, then the class's attributes. A new item's first stock row is
-/// on the same form, and saved with it, in one request: where it is, how
-/// many, and its stock values (decision 107).
+/// Like `wtf item add` and `wtf item edit`: class, name, then the class's
+/// attributes. A new item's first stock row is on the same form, and saved
+/// with it, in one request: where it is, how many, and its stock values
+/// (decision 107); how many as its class counts its stock (decision 110).
 class ItemFormScreen extends StatelessWidget {
   const ItemFormScreen({super.key, this.code, this.classId});
 
@@ -72,7 +72,6 @@ class _ItemForm extends StatefulWidget {
 class _ItemFormState extends State<_ItemForm> {
   final _form = GlobalKey<FormState>();
   late final _name = TextEditingController(text: widget.item?.name ?? '');
-  late final _unit = TextEditingController(text: widget.item?.unit ?? '');
   final _amount = TextEditingController();
   final _nameFocus = FocusNode();
   final _amountFocus = FocusNode();
@@ -92,9 +91,6 @@ class _ItemFormState extends State<_ItemForm> {
     (id) => _usableLocation(id) != null,
   );
 
-  // Whether the unit was typed into: until it is, a new item's unit is the
-  // one last given to an item of its class.
-  bool _unitTyped = false;
   ClassDetail? _class;
   List<ValueInput> _inputs = [];
   List<ValueInput> _stockInputs = [];
@@ -122,7 +118,6 @@ class _ItemFormState extends State<_ItemForm> {
   @override
   void dispose() {
     _name.dispose();
-    _unit.dispose();
     _amount.dispose();
     _nameFocus.dispose();
     _amountFocus.dispose();
@@ -138,9 +133,6 @@ class _ItemFormState extends State<_ItemForm> {
   Future<void> _loadValues() async {
     final classId = _classId;
     if (classId == null) return;
-    if (!_editing && !_unitTyped) {
-      _unit.text = context.read<Session>().recent.unit(classId) ?? '';
-    }
     setState(() {
       _loadingValues = true;
       _valuesError = null;
@@ -217,7 +209,7 @@ class _ItemFormState extends State<_ItemForm> {
     if (id == null) return;
     setState(() => _locationId = id);
     // On to the amount, as Tab would have gone.
-    if (_amount.text.isEmpty) _amountFocus.requestFocus();
+    if (_counted && _amount.text.isEmpty) _amountFocus.requestFocus();
   }
 
   /// The values the item has that the chosen class has no attribute for:
@@ -232,17 +224,26 @@ class _ItemFormState extends State<_ItemForm> {
     ];
   }
 
-  String? get _unitText => _unit.text.trim().isEmpty ? null : _unit.text.trim();
+  /// How the chosen class counts its items' stock; the default while it
+  /// loads.
+  StockRule get _rule => _class?.stock ?? const StockRule();
+
+  /// Whether the stock row has an amount field: its class counts its stock.
+  bool get _counted => _rule.counting != Counting.none;
 
   /// Whether the form makes a stock row with the new item.
   bool get _withStock => !_editing && _addStock;
 
   /// The field Enter saves in: the last one typed into, of the parts in use
   /// (a list to choose from takes Enter for choosing). The amount's
-  /// controller stands for the amount, the unit's for the unit.
-  Object get _lastField => _withStock
-      ? lastTyped(_stockInputs) ?? _amount
-      : lastTyped(_inputs) ?? _unit;
+  /// controller stands for the amount, the name's for the name.
+  Object get _lastField {
+    if (_withStock) {
+      final stock = lastTyped(_stockInputs) ?? (_counted ? _amount : null);
+      if (stock != null) return stock;
+    }
+    return lastTyped(_inputs) ?? _name;
+  }
 
   /// Saves; with [another], the form for the next new item follows instead
   /// of the item's screen.
@@ -283,24 +284,22 @@ class _ItemFormState extends State<_ItemForm> {
   /// screen, or with [another], the form for the next item.
   Future<void> _create({required bool another}) async {
     final classId = _classId!;
-    final unit = _unitText;
     final location = _withStock ? _locationId : null;
     final item = await _client.createItem(
       classId: classId,
       name: _name.text.trim(),
-      unit: unit,
       values: newValues(_inputs),
       stock: location == null
           ? null
           : (
               locationId: location,
-              amount: AmountField.parse(_amount, unit),
+              amount: _counted ? AmountField.parse(_amount, _rule.unit) : null,
               values: newValues(_stockInputs),
             ),
     );
     if (!mounted) return;
     final recent = context.read<Session>().recent
-      ..itemAdded(classId, unit)
+      ..itemAdded(classId)
       ..addStock = _addStock;
     if (location != null) recent.stockAdded(location);
     showMessage(
@@ -325,7 +324,6 @@ class _ItemFormState extends State<_ItemForm> {
     changes.addAll({
       if (name != item.name) 'name': name,
       if (_classId != item.cls.id) 'class': _classId,
-      if (_unitText != item.unit) 'unit': _unitText,
     });
     if (changes.isNotEmpty) await _client.patchItem(item.id, changes);
     if (!mounted) return;
@@ -405,34 +403,18 @@ class _ItemFormState extends State<_ItemForm> {
                   controller: _name,
                   focusNode: _nameFocus,
                   autofocus: !_editing && _classId != null,
-                  textInputAction: TextInputAction.next,
+                  textInputAction: identical(last, _name)
+                      ? TextInputAction.done
+                      : TextInputAction.next,
+                  onFieldSubmitted: (_) {
+                    if (identical(_lastField, _name)) _save();
+                  },
                   decoration: const InputDecoration(
                     labelText: 'Name',
                     border: OutlineInputBorder(),
                   ),
                   validator: (v) =>
                       (v ?? '').trim().isEmpty ? 'Enter a name' : null,
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _unit,
-                  // The amount's unit follows what is typed here.
-                  onChanged: (_) => setState(() => _unitTyped = true),
-                  textInputAction: identical(last, _unit)
-                      ? TextInputAction.done
-                      : TextInputAction.next,
-                  onFieldSubmitted: (_) {
-                    if (identical(_lastField, _unit)) _save();
-                  },
-                  decoration: const InputDecoration(
-                    labelText: 'Unit of its stock',
-                    hintText: 'm, kg, l …',
-                    helperText:
-                        'What its stock is counted in, a label; empty: pieces, '
-                        'counted one by one',
-                    helperMaxLines: 2,
-                    border: OutlineInputBorder(),
-                  ),
                 ),
                 if (_valuesError != null) ...[
                   const SizedBox(height: 16),
@@ -488,8 +470,10 @@ class _ItemFormState extends State<_ItemForm> {
       SwitchListTile(
         contentPadding: EdgeInsets.zero,
         title: const Text('Add stock'),
-        subtitle: const Text(
-          'Its first stock row, saved with it: where it is, and how many',
+        // How it is counted is its class's.
+        subtitle: Text(
+          'Its first stock row, saved with it. '
+          '${_class == null ? '' : 'Its class: ${_rule.text.toLowerCase()}.'}',
         ),
         value: on,
         onChanged: (v) => setState(() => _addStock = v),
@@ -522,14 +506,18 @@ class _ItemFormState extends State<_ItemForm> {
           ),
         ),
       ),
-      const SizedBox(height: 16),
-      AmountField(
-        controller: _amount,
-        unit: _unitText,
-        focusNode: _amountFocus,
-        enabled: on,
-        onSubmitted: identical(last, _amount) ? _save : null,
-      ),
+      // As the class counts its stock: no amount when it doesn't.
+      if (_counted) ...[
+        const SizedBox(height: 16),
+        AmountField(
+          controller: _amount,
+          unit: _rule.unit,
+          focusNode: _amountFocus,
+          enabled: on,
+          required: _rule.counting == Counting.required,
+          onSubmitted: identical(last, _amount) ? _save : null,
+        ),
+      ],
       for (final i in _stockInputs)
         Padding(
           key: ValueKey(('stock', i.attribute.name)),

@@ -56,9 +56,9 @@ func TestCLIEdit(t *testing.T) {
 	_, prompts = c.interactExit(1, []string{"\r", "\r", clear + "yes\r"}, false, "class", "edit", "Hardware/Screws")
 	contains(t, prompts, "can't become a container")
 
-	// Item form: rename, keep the class and the unit, change Length, set
-	// Colour, which followed its default.
-	out, prompts := c.interact([]string{clear + "M3x10\r", "\r", "\r", clear + "15\r", clear + "blue\r"}, false, "item", "edit", "M3")
+	// Item form: rename, keep the class, change Length, set Colour, which
+	// followed its default. (Its unit is its class's.)
+	out, prompts := c.interact([]string{clear + "M3x10\r", "\r", clear + "15\r", clear + "blue\r"}, false, "item", "edit", "M3")
 	contains(t, prompts, "Class: Hardware/Screws", "Length (required) (mm): 12", "Colour [default red] (red, blue): default",
 		"Saved: changed name, changed values.")
 	contains(t, out, "Name:   M3x10", "blue", "15 mm")
@@ -86,7 +86,7 @@ func TestCLIEdit(t *testing.T) {
 	out, _ = c.interact([]string{"\r", "\r", clear + "yes\r"}, false, "location", "add", "Cellar", "--edit")
 	contains(t, out, "Container:  yes")
 	// With --edit, item add ends with the form: no question about stock.
-	out, prompts = c.interact([]string{"\r", "\r", "\r", clear + "3\r", "\r"},
+	out, prompts = c.interact([]string{"\r", "\r", clear + "3\r", "\r"},
 		false, "item", "add", "M2", "--class", "Hardware/Screws", "--length", "2", "--edit")
 	contains(t, out, "Name:   M2", "Colour:", "red", "(default)", "3 mm")
 	if strings.Contains(prompts, "Add stock") {

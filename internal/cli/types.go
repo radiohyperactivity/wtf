@@ -54,14 +54,27 @@ type class struct {
 	Container  bool        `json:"container"`
 	Path       []ref       `json:"path"`
 	Attributes []attribute `json:"attributes"`
+	Stock      stockRule   `json:"stock"`
 }
 
-// classChange is the answer of a change of a class's attributes.
+// stockRule is how a class's items' stock is counted: Counting none,
+// optional or required, in Unit (nil: pieces); From is the class whose
+// rule it is (nil: the default).
+type stockRule struct {
+	Counting string  `json:"counting"`
+	Unit     *string `json:"unit"`
+	From     *string `json:"from"`
+}
+
+// classChange is the answer of a change of a class's attributes, or of
+// its rule for counting stock (Relabelled: stock rows with an amount that
+// got another unit).
 type classChange struct {
-	Class  class `json:"class"`
-	Items  int   `json:"items"`
-	Stock  int   `json:"stock"`
-	DryRun bool  `json:"dry_run"`
+	Class      class `json:"class"`
+	Items      int   `json:"items"`
+	Stock      int   `json:"stock"`
+	Relabelled int   `json:"relabelled"`
+	DryRun     bool  `json:"dry_run"`
 }
 
 type location struct {
@@ -98,7 +111,8 @@ type item struct {
 	Code      string      `json:"code"`
 	Name      string      `json:"name"`
 	Class     class       `json:"class"`
-	Unit      *string     `json:"unit"`
+	Counting  string      `json:"counting"` // its class's: none, optional or required
+	Unit      *string     `json:"unit"`     // its class's; nil: pieces
 	Photo     *string     `json:"photo"`
 	Values    values      `json:"values"`
 	Defaulted []string    `json:"defaulted"`

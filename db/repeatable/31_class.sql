@@ -406,7 +406,9 @@ $$;
 -- parent's attributes and its own again, from the top down, one level of
 -- the tree per statement. Refused when a class would inherit an attribute
 -- of the same name as one of its own: a class can't define a name it
--- inherits.
+-- inherits. Its rule for counting stock too: a class without one of its
+-- own takes its parent's, and at the top, the default (counted, optional,
+-- in pieces).
 CREATE FUNCTION class.rebuild(p_class uuid)
 RETURNS void
 LANGUAGE plpgsql AS $$
@@ -432,6 +434,15 @@ BEGIN
         SET attributes = coalesce((SELECT p.attributes FROM public.class p WHERE p.id = c.parent), '{}')
                          || class.own(c)
         WHERE c.id = ANY (v_level);
+        UPDATE public.class c
+        SET counting   = coalesce(p.counting, 'optional'),
+            unit       = p.unit,
+            stock_from = p.stock_from
+        FROM public.class x
+        LEFT JOIN public.class p ON p.id = x.parent
+        WHERE c.id = x.id
+          AND x.id = ANY (v_level)
+          AND c.stock_from IS DISTINCT FROM c.id;
         v_level := ARRAY(SELECT c.id FROM public.class c WHERE c.parent = ANY (v_level));
     END LOOP;
 END;
@@ -507,6 +518,75 @@ BEGIN
     GET DIAGNOSTICS v_stock = ROW_COUNT;
 
     RETURN jsonb_build_object('items', v_items, 'stock', v_stock);
+END;
+$$;
+
+-- The units of class p_class and of every class below it, as JSON
+-- ({"<id>": "<unit>" or null, …}): taken before a change, for
+-- class.relabelled after it.
+CREATE FUNCTION class.units_json(p_class uuid)
+RETURNS jsonb
+LANGUAGE sql STABLE AS $$
+    WITH RECURSIVE below (id) AS (
+        SELECT p_class
+        UNION ALL
+        SELECT c.id FROM public.class c JOIN below b ON c.parent = b.id
+    )
+    SELECT coalesce(jsonb_object_agg(c.id::text, c.unit), '{}')
+    FROM public.class c WHERE c.id IN (SELECT id FROM below);
+$$;
+
+-- How many stock rows with an amount, of the items of the classes in
+-- p_before (class.units_json, taken before a change), are counted in
+-- another unit now: relabelled, as nothing converts.
+CREATE FUNCTION class.relabelled(p_before jsonb)
+RETURNS bigint
+LANGUAGE sql STABLE AS $$
+    SELECT count(*)
+    FROM jsonb_each(p_before) b
+    JOIN public.class c ON c.id = b.key::uuid
+    JOIN public.item i  ON i.class = c.id
+    JOIN public.stock s ON s.item = i.id
+    WHERE s.amount IS NOT NULL
+      AND (b.value #>> '{}') IS DISTINCT FROM c.unit;
+$$;
+
+-- Refuses, with how many and one of them, when a stock row of an item of
+-- class p_class or a class below it doesn't fit its class's rule for
+-- counting: an amount where nothing is counted, none where one is
+-- required, a part of a piece where it counts in pieces.
+CREATE FUNCTION class.check_stock(p_class uuid)
+RETURNS void
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_problem record;
+BEGIN
+    WITH RECURSIVE below (id) AS (
+        SELECT p_class
+        UNION ALL
+        SELECT c.id FROM public.class c JOIN below b ON c.parent = b.id
+    )
+    SELECT s.id, count(*) OVER () AS count,
+           CASE WHEN c.counting = 'none'
+                THEN format('has an amount, and class "%s" doesn''t count its stock', c.name)
+                WHEN c.counting = 'required' AND s.amount IS NULL
+                THEN format('has no amount, and class "%s" requires one', c.name)
+                ELSE format('has a part of a piece, and class "%s" counts in pieces', c.name)
+           END AS problem
+    INTO v_problem
+    FROM public.stock s
+    JOIN public.item i  ON i.id = s.item
+    JOIN public.class c ON c.id = i.class
+    WHERE c.id IN (SELECT id FROM below)
+      AND (c.counting = 'none' AND s.amount IS NOT NULL
+           OR c.counting = 'required' AND s.amount IS NULL
+           OR c.unit IS NULL AND s.amount <> trunc(s.amount))
+    ORDER BY i.name COLLATE public.natural, s.id
+    LIMIT 1;
+    IF FOUND THEN
+        PERFORM error.not_allowed(format('%s stock row(s) wouldn''t fit; %s %s',
+                                         v_problem.count, error.row_label('stock', v_problem.id), v_problem.problem));
+    END IF;
 END;
 $$;
 
@@ -619,13 +699,25 @@ LANGUAGE sql IMMUTABLE AS $$
     FROM jsonb_each(p_class.attributes) e;
 $$;
 
--- A class as class.get shows it: its path from the top, and its attributes.
+-- A class's rule for counting its items' stock: {counting, unit, from},
+-- from being the class whose rule it is (itself, an ancestor, or null for
+-- the default).
+CREATE FUNCTION class.stock_json(p_class public.class)
+RETURNS jsonb
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT jsonb_build_object('counting', p_class.counting, 'unit', p_class.unit,
+                              'from', p_class.stock_from);
+$$;
+
+-- A class as class.get shows it: its path from the top, its attributes, and
+-- its rule for counting stock.
 CREATE FUNCTION class.detail_json(p_class public.class)
 RETURNS jsonb
 LANGUAGE sql STABLE AS $$
     SELECT class.json(p_class) || jsonb_build_object(
         'path',       class.path_json(p_class.id),
-        'attributes', class.attributes_json(p_class));
+        'attributes', class.attributes_json(p_class),
+        'stock',      class.stock_json(p_class));
 $$;
 
 -- What a change of a class's attributes answers: the class as class.get
@@ -711,7 +803,8 @@ END;
 $$;
 
 -- Creates a class below p_parent (NULL: at the top), with
--- the parent's attributes. Its name can't contain "/" (it separates the
+-- the parent's attributes and its rule for counting stock (at the top, the
+-- default: counted, optional, in pieces). Its name can't contain "/" (it separates the
 -- names in a path), and must not be one of its siblings' already (letter
 -- case ignored). A container holds only other classes, never items. For
 -- admins.
@@ -728,24 +821,27 @@ DECLARE
     v_session    record := util.session(p_request, 'admin');
     v_name       text := util.trim_and_check_path_name(p_name, 'class');
     v_attributes jsonb := '{}';
+    v_parent     public.class;
     v_class      public.class;
 BEGIN
     IF p_container IS NULL THEN
         PERFORM error.invalid('Say whether the class is a container');
     END IF;
     IF p_parent IS NOT NULL THEN
-        SELECT c.attributes INTO v_attributes
+        SELECT c.* INTO v_parent
         FROM public.class c
         WHERE c.id = p_parent
         FOR SHARE;
         IF NOT FOUND THEN
             PERFORM error.bad_reference('class', p_parent);
         END IF;
+        v_attributes := v_parent.attributes;
     END IF;
     PERFORM class.check_sibling_name(p_parent, v_name, NULL);
 
-    INSERT INTO public.class (name, parent, container, attributes)
-    VALUES (v_name, p_parent, p_container, v_attributes)
+    INSERT INTO public.class (name, parent, container, attributes, counting, unit, stock_from)
+    VALUES (v_name, p_parent, p_container, v_attributes,
+            coalesce(v_parent.counting, 'optional'), v_parent.unit, v_parent.stock_from)
     RETURNING * INTO v_class;
     PERFORM util.bump_version('class');
     RETURN class.detail_json(v_class);
@@ -757,7 +853,10 @@ $$;
 -- own subclasses is refused, and so is becoming a container while it has
 -- items. Moving it gives it and the classes below it what they inherit from
 -- their new place, which is checked against every item and stock row below
--- it, and refused if one doesn't fit (class.rewrite_rows); renaming it
+-- it, and refused if one doesn't fit (class.rewrite_rows); its rule for
+-- counting stock too, when it inherits it: refused when a stock row below
+-- doesn't fit the new rule, or when counted stock would get another unit
+-- (nothing converts; give it a rule of its own first). Renaming it
 -- rewrites the search texts of the items below it. Returns the class as
 -- class.get does. For admins.
 CREATE FUNCTION class.patch(p_request public.request, p_class uuid, p_patch jsonb)
@@ -771,6 +870,8 @@ DECLARE
     v_name      text;
     v_parent    uuid;
     v_container boolean;
+    v_units     jsonb;
+    v_relabelled bigint;
 BEGIN
     PERFORM util.check_patch(p_patch, ARRAY['name', 'parent', 'container'], ARRAY['name', 'container']);
     v_class := class.lock_subtree(p_class);
@@ -797,11 +898,19 @@ BEGIN
                                          v_class.name, (SELECT count(*) FROM public.item i WHERE i.class = p_class)));
     END IF;
 
+    v_units := class.units_json(p_class);
     UPDATE public.class c
     SET name = v_name, parent = v_parent, container = v_container
     WHERE c.id = p_class;
     IF v_parent IS DISTINCT FROM v_class.parent THEN
         PERFORM class.rebuild(p_class);
+        PERFORM class.check_stock(p_class);
+        v_relabelled := class.relabelled(v_units);
+        IF v_relabelled > 0 THEN
+            PERFORM error.not_allowed(format(
+                'Moving class "%s" there would count %s stock row(s) in another unit, and nothing converts; '
+                'give it a rule of its own for counting first', v_class.name, v_relabelled));
+        END IF;
     END IF;
     IF v_name IS DISTINCT FROM v_class.name OR v_parent IS DISTINCT FROM v_class.parent THEN
         PERFORM class.rewrite_rows(p_class);
@@ -809,6 +918,98 @@ BEGIN
     PERFORM util.bump_version('class');
     SELECT c.* INTO v_class FROM public.class c WHERE c.id = p_class;
     RETURN class.detail_json(v_class);
+END;
+$$;
+
+-- Gives class p_class a rule of its own for counting its items' stock
+-- (p_own), or makes it inherit its parent's again; the classes below that
+-- inherit it follow. p_counting is none, optional or required; p_unit what
+-- amounts are counted in, a label (NULL or empty for pieces), and none when
+-- nothing is counted. Every stock row below is checked against its class's
+-- new rule (class.check_stock), and the change is refused when one doesn't
+-- fit. Counted stock that gets another unit is relabelled, as nothing
+-- converts: the answer says how many rows (relabelled), and a dry run says
+-- so without changing anything, for the client to ask first.
+CREATE FUNCTION class.change_stock(
+    p_class    uuid,
+    p_own      boolean,
+    p_counting public.counting,
+    p_unit     text,
+    p_dry_run  boolean
+) RETURNS jsonb
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_unit   text := nullif(btrim(p_unit), '');
+    v_units  jsonb;
+    v_answer jsonb;
+    v_detail text;
+BEGIN
+    IF p_dry_run IS NULL THEN
+        PERFORM error.invalid('Say whether it is a dry run');
+    END IF;
+    IF p_own AND p_counting IS NULL THEN
+        PERFORM error.invalid('Say how its stock is counted: none, optional or required');
+    END IF;
+    IF p_own AND p_counting = 'none' AND v_unit IS NOT NULL THEN
+        PERFORM error.invalid('Stock that isn''t counted has no unit');
+    END IF;
+    PERFORM class.lock_subtree(p_class);
+
+    BEGIN
+        v_units := class.units_json(p_class);
+        IF p_own THEN
+            UPDATE public.class c
+            SET counting = p_counting, unit = v_unit, stock_from = p_class
+            WHERE c.id = p_class;
+        ELSE
+            UPDATE public.class c SET stock_from = NULL WHERE c.id = p_class;
+        END IF;
+        PERFORM class.rebuild(p_class);
+        PERFORM class.check_stock(p_class);
+        v_answer := class.change_json(p_class, '{"items": 0, "stock": 0}')
+                    || jsonb_build_object('relabelled', class.relabelled(v_units));
+        IF p_dry_run THEN
+            PERFORM util.end_dry_run(v_answer);
+        END IF;
+    EXCEPTION WHEN SQLSTATE 'WT900' THEN
+        GET STACKED DIAGNOSTICS v_detail = PG_EXCEPTION_DETAIL;
+        RETURN util.dry_run_answer(v_detail);
+    END;
+    PERFORM util.bump_version('class');
+    RETURN v_answer;
+END;
+$$;
+
+-- Gives class p_class a rule of its own for counting its items' stock, as
+-- class.change_stock says. For admins.
+CREATE FUNCTION class.stock_set(
+    p_request  public.request,
+    p_class    uuid,
+    p_counting public.counting,
+    p_unit     text,
+    p_dry_run  boolean
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
+AS $$
+DECLARE
+    v_session record := util.session(p_request, 'admin');
+BEGIN
+    RETURN class.change_stock(p_class, true, p_counting, p_unit, p_dry_run);
+END;
+$$;
+
+-- Makes class p_class inherit its parent's rule for counting stock again
+-- (at the top, the default), as class.change_stock says. For admins.
+CREATE FUNCTION class.stock_inherit(p_request public.request, p_class uuid, p_dry_run boolean)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
+AS $$
+DECLARE
+    v_session record := util.session(p_request, 'admin');
+BEGIN
+    RETURN class.change_stock(p_class, false, NULL, NULL, p_dry_run);
 END;
 $$;
 

@@ -4,12 +4,12 @@ The SQL is in [`db/repeatable/42_item.sql`](../db/repeatable/42_item.sql). Value
 
 ## An item
 
-`item.get` answers `{id, code, name, class, unit, photo}` with the class (`{id, name, path}`), `values`, `defaulted`, and the item's stock rows, by location name, each with its values.
+`item.get` answers `{id, code, name, class, counting, unit, photo}` with the class (`{id, name, path}`), `values`, `defaulted`, and the item's stock rows, by location name, each with its values.
 
-- **`unit`** is what its stock is counted in, a label such as `"m"`; null for pieces, whose amounts are whole.
+- **`counting` and `unit`** are its class's rule for counting its stock ([class.md](class.md), "How stock is counted"): `none`, `optional` or `required`, and what amounts are counted in, a label such as `"m"`; null for pieces, whose amounts are whole. An item has no unit of its own.
 - **`photo`** is the hash of its photo's file, or null ([attachment.md](attachment.md)).
-- **`item.create(p_class, p_name, p_unit, p_values, p_stock)`** makes an item; its class can't be a container. With `p_stock`, `{"location": …, "amount": …, "values": {…}}`, it also makes the item's first stock row, as `stock.create` does, in the same transaction: both are made, or, when either is refused, neither. The apps make a new item's stock with it this way (APP.md, decision 107). `p_stock` is optional (null: no stock), having come after the rest, while its own three fields are all required, as for `stock.create`.
-- **`item.patch(p_item, p_patch)`** changes `class`, `name`, `unit` (null: pieces, refused while a stock amount isn't whole), `photo` (null only: a photo is uploaded), and the values (`values` and `default`, [attribute.md](attribute.md)), in one transaction. In another class, its values and its stock rows' values are checked against the new class, and those that follow a default take the new class's.
+- **`item.create(p_class, p_name, p_values, p_stock)`** makes an item; its class can't be a container. With `p_stock`, `{"location": …, "amount": …, "values": {…}}`, it also makes the item's first stock row, as `stock.create` does, in the same transaction: both are made, or, when either is refused, neither. The apps make a new item's stock with it this way (APP.md, decision 107). `p_stock` is optional (null: no stock), having come after the rest, while its own three fields are all required, as for `stock.create`.
+- **`item.patch(p_item, p_patch)`** changes `class`, `name`, `photo` (null only: a photo is uploaded), and the values (`values` and `default`, [attribute.md](attribute.md)), in one transaction. In another class, its values and its stock rows' values are checked against the new class, and those that follow a default take the new class's. Its stock must fit the new class's rule for counting too: the move is refused when the new class counts in another unit and a stock row has an amount (nothing converts), and when a row doesn't fit the new rule (`item.check_stock_moves`).
 
 ## Lists
 

@@ -4,8 +4,8 @@
 // elsewhere (another device, the CLI) aren't counted.
 
 /// The class of the last item added and the last class made, the location
-/// stock was last added to and the last location made, the unit last given
-/// to an item of each class, and whether the last new item had stock.
+/// stock was last added to and the last location made, and whether the last
+/// new item had stock. (Units are the classes' now, decision 110.)
 class Recent {
   // Each choice is numbered in the order it was made: the default is the
   // later of the two.
@@ -14,22 +14,13 @@ class Recent {
   _Choice? _newClass;
   _Choice? _stockLocation;
   _Choice? _newLocation;
-  final Map<String, String> _units = {};
 
   /// Whether the new-item form makes the item's first stock row with it:
   /// as it was set for the last item added; at first, yes.
   bool addStock = true;
 
-  /// An item was added in class [id], with stock counted in [unit] (null:
-  /// pieces).
-  void itemAdded(String classId, String? unit) {
-    _itemClass = _Choice(classId, ++_count);
-    if (unit == null) {
-      _units.remove(classId);
-    } else {
-      _units[classId] = unit;
-    }
-  }
+  /// An item was added in class [classId].
+  void itemAdded(String classId) => _itemClass = _Choice(classId, ++_count);
 
   void classMade(String id) => _newClass = _Choice(id, ++_count);
 
@@ -48,10 +39,6 @@ class Recent {
   /// The location for new stock, as [itemClass] is chosen.
   String? stockLocation(bool Function(String id) usable) =>
       _latest(_newLocation, _stockLocation, usable);
-
-  /// The unit last given to an item of class [classId]; null for none, or
-  /// pieces.
-  String? unit(String classId) => _units[classId];
 
   static String? _latest(
     _Choice? a,

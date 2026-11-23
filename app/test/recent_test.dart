@@ -8,15 +8,15 @@ void main() {
     final r = Recent();
     expect(r.itemClass(any), isNull);
     expect(r.stockLocation(any), isNull);
-    expect(r.unit('c'), isNull);
+    expect(r.addStock, isTrue);
   });
 
   test('the class of the last item, unless a class was made since', () {
-    final r = Recent()..itemAdded('drills', null);
+    final r = Recent()..itemAdded('drills');
     expect(r.itemClass(any), 'drills');
     r.classMade('saws');
     expect(r.itemClass(any), 'saws');
-    r.itemAdded('drills', null);
+    r.itemAdded('drills');
     expect(r.itemClass(any), 'drills');
   });
 
@@ -31,17 +31,9 @@ void main() {
 
   test('one that is gone, or a container, gives way to the other', () {
     final r = Recent()
-      ..itemAdded('drills', null)
+      ..itemAdded('drills')
       ..classMade('tools');
     expect(r.itemClass((id) => id != 'tools'), 'drills');
     expect(r.itemClass((id) => false), isNull);
-  });
-
-  test('the unit last given in a class', () {
-    final r = Recent()..itemAdded('cables', 'm');
-    expect(r.unit('cables'), 'm');
-    expect(r.unit('drills'), isNull);
-    r.itemAdded('cables', null);
-    expect(r.unit('cables'), isNull);
   });
 }

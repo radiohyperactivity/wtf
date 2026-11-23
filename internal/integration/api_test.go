@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/url"
@@ -245,6 +246,141 @@ func TestStock(t *testing.T) {
 	e.expect(t, 400, "POST", "/items", obj("class", classID, "name", "Rivet", "stock", "garage"))
 	if rows := get(t, e.expect(t, 200, "GET", "/items?search=rivet", nil).body, "rows").([]any); len(rows) != 0 {
 		t.Errorf("a refused item was made: %v", rows)
+	}
+}
+
+// How a class's items' stock is counted: the class's rule, inherited down
+// the tree, checked against every stock row, and refusing what would
+// relabel counted stock without saying so (2026-11-22-stock-rules-on-classes.md).
+func TestStockRules(t *testing.T) {
+	e := setup(t)
+	e.reset(t)
+	rule := func(class string) map[string]any {
+		t.Helper()
+		return get(t, e.expect(t, 200, "GET", "/classes/"+class, nil).body, "stock").(map[string]any)
+	}
+	// refused expects a refusal with status, whose answer says each of want.
+	refused := func(status int, method, path string, body any, want ...string) {
+		t.Helper()
+		contains(t, fmt.Sprint(e.expect(t, status, method, path, body).body), want...)
+	}
+	shelf := str(t, e.expect(t, 201, "POST", "/locations", obj("name", "Shelf")).body, "id")
+
+	// The default, for a class without a rule of its own: counted, optional,
+	// in pieces.
+	tools := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Tools")).body, "id")
+	sameJSON(t, "the default", rule(tools), obj("counting", "optional", "unit", nil, "from", nil))
+
+	// A rule of its own, inherited by a class made below it, and by its items.
+	r := e.expect(t, 200, "PUT", "/classes/"+tools+"/stock", obj("counting", "optional", "unit", "m")).body
+	if num(t, r, "relabelled") != 0 || str(t, r, "class", "stock", "unit") != "m" {
+		t.Errorf("a rule of its own: %v", r)
+	}
+	cables := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Cables", "parent", tools)).body, "id")
+	sameJSON(t, "inherited", rule(cables), obj("counting", "optional", "unit", "m", "from", tools))
+	e.expect(t, 400, "POST", "/items", obj("class", cables, "name", "Cable", "unit", "m"))
+	cable := e.expect(t, 201, "POST", "/items", obj("class", cables, "name", "Cable",
+		"stock", obj("location", shelf, "amount", 2.5, "values", obj()))).body
+	if str(t, cable, "unit") != "m" || str(t, cable, "counting") != "optional" {
+		t.Errorf("an item has its class's rule: %v", cable)
+	}
+	cableID := str(t, cable, "id")
+	counted := str(t, get(t, cable, "stock").([]any)[0], "id")
+	e.expect(t, 201, "POST", "/stock", obj("item", cableID, "location", shelf)) // uncounted
+
+	// Another unit relabels counted stock: a dry run says how many rows,
+	// and changes nothing.
+	r = e.expect(t, 200, "PUT", "/classes/"+tools+"/stock?dry_run=true", obj("counting", "optional", "unit", "cm")).body
+	if num(t, r, "relabelled") != 1 || get(t, r, "dry_run") != true {
+		t.Errorf("a dry run of another unit: %v", r)
+	}
+	if rule(cables)["unit"] != "m" {
+		t.Error("the dry run changed the unit")
+	}
+	r = e.expect(t, 200, "PUT", "/classes/"+tools+"/stock", obj("counting", "optional", "unit", "cm")).body
+	if num(t, r, "relabelled") != 1 || rule(cables)["unit"] != "cm" {
+		t.Errorf("another unit: %v", r)
+	}
+
+	// Rules the stock doesn't fit are refused, saying how many rows.
+	refused(422, "PUT", "/classes/"+cables+"/stock", obj("counting", "required", "unit", "cm"), "1 stock row(s) wouldn't fit", "has no amount")
+	refused(422, "PUT", "/classes/"+cables+"/stock", obj("counting", "none", "unit", nil), "doesn't count its stock")
+	e.expect(t, 400, "PUT", "/classes/"+cables+"/stock", obj("counting", "none", "unit", "cm"))
+	e.expect(t, 400, "PUT", "/classes/"+cables+"/stock", obj("counting", "lots", "unit", nil))
+	// Inheriting the default, pieces: 2.5 isn't whole.
+	refused(422, "DELETE", "/classes/"+tools+"/stock", nil, "a part of a piece")
+
+	// Moving the class elsewhere would count its stock in another unit.
+	e.expect(t, 200, "PATCH", "/stock/"+counted, obj("amount", 3))
+	refused(422, "PATCH", "/classes/"+cables, obj("parent", nil), "in another unit")
+	// With a rule of its own, it keeps its unit wherever it goes.
+	e.expect(t, 200, "PUT", "/classes/"+cables+"/stock", obj("counting", "optional", "unit", "cm"))
+	e.expect(t, 200, "PATCH", "/classes/"+cables, obj("parent", nil))
+	sameJSON(t, "its own, moved", rule(cables), obj("counting", "optional", "unit", "cm", "from", cables))
+
+	// An item moves to a class with another unit only without counted stock,
+	// and to a class requiring amounts only with them all counted.
+	plugs := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Plugs")).body, "id")
+	refused(422, "PATCH", "/items/"+cableID, obj("class", plugs), "counted in cm", "counts in pieces")
+	e.expect(t, 200, "PATCH", "/stock/"+counted, obj("amount", nil))
+	e.expect(t, 200, "PATCH", "/items/"+cableID, obj("class", plugs))
+	consumables := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Consumables")).body, "id")
+	e.expect(t, 200, "PUT", "/classes/"+consumables+"/stock", obj("counting", "required", "unit", nil))
+	refused(422, "PATCH", "/items/"+cableID, obj("class", consumables), "requires an amount")
+
+	// A stock row given to an item counted in another unit keeps its amount
+	// only when the change gives it too.
+	glue := str(t, e.expect(t, 201, "POST", "/items", obj("class", consumables, "name", "Glue",
+		"stock", obj("location", shelf, "amount", 4, "values", obj()))).body, "id")
+	metres := str(t, e.expect(t, 201, "POST", "/items", obj("class", tools, "name", "Rope")).body, "id")
+	glueRow := str(t, get(t, e.expect(t, 200, "GET", "/items/"+glue, nil).body, "stock").([]any)[0], "id")
+	refused(422, "PATCH", "/stock/"+glueRow, obj("item", metres), "nothing converts")
+	e.expect(t, 200, "PATCH", "/stock/"+glueRow, obj("item", metres, "amount", 400))
+
+	// Required: every row has an amount. Not counted: none has.
+	e.expect(t, 422, "POST", "/stock", obj("item", glue, "location", shelf))
+	e.expect(t, 422, "POST", "/items", obj("class", consumables, "name", "Tape",
+		"stock", obj("location", shelf, "amount", nil, "values", obj())))
+	furniture := str(t, e.expect(t, 201, "POST", "/classes", obj("name", "Furniture")).body, "id")
+	e.expect(t, 200, "PUT", "/classes/"+furniture+"/stock", obj("counting", "none", "unit", nil))
+	chair := str(t, e.expect(t, 201, "POST", "/items", obj("class", furniture, "name", "Chair")).body, "id")
+	e.expect(t, 422, "POST", "/stock", obj("item", chair, "location", shelf, "amount", 1))
+	e.expect(t, 201, "POST", "/stock", obj("item", chair, "location", shelf))
+
+	// Inheriting again: Cables, at the top now, takes the default.
+	e.expect(t, 200, "DELETE", "/classes/"+cables+"/stock", nil)
+	sameJSON(t, "inheriting again", rule(cables), obj("counting", "optional", "unit", nil, "from", nil))
+
+	// Model files: version 3, with the rules; read back where they are, they
+	// change nothing.
+	model := e.expect(t, 200, "GET", "/classes/"+furniture+"/model", nil).body
+	if num(t, model, "version") != 3 {
+		t.Errorf("model version: %v", get(t, model, "version"))
+	}
+	sameJSON(t, "a rule in a model file", get(t, model, "classes", 0, "stock"), obj("counting", "none"))
+	r = e.expect(t, 200, "POST", "/model/import", model).body
+	if num(t, r, "classes", "added") != 0 {
+		t.Errorf("importing it again: %v", r)
+	}
+	// A class there already with another rule is refused; a new one gets it.
+	other := map[string]any{"format": "wtf-model", "version": 3, "classes": []any{
+		obj("name", "Furniture", "stock", obj("counting", "optional", "unit", nil)),
+		obj("name", "Fabric", "stock", obj("counting", "required", "unit", "m")),
+	}}
+	refused(409, "POST", "/model/import", other, "not counted already")
+	other["classes"] = other["classes"].([]any)[1:]
+	e.expect(t, 200, "POST", "/model/import", other)
+	classes := get(t, e.expect(t, 200, "GET", "/classes", nil).body, "tree").([]any)
+	found := false
+	for _, c := range classes {
+		if str(t, c, "name") == "Fabric" {
+			found = true
+			sameJSON(t, "an imported rule", rule(str(t, c, "id")),
+				obj("counting", "required", "unit", "m", "from", str(t, c, "id")))
+		}
+	}
+	if !found {
+		t.Error("Fabric wasn't imported")
 	}
 }
 

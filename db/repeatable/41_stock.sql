@@ -9,9 +9,9 @@ CREATE SCHEMA stock;
 -- Helpers
 -- ---------------------------------------------------------------------------
 
--- A stock row as the API shows it. Its amount is in its item's unit;
--- location is the id, which clients look up in the location tree they
--- keep; photo is its file's hash, or null.
+-- A stock row as the API shows it. Its amount is in the unit of its item's
+-- class; location is the id, which clients look up in the location tree
+-- they keep; photo is its file's hash, or null.
 CREATE FUNCTION stock.json(p_stock public.stock)
 RETURNS jsonb
 LANGUAGE sql IMMUTABLE AS $$
@@ -34,10 +34,11 @@ LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (
         SELECT stock.json(p_stock) || jsonb_build_object(
-            'item',      item.json(i),
+            'item',      item.json(i, c),
             'values',    p_stock.values,
             'defaulted', to_jsonb(p_stock.defaulted))
         FROM public.item i
+        JOIN public.class c ON c.id = i.class
         WHERE i.id = p_stock.item
     );
 END;
@@ -111,18 +112,26 @@ BEGIN
 END;
 $$;
 
--- Refuses amount p_amount for a stock row of item p_item: it can't be
--- below 0, and must be whole when the item is counted in pieces (it has no
--- unit). NULL is "present, but not counted".
-CREATE FUNCTION stock.check_amount(p_item public.item, p_amount numeric)
+-- Refuses amount p_amount for a stock row of an item of class p_class, by
+-- the class's rule for counting: none where nothing is counted, one where
+-- it is required (NULL is "present, but not counted"); never below 0, and
+-- whole when it counts in pieces (it has no unit).
+CREATE FUNCTION stock.check_amount(p_class public.class, p_amount numeric)
 RETURNS void
 LANGUAGE plpgsql IMMUTABLE AS $$
 BEGIN
+    IF p_class.counting = 'none' AND p_amount IS NOT NULL THEN
+        PERFORM error.not_allowed(format('Class "%s" doesn''t count its stock: a stock row has no amount',
+                                         p_class.name));
+    END IF;
+    IF p_class.counting = 'required' AND p_amount IS NULL THEN
+        PERFORM error.not_allowed(format('Class "%s" counts its stock: give an amount', p_class.name));
+    END IF;
     IF p_amount < 0 THEN
         PERFORM error.invalid('An amount can''t be below 0');
     END IF;
-    IF p_item.unit IS NULL AND p_amount <> trunc(p_amount) THEN
-        PERFORM error.not_allowed(format('Item "%s" is counted in pieces, so its amounts are whole', p_item.name));
+    IF p_class.unit IS NULL AND p_amount <> trunc(p_amount) THEN
+        PERFORM error.not_allowed(format('Class "%s" counts in pieces, so its amounts are whole', p_class.name));
     END IF;
 END;
 $$;
@@ -222,10 +231,11 @@ BEGIN
         )
         SELECT jsonb_build_object(
             'rows', coalesce((
-                SELECT jsonb_agg(stock.json(s) || jsonb_build_object('item', item.json(i)) ORDER BY p.n)
+                SELECT jsonb_agg(stock.json(s) || jsonb_build_object('item', item.json(i, c)) ORDER BY p.n)
                 FROM page p
                 JOIN public.stock s ON s.id = p.id
                 JOIN public.item i  ON i.id = s.item
+                JOIN public.class c ON c.id = i.class
                 WHERE p.n <= p_limit), '[]'),
             'more', EXISTS (SELECT 1 FROM page WHERE n > p_limit),
             'next', CASE WHEN EXISTS (SELECT 1 FROM page WHERE n > p_limit)
@@ -254,12 +264,13 @@ BEGIN
 END;
 $$;
 
--- Creates a stock row of an item in a location,
--- with a code for its label. p_amount is in the item's unit (whole for
--- pieces), and NULL means present but not counted. p_values sets its stock
--- values, as
--- item.create does an item's: {"Bought": "2026-11-02", ...}; the others get
--- their defaults, and follow them. Returns the row as stock.get does.
+-- Creates a stock row of an item in a location, with a code for its label.
+-- p_amount is in the unit of the item's class, as the class's rule for
+-- counting allows (stock.check_amount): none where nothing is counted, one
+-- where it is required, whole in pieces; NULL means present but not
+-- counted. p_values sets its stock values, as item.create does an item's:
+-- {"Bought": "2026-11-02", ...}; the others get their defaults, and follow
+-- them. Returns the row as stock.get does.
 CREATE FUNCTION stock.create(
     p_request  public.request,
     p_item     uuid,
@@ -280,7 +291,7 @@ DECLARE
     v_stock   public.stock;
 BEGIN
     PERFORM stock.location_for_write(p_location);
-    PERFORM stock.check_amount(v_item, p_amount);
+    PERFORM stock.check_amount(v_class, p_amount);
     PERFORM item.refuse_files(v_class, 'stock', v_values);
     v_checked := class.check_values(v_values, '{}', v_class.attributes, 'stock', true);
     IF v_checked.problem IS NOT NULL THEN
@@ -313,6 +324,7 @@ DECLARE
     v_for     record;
     v_amount  numeric;
     v_changed record;
+    v_was     public.class;
 BEGIN
     PERFORM util.check_patch(p_patch, ARRAY['item', 'location', 'amount', 'photo', 'values', 'default'],
                              ARRAY['item', 'location']);
@@ -335,7 +347,15 @@ BEGIN
         PERFORM stock.location_for_write((p_patch ->> 'location')::uuid);
     END IF;
     v_amount := CASE WHEN p_patch ? 'amount' THEN (p_patch ->> 'amount')::numeric ELSE v_stock.amount END;
-    PERFORM stock.check_amount(v_item, v_amount);
+    -- Given an item of a class that counts in another unit, an amount it
+    -- keeps would be relabelled, as nothing converts.
+    v_was := v_locked.class_row;
+    IF v_class.unit IS DISTINCT FROM v_was.unit AND v_amount IS NOT NULL AND NOT p_patch ? 'amount' THEN
+        PERFORM error.not_allowed(format(
+            'Item "%s" is counted in %s, this stock row in %s, and nothing converts; give its amount too',
+            v_item.name, coalesce(v_class.unit, 'pieces'), coalesce(v_was.unit, 'pieces')));
+    END IF;
+    PERFORM stock.check_amount(v_class, v_amount);
 
     UPDATE public.stock s
     SET item     = v_item.id,
@@ -379,7 +399,7 @@ BEGIN
             PERFORM error.invalid(format('The amount to move must be more than 0 and at most %s',
                                          v_stock.amount));
         END IF;
-        PERFORM stock.check_amount(v_locked.item_row, p_amount);
+        PERFORM stock.check_amount(v_locked.class_row, p_amount);
     END IF;
 
     IF p_amount IS NULL OR p_amount = v_stock.amount THEN

@@ -10,7 +10,7 @@ The SQL is in [`db/repeatable/40_location.sql`](../db/repeatable/40_location.sql
 
 A stock row is an item at a location, with:
 
-- **`amount`**, in the item's unit (whole for pieces); null: present, but not counted; 0: none left, but this is where they belong;
+- **`amount`**, in the unit of the item's class (whole for pieces), as the class's rule allows ([class.md](class.md), "How stock is counted"); null: present, but not counted; 0: none left, but this is where they belong;
 - **`photo`**, the hash of its photo's file, or null;
 - **`values`** and **`defaulted`**, for its item's class's attributes with scope `stock` ([attribute.md](attribute.md)). An order number or a serial number is one of these, where a class wants it: a stock row has no fields of its own for them.
 

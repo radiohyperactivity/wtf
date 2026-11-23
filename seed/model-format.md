@@ -6,14 +6,14 @@ A model file describes part of an installation's model in JSON: a tree of classe
 - **Export:** a class's menu → Export as a model file in the app; `wtf model export CLASS` in the CLI; `GET /api/v1/classes/{id}/model`.
 - **Example:** [models/mcu.json](models/mcu.json), a model of microcontrollers.
 
-"Model" is WtF's word for classes and their attributes, as against the data: items, stock and locations. A model file carries no data. Version 2 of the format, from 2 November 2026, has a class's attributes in the same JSON as the database keeps them ([2026-11-02-attributes-in-json.md](../2026-11-02-attributes-in-json.md), decision 31); version 1, with units and separate attributes, is no longer read.
+"Model" is WtF's word for classes and their attributes, as against the data: items, stock and locations. A model file carries no data. Version 3 of the format, from 22 November 2026, adds a class's rule for counting stock (`stock`, [2026-11-22-stock-rules-on-classes.md](../2026-11-22-stock-rules-on-classes.md)); version 2, from 2 November 2026, has a class's attributes in the same JSON as the database keeps them ([2026-11-02-attributes-in-json.md](../2026-11-02-attributes-in-json.md), decision 31), and is still read, as version 3 without rules; version 1, with units and separate attributes, is no longer read.
 
 ## An example
 
 ```json
 {
   "format": "wtf-model",
-  "version": 2,
+  "version": 3,
   "meta": { "name": "Microcontrollers", "description": "MCUs by family, with what tells them apart." },
   "classes": [
     {
@@ -45,7 +45,7 @@ The file is a JSON object (UTF-8):
 | Key | | |
 |-----|-|-|
 | `format` | required | Always `"wtf-model"`. Tells a model file from any other JSON. |
-| `version` | required | The version of this format: `2`. |
+| `version` | required | The version of this format: `3` (`2` is still read). |
 | `meta` | optional | About the file, for people: never read by an import. Apps show its `name` and `description`; an export writes the class's `name`. |
 | `classes` | optional | The top classes it defines, below; each may have classes of its own. |
 
@@ -55,6 +55,7 @@ The file is a JSON object (UTF-8):
 |-----|-|-|
 | `name` | required | Its name, without "/". |
 | `container` | optional | `true`: it holds only other classes, no items. |
+| `stock` | optional | Its own rule for counting its items' stock, `{counting, unit}`: `counting` `none`, `optional` or `required`, and `unit` a label or null for pieces (none when nothing is counted), as [api/class.md](../api/class.md) describes. Left out, it inherits its parent's. |
 | `attributes` | optional | The attributes it defines, by name, each a definition as [api/attribute.md](../api/attribute.md) describes: `scope`, `type`, `required`, `unit`, `default`, `choices`, `media` and `order`. |
 | `classes` | optional | The classes below it, of the same form. |
 
@@ -65,7 +66,7 @@ A class's attributes are inherited by the classes below it, and a class can't de
 - **Where:** at the top of the class tree, or below a class (`parent`).
 - **Matching by name:** a class by its name below its parent, ignoring case; an attribute by its name in the class.
 - **A class that is there already is imported into:** it gets the attributes it hasn't got, and its classes from the file, the same way. Its `container` stays as it is.
-- **An attribute that is there already must be the same** (all but its `order`), or the import is refused (409, saying which).
+- **An attribute that is there already must be the same** (all but its `order`), or the import is refused (409, saying which). So must the rule for counting stock of a class that is there already, when the file gives one: its rule now, its own or inherited. A class that is added gets the file's rule as its own, or inherits.
 - **What is there and the same is used as it is.** Importing a file twice changes nothing the second time.
 - **Into a class with items:** a required attribute with a default gives its default to every item (or stock row) below the class, and one without a default is refused while there are any, as a change of the class is ([api/attribute.md](../api/attribute.md)).
 - **All or nothing.** The first problem refuses the whole file; nothing is kept.
@@ -78,8 +79,8 @@ A class's attributes are inherited by the classes below it, and a class can't de
 
 An export is of one class, with everything below it:
 
-- **The class** is the file's only top class, with every attribute it has: its own, and the ones it inherits, as its own, so that the file stands on its own.
-- **The classes below it** have their own attributes.
+- **The class** is the file's only top class, with every attribute it has: its own, and the ones it inherits, as its own, so that the file stands on its own; and its rule for counting stock, also when inherited (not the default).
+- **The classes below it** have their own attributes, and their own rules.
 - **Who:** an admin, as only admins can import the file again.
 
 So importing the file where the class is changes nothing, and importing it elsewhere sets up the same classes and attributes: exported again from there, the file is the same.

@@ -508,7 +508,11 @@ void main() {
       narrow.top,
       greaterThan(tester.getRect(find.text('Voltage')).bottom),
     );
-    expect(narrow.bottom, lessThan(tester.getRect(find.text('Stock')).top));
+    // The section's heading, after the field saying how it is counted.
+    expect(
+      narrow.bottom,
+      lessThan(tester.getRect(find.text('Stock').last).top),
+    );
     expect(narrow.width, 400 - 32);
   });
 
@@ -798,7 +802,8 @@ void main() {
     expect(find.text('Tools/Drills'), findsOneWidget);
     // A value that follows the class's default says so.
     expect(find.text('Red  (default)'), findsOneWidget);
-    expect(find.text('pieces'), findsOneWidget);
+    // How its stock is counted: its class's rule, here the default.
+    expect(find.text('Counted, the amount optional · pieces'), findsOneWidget);
 
     await tester.tap(find.text('Garage/Shelf 1'));
     await tester.pumpAndSettle();
@@ -959,7 +964,6 @@ void main() {
         'code': '2${n.toString().padLeft(3, '0')}',
         'name': 'Drill ${n.toString().padLeft(2, '0')}',
         'class': 'c-drills',
-        'unit': null,
         'photo': null,
         'values': <String, Object?>{'Voltage': 12},
         'defaulted': <String>[],
@@ -1292,7 +1296,7 @@ void main() {
     expect(
       fake.changes.single,
       'POST /api/v1/items {"class":"c-drills","name":"Impact driver",'
-      '"unit":null,"values":{"Voltage":18}}',
+      '"values":{"Voltage":18}}',
     );
     expect(find.widgetWithText(AppBar, 'New item'), findsNothing);
     expect(find.text('Impact driver'), findsWidgets);
@@ -1303,7 +1307,9 @@ void main() {
 
   testWidgets('add an item counted in metres, with its stock', (tester) async {
     setSize(tester, 1000);
-    final fake = FakeServer();
+    // Its class counts in metres; the item has no unit of its own.
+    final fake = FakeServer()
+      ..ownStock['c-drills'] = {'counting': 'optional', 'unit': 'm'};
     await startApp(tester, fake);
     await tester.tap(find.text('New item'));
     await tester.pumpAndSettle();
@@ -1311,11 +1317,11 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Tools/Drills'));
     await tester.pumpAndSettle();
+    expect(field('Unit of its stock'), findsNothing);
     await tester.enterText(field('Name'), 'Drill cable');
-    await tester.enterText(field('Unit of its stock'), 'm');
     await tester.enterText(field('Voltage *'), '230');
 
-    // Its stock on the same form, in the item's unit.
+    // Its stock on the same form, in its class's unit.
     await tester.ensureVisible(find.text('Choose a location'));
     await tester.tap(find.text('Choose a location'));
     await tester.pumpAndSettle();
@@ -1330,7 +1336,7 @@ void main() {
     expect(
       fake.changes.single,
       'POST /api/v1/items {"class":"c-drills","name":"Drill cable",'
-      '"unit":"m","values":{"Voltage":230},"stock":{"location":"l-shelf2",'
+      '"values":{"Voltage":230},"stock":{"location":"l-shelf2",'
       '"amount":2.5,"values":{"Bought":"2026-11-01"}}}',
     );
     // Then the item's screen shows it.
@@ -1340,96 +1346,167 @@ void main() {
     expect(find.text('2026-11-01'), findsOneWidget);
   });
 
-  testWidgets(
-    'one item after another: class, unit, stock and location carry over',
-    (tester) async {
-      setSize(tester, 1000);
-      final fake = FakeServer();
-      await startApp(tester, fake);
-      await tester.tap(find.text('New item'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Choose a class'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Tools/Drills'));
-      await tester.pumpAndSettle();
-      await tester.enterText(field('Name'), 'Drill cable');
-      await tester.enterText(field('Unit of its stock'), 'm');
-      await tester.enterText(field('Voltage *'), '230');
-      await tester.ensureVisible(find.text('Choose a location'));
-      await tester.tap(find.text('Choose a location'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Garage/Shelf 2'));
-      await tester.pumpAndSettle();
-      await tester.enterText(field('Amount'), '2.5 m');
-      await tester.tap(find.text('Create and add another'));
-      await tester.pumpAndSettle();
-      expect(fake.changes.single, contains('"stock":{"location":"l-shelf2"'));
+  testWidgets('one item after another: class, stock and location carry over', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    final fake = FakeServer()
+      ..ownStock['c-drills'] = {'counting': 'optional', 'unit': 'm'};
+    await startApp(tester, fake);
+    await tester.tap(find.text('New item'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Choose a class'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Tools/Drills'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('Name'), 'Drill cable');
+    await tester.enterText(field('Voltage *'), '230');
+    await tester.ensureVisible(find.text('Choose a location'));
+    await tester.tap(find.text('Choose a location'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Garage/Shelf 2'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('Amount'), '2.5 m');
+    await tester.tap(find.text('Create and add another'));
+    await tester.pumpAndSettle();
+    expect(fake.changes.single, contains('"stock":{"location":"l-shelf2"'));
 
-      // The next item's form: the class and unit of the last item, its stock
-      // at the same place; ready for the name.
-      expect(find.widgetWithText(AppBar, 'New item'), findsOneWidget);
-      expect(find.text('Tools/Drills'), findsOneWidget);
-      expect(
-        tester
-            .widget<TextFormField>(field('Unit of its stock'))
-            .controller!
-            .text,
-        'm',
-      );
-      expect(find.text('Garage/Shelf 2'), findsOneWidget);
-      expect(
-        tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
-        isTrue,
-      );
-      final name = tester.widget<EditableText>(
-        find.descendant(of: field('Name'), matching: find.byType(EditableText)),
-      );
-      expect(name.focusNode.hasFocus, isTrue);
-      await tester.enterText(field('Name'), 'Extension cable');
-      await tester.enterText(field('Voltage *'), '230');
-      // Enter in Manual, the item's last field, goes on: the stock's fields
-      // come after it.
-      await tester.enterText(field('Manual'), '');
-      await tester.testTextInput.receiveAction(TextInputAction.next);
-      await tester.pumpAndSettle();
-      expect(fake.changes, hasLength(1));
-      await tester.enterText(field('Amount'), '10');
-      // Enter in Bought, the stock's last field, creates both.
-      await tester.enterText(field('Bought'), '');
-      await tester.testTextInput.receiveAction(TextInputAction.done);
-      await tester.pumpAndSettle();
-      expect(fake.changes.last, contains('"name":"Extension cable"'));
-      expect(fake.changes.last, contains('"unit":"m"'));
-      expect(fake.changes.last, contains('"location":"l-shelf2","amount":10'));
-      expect(find.text('Extension cable'), findsWidgets);
+    // The next item's form: the class of the last item, its stock at the
+    // same place; ready for the name.
+    expect(find.widgetWithText(AppBar, 'New item'), findsOneWidget);
+    expect(find.text('Tools/Drills'), findsOneWidget);
+    expect(find.text('Garage/Shelf 2'), findsOneWidget);
+    expect(
+      tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
+      isTrue,
+    );
+    final name = tester.widget<EditableText>(
+      find.descendant(of: field('Name'), matching: find.byType(EditableText)),
+    );
+    expect(name.focusNode.hasFocus, isTrue);
+    await tester.enterText(field('Name'), 'Extension cable');
+    await tester.enterText(field('Voltage *'), '230');
+    // Enter in Manual, the item's last field, goes on: the stock's fields
+    // come after it.
+    await tester.enterText(field('Manual'), '');
+    await tester.testTextInput.receiveAction(TextInputAction.next);
+    await tester.pumpAndSettle();
+    expect(fake.changes, hasLength(1));
+    await tester.enterText(field('Amount'), '10');
+    // Enter in Bought, the stock's last field, creates both.
+    await tester.enterText(field('Bought'), '');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(fake.changes.last, contains('"name":"Extension cable"'));
+    expect(fake.changes.last, contains('"location":"l-shelf2","amount":10'));
+    expect(find.text('Extension cable'), findsWidgets);
 
-      // Add stock turned off stays off for the next new item; Enter in the
-      // item's last field then creates it.
-      clearMessages(tester);
-      await tester.tap(find.text('Items'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('New item'));
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Add stock'));
-      await tester.tap(find.text('Add stock'));
-      await tester.pumpAndSettle();
-      await tester.enterText(field('Name'), 'Hook');
-      await tester.enterText(field('Voltage *'), '12');
-      await tester.enterText(field('Manual'), '');
-      await tester.testTextInput.receiveAction(TextInputAction.done);
-      await tester.pumpAndSettle();
-      expect(fake.changes.last, isNot(contains('"stock"')));
-      clearMessages(tester);
-      await tester.tap(find.text('Items'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('New item'));
-      await tester.pumpAndSettle();
-      expect(
-        tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
-        isFalse,
-      );
-    },
-  );
+    // Add stock turned off stays off for the next new item; Enter in the
+    // item's last field then creates it.
+    clearMessages(tester);
+    await tester.tap(find.text('Items'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New item'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Add stock'));
+    await tester.tap(find.text('Add stock'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('Name'), 'Hook');
+    await tester.enterText(field('Voltage *'), '12');
+    await tester.enterText(field('Manual'), '');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(fake.changes.last, isNot(contains('"stock"')));
+    clearMessages(tester);
+    await tester.tap(find.text('Items'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New item'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<SwitchListTile>(find.byType(SwitchListTile)).value,
+      isFalse,
+    );
+  });
+
+  testWidgets('a class says how its stock is counted, and the forms follow', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    await startApp(tester, fake);
+
+    // The class screen: the default, as no class has a rule of its own.
+    await open(tester, '/classes/c-drills');
+    expect(
+      find.text('Stock: counted, the amount optional · pieces'),
+      findsOneWidget,
+    );
+    expect(find.text('the default'), findsOneWidget);
+
+    // Counting in metres relabels the drill's 2 pieces: asked first, after
+    // a dry run.
+    await tester.tap(find.text('Stock: counted, the amount optional · pieces'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Counted, the amount required'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Unit'), 'm');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    expect(find.text('Count in another unit?'), findsOneWidget);
+    expect(find.textContaining('1 stock row is counted'), findsOneWidget);
+    expect(
+      fake.changes.single,
+      'PUT /api/v1/classes/c-drills/stock?dry_run=true '
+      '{"counting":"required","unit":"m"}',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Change'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      'PUT /api/v1/classes/c-drills/stock {"counting":"required","unit":"m"}',
+    );
+    expect(
+      find.text('Stock: counted, the amount required · m'),
+      findsOneWidget,
+    );
+    expect(find.text('its own'), findsOneWidget);
+
+    // A new item's stock needs an amount now, in metres.
+    await tester.tap(find.text('New item'));
+    await tester.pumpAndSettle();
+    expect(field('Amount *'), findsOneWidget);
+    await tester.enterText(field('Name'), 'Drill cable');
+    await tester.enterText(field('Voltage *'), '230');
+    await tester.ensureVisible(find.text('Choose a location'));
+    await tester.tap(find.text('Choose a location'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Garage/Shelf 2'));
+    await tester.pumpAndSettle();
+    final before = fake.changes.length;
+    await tester.tap(find.text('Create'));
+    await tester.pumpAndSettle();
+    expect(find.text('Required'), findsOneWidget);
+    expect(fake.changes, hasLength(before));
+    await tester.enterText(field('Amount *'), '2.5 m');
+    await tester.tap(find.text('Create'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.last,
+      contains('"stock":{"location":"l-shelf2","amount":2.5'),
+    );
+
+    // Not counted: no amount at all, on the new item's form and on the
+    // stock form.
+    fake.ownStock['c-drills'] = {'counting': 'none', 'unit': null};
+    clearMessages(tester);
+    await open(tester, '/items/new?class=c-drills');
+    expect(field('Amount'), findsNothing);
+    expect(field('Amount *'), findsNothing);
+    expect(find.textContaining('Its class: not counted.'), findsOneWidget);
+    await open(tester, '/stock/new?item=i-drill');
+    expect(find.text('Cordless drill  (1B00)'), findsOneWidget);
+    expect(field('Amount'), findsNothing);
+  });
 
   testWidgets('on a phone, the keyboard comes only when asked for', (
     tester,

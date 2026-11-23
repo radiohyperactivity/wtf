@@ -172,7 +172,11 @@ class _StockFormState extends State<_StockForm> {
     if (id == null) return;
     setState(() => _locationId = id);
     // On to the amount, as Tab would have gone.
-    if (_item != null && _amount.text.isEmpty) _amountFocus.requestFocus();
+    if (_item != null &&
+        _item!.counting != Counting.none &&
+        _amount.text.isEmpty) {
+      _amountFocus.requestFocus();
+    }
   }
 
   /// Saves; with [another], new stock is followed by the form again, for
@@ -191,7 +195,10 @@ class _StockFormState extends State<_StockForm> {
     if (!_form.currentState!.validate()) return;
     setState(() => _busy = true);
     try {
-      final amount = AmountField.parse(_amount, item.unit);
+      // As its class counts its stock: no amount when it doesn't.
+      final amount = item.counting == Counting.none
+          ? null
+          : AmountField.parse(_amount, item.unit);
       final stock = widget.stock;
       if (stock == null) {
         final created = await _client.createStock(
@@ -328,12 +335,15 @@ class _StockFormState extends State<_StockForm> {
                     ),
                   ),
                 ),
-                if (item != null) ...[
+                // As its class counts its stock: no amount when it doesn't,
+                // one that must be given when it requires it.
+                if (item != null && item.counting != Counting.none) ...[
                   const SizedBox(height: 16),
                   AmountField(
                     controller: _amount,
                     unit: item.unit,
                     focusNode: _amountFocus,
+                    required: item.counting == Counting.required,
                     // Ready to type, when the item and place are known.
                     autofocus: !_editing && _locationId != null,
                     onSubmitted: lastTyped(_inputs) == null ? _save : null,

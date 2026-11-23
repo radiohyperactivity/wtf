@@ -176,14 +176,13 @@ func itemGroup() group {
 			},
 			{
 				name:    "add",
-				args:    "<name> --class C [--unit U] [--<attribute> VALUE]… [--edit]",
+				args:    "<name> --class C [--<attribute> VALUE]… [--edit]",
 				summary: "Create an item, with values for its class's attributes (--length 12, --colour red).",
 				params:  []param{arg("Name", nil)},
 				flags:   map[string]param{"class": arg("Class", completeItemClasses)},
 				values:  true,
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
 					classRef := fs.String("class", "", "the item's class (required)")
-					unit := fs.String("unit", "", "what its stock is counted in, a label such as m or kg (default: pieces)")
 					editAfter := fs.Bool("edit", false, "open the new item in the edit form")
 					explicit, _ := valueFlags(fs, false)
 					return func(e *env, args []string) error {
@@ -210,16 +209,11 @@ func itemGroup() group {
 						if err != nil {
 							return err
 						}
-						if *unit == "" {
-							if *unit, err = e.offer("Unit (Enter: pieces)", param{}, args); err != nil {
-								return err
-							}
-						}
 						if err := e.askValues(c, "item", set); err != nil {
 							return err
 						}
 						data, err := e.do(http.MethodPost, "/items", object{
-							"name": args[0], "class": classID, "unit": orNil(*unit), "values": set})
+							"name": args[0], "class": classID, "values": set})
 						if err != nil {
 							return err
 						}
@@ -241,17 +235,15 @@ func itemGroup() group {
 			},
 			{
 				name:    "set",
-				args:    "<item> [--name N] [--class C] [--unit U | --no-unit] [--no-photo] [--<attribute> VALUE] [--no-<attribute>] [--default ATTRIBUTE]…",
-				summary: "Change an item's name, class, unit or values, in one change.",
+				args:    "<item> [--name N] [--class C] [--no-photo] [--<attribute> VALUE] [--no-<attribute>] [--default ATTRIBUTE]…",
+				summary: "Change an item's name, class or values, in one change.",
 				params:  []param{itemParam},
 				flags:   map[string]param{"class": arg("Class", completeItemClasses)},
 				values:  true,
 				setup: func(fs *flag.FlagSet) func(*env, []string) error {
-					var name, classRef, unit optString
+					var name, classRef optString
 					fs.Var(&name, "name", "new name")
-					fs.Var(&classRef, "class", "new class; its values must fit it")
-					fs.Var(&unit, "unit", "what its stock is counted in, a label")
-					noUnit := fs.Bool("no-unit", false, "count its stock in pieces")
+					fs.Var(&classRef, "class", "new class; its values and stock must fit it")
 					noPhoto := fs.Bool("no-photo", false, "remove its photo")
 					explicit, defaults := valueFlags(fs, true)
 					return func(e *env, args []string) error {
@@ -276,14 +268,6 @@ func itemGroup() group {
 								return err
 							}
 							body["class"] = classID
-						}
-						switch {
-						case unit.set && *noUnit:
-							return usagef("give --unit or --no-unit, not both")
-						case unit.set:
-							body["unit"] = unit.value
-						case *noUnit:
-							body["unit"] = nil
 						}
 						if *noPhoto {
 							body["photo"] = nil
@@ -880,7 +864,16 @@ func (e *env) offerStock(itemID string) error {
 	if err != nil {
 		return err
 	}
-	amount, err := e.offer("Amount (Enter: uncounted)", param{}, nil)
+	// As its class counts its stock: no amount, or one that may be left
+	// out, or one that must be given.
+	amount := ""
+	switch it.Counting {
+	case "none":
+	case "required":
+		amount, err = e.ask(arg("Amount", nil), nil)
+	default:
+		amount, err = e.offer("Amount (Enter: uncounted)", param{}, nil)
+	}
 	if err != nil {
 		return err
 	}

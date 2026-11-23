@@ -75,6 +75,47 @@ func contains(t *testing.T, out string, want ...string) {
 	}
 }
 
+// How a class's items' stock is counted, from the CLI: wtf class stock,
+// which asks (or needs --yes) before counted stock gets another unit.
+func TestCLIStockRules(t *testing.T) {
+	e := setup(t)
+	e.reset(t)
+	c := e.cli(t)
+
+	c.ok("location", "add", "Shelf")
+	c.ok("class", "add", "Cables")
+	contains(t, c.ok("class", "get", "Cables"), "Stock:  counted, optional, in pieces (the default)")
+	contains(t, c.ok("class", "stock", "Cables", "--counting", "optional", "--unit", "m"),
+		"Stock:  counted, optional, in m (this class)")
+	c.ok("class", "add", "Thin", "--parent", "Cables")
+	contains(t, c.ok("class", "get", "Thin"), "counted, optional, in m (from Cables)")
+
+	// An item has its class's unit; it can't be given one.
+	c.ok("item", "add", "Cable", "--class", "Thin")
+	c.ok("stock", "add", "Cable", "Shelf", "2.5")
+	contains(t, c.ok("item", "get", "Cable"), "2.5 m")
+	_, stderr := c.run(2, "", "item", "add", "Rope", "--class", "Thin", "--unit", "m")
+	contains(t, stderr, "unit")
+
+	// Another unit relabels counted stock: refused without a terminal, unless
+	// --yes; --dry-run says what it would do.
+	_, stderr = c.run(1, "", "class", "stock", "Cables", "--counting", "optional", "--unit", "cm")
+	contains(t, stderr, "1 stock row in another unit", "--yes")
+	contains(t, c.ok("class", "stock", "Cables", "--counting", "optional", "--unit", "cm", "--dry-run"),
+		"A dry run", "It would count 1 stock row in another unit")
+	contains(t, c.ok("class", "stock", "Cables", "--counting", "optional", "--unit", "cm", "--yes"),
+		"Counted 1 stock row in another unit")
+	contains(t, c.ok("item", "get", "Cable"), "2.5 cm")
+
+	// A rule the stock doesn't fit is refused; --inherit goes back.
+	_, stderr = c.run(1, "", "class", "stock", "Cables", "--counting", "none")
+	contains(t, stderr, "doesn't count its stock")
+	_, stderr = c.run(2, "", "class", "stock", "Cables", "--counting", "none", "--inherit")
+	contains(t, stderr, "not both")
+	c.ok("stock", "set", "Cable@Shelf", "--amount", "3")
+	contains(t, c.ok("class", "stock", "Cables", "--inherit", "--yes"), "in pieces (the default)")
+}
+
 func TestCLI(t *testing.T) {
 	e := setup(t)
 	e.reset(t)

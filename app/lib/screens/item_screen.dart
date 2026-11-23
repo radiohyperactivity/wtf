@@ -194,7 +194,14 @@ class ItemScreen extends StatelessWidget {
                               ? () => open('/classes/${item.cls.id}')
                               : null,
                         ),
-                        Field('Counted in', item.unit ?? 'pieces'),
+                        // Its class's rule (decision 110).
+                        Field(
+                          'Stock',
+                          StockRule(
+                            counting: item.counting,
+                            unit: item.unit,
+                          ).text,
+                        ),
                         ...valueFields(
                           cls,
                           item.values,

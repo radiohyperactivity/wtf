@@ -117,6 +117,20 @@ class FakeServer {
     },
   };
 
+  /// The rules for counting stock the classes have of their own, {counting,
+  /// unit}; the others inherit, and at the top, count, optionally, in
+  /// pieces.
+  final ownStock = <String, JsonMap>{};
+
+  /// Class [id]'s rule: {counting, unit, from}.
+  JsonMap stockRule(String id) {
+    for (final p in _path(classes, id).reversed) {
+      final rule = ownStock[p['id']];
+      if (rule != null) return {...rule, 'from': p['id']};
+    }
+    return {'counting': 'optional', 'unit': null, 'from': null};
+  }
+
   final locations = <JsonMap>[
     {
       'id': 'l-garage',
@@ -146,7 +160,6 @@ class FakeServer {
       'code': '1B00',
       'name': 'Cordless drill',
       'class': 'c-drills',
-      'unit': null,
       'photo': null,
       'values': <String, Object?>{'Voltage': 18, 'Colour': 'Red'},
       'defaulted': <String>['Colour'],
@@ -260,7 +273,12 @@ class FakeServer {
               ? scope
               : (a['order'] as int).compareTo(b['order'] as int);
         });
-    return {...c, 'path': _path(classes, id), 'attributes': attributes};
+    return {
+      ...c,
+      'path': _path(classes, id),
+      'attributes': attributes,
+      'stock': stockRule(id),
+    };
   }
 
   JsonMap locationJson(String id) => {
@@ -268,9 +286,15 @@ class FakeServer {
     'path': _path(locations, id),
   };
 
-  JsonMap _summary(JsonMap i) => {
-    for (final k in ['id', 'code', 'name', 'class', 'unit', 'photo']) k: i[k],
-  };
+  /// An item as lists show it, with its class's rule for counting stock.
+  JsonMap _summary(JsonMap i) {
+    final rule = stockRule(i['class'] as String);
+    return {
+      for (final k in ['id', 'code', 'name', 'class', 'photo']) k: i[k],
+      'counting': rule['counting'],
+      'unit': rule['unit'],
+    };
+  }
 
   JsonMap _stockRow(
     JsonMap s, {
@@ -600,6 +624,41 @@ class FakeServer {
       case ('GET', ['locations', final id]):
         return _json(locationJson(id));
 
+      // A class's rule for counting its items' stock: counted stock that
+      // gets another unit is relabelled, and the answer says how many rows.
+      case ('PUT' || 'DELETE', ['classes', final id, 'stock']):
+        final before = {
+          for (final c in classes)
+            c['id']: stockRule(c['id'] as String)['unit'],
+        };
+        final saved = ownStock[id];
+        if (method == 'PUT') {
+          ownStock[id] = {'counting': body!['counting'], 'unit': body['unit']};
+        } else {
+          ownStock.remove(id);
+        }
+        final relabelled = stock.where((r) {
+          final cls = items.firstWhere((i) => i['id'] == r['item'])['class'];
+          return r['amount'] != null &&
+              before[cls] != stockRule(cls as String)['unit'];
+        }).length;
+        final answer = {
+          'class': classJson(id),
+          'items': 0,
+          'stock': 0,
+          'relabelled': relabelled,
+          'dry_run': dryRun,
+        };
+        if (dryRun) {
+          if (saved == null) {
+            ownStock.remove(id);
+          } else {
+            ownStock[id] = saved;
+          }
+          answer['class'] = classJson(id);
+        }
+        return _json(answer);
+
       // A class's attributes.
       case ('POST', ['classes', final id, 'attributes']):
         final name = body!['name'] as String;
@@ -761,7 +820,6 @@ class FakeServer {
           'code': _code('1D'),
           'name': body['name'],
           'class': body['class'],
-          'unit': body['unit'],
           'photo': null,
           'values': values,
           'defaulted': defaulted,
@@ -788,7 +846,7 @@ class FakeServer {
         return _json(itemJson(item['id'] as String), 201);
       case ('PATCH', ['items', final id]):
         final item = items.firstWhere((i) => i['id'] == id);
-        for (final k in ['name', 'class', 'unit', 'photo']) {
+        for (final k in ['name', 'class', 'photo']) {
           if (body!.containsKey(k)) item[k] = body[k];
         }
         _patchValues(item, item['class'] as String, body!);

@@ -230,6 +230,70 @@
         }
       }
     },
+    "/classes/{id}/stock": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/Id"
+        }
+      ],
+      "put": {
+        "summary": "Give the class a rule of its own for counting its items' stock",
+        "description": "The classes below it that inherit it follow. Every stock row below is checked against its class's new rule, and the change is refused (422) when one doesn't fit: an amount where nothing is counted, none where one is required, a part of a piece where it counts in pieces. Counted stock that gets another unit keeps its amounts, as nothing converts: the answer's relabelled says how many rows, and a dry run says so first.",
+        "operationId": "classStockSet",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DryRun"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "counting": {
+                    "$ref": "#/components/schemas/Counting"
+                  },
+                  "unit": {
+                    "type": ["string", "null"],
+                    "description": "A label; null for pieces, and null when nothing is counted."
+                  }
+                },
+                "required": ["counting", "unit"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ClassChange"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Make the class inherit its parent's rule for counting stock again",
+        "description": "At the top, the default: counted, optional, in pieces. Checked and answered as a rule of its own is.",
+        "operationId": "classStockInherit",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DryRun"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/ClassChange"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/classes/{id}/model": {
       "parameters": [
         {
@@ -374,13 +438,6 @@
                   "name": {
                     "type": "string"
                   },
-                  "unit": {
-                    "type": [
-                      "string",
-                      "null"
-                    ],
-                    "description": "What its stock is counted in, a label (\"m\"); null for pieces."
-                  },
                   "values": {
                     "allOf": [
                       {
@@ -426,7 +483,6 @@
                 "required": [
                   "class",
                   "name",
-                  "unit",
                   "values"
                 ]
               }
@@ -491,13 +547,6 @@
                   },
                   "name": {
                     "type": "string"
-                  },
-                  "unit": {
-                    "type": [
-                      "string",
-                      "null"
-                    ],
-                    "description": "A label; null for pieces."
                   },
                   "photo": {
                     "type": "null",
@@ -2969,6 +3018,38 @@
               "$ref": "#/components/schemas/Attribute"
             },
             "description": "Every attribute it has, its own and those it inherits: the item attributes, then the stock attributes, each by order."
+          },
+          "stock": {
+            "$ref": "#/components/schemas/StockRule"
+          }
+        }
+      },
+      "Counting": {
+        "type": "string",
+        "enum": ["none", "optional", "required"],
+        "description": "How stock is counted: none, not at all (a stock row has no amount); optional, an amount may be left out (not counted yet); required, every stock row has one."
+      },
+      "StockRule": {
+        "type": "object",
+        "description": "How the stock of the class's items is counted: its own rule, or its parent's. A top-level class without one of its own counts, optionally, in pieces.",
+        "properties": {
+          "counting": {
+            "$ref": "#/components/schemas/Counting"
+          },
+          "unit": {
+            "type": ["string", "null"],
+            "description": "What amounts are counted in, a label (nothing converts); null for pieces, whose amounts are whole. Null when nothing is counted."
+          },
+          "from": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The class whose rule it is: this class, an ancestor, or null for the default."
           }
         }
       },
@@ -3033,12 +3114,15 @@
           "class": {
             "$ref": "#/components/schemas/Uuid"
           },
+          "counting": {
+            "$ref": "#/components/schemas/Counting"
+          },
           "unit": {
             "type": [
               "string",
               "null"
             ],
-            "description": "What its stock is counted in, a label; null for pieces."
+            "description": "Its class's: what its stock is counted in, a label; null for pieces."
           },
           "photo": {
             "oneOf": [
@@ -3322,6 +3406,10 @@
           "stock": {
             "type": "integer",
             "description": "How many stock rows it wrote (or would have)."
+          },
+          "relabelled": {
+            "type": "integer",
+            "description": "A change of the rule for counting stock only: how many stock rows with an amount are counted in another unit now (or would be). Nothing converts."
           },
           "dry_run": {
             "type": "boolean"

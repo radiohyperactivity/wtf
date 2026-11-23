@@ -42,6 +42,12 @@ func (s *server) routes() []route {
 		))},
 		{"GET /classes/{id}", s.read("class.get", class)},
 		{"PATCH /classes/{id}", s.update("class.patch", class, patch("p_patch"))},
+		// How its items' stock is counted: a rule of its own, or its parent's.
+		{"PUT /classes/{id}/stock", s.update("class.stock_set", class, body(
+			field{key: "counting", name: "p_counting", typ: "counting"},
+			field{key: "unit", name: "p_unit", typ: "text"},
+		), dryRun)},
+		{"DELETE /classes/{id}/stock", s.update("class.stock_inherit", class, dryRun)},
 		{"DELETE /classes/{id}", s.removeTree("class.delete", "class.delete_tree", class)},
 		{"GET /classes/{id}/model", s.read("model.export", class)},
 		{"GET /classes/{id}/deletion", s.read("class.delete_tree", class,
@@ -72,7 +78,6 @@ func (s *server) routes() []route {
 		{"POST /items", s.create("item.create", "/items/", body(
 			field{key: "class", name: "p_class", typ: "uuid"},
 			field{key: "name", name: "p_name", typ: "text"},
-			field{key: "unit", name: "p_unit", typ: "text"},
 			field{key: "values", name: "p_values", typ: "jsonb"},
 			// The item's first stock row, made with it; optional, as it came
 			// after the rest.

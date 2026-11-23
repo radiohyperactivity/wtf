@@ -99,20 +99,20 @@ func TestAttributes(t *testing.T) {
 
 	var drill string
 	t.Run("values", func(t *testing.T) {
-		v := user.must(t, "item.create", drills, "Drill", nil, js(obj("Length", 120)))
+		v := user.must(t, "item.create", drills, "Drill", js(obj("Length", 120)))
 		drill = str(t, v, "id")
 		sameJSON(t, "values", get(t, v, "values"), obj("Length", 120, "Colour", "Red"))
 		sameJSON(t, "defaulted", get(t, v, "defaulted"), []string{"Colour"})
 
-		_, err := user.call(t, "item.create", drills, "Bad", nil, js(obj("Length", "long")))
+		_, err := user.call(t, "item.create", drills, "Bad", js(obj("Length", "long")))
 		wantState(t, err, "23514", `"Length" that isn't a number`)
-		_, err = user.call(t, "item.create", drills, "Bad", nil, js(obj("Weight", 1)))
+		_, err = user.call(t, "item.create", drills, "Bad", js(obj("Weight", 1)))
 		wantState(t, err, "23514", `"Weight", which isn't one of its class's item attributes`)
-		_, err = user.call(t, "item.create", drills, "Bad", nil, js(obj("Bought", "2026-01-01")))
+		_, err = user.call(t, "item.create", drills, "Bad", js(obj("Bought", "2026-01-01")))
 		wantState(t, err, "23514", "isn't one of its class's item attributes")
-		_, err = user.call(t, "item.create", drills, "Bad", nil, js(obj("Manual", strings.Repeat("a", 64))))
+		_, err = user.call(t, "item.create", drills, "Bad", js(obj("Manual", strings.Repeat("a", 64))))
 		wantState(t, err, "22023", "is a file: upload it")
-		_, err = user.call(t, "item.create", drills, "Bad", nil, js(obj("Colour", "Pink")))
+		_, err = user.call(t, "item.create", drills, "Bad", js(obj("Colour", "Pink")))
 		wantState(t, err, "23514", "one of Red, Green, Blue")
 
 		v = user.must(t, "item.patch", drill, js(obj("values", obj("Colour", "Green"))))
@@ -136,7 +136,7 @@ func TestAttributes(t *testing.T) {
 	})
 
 	t.Run("a changed default", func(t *testing.T) {
-		own := user.id(t, "item.create", drills, "Green drill", nil, js(obj("Colour", "Green")))
+		own := user.id(t, "item.create", drills, "Green drill", js(obj("Colour", "Green")))
 		r := admin.must(t, "class.attribute_change", tools, "Colour", js(obj("default", "Blue")), true)
 		if get(t, r, "dry_run") != true || num(t, r, "items") != 1 {
 			t.Fatalf("dry run: %v", r)
@@ -231,14 +231,14 @@ func TestItemListPagesAndFilters(t *testing.T) {
 		if i%2 == 0 {
 			kind = "Nut"
 		}
-		item := user.id(t, "item.create", parts, fmt.Sprintf("Part %d", i), nil,
+		item := user.id(t, "item.create", parts, fmt.Sprintf("Part %d", i),
 			js(obj("Size", i, "Kind", kind, "Made", fmt.Sprintf("2026-01-%02d", i))))
 		if i == 7 {
 			user.must(t, "stock.create", item, shelf, 1, js(obj("Lot", "L-77")))
 		}
 	}
 	// Two of the same name, which paging keeps apart by id.
-	user.must(t, "item.create", parts, "Part 10", nil, js(obj()))
+	user.must(t, "item.create", parts, "Part 10", js(obj()))
 
 	names := func(page any) []string {
 		var n []string
@@ -293,18 +293,22 @@ func TestItemListPagesAndFilters(t *testing.T) {
 func TestStockValuesAndMerge(t *testing.T) {
 	at := newAccessors(t, "stockvalues")
 	admin, user := at.admin, at.user
+	// Cables are counted in metres; plugs, in a class of their own, in
+	// pieces, as a new class is.
 	cables := admin.id(t, "class.create", "Cables", nil, false)
+	admin.must(t, "class.stock_set", cables, "optional", "m", false)
+	plugs := admin.id(t, "class.create", "Plugs", nil, false)
 	addAttribute(t, admin, cables, "Colour", obj("scope", "stock", "type", "text", "default", "Black"))
 	addAttribute(t, admin, cables, "Order", obj("scope", "stock", "type", "text"))
 	shelf := admin.id(t, "location.create", "Shelf", nil, false, nil, nil, nil)
 	box := admin.id(t, "location.create", "Box", nil, false, nil, nil, nil)
-	cable := user.id(t, "item.create", cables, "Cable", "m", js(obj()))
-	pieces := user.id(t, "item.create", cables, "Plug", nil, js(obj()))
+	cable := user.id(t, "item.create", cables, "Cable", js(obj()))
+	pieces := user.id(t, "item.create", plugs, "Plug", js(obj()))
 
 	a := user.must(t, "stock.create", cable, shelf, 12.5, js(obj("Order", "PO-1")))
 	sameJSON(t, "default on stock", get(t, a, "values"), obj("Colour", "Black", "Order", "PO-1"))
 	_, err := user.call(t, "stock.create", pieces, shelf, 1.5, js(obj()))
-	wantState(t, err, "23514", "counted in pieces")
+	wantState(t, err, "23514", "counts in pieces")
 
 	split := user.must(t, "stock.move", str(t, a, "id"), box, 2.5)
 	if str(t, split, "values", "Order") != "PO-1" || num(t, split, "amount") != 2.5 {
@@ -337,7 +341,7 @@ func TestFilesAndModels(t *testing.T) {
 	tools := admin.id(t, "class.create", "Tools", nil, false)
 	addAttribute(t, admin, tools, "Manual", obj("scope", "item", "type", "attachment", "media", []string{"application/pdf"}))
 	addAttribute(t, admin, tools, "Volts", obj("scope", "item", "type", "decimal", "unit", "V", "required", true, "default", 18))
-	drill := user.id(t, "item.create", tools, "Drill", nil, js(obj()))
+	drill := user.id(t, "item.create", tools, "Drill", js(obj()))
 	hash := strings.Repeat("ab", 32)
 
 	t.Run("files", func(t *testing.T) {

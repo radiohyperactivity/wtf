@@ -73,10 +73,11 @@ func TestCLIInteractive(t *testing.T) {
 	c.ok("class", "attribute", "add", "Screws", "Lot", "--type", "text", "--stock")
 
 	// A bare "item add" asks for everything: name, class (Tab completes
-	// "Scr" to the path), unit (skipped), the required Length, then
-	// the optional Colour (picked with Tab Tab, filtering on "bl").
-	out, prompts := c.interact([]string{"M3 screw\r", "Scr", "\t", "\r", "\r", "12\r", "\t", "\t", "b", "l", "\r", "\r", "\r"}, false, "item", "add") // the last: no stock
-	contains(t, prompts, "Name: ", "Class: ", "Unit (Enter: pieces)", "Length (required) (mm): ", "Colour [red]")
+	// "Scr" to the path), the required Length, then the optional Colour
+	// (picked with Tab Tab, filtering on "bl"). Not a unit: that is the
+	// class's.
+	out, prompts := c.interact([]string{"M3 screw\r", "Scr", "\t", "\r", "12\r", "\t", "\t", "b", "l", "\r", "\r", "\r"}, false, "item", "add") // the last: no stock
+	contains(t, prompts, "Name: ", "Class: ", "Length (required) (mm): ", "Colour [red]")
 	contains(t, out, "M3 screw", "Hardware/Screws", "12 mm", "blue")
 
 	// Stock: the location by Tab, an amount, and the stock attribute Lot.
@@ -134,15 +135,15 @@ func TestCLIInteractive(t *testing.T) {
 	_, stderr = c.run(1, "", "class", "add", "Tools/Hand/Pliers")
 	contains(t, stderr, "these classes don't exist: Tools, Tools/Hand", "--create-parents")
 	out, _ = c.run(0, "", "class", "add", "Tools/Hand/Pliers", "--create-parents")
-	contains(t, out, "Created class Tools.", "Created class Hand.", "Path:  Tools/Hand/Pliers")
-	contains(t, c.ok("class", "add", "Hand/Saws"), "Path:  Tools/Hand/Saws") // the parent by its end
+	contains(t, out, "Created class Tools.", "Created class Hand.", "Path:   Tools/Hand/Pliers")
+	contains(t, c.ok("class", "add", "Hand/Saws"), "Path:   Tools/Hand/Saws") // the parent by its end
 	out, prompts = c.interact([]string{"y\r"}, false, "class", "add", "tools/Power/Drills")
 	contains(t, prompts, "These classes don't exist yet:\n  Tools/Power\n", "Create them? [y/N]")
-	contains(t, out, "Created class Power.", "Path:  Tools/Power/Drills")
+	contains(t, out, "Created class Power.", "Path:   Tools/Power/Drills")
 	_, prompts = c.interactExit(1, []string{"\r"}, false, "class", "add", "Garden/Hoses")
 	contains(t, prompts, "Garden\n")
-	contains(t, c.ok("class", "add", "Bar", "--parent", "Tools", "--create-parents"), "Path:  Tools/Bar")
-	contains(t, c.ok("class", "add", "Clamps/Quick", "--parent", "Tools", "--create-parents"), "Path:  Tools/Clamps/Quick")
+	contains(t, c.ok("class", "add", "Bar", "--parent", "Tools", "--create-parents"), "Path:   Tools/Bar")
+	contains(t, c.ok("class", "add", "Clamps/Quick", "--parent", "Tools", "--create-parents"), "Path:   Tools/Clamps/Quick")
 	tree = c.ok("class", "tree")
 	contains(t, tree, "Tools\n  Bar\n  Clamps\n    Quick\n  Hand\n    Pliers\n    Saws\n  Power\n    Drills\n")
 	if strings.Contains(tree, "Garden") {

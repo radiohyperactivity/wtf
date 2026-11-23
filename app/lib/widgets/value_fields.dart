@@ -367,8 +367,9 @@ class _ValueFieldState extends State<ValueField> {
 }
 
 /// An amount field: empty means uncounted (or, when moving or merging, all
-/// of it). [unit] is the item's: what its stock is counted in, a label
-/// (null: pieces, integers).
+/// of it), unless [required] (the class counts every stock row). [unit] is
+/// the item's class's: what its stock is counted in, a label (null:
+/// pieces, integers).
 class AmountField extends StatelessWidget {
   const AmountField({
     super.key,
@@ -379,10 +380,14 @@ class AmountField extends StatelessWidget {
     this.autofocus = false,
     this.onSubmitted,
     this.enabled = true,
+    this.required = false,
   });
 
   final TextEditingController controller;
   final String? unit;
+
+  /// An amount must be given: the class requires one.
+  final bool required;
   final String emptyMeans;
   final FocusNode? focusNode;
   final bool autofocus;
@@ -411,15 +416,16 @@ class AmountField extends StatelessWidget {
         : TextInputAction.done,
     onFieldSubmitted: (_) => onSubmitted?.call(),
     decoration: InputDecoration(
-      labelText: 'Amount',
+      labelText: required ? 'Amount *' : 'Amount',
       suffixText: unit ?? 'pieces',
-      helperText: 'Empty: $emptyMeans',
+      helperText: required ? null : 'Empty: $emptyMeans',
       border: const OutlineInputBorder(),
     ),
     keyboardType: const TextInputType.numberWithOptions(decimal: true),
     autovalidateMode: AutovalidateMode.onUserInteraction,
     validator: (_) {
       if (!enabled) return null;
+      if (required && controller.text.trim().isEmpty) return 'Required';
       try {
         parse(controller, unit);
         return null;

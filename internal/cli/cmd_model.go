@@ -393,9 +393,111 @@ func classGroup() group {
 			nodeAddCommand("class", "/classes", resolveClassFn, show),
 			nodeSetCommand("class", "/classes/", resolveClassFn, show),
 			editCommand("class", objectParam("class"), resolveClassFn, (*env).editClass),
+			classStockCommand(),
 			treeDeleteCommand("class", "/classes/", resolveClassFn),
 		},
 	}
+}
+
+// classStockCommand says how the stock of a class's items is counted.
+func classStockCommand() command {
+	return command{
+		name: "stock",
+		args: "<class> (--counting none|optional|required [--unit U] | --inherit) [--dry-run] [--yes]",
+		summary: "Say how the stock of the class's items is counted, for the classes below that inherit it too: " +
+			"none (not counted), optional or required (the amount), in --unit (default: pieces); or --inherit, " +
+			"as its parent does. Nothing converts: on a terminal it asks before counted stock gets another unit.",
+		params: []param{arg("Class", completeClasses)},
+		setup: func(fs *flag.FlagSet) func(*env, []string) error {
+			counting := fs.String("counting", "", "none, optional or required")
+			unit := fs.String("unit", "", "what amounts are counted in, a label such as m or kg (default: pieces)")
+			inherit := fs.Bool("inherit", false, "count as its parent class does")
+			dryRun := fs.Bool("dry-run", false, "change nothing, and say what it would do")
+			yes := fs.Bool("yes", false, "don't ask before relabelling counted stock")
+			return func(e *env, args []string) error {
+				if err := wantArgs(args, 1, 1); err != nil {
+					return err
+				}
+				switch {
+				case *inherit && *counting != "":
+					return usagef("give --counting or --inherit, not both")
+				case !*inherit && *counting == "":
+					return usagef("give --counting none|optional|required, or --inherit")
+				case *inherit && *unit != "":
+					return usagef("--unit goes with --counting")
+				}
+				classID, err := e.resolveClass(args[0])
+				if err != nil {
+					return err
+				}
+				path := "/classes/" + classID + "/stock"
+				method, body := http.MethodPut, any(object{"counting": *counting, "unit": orNil(*unit)})
+				if *inherit {
+					method, body = http.MethodDelete, nil
+				}
+				if !*dryRun && !*yes {
+					if err := e.confirmRelabel(method, path, body); err != nil {
+						return err
+					}
+				}
+				return e.classChange(method, path, body, *dryRun)
+			}
+		},
+	}
+}
+
+// confirmRelabel asks, on a terminal, before a change of a class's rule
+// for counting stock that gives counted stock another unit (a dry run says
+// how many rows); elsewhere such a change needs --yes.
+func (e *env) confirmRelabel(method, path string, body any) error {
+	data, _, err := e.api.Do(e.ctx, method, path+"?dry_run=true", nil, body)
+	if err != nil {
+		return err
+	}
+	var r classChange
+	if err := e.decode(data, &r); err != nil {
+		return err
+	}
+	if r.Relabelled == 0 {
+		return nil
+	}
+	rows := count(r.Relabelled, "stock row", "stock rows")
+	if e.term == nil {
+		return fmt.Errorf("this counts %s in another unit, and nothing converts; give --yes to go ahead", rows)
+	}
+	answer, err := e.term.ReadLine(fmt.Sprintf("This counts %s in another unit, and nothing converts: "+
+		"their amounts stay as they are. Go ahead? [y/N] ", rows), "", nil)
+	if err != nil {
+		return err
+	}
+	if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
+		return errors.New("nothing was changed")
+	}
+	return nil
+}
+
+// stockRuleText is how a class counts its items' stock, in words, and
+// where the rule comes from.
+func (e *env) stockRuleText(c class) string {
+	r := c.Stock
+	text := "not counted"
+	if r.Counting != "none" {
+		unit := "pieces"
+		if r.Unit != nil {
+			unit = *r.Unit
+		}
+		text = fmt.Sprintf("counted, %s, in %s", r.Counting, unit)
+	}
+	switch {
+	case r.From == nil:
+		return text + " (the default)"
+	case *r.From == c.ID:
+		return text + " (this class)"
+	}
+	if classes, err := e.classTree(); err == nil {
+		return text + " (from " + classes.pathString(*r.From) + ")"
+	}
+	return text + " (inherited)"
 }
 
 func (e *env) printClassJSON(data json.RawMessage) error {
@@ -413,6 +515,7 @@ func (e *env) printClass(c class) {
 		"Name", c.Name,
 		"Container", yesNo(c.Container),
 		"Path", pathNames(c.Path),
+		"Stock", e.stockRuleText(c),
 		"Id", c.ID)
 	for _, scope := range []string{"item", "stock"} {
 		header := false
@@ -483,6 +586,14 @@ func (e *env) classChange(method, path string, body any, dryRun bool) error {
 			fmt.Fprintf(e.stdout, "A dry run: nothing changed. It would rewrite %s.\n", rows)
 		case rows != "":
 			fmt.Fprintf(e.stdout, "Rewrote %s.\n", rows)
+		}
+		if r.Relabelled > 0 {
+			relabelled := count(r.Relabelled, "stock row", "stock rows")
+			if r.DryRun {
+				fmt.Fprintf(e.stdout, "It would count %s in another unit; nothing converts.\n", relabelled)
+			} else {
+				fmt.Fprintf(e.stdout, "Counted %s in another unit; nothing converted.\n", relabelled)
+			}
 		}
 		return nil
 	})

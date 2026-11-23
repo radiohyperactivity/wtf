@@ -61,10 +61,11 @@ wtf item add            # asks for everything, with Tab completion
 | `wtf profile list` / `use <name>` / `delete <name>` | (local configuration) |
 | `wtf find <words…> [--class C] [--where CONDITION]…` | `GET /items?search=&where=`, plus each item's stock locations |
 | `wtf code <code>` | `/codes/{code}` |
-| `wtf item list [--class C] [--search S] [--where CONDITION]… [--limit N] [--all]` / `get` / `add <name> --class C [--unit U] [--<attribute> VALUE]… [--edit]` / `set [--name N] [--class C] [--unit U \| --no-unit] [--no-photo] [--<attribute> VALUE] [--no-<attribute>] [--default ATTRIBUTE]…` / `edit` / `delete` | `/items` |
+| `wtf item list [--class C] [--search S] [--where CONDITION]… [--limit N] [--all]` / `get` / `add <name> --class C [--<attribute> VALUE]… [--edit]` / `set [--name N] [--class C] [--no-photo] [--<attribute> VALUE] [--no-<attribute>] [--default ATTRIBUTE]…` / `edit` / `delete` | `/items` |
 | `wtf stock list [--item I] [--location L] [--search S] [--limit N] [--all]` / `get` / `add <item> <location> [amount] [--<attribute> VALUE]…` / `move <stock> <location> [amount]` / `merge <stock> <into> [amount] [--keep FIELD=from\|into]…` / `set [--amount A\|none] [--location L] [--item I] [--no-photo] [--<attribute> VALUE] …` / `edit` / `delete` | `/stock` |
 | `wtf location tree` / `get` / `add <name or path> [--parent P] [--create-parents] [--container \| --grid COLUMNSxROWS] [--edit]` / `set [--name N] [--parent P\|none] [--container yes\|no]` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` | `/locations` |
 | `wtf class tree` / `get` / `add` / `set` / `edit` / `delete [--recursive [--force]] [--yes] [--verbose]` | `/classes` |
+| `wtf class stock <class> (--counting none\|optional\|required [--unit U] \| --inherit) [--dry-run] [--yes]` | `/classes/{id}/stock` |
 | `wtf class attribute add <class> <name> --type T [--stock] [--unit U] [--required] [--default V] [--choices A,B,C] [--media TYPES] [--order N] [--dry-run]` / `set <class> <attribute> [--required yes\|no] [--default V \| --no-default] [--unit U \| --no-unit] [--media TYPES \| --no-media] [--order N] [--dry-run]` / `rename <class> <attribute> <new name> [--dry-run]` / `remove <class> <attribute> [--dry-run] [--yes]` | `/classes/{id}/attributes` |
 | `wtf class choice add <class> <attribute> <choice>…` / `rename <class> <attribute> <choice> <new>` / `remove <class> <attribute> <choice>`, each `[--dry-run]` | `/classes/{id}/attributes/{attribute}/choices` |
 | `wtf file put <item, stock row or location> <attribute\|photo> <file>` / `get <item, stock row or location> <attribute\|photo> [file\|-] [--force]` | `/items/{id}/photo`, `/items/{id}/files/{attribute}`, the same for `/stock`, and `/locations/{id}/photo` |
@@ -81,7 +82,7 @@ When stdin and stderr are a terminal, `wtf` asks for missing arguments instead o
   - missing required arguments and flags (`--class` of `item add`, `--type` of `class attribute add`, …);
   - required attribute values that have no value or default, even when the command line was otherwise complete.
 - **What is offered:** once `wtf` has asked for something, the session counts as interactive, and optional data is offered too. Enter skips it.
-  - `item add`: the unit, then every attribute of the class, required ones first, with defaults shown as `Colour [red]`.
+  - `item add`: every attribute of the class, required ones first, with defaults shown as `Colour [red]`. (An item has no unit of its own: it is its class's.)
   - `stock add`: the amount (Enter: uncounted) and the class's stock attributes.
   - `stock move`, `stock merge`: the amount (Enter: all of it).
   - Files are uploaded with `wtf file put`, and never asked for.
@@ -372,3 +373,11 @@ Built with the refactored API ([API.md](API.md), API revision 1 again; 2026-10-3
 74. **Lists show one page** and say when more follow; `--all` follows the pages to the end (the API pages by key, with no total). `--offset` is gone.
 75. **`wtf stock merge`** asks, on a terminal, which row's value to keep for each difference (the photo, a value), and takes `--keep FIELD=from|into` in scripts; without a terminal, a difference that `--keep` doesn't settle is an error that lists them all.
 76. **Profiles have the server's address only** (decision 41 of the plan): there are no tenants to pick by hostname.
+
+### How stock is counted, on the class (22 November 2026)
+
+[2026-11-22-stock-rules-on-classes.md](2026-11-22-stock-rules-on-classes.md), decisions 13 and 14:
+
+77. **`wtf item add` and `wtf item set` lose `--unit` and `--no-unit`,** and the edit form its unit field: an item's unit is its class's. `wtf item get` still shows it, from the class.
+78. **`wtf class stock <class> --counting none|optional|required [--unit U]`** gives a class its own rule for counting its items' stock, and **`--inherit`** makes it inherit its parent's again. It does a dry run first: when the change would count stock with an amount in another unit (nothing converts), it asks on a terminal, and needs `--yes` elsewhere. `--dry-run` only says what it would do; the answer says how many rows were counted in another unit. `wtf class get` shows the rule as `Stock:  counted, optional, in m (from Tools)`.
+79. **After `item add`, the stock offered follows the class's rule:** no amount asked for when nothing is counted, and one that must be given when it is required.

@@ -352,16 +352,6 @@ func (e *env) editItem(id string) error {
 		}
 		p.patch["class"] = classID
 	}
-	unit := ""
-	if it.Unit != nil {
-		unit = *it.Unit
-	}
-	if v, err = e.field("Unit of its stock (empty: pieces)", unit, nil); err != nil {
-		return err
-	}
-	if v != unit {
-		p.patch["unit"] = orNil(v)
-	}
 	c, err := e.classDetail(classID)
 	if err != nil {
 		return err

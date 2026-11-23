@@ -161,8 +161,8 @@ func TestFunctionCatalogue(t *testing.T) {
 			t.Errorf("helpers with settings of their own: %v", bad)
 		}
 		n := d.value(t, `SELECT count(*)`+ours+` AND p.prosecdef`)
-		if n != int64(54) {
-			t.Errorf("%v functions for the API, want 54", n)
+		if n != int64(56) {
+			t.Errorf("%v functions for the API, want 56", n)
 		}
 	})
 
@@ -196,7 +196,7 @@ func TestFunctionCatalogue(t *testing.T) {
 	t.Run("names that are reserved words", func(t *testing.T) {
 		at := newAccessors(t, "catalogue")
 		class := at.admin.id(t, "class.create", "Things", nil, false)
-		item := at.user.id(t, "item.create", class, "Thing", nil, "{}")
+		item := at.user.id(t, "item.create", class, "Thing", "{}")
 		if _, err := at.user.call(t, "item.delete", item); err != nil {
 			t.Error(err)
 		}
@@ -224,9 +224,9 @@ func TestAccessorSessions(t *testing.T) {
 		_, err = at.user.call(t, "class.create", "Tools", nil, false)
 		wantState(t, err, "42501", "you are user")
 		class := at.admin.id(t, "class.create", "Tools", nil, false)
-		_, err = at.viewer.call(t, "item.create", class, "Drill", nil, "{}")
+		_, err = at.viewer.call(t, "item.create", class, "Drill", "{}")
 		wantState(t, err, "42501", "you are viewer")
-		at.user.must(t, "item.create", class, "Drill", nil, "{}")
+		at.user.must(t, "item.create", class, "Drill", "{}")
 	})
 
 	t.Run("emails are in lower case, and once", func(t *testing.T) {
@@ -330,7 +330,7 @@ func TestAccessorDeleting(t *testing.T) {
 	tools := admin.id(t, "class.create", "Tools", nil, false)
 	drills := admin.id(t, "class.create", "Drills", tools, false)
 	shed := admin.id(t, "location.create", "Shed", nil, false, nil, nil, nil)
-	drill := user.id(t, "item.create", drills, "Drill", nil, "{}")
+	drill := user.id(t, "item.create", drills, "Drill", "{}")
 	stock := user.id(t, "stock.create", drill, shed, 1, "{}")
 
 	t.Run("what is in the way is named", func(t *testing.T) {
@@ -363,7 +363,7 @@ func TestAccessorDeleting(t *testing.T) {
 
 	t.Run("a deleted thing's label is gone, one never handed out not found", func(t *testing.T) {
 		things := admin.id(t, "class.create", "Things", nil, false)
-		box := user.must(t, "item.create", things, "Box", nil, "{}")
+		box := user.must(t, "item.create", things, "Box", "{}")
 		code := str(t, box, "code")
 		user.must(t, "item.delete", str(t, box, "id"))
 		_, err := user.call(t, "code.resolve", code)
@@ -376,14 +376,14 @@ func TestAccessorDeleting(t *testing.T) {
 
 	t.Run("containers", func(t *testing.T) {
 		boxes := admin.id(t, "class.create", "Boxes", nil, true)
-		_, err := user.call(t, "item.create", boxes, "Box", nil, "{}")
+		_, err := user.call(t, "item.create", boxes, "Box", "{}")
 		wantState(t, err, "23514", "is a container")
 		things := admin.id(t, "class.create", "Stuff", nil, false)
-		user.must(t, "item.create", things, "Thing", nil, "{}")
+		user.must(t, "item.create", things, "Thing", "{}")
 		_, err = admin.call(t, "class.patch", things, `{"container": true}`)
 		wantState(t, err, "23514", "can't become a container")
 		room := admin.id(t, "location.create", "Room", nil, true, nil, nil, nil)
-		_, err = user.call(t, "stock.create", str(t, user.must(t, "item.create", things, "Other", nil, "{}"), "id"),
+		_, err = user.call(t, "stock.create", str(t, user.must(t, "item.create", things, "Other", "{}"), "id"),
 			room, 1, "{}")
 		wantState(t, err, "23514", "is a container")
 	})

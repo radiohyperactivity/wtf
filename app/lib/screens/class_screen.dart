@@ -24,9 +24,10 @@ class _ClassData {
   final ResultPage<ItemListed> items;
 }
 
-/// A class, like `wtf class get`: its path, its attributes (own and
-/// inherited), the classes below it and its items. Admins change its
-/// attributes here; every change says first what it would rewrite.
+/// A class, like `wtf class get`: its path, how its items' stock is
+/// counted, its attributes (own and inherited), the classes below it and
+/// its items. Admins change its attributes and its rule for counting here;
+/// every change says first what it would rewrite.
 class ClassScreen extends StatelessWidget {
   const ClassScreen({super.key, required this.id});
 
@@ -208,6 +209,26 @@ class ClassScreen extends StatelessWidget {
                       'yes',
                       note: 'holds only other classes',
                     ),
+                  // How its items' stock is counted, and whose rule it is
+                  // (decision 110).
+                  ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.inventory_outlined),
+                    title: Text('Stock: ${c.stock.text.toLowerCase()}'),
+                    subtitle: Text(switch (c.stock.from) {
+                      null => 'the default',
+                      final from when from == c.id => 'its own',
+                      final from => 'from ${data.tree.pathOf(from)}',
+                    }),
+                    onTap: write
+                        ? () async {
+                            if (await showStockRuleDialog(context, c) &&
+                                context.mounted) {
+                              reload();
+                            }
+                          }
+                        : null,
+                  ),
                   ...attributeSections(),
                   SectionTitle(
                     'Classes below',
@@ -867,4 +888,149 @@ Future<bool> showChoicesDialog(
     ),
   );
   return changed;
+}
+
+/// The choices for a class's rule for counting stock: its parent's (or the
+/// default), or one of its own.
+enum _RuleChoice { inherit, none, optional, required }
+
+/// Changes how the stock of class [c]'s items is counted: inherited, or a
+/// rule of its own with a unit. A dry run first: when counted stock would
+/// get another unit, it says how many rows and asks, as nothing converts.
+/// True when it changed.
+Future<bool> showStockRuleDialog(BuildContext context, ClassDetail c) async {
+  final client = context.read<Session>().client;
+  final own = c.stock.from == c.id;
+  var choice = !own
+      ? _RuleChoice.inherit
+      : switch (c.stock.counting) {
+          Counting.none => _RuleChoice.none,
+          Counting.optional => _RuleChoice.optional,
+          Counting.required => _RuleChoice.required,
+        };
+  final unit = TextEditingController(text: own ? c.stock.unit ?? '' : '');
+  final changed = await showDialog<bool>(
+    context: context,
+    // The unit's controller goes with the dialog, once it has closed.
+    builder: (context) => DisposeWith(
+      onDispose: unit.dispose,
+      child: StatefulBuilder(
+        builder: (context, setState) {
+          final counted =
+              choice == _RuleChoice.optional || choice == _RuleChoice.required;
+
+          Future<ClassChange> change({required bool dryRun}) {
+            if (choice == _RuleChoice.inherit) {
+              return client.inheritClassStock(c.id, dryRun: dryRun);
+            }
+            final text = unit.text.trim();
+            return client.setClassStock(
+              c.id,
+              Counting.values.byName(choice.name),
+              counted && text.isNotEmpty ? text : null,
+              dryRun: dryRun,
+            );
+          }
+
+          Future<void> save() async {
+            try {
+              final trial = await change(dryRun: true);
+              if (!context.mounted) return;
+              if (trial.relabelled > 0) {
+                final go = await showDialog<bool>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('Count in another unit?'),
+                    content: Text(
+                      '${trial.relabelled} stock '
+                      '${trial.relabelled == 1 ? 'row is' : 'rows are'} counted '
+                      'in another unit then. Nothing converts: '
+                      '${trial.relabelled == 1 ? 'its amount stays' : 'their amounts stay'} '
+                      'as ${trial.relabelled == 1 ? 'it is' : 'they are'}.',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('Cancel'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('Change'),
+                      ),
+                    ],
+                  ),
+                );
+                if (go != true || !context.mounted) return;
+              }
+              await change(dryRun: false);
+              if (context.mounted) Navigator.pop(context, true);
+            } catch (e) {
+              if (context.mounted) showError(context, e);
+            }
+          }
+
+          return AlertDialog(
+            title: Text('Stock of ${c.name}'),
+            content: SizedBox(
+              width: 420,
+              child: FormKeys(
+                save: save,
+                child: RadioGroup<_RuleChoice>(
+                  groupValue: choice,
+                  onChanged: (v) => setState(() => choice = v ?? choice),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      RadioListTile(
+                        value: _RuleChoice.inherit,
+                        title: Text(
+                          c.parent == null
+                              ? 'The default: counted, the amount optional, pieces'
+                              : "As its parent's",
+                        ),
+                      ),
+                      for (final (value, counting) in [
+                        (_RuleChoice.none, Counting.none),
+                        (_RuleChoice.optional, Counting.optional),
+                        (_RuleChoice.required, Counting.required),
+                      ])
+                        RadioListTile(
+                          value: value,
+                          title: Text(counting.label),
+                        ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: unit,
+                        enabled: counted,
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: (_) => save(),
+                        decoration: const InputDecoration(
+                          labelText: 'Unit',
+                          hintText: 'm, kg, l …',
+                          helperText:
+                              'A label; nothing converts. Empty: pieces, '
+                              'counted one by one',
+                          helperMaxLines: 2,
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(onPressed: save, child: const Text('Save')),
+            ],
+          );
+        },
+      ),
+    ),
+  );
+  return changed ?? false;
 }

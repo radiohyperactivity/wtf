@@ -86,7 +86,7 @@ class      { id, name, parent, container, path: [ { id, name } ], attributes: [ 
 change     { class, items, stock, dry_run }                     (a change of a class's attributes)
 location   { id, code, name, parent, container, path: [ { id, name } ] }
 values     { "<attribute name>": value, … }                     (no key: no value)
-item       (list) { id, code, name, class: <class id>, unit, photo, stock: { total, uncounted } }
+item       (list) { id, code, name, class: <class id>, counting, unit, photo, stock: { total, uncounted } }
            (get)  { id, code, name, class: { id, name, path }, unit, photo, values, defaulted: [ name ],
                     stock: [ stock, with item: <item id> ] }
 stock      { id, code, item: item (list form, without stock), location: <location id>, amount: number | null,
@@ -119,6 +119,8 @@ The 51 functions the API calls, and the routes that call them (under `/api/v1`).
 | `class.get(p_class)` | class | `GET /classes/{id}` |
 | `class.create(p_name, p_parent, p_container)` | class | `POST /classes` |
 | `class.patch(p_class, p_patch)` | class | `PATCH /classes/{id}` |
+| `class.stock_set(p_class, p_counting, p_unit, p_dry_run)` | change | `PUT /classes/{id}/stock` |
+| `class.stock_inherit(p_class, p_dry_run)` | change | `DELETE /classes/{id}/stock` |
 | `class.delete(p_class)` | void | `DELETE /classes/{id}` |
 | `class.delete_tree(p_class, p_force, p_dry_run)` | `{classes, items, stock}` | `DELETE /classes/{id}?recursive=true[&force=true]`; preview `GET /classes/{id}/deletion` |
 | `class.attribute_add(p_class, p_name, p_definition, p_dry_run)` | change | `POST /classes/{id}/attributes` |
@@ -143,7 +145,7 @@ The 51 functions the API calls, and the routes that call them (under `/api/v1`).
 | `stock.delete(p_stock)` | void | `DELETE /stock/{id}` |
 | `item.list(p_class, p_search, p_where, p_limit, p_after)` | page of items (list form) | `GET /items` |
 | `item.get(p_item)` | item | `GET /items/{id}` |
-| `item.create(p_class, p_name, p_unit, p_values, p_stock)` | item, with its first stock row when `p_stock` is given | `POST /items` |
+| `item.create(p_class, p_name, p_values, p_stock)` | item, with its first stock row when `p_stock` is given | `POST /items` |
 | `item.patch(p_item, p_patch)` | item | `PATCH /items/{id}` |
 | `item.delete(p_item)` | void | `DELETE /items/{id}` |
 | `attachment.lock(p_hash)` | void | `PUT /{kind}/{id}/photo`, `PUT /{kind}/{id}/files/{attribute}` (multipart; wtfd stores the file between the two calls) |
