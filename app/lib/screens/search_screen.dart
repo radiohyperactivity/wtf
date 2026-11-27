@@ -22,6 +22,10 @@ import '../widgets/select_keys.dart';
 class ItemSearchScreen extends StatefulWidget {
   const ItemSearchScreen({super.key});
 
+  /// Moved on by Ctrl+F (decision 121): the search field takes the cursor,
+  /// with what it has selected, so typing replaces it.
+  static final focusRequests = ValueNotifier<int>(0);
+
   @override
   State<ItemSearchScreen> createState() => _ItemSearchScreenState();
 }
@@ -29,6 +33,7 @@ class ItemSearchScreen extends StatefulWidget {
 class _ItemSearchScreenState extends State<ItemSearchScreen> {
   final _form = GlobalKey<FormState>();
   final _query = TextEditingController();
+  final _queryFocus = FocusNode();
   String? _classId;
   Tree? _classes;
   List<_Condition> _conditions = [];
@@ -47,6 +52,7 @@ class _ItemSearchScreenState extends State<ItemSearchScreen> {
   @override
   void initState() {
     super.initState();
+    ItemSearchScreen.focusRequests.addListener(_focusQuery);
     _treeChanges = _client.treeChanges.listen((kind) async {
       if (kind != TreeKind.classes) return;
       final tree = await _client.tree(kind);
@@ -54,9 +60,21 @@ class _ItemSearchScreenState extends State<ItemSearchScreen> {
     });
   }
 
+  // After the frame, by which the screens over this one are gone.
+  void _focusQuery() => WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (!mounted) return;
+    _queryFocus.requestFocus();
+    _query.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: _query.text.length,
+    );
+  });
+
   @override
   void dispose() {
+    ItemSearchScreen.focusRequests.removeListener(_focusQuery);
     _treeChanges?.cancel();
+    _queryFocus.dispose();
     _query.dispose();
     for (final c in _conditions) {
       c.dispose();
@@ -153,6 +171,7 @@ class _ItemSearchScreenState extends State<ItemSearchScreen> {
     final session = context.watch<Session>();
     final query = TextField(
       controller: _query,
+      focusNode: _queryFocus,
       // Ready to type on a computer. Not on a phone or tablet, where the
       // keyboard would come up over the screen at every start.
       autofocus: !_touch,
@@ -207,20 +226,24 @@ class _ItemSearchScreenState extends State<ItemSearchScreen> {
       label: const Text('Search'),
       style: FilledButton.styleFrom(minimumSize: const Size(0, 56)),
     );
+    final main = session.canWriteItems
+        ? MainAction(
+            label: 'New item',
+            icon: Icons.add,
+            onPressed: () => context.push(
+              _classId == null ? '/items/new' : '/items/new?class=$_classId',
+            ),
+          )
+        : null;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Items'),
-        actions: [TextButton(onPressed: _clear, child: const Text('Clear'))],
+        actions: [
+          TextButton(onPressed: _clear, child: const Text('Clear')),
+          ?main?.inBar(context),
+        ],
       ),
-      floatingActionButton: session.canWriteItems
-          ? FloatingActionButton.extended(
-              onPressed: () => context.push(
-                _classId == null ? '/items/new' : '/items/new?class=$_classId',
-              ),
-              icon: const Icon(Icons.add),
-              label: const Text('New item'),
-            )
-          : null,
+      floatingActionButton: main?.floating(context),
       body: Readable(
         child: Form(
           key: _form,

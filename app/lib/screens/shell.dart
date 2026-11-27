@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../api/client.dart';
 import '../camera.dart';
 import '../session.dart';
+import '../widgets/common.dart';
 
 class _Destination {
   const _Destination(this.path, this.label, this.icon, this.selectedIcon);
@@ -49,9 +50,6 @@ bool adminOnly(String path) =>
     _underAdmin.hasMatch(path) ||
     path == '/locations/new' ||
     RegExp(r'^/locations/[^/]+/edit$').hasMatch(path);
-
-/// Below this width (logical pixels) the navigation is a bottom bar.
-const compactWidth = 600.0;
 
 class AppShell extends StatelessWidget {
   const AppShell({super.key, required this.location, required this.child});

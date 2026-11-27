@@ -29,6 +29,7 @@ class _Node {
   const _Node({
     required this.id,
     required this.name,
+    this.description,
     this.parent,
     this.container = false,
     this.code,
@@ -38,6 +39,7 @@ class _Node {
 
   final String id;
   final String name;
+  final String? description;
   final String? parent;
   final bool container;
   final String? code;
@@ -77,6 +79,7 @@ class NodeFormScreen extends StatelessWidget {
             _Node(
               id: l.id,
               name: l.name,
+              description: l.description,
               parent: l.parent,
               container: l.container,
               code: l.code,
@@ -91,6 +94,7 @@ class NodeFormScreen extends StatelessWidget {
           _Node(
             id: c.id,
             name: c.name,
+            description: c.description,
             parent: c.parent,
             container: c.container,
           ),
@@ -117,11 +121,17 @@ class _NodeForm extends StatefulWidget {
 class _NodeFormState extends State<_NodeForm> {
   final _form = GlobalKey<FormState>();
   late final _name = TextEditingController(text: widget.node?.name ?? '');
+  late final _description = TextEditingController(
+    text: widget.node?.description ?? '',
+  );
   final _columns = TextEditingController(text: '8');
   final _rows = TextEditingController(text: '5');
-  late String? _parent = widget.node == null
-      ? widget.args.parentId
-      : widget.node!.parent;
+  // A new one's parent: what the form was opened for ("Add" on a location
+  // or class), else the parent of the last one made in this session, else
+  // the top level (decision 122).
+  late String? _parent = widget.node != null
+      ? widget.node!.parent
+      : widget.args.parentId ?? _recentParent();
   late bool _container = widget.node?.container ?? false;
   bool _grid = false;
   bool _busy = false;
@@ -136,6 +146,15 @@ class _NodeFormState extends State<_NodeForm> {
       (_parent == null ? false : widget.tree[_parent]?.stockPhotos ?? false);
 
   bool get _locations => widget.args.kind == TreeKind.locations;
+
+  String? _recentParent() {
+    final recent = context.read<Session>().recent;
+    bool exists(String id) => widget.tree[id] != null;
+    return _locations
+        ? recent.locationParent(exists)
+        : recent.classParent(exists);
+  }
+
   String get _noun => _locations ? 'location' : 'class';
 
   /// Stops this form taking the camera's photos; a location's form only.
@@ -161,6 +180,7 @@ class _NodeFormState extends State<_NodeForm> {
   void dispose() {
     _untake?.call();
     _name.dispose();
+    _description.dispose();
     _columns.dispose();
     _rows.dispose();
     super.dispose();
@@ -228,12 +248,13 @@ class _NodeFormState extends State<_NodeForm> {
             grid: grid,
             confirm: confirmed,
             stockPhotos: _stockPhotos,
+            description: DescriptionField.valueOf(_description),
           );
           final failed = await uploadFormFiles(client, '/locations/${l.id}', [
             _photo,
           ]);
           if (mounted) {
-            context.read<Session>().recent.locationMade(l.id);
+            context.read<Session>().recent.locationMade(l.id, _parent);
             _sayNotUploaded('Created ${l.name}', failed);
           }
           target = '/locations/${l.code}';
@@ -242,8 +263,9 @@ class _NodeFormState extends State<_NodeForm> {
             name: name,
             parentId: _parent,
             container: _container,
+            description: DescriptionField.valueOf(_description),
           );
-          if (mounted) context.read<Session>().recent.classMade(c.id);
+          if (mounted) context.read<Session>().recent.classMade(c.id, _parent);
           target = '/classes/${c.id}';
         }
         if (mounted) context.pushReplacement(target);
@@ -256,6 +278,7 @@ class _NodeFormState extends State<_NodeForm> {
         if (_locations && _stockPhotosShown != node.stockPhotos)
           'stock_photos': _stockPhotosShown,
       };
+      DescriptionField.addChange(changes, _description, node.description);
       if (_locations) addFileRemovals(changes, [_photo]);
       if (changes.isEmpty && !_photo.changed) {
         if (mounted) context.pop(false);
@@ -335,6 +358,8 @@ class _NodeFormState extends State<_NodeForm> {
                     return null;
                   },
                 ),
+                const SizedBox(height: 16),
+                DescriptionField(controller: _description),
                 const SizedBox(height: 16),
                 InputDecorator(
                   decoration: const InputDecoration(

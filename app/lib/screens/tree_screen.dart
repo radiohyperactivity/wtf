@@ -71,6 +71,19 @@ class _TreeScreenState extends State<TreeScreen> {
 
           walk(tree.roots);
         }
+        // Admins set up locations and classes.
+        final main = session.isAdmin
+            ? MainAction(
+                label: _locations ? 'New location' : 'New class',
+                icon: Icons.add,
+                onPressed: () async {
+                  await context.push(
+                    _locations ? '/locations/new' : '/classes/new',
+                  );
+                  reload();
+                },
+              )
+            : null;
         return Scaffold(
           appBar: AppBar(
             title: Text(title),
@@ -96,21 +109,10 @@ class _TreeScreenState extends State<TreeScreen> {
                 tooltip: 'Reload',
                 onPressed: reload,
               ),
+              ?main?.inBar(context),
             ],
           ),
-          // Admins set up locations and classes.
-          floatingActionButton: session.isAdmin
-              ? FloatingActionButton.extended(
-                  onPressed: () async {
-                    await context.push(
-                      _locations ? '/locations/new' : '/classes/new',
-                    );
-                    reload();
-                  },
-                  icon: const Icon(Icons.add),
-                  label: Text(_locations ? 'New location' : 'New class'),
-                )
-              : null,
+          floatingActionButton: main?.floating(context),
           body: Readable(
             child: Column(
               children: [

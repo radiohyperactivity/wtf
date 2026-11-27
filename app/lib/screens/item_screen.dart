@@ -67,7 +67,7 @@ class ItemScreen extends StatelessWidget {
     final client = session.client;
     return Loader<(ItemDetail, ClassDetail, Tree)>(
       key: ValueKey(code),
-      title: 'Item $code',
+      title: 'Item',
       // Also after a change by this session's camera, such as a photo
       // taken on the phone.
       refreshOn: anyOf([client.treeChanges, client.remoteChanges]),
@@ -96,6 +96,13 @@ class ItemScreen extends StatelessWidget {
         }
 
         final write = session.canWriteItems;
+        final main = write
+            ? MainAction(
+                label: 'Add stock',
+                icon: Icons.add,
+                onPressed: () => open('/stock/new?item=${item.id}'),
+              )
+            : null;
 
         Future<void> delete() async {
           final ok = await confirmDelete(
@@ -129,7 +136,9 @@ class ItemScreen extends StatelessWidget {
           target: CameraTarget(type: 'item', id: item.id, name: item.name),
           child: Scaffold(
             appBar: AppBar(
-              title: Text(item.name),
+              // The name is among the details, where a long one has room
+              // (decision 120).
+              title: const Text('Item'),
               actions: [
                 if (write) ...[
                   IconButton(
@@ -165,26 +174,24 @@ class ItemScreen extends StatelessWidget {
                     ],
                   ),
                 ],
+                ?main?.inBar(context),
               ],
             ),
-            floatingActionButton: write
-                ? FloatingActionButton.extended(
-                    onPressed: () => open('/stock/new?item=${item.id}'),
-                    icon: const Icon(Icons.add),
-                    label: const Text('Add stock'),
-                  )
-                : null,
-            body: Readable(
-              child: RefreshIndicator(
-                onRefresh: reload,
-                child: ListView(
-                  padding: const EdgeInsets.only(bottom: 88),
-                  children: [
-                    // The class's values are details like the code and class.
-                    WithPhoto(
+            floatingActionButton: main?.floating(context),
+            body: RefreshIndicator(
+              onRefresh: reload,
+              child: ListView(
+                padding: const EdgeInsets.only(bottom: 88),
+                children: [
+                  // The class's values are details like the code and class.
+                  Details(
+                    child: WithPhoto(
                       photo: item.photo,
                       children: [
                         const SizedBox(height: 8),
+                        Field('Name', item.name),
+                        if (item.description case final d?)
+                          Field('Description', d),
                         Field('Code', item.code),
                         Field(
                           'Class',
@@ -210,49 +217,48 @@ class ItemScreen extends StatelessWidget {
                         ),
                       ],
                     ),
-                    if (files.isNotEmpty) ...[
-                      const SectionTitle('Files'),
-                      ...files,
-                    ],
-                    SectionTitle(
-                      'Stock',
-                      trailing: write
-                          ? TextButton.icon(
-                              onPressed: () =>
-                                  open('/stock/new?item=${item.id}'),
-                              icon: const Icon(Icons.add),
-                              label: const Text('Add'),
-                            )
-                          : null,
-                    ),
-                    if (item.stock.isEmpty) const EmptyNote('No stock.'),
-                    for (final s in item.stock) ...[
-                      ListTile(
-                        // The row's own photo, else its location's.
-                        leading: PhotoOrIcon(
-                          s.photo ?? locations[s.location]?.photo,
-                          icon: Icons.place_outlined,
-                        ),
-                        title: Text(locations.pathOf(s.location)),
-                        subtitle: Text(s.code),
-                        trailing: Text(
-                          s.amountText,
-                          style: Theme.of(context).textTheme.titleSmall,
-                        ),
-                        onTap: () => open('/stock/${s.code}'),
-                      ),
-                      if (valueFields(cls, s.values, s.defaulted, stock: true)
-                          case final fields when fields.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 56),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: fields,
-                          ),
-                        ),
-                    ],
+                  ),
+                  if (files.isNotEmpty) ...[
+                    const SectionTitle('Files'),
+                    ...files,
                   ],
-                ),
+                  SectionTitle(
+                    'Stock',
+                    trailing: write
+                        ? TextButton.icon(
+                            onPressed: () => open('/stock/new?item=${item.id}'),
+                            icon: const Icon(Icons.add),
+                            label: const Text('Add'),
+                          )
+                        : null,
+                  ),
+                  if (item.stock.isEmpty) const EmptyNote('No stock.'),
+                  for (final s in item.stock) ...[
+                    ListTile(
+                      // The row's own photo, else its location's.
+                      leading: PhotoOrIcon(
+                        s.photo ?? locations[s.location]?.photo,
+                        icon: Icons.place_outlined,
+                      ),
+                      title: Text(locations.pathOf(s.location)),
+                      subtitle: Text(s.code),
+                      trailing: Text(
+                        s.amountText,
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      onTap: () => open('/stock/${s.code}'),
+                    ),
+                    if (valueFields(cls, s.values, s.defaulted, stock: true)
+                        case final fields when fields.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 56),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: fields,
+                        ),
+                      ),
+                  ],
+                ],
               ),
             ),
           ),

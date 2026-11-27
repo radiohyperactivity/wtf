@@ -76,6 +76,9 @@ class _ItemForm extends StatefulWidget {
 class _ItemFormState extends State<_ItemForm> {
   final _form = GlobalKey<FormState>();
   late final _name = TextEditingController(text: widget.item?.name ?? '');
+  late final _description = TextEditingController(
+    text: widget.item?.description ?? '',
+  );
   final _amount = TextEditingController();
   final _nameFocus = FocusNode();
   final _amountFocus = FocusNode();
@@ -141,6 +144,7 @@ class _ItemFormState extends State<_ItemForm> {
   void dispose() {
     _untake();
     _name.dispose();
+    _description.dispose();
     _amount.dispose();
     _nameFocus.dispose();
     _amountFocus.dispose();
@@ -348,6 +352,7 @@ class _ItemFormState extends State<_ItemForm> {
     final item = await _client.createItem(
       classId: classId,
       name: _name.text.trim(),
+      description: DescriptionField.valueOf(_description),
       values: newValues(_inputs),
       stock: location == null
           ? null
@@ -403,6 +408,7 @@ class _ItemFormState extends State<_ItemForm> {
       if (name != item.name) 'name': name,
       if (_classId != item.cls.id) 'class': _classId,
     });
+    DescriptionField.addChange(changes, _description, item.description);
     final files = [_photo, ..._files.values];
     addFileRemovals(changes, files);
     if (changes.isNotEmpty) await _client.patchItem(item.id, changes);
@@ -509,6 +515,8 @@ class _ItemFormState extends State<_ItemForm> {
                   validator: (v) =>
                       (v ?? '').trim().isEmpty ? 'Enter a name' : null,
                 ),
+                const SizedBox(height: 16),
+                DescriptionField(controller: _description),
                 const SizedBox(height: 8),
                 FormFileTile(_photo),
                 if (_valuesError != null) ...[

@@ -17,9 +17,10 @@ class AccountsScreen extends StatelessWidget {
     return Loader<List<Account>>(
       title: 'Accounts',
       load: session.client.accounts,
-      builder: (context, accounts, reload) => Scaffold(
-        appBar: AppBar(title: const Text('Accounts')),
-        floatingActionButton: FloatingActionButton.extended(
+      builder: (context, accounts, reload) {
+        final main = MainAction(
+          label: 'New account',
+          icon: Icons.person_add_alt,
           onPressed: () async {
             final created = await showAccountDialog(context);
             if (created != null && context.mounted) {
@@ -27,32 +28,37 @@ class AccountsScreen extends StatelessWidget {
             }
             reload();
           },
-          icon: const Icon(Icons.person_add_alt),
-          label: const Text('New account'),
-        ),
-        body: Readable(
-          child: ListView(
-            padding: const EdgeInsets.only(bottom: 88),
-            children: [
-              for (final a in accounts)
-                ListTile(
-                  leading: const Icon(Icons.person_outline),
-                  title: Text(a.email),
-                  subtitle: Text(
-                    [
-                      a.role.label,
-                      if (!a.hasPassword) 'no password',
-                    ].join(' · '),
-                  ),
-                  onTap: () async {
-                    await context.push('/accounts/${a.id}');
-                    reload();
-                  },
-                ),
-            ],
+        );
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Accounts'),
+            actions: [?main.inBar(context)],
           ),
-        ),
-      ),
+          floatingActionButton: main.floating(context),
+          body: Readable(
+            child: ListView(
+              padding: const EdgeInsets.only(bottom: 88),
+              children: [
+                for (final a in accounts)
+                  ListTile(
+                    leading: const Icon(Icons.person_outline),
+                    title: Text(a.email),
+                    subtitle: Text(
+                      [
+                        a.role.label,
+                        if (!a.hasPassword) 'no password',
+                      ].join(' · '),
+                    ),
+                    onTap: () async {
+                      await context.push('/accounts/${a.id}');
+                      reload();
+                    },
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -75,7 +81,9 @@ class AccountScreen extends StatelessWidget {
         final own = a.id == session.me?.id;
         return Scaffold(
           appBar: AppBar(
-            title: Text(a.email),
+            // The email is among the details, where a long one has room
+            // (decision 120).
+            title: const Text('Account'),
             actions: [
               IconButton(
                 icon: const Icon(Icons.edit_outlined),

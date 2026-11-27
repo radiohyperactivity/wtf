@@ -38,7 +38,7 @@ class LocationScreen extends StatelessWidget {
     final client = session.client;
     return Loader<_LocationData>(
       key: ValueKey(code),
-      title: 'Location $code',
+      title: 'Location',
       // Also after a change by this session's camera: what is here changes
       // with its stock rows too.
       refreshOn: anyOf([
@@ -83,13 +83,24 @@ class LocationScreen extends StatelessWidget {
         // Admins set up locations, photos included; users put stock in
         // them.
         final write = session.isAdmin;
+        final main = session.canWriteItems && !l.container
+            ? MainAction(
+                label: 'Add stock here',
+                icon: Icons.add,
+                onPressed: () => open('/stock/new?location=${l.id}'),
+              )
+            : null;
+        // The locations it is in, outermost first.
+        final parents = l.path.sublist(0, l.path.length - 1);
 
         return CameraSubject(
           path: '/locations/$code',
           target: CameraTarget(type: 'location', id: l.id, name: l.name),
           child: Scaffold(
             appBar: AppBar(
-              title: Text(l.name),
+              // The name is among the details, where a long one has room
+              // (decision 120).
+              title: const Text('Location'),
               actions: [
                 if (write)
                   PopupMenuButton<String>(
@@ -134,38 +145,38 @@ class LocationScreen extends StatelessWidget {
                       PopupMenuItem(value: 'delete', child: Text('Delete…')),
                     ],
                   ),
+                ?main?.inBar(context),
               ],
             ),
-            floatingActionButton: session.canWriteItems && !l.container
-                ? FloatingActionButton.extended(
-                    onPressed: () => open('/stock/new?location=${l.id}'),
-                    icon: const Icon(Icons.add),
-                    label: const Text('Add stock here'),
-                  )
-                : null,
-            body: Readable(
-              child: RefreshIndicator(
-                onRefresh: reload,
-                child: ListView(
-                  padding: const EdgeInsets.only(bottom: 88),
-                  children: [
-                    WithPhoto(
+            floatingActionButton: main?.floating(context),
+            body: RefreshIndicator(
+              onRefresh: reload,
+              child: ListView(
+                padding: const EdgeInsets.only(bottom: 88),
+                children: [
+                  Details(
+                    child: WithPhoto(
                       photo: l.photo,
                       children: [
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                          child: PathLinks(
-                            parts: [
-                              for (final p in l.path)
-                                (
-                                  p.name,
-                                  p.id == l.id || tree[p.id]?.code == null
-                                      ? null
-                                      : '/locations/${tree[p.id]!.code}',
-                                ),
-                            ],
+                        const SizedBox(height: 8),
+                        Field('Name', l.name),
+                        if (l.description case final d?)
+                          Field('Description', d),
+                        if (parents.isNotEmpty)
+                          Field.content(
+                            'In',
+                            PathLinks(
+                              parts: [
+                                for (final p in parents)
+                                  (
+                                    p.name,
+                                    tree[p.id]?.code == null
+                                        ? null
+                                        : '/locations/${tree[p.id]!.code}',
+                                  ),
+                              ],
+                            ),
                           ),
-                        ),
                         Field('Code', l.code),
                         if (l.container)
                           const Field(
@@ -175,57 +186,57 @@ class LocationScreen extends StatelessWidget {
                           ),
                       ],
                     ),
-                    SectionTitle(
-                      'Inside',
-                      trailing: write
-                          ? TextButton.icon(
-                              onPressed: () =>
-                                  open('/locations/new?parent=${l.id}'),
-                              icon: const Icon(Icons.add),
-                              label: const Text('Add'),
-                            )
-                          : null,
-                    ),
-                    if (node == null || node.children.isEmpty)
-                      const EmptyNote('No locations inside.'),
-                    for (final c in node?.children ?? const <TreeNode>[])
-                      ListTile(
-                        dense: true,
-                        leading: PhotoOrIcon(
-                          c.photo,
-                          icon: c.container
-                              ? Icons.folder_outlined
-                              : Icons.place_outlined,
-                        ),
-                        title: Text(c.container ? '${c.name}/' : c.name),
-                        trailing: Text(c.code ?? ''),
-                        onTap: () => open('/locations/${c.code}'),
+                  ),
+                  SectionTitle(
+                    'Inside',
+                    trailing: write
+                        ? TextButton.icon(
+                            onPressed: () =>
+                                open('/locations/new?parent=${l.id}'),
+                            icon: const Icon(Icons.add),
+                            label: const Text('Add'),
+                          )
+                        : null,
+                  ),
+                  if (node == null || node.children.isEmpty)
+                    const EmptyNote('No locations inside.'),
+                  for (final c in node?.children ?? const <TreeNode>[])
+                    ListTile(
+                      dense: true,
+                      leading: PhotoOrIcon(
+                        c.photo,
+                        icon: c.container
+                            ? Icons.folder_outlined
+                            : Icons.place_outlined,
                       ),
-                    if (!l.container) ...[
-                      const SectionTitle('Stock here'),
-                      if (here.isEmpty) const EmptyNote('No stock here.'),
-                      for (final s in here)
-                        _StockRow(
-                          stock: s,
-                          place: null,
-                          onTap: () => open('/stock/${s.code}'),
-                        ),
-                    ],
-                    if (below.isNotEmpty) ...[
-                      const SectionTitle('Stock further in'),
-                      for (final s in below)
-                        _StockRow(
-                          stock: s,
-                          place: relative(s.location),
-                          onTap: () => open('/stock/${s.code}'),
-                        ),
-                    ],
-                    if (data.more)
-                      const EmptyNote(
-                        '… and more stock rows than are shown here.',
+                      title: Text(c.container ? '${c.name}/' : c.name),
+                      trailing: Text(c.code ?? ''),
+                      onTap: () => open('/locations/${c.code}'),
+                    ),
+                  if (!l.container) ...[
+                    const SectionTitle('Stock here'),
+                    if (here.isEmpty) const EmptyNote('No stock here.'),
+                    for (final s in here)
+                      _StockRow(
+                        stock: s,
+                        place: null,
+                        onTap: () => open('/stock/${s.code}'),
                       ),
                   ],
-                ),
+                  if (below.isNotEmpty) ...[
+                    const SectionTitle('Stock further in'),
+                    for (final s in below)
+                      _StockRow(
+                        stock: s,
+                        place: relative(s.location),
+                        onTap: () => open('/stock/${s.code}'),
+                      ),
+                  ],
+                  if (data.more)
+                    const EmptyNote(
+                      '… and more stock rows than are shown here.',
+                    ),
+                ],
               ),
             ),
           ),

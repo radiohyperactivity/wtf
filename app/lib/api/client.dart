@@ -495,6 +495,7 @@ class ApiClient {
   Future<ItemDetail> createItem({
     required String classId,
     required String name,
+    String? description,
     Values values = const {},
     NewStock? stock,
   }) async => ItemDetail.fromJson(
@@ -504,6 +505,7 @@ class ApiClient {
       body: {
         'class': classId,
         'name': name,
+        'description': ?description,
         'values': values,
         if (stock != null)
           'stock': {
@@ -559,6 +561,7 @@ class ApiClient {
     required String itemId,
     required String locationId,
     Decimal? amount,
+    String? description,
     Values values = const {},
   }) async => Stock.fromJson(
     await _call(
@@ -568,6 +571,7 @@ class ApiClient {
         'item': itemId,
         'location': locationId,
         'amount': amount,
+        'description': ?description,
         'values': values,
       },
     ) as Json,
@@ -726,12 +730,14 @@ class ApiClient {
     (int columns, int rows)? grid,
     bool confirm = false,
     bool? stockPhotos,
+    String? description,
   }) async => Location.fromJson(
     await _call(
       'POST',
       '/locations',
       body: {
         'name': name,
+        'description': ?description,
         'parent': parentId,
         'container': container,
         'stock_photos': ?stockPhotos,
@@ -787,11 +793,17 @@ class ApiClient {
     required String name,
     String? parentId,
     bool container = false,
+    String? description,
   }) async => ClassDetail.fromJson(
     await _call(
       'POST',
       '/classes',
-      body: {'name': name, 'parent': parentId, 'container': container},
+      body: {
+        'name': name,
+        'parent': parentId,
+        'container': container,
+        'description': ?description,
+      },
     ) as Json,
   );
 

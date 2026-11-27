@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io' show HandshakeException;
 
+import 'package:flutter/foundation.dart'
+    show debugDefaultTargetPlatformOverride;
 import 'package:flutter/gestures.dart' show kSecondaryButton;
 import 'package:flutter/material.dart' hide FileImage;
 import 'package:flutter/services.dart';
@@ -11,7 +13,9 @@ import 'package:http/testing.dart';
 import 'package:wtf/app.dart';
 import 'package:wtf/camera.dart' show cameraPoll;
 import 'package:wtf/screens/model_import.dart';
+import 'package:wtf/api/models.dart';
 import 'package:wtf/screens/search_screen.dart';
+import 'package:wtf/screens/stock_screen.dart' show stockDifferences;
 import 'package:wtf/session.dart';
 import 'package:wtf/theme.dart';
 import 'package:wtf/widgets/common.dart' show SwitchTile;
@@ -1149,11 +1153,11 @@ void main() {
     await tester.pumpAndSettle();
     // Pieces are whole.
     await tester.enterText(field('Amount'), '1.5');
-    await tester.tap(find.widgetWithText(FilledButton, 'Move'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Move').last);
     await tester.pumpAndSettle();
     expect(find.text('"1.5" is not an integer'), findsOneWidget);
     await tester.enterText(field('Amount'), '1');
-    await tester.tap(find.widgetWithText(FilledButton, 'Move'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Move').last);
     await tester.pumpAndSettle();
 
     expect(
@@ -1437,7 +1441,7 @@ void main() {
       'POST /api/v1/classes/c-drills/attributes?dry_run=true $body',
     ]);
     expect(find.text('Add Brand to Drills?'), findsOneWidget);
-    expect(find.text('This rewrites 1 item.'), findsOneWidget);
+    expect(find.text('This changes the values of 1 item.'), findsOneWidget);
     expect(fake.own['c-drills']!.containsKey('Brand'), isFalse);
     await tester.tap(button('Add'));
     await tester.pumpAndSettle();
@@ -1454,17 +1458,12 @@ void main() {
     await tester.enterText(field('Default'), '12');
     await tester.tap(find.widgetWithText(FilledButton, 'Save'));
     await tester.pumpAndSettle();
-    expect(
-      fake.changes.last,
+    // Nothing to rewrite: done at once after the dry run, without asking.
+    expect(find.text('Change Voltage?'), findsNothing);
+    expect(fake.changes.sublist(fake.changes.length - 2), [
       'PATCH /api/v1/classes/c-drills/attributes/Voltage?dry_run=true {"default":12}',
-    );
-    expect(find.text('No item or stock row changes.'), findsOneWidget);
-    await tester.tap(button('Save'));
-    await tester.pumpAndSettle();
-    expect(
-      fake.changes.last,
       'PATCH /api/v1/classes/c-drills/attributes/Voltage {"default":12}',
-    );
+    ]);
     expect(find.textContaining('default 12 V'), findsOneWidget);
 
     // Renamed, from its menu: every value of it is rewritten.
@@ -1507,6 +1506,7 @@ void main() {
     await tester.tap(find.byTooltip('Remove').last);
     await tester.pumpAndSettle();
     expect(find.text('Remove Blue?'), findsOneWidget);
+    expect(find.text('No item or stock row has Blue.'), findsOneWidget);
     await tester.tap(button('Remove'));
     await tester.pumpAndSettle();
     expect(
@@ -2084,6 +2084,163 @@ void main() {
     expect(find.text('B3'), findsOneWidget);
     // The tree underneath already shows the new box.
     expect(find.text('Box/', skipOffstage: false), findsOneWidget);
+  });
+
+  testWidgets('keys for search, new locations and classes; the last parent', (
+    tester,
+  ) async {
+    // The keys are the desktop apps'.
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    try {
+      setSize(tester, 1000);
+      final fake = FakeServer();
+      await startApp(tester, fake);
+
+      Future<void> ctrl(LogicalKeyboardKey key, {bool shift = false}) async {
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+        if (shift) await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+        await tester.sendKeyEvent(key);
+        if (shift) await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+        await tester.pumpAndSettle();
+      }
+
+      // A location in Garage, from Garage's "Add".
+      await open(tester, '/locations/new?parent=l-garage');
+      await tester.enterText(field('Name'), 'Shelf 3');
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+      expect(
+        fake.changes.last,
+        startsWith(
+          'POST /api/v1/locations {"name":"Shelf 3","parent":"l-garage",',
+        ),
+      );
+      // Its screen: "Location" above, the name and where it is below; on a
+      // wide screen, the main action in the top bar.
+      expect(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.text('Location'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Shelf 3'), findsOneWidget);
+      expect(find.text('Garage'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.widgetWithText(FilledButton, 'Add stock here'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.byType(FloatingActionButton), findsNothing);
+
+      // Ctrl+Shift+L: the next one goes in Garage too.
+      await ctrl(LogicalKeyboardKey.keyL, shift: true);
+      expect(find.text('New location'), findsWidgets);
+      await tester.enterText(field('Name'), 'Shelf 4');
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+      expect(
+        fake.changes.last,
+        startsWith(
+          'POST /api/v1/locations {"name":"Shelf 4","parent":"l-garage",',
+        ),
+      );
+
+      // Ctrl+Shift+C: a new class, at the top level, as none was made.
+      await ctrl(LogicalKeyboardKey.keyC, shift: true);
+      expect(find.text('New class'), findsWidgets);
+      await tester.enterText(field('Name'), 'Sensors');
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+      expect(
+        fake.changes.last,
+        startsWith('POST /api/v1/classes {"name":"Sensors","parent":null,'),
+      );
+
+      // Ctrl+F: back to the search, the cursor in its field.
+      await ctrl(LogicalKeyboardKey.keyF);
+      expect(find.byType(ItemSearchScreen), findsOneWidget);
+      final search = tester.widget<TextField>(find.byType(TextField).first);
+      expect(search.focusNode!.hasFocus, isTrue);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('on a phone, the main action is at the bottom right', (
+    tester,
+  ) async {
+    setSize(tester, 400);
+    await startApp(tester, FakeServer());
+    await open(tester, '/locations/1A01');
+    expect(
+      find.widgetWithText(FloatingActionButton, 'Add stock here'),
+      findsOneWidget,
+    );
+    expect(find.widgetWithText(FilledButton, 'Add stock here'), findsNothing);
+  });
+
+  testWidgets('a description: on the form, several lines, and on the screen', (
+    tester,
+  ) async {
+    setSize(tester, 1000);
+    final fake = FakeServer();
+    await startApp(tester, fake);
+    await openItem(tester, 'Cordless drill');
+
+    await tester.tap(find.byTooltip('Edit'));
+    await tester.pumpAndSettle();
+    // Four lines at first, growing to twenty.
+    final description = tester.widget<TextField>(
+      find.descendant(
+        of: field('Description'),
+        matching: find.byType(TextField),
+      ),
+    );
+    expect((description.minLines, description.maxLines), (4, 20));
+    await tester.enterText(
+      field('Description'),
+      '  Blue battery.\nIn its case.  ',
+    );
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(
+      fake.changes.single,
+      endsWith(r'{"description":"Blue battery.\nIn its case."}'),
+    );
+    // Among the details, after the name.
+    expect(find.text('Blue battery.\nIn its case.'), findsOneWidget);
+
+    // Emptied, it goes.
+    await tester.tap(find.byTooltip('Edit'));
+    await tester.pumpAndSettle();
+    await tester.enterText(field('Description'), ' ');
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    expect(fake.changes.last, endsWith('{"description":null}'));
+    expect(find.text('Description'), findsNothing);
+  });
+
+  test('stock rows that differ in their description', () {
+    const item = ItemSummary(
+      id: 'i',
+      code: '1D00',
+      name: 'Drill',
+      classId: 'c',
+    );
+    const a = Stock(id: 'a', code: 'A', item: item, location: 'l');
+    const b = Stock(
+      id: 'b',
+      code: 'B',
+      item: item,
+      location: 'l',
+      description: 'Tested.',
+    );
+    expect(stockDifferences(a, b), ['description']);
+    expect(stockDifferences(b, b), isEmpty);
   });
 
   testWidgets('edit an item: fields and values in one change', (tester) async {

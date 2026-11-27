@@ -90,8 +90,8 @@ class _WtfAppState extends State<WtfApp> {
     },
   );
 
-  /// The desktop apps have keys of their own: Ctrl+N (⌘+N on a Mac) for a
-  /// new item. A browser keeps those keys for itself, and phones have none.
+  /// The desktop apps have keys of their own (decision 121). A browser
+  /// keeps those keys for itself, and phones have none.
   static bool get _desktop =>
       !kIsWeb &&
       switch (defaultTargetPlatform) {
@@ -101,22 +101,39 @@ class _WtfAppState extends State<WtfApp> {
         _ => false,
       };
 
-  /// Ctrl+N, or ⌘+N on a Mac: a new item, from wherever the app is, for an
-  /// account that may add items. Not while the app is another session's
-  /// camera, and not again on the new item's form.
+  /// From wherever the app is, with Ctrl (⌘ on a Mac):
+  ///
+  /// - F: the item search, with the cursor in its search field;
+  /// - N: a new item, for an account that may add items;
+  /// - Shift+L: a new location, and Shift+C a new class, for admins.
+  ///
+  /// Not while the app is another session's camera, and a form isn't
+  /// opened again over itself.
   bool _onKey(KeyEvent event) {
-    if (event is! KeyDownEvent || event.logicalKey != LogicalKeyboardKey.keyN) {
-      return false;
-    }
+    if (event is! KeyDownEvent) return false;
     final keys = HardwareKeyboard.instance;
     final mac = defaultTargetPlatform == TargetPlatform.macOS;
     final command = mac ? keys.isMetaPressed : keys.isControlPressed;
-    if (!command || keys.isShiftPressed || keys.isAltPressed) return false;
-    if (!widget.session.canWriteItems || _camera.pairing != null) {
-      return false;
+    if (!command || keys.isAltPressed || _camera.pairing != null) return false;
+    final session = widget.session;
+    final shift = keys.isShiftPressed;
+    final String path;
+    switch (event.logicalKey) {
+      case LogicalKeyboardKey.keyF when !shift && session.me != null:
+        _router.go('/');
+        ItemSearchScreen.focusRequests.value++;
+        return true;
+      case LogicalKeyboardKey.keyN when !shift && session.canWriteItems:
+        path = '/items/new';
+      case LogicalKeyboardKey.keyL when shift && session.isAdmin:
+        path = '/locations/new';
+      case LogicalKeyboardKey.keyC when shift && session.isAdmin:
+        path = '/classes/new';
+      default:
+        return false;
     }
     final here = _router.routerDelegate.currentConfiguration.uri.path;
-    if (here != '/items/new') _router.push('/items/new');
+    if (here != path) _router.push(path);
     return true;
   }
 }

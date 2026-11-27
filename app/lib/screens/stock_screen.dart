@@ -28,7 +28,7 @@ class StockScreen extends StatelessWidget {
     final client = session.client;
     return Loader<(Stock, ClassDetail, Tree)>(
       key: ValueKey(code),
-      title: 'Stock $code',
+      title: 'Stock',
       // Also after a change by this session's camera, such as a photo
       // taken on the phone.
       refreshOn: anyOf([client.treeChanges, client.remoteChanges]),
@@ -100,6 +100,28 @@ class StockScreen extends StatelessWidget {
           stock: true,
         );
 
+        final main = write
+            ? MainAction(
+                label: 'Move',
+                icon: Icons.move_down,
+                onPressed: () async {
+                  final moved = await showMoveDialog(context, stock, locations);
+                  if (moved == null || !context.mounted) return;
+                  // The answer is the row at the destination: this one
+                  // (moved whole), or one split off from it.
+                  showMessage(
+                    context,
+                    'Moved to ${locations.pathOf(moved.location)}.',
+                  );
+                  if (moved.id == stock.id) {
+                    reload();
+                  } else {
+                    context.pushReplacement('/stock/${moved.code}');
+                  }
+                },
+              )
+            : null;
+
         return CameraSubject(
           path: '/stock/$code',
           target: CameraTarget(
@@ -109,7 +131,9 @@ class StockScreen extends StatelessWidget {
           ),
           child: Scaffold(
             appBar: AppBar(
-              title: Text('${stock.item.name} · ${stock.code}'),
+              // What it is, its item and location, is among the details,
+              // where long names have room (decision 120).
+              title: const Text('Stock'),
               actions: [
                 if (write) ...[
                   IconButton(
@@ -162,40 +186,17 @@ class StockScreen extends StatelessWidget {
                     ],
                   ),
                 ],
+                ?main?.inBar(context),
               ],
             ),
-            floatingActionButton: write
-                ? FloatingActionButton.extended(
-                    onPressed: () async {
-                      final moved = await showMoveDialog(
-                        context,
-                        stock,
-                        locations,
-                      );
-                      if (moved == null || !context.mounted) return;
-                      // The answer is the row at the destination: this one
-                      // (moved whole), or one split off from it.
-                      showMessage(
-                        context,
-                        'Moved to ${locations.pathOf(moved.location)}.',
-                      );
-                      if (moved.id == stock.id) {
-                        reload();
-                      } else {
-                        context.pushReplacement('/stock/${moved.code}');
-                      }
-                    },
-                    icon: const Icon(Icons.move_down),
-                    label: const Text('Move'),
-                  )
-                : null,
-            body: Readable(
-              child: RefreshIndicator(
-                onRefresh: reload,
-                child: ListView(
-                  padding: const EdgeInsets.only(bottom: 88),
-                  children: [
-                    WithPhoto(
+            floatingActionButton: main?.floating(context),
+            body: RefreshIndicator(
+              onRefresh: reload,
+              child: ListView(
+                padding: const EdgeInsets.only(bottom: 88),
+                children: [
+                  Details(
+                    child: WithPhoto(
                       photo: stock.photo,
                       children: [
                         const SizedBox(height: 8),
@@ -213,6 +214,8 @@ class StockScreen extends StatelessWidget {
                               : () => context.push('/locations/${place!.code}'),
                         ),
                         Field('Amount', stock.amountText),
+                        if (stock.description case final d?)
+                          Field('Description', d),
                         Field('Code', stock.code),
                         if (values.isNotEmpty) ...[
                           const SectionTitle('Values'),
@@ -220,12 +223,12 @@ class StockScreen extends StatelessWidget {
                         ],
                       ],
                     ),
-                    if (files.isNotEmpty) ...[
-                      const SectionTitle('Files'),
-                      ...files,
-                    ],
+                  ),
+                  if (files.isNotEmpty) ...[
+                    const SectionTitle('Files'),
+                    ...files,
                   ],
-                ),
+                ],
               ),
             ),
           ),
@@ -355,10 +358,11 @@ Future<Stock?> showMoveDialog(
 }
 
 /// What differs between stock rows [a] and [b], as the server finds it:
-/// "photo", and `values.NAME` for each value one has and the other
-/// hasn't, or has with another value.
+/// "photo", "description", and `values.NAME` for each value one has and the
+/// other hasn't, or has with another value.
 List<String> stockDifferences(Stock a, Stock b) => [
   if (a.photo?.hash != b.photo?.hash) 'photo',
+  if (a.description != b.description) 'description',
   for (final name in {...a.values.keys, ...b.values.keys})
     if (a.values[name] != b.values[name]) 'values.$name',
 ];
@@ -405,6 +409,11 @@ Future<Stock?> showMergeDialog(
   String shown(String difference, Stock s) {
     final text = switch (difference) {
       'photo' => s.photo == null ? null : 'a photo',
+      // Its first line, which tells them apart often enough.
+      'description' => switch (s.description?.split('\n')) {
+        null => null,
+        final lines => lines.length == 1 ? lines.first : '${lines.first} …',
+      },
       _ => formatValue(
         cls.attribute(difference.substring('values.'.length)),
         s.values[difference.substring('values.'.length)],
@@ -415,6 +424,7 @@ Future<Stock?> showMergeDialog(
 
   String label(String difference) => switch (difference) {
     'photo' => 'Photo',
+    'description' => 'Description',
     _ => difference.substring('values.'.length),
   };
 

@@ -601,6 +601,7 @@ class ClassDetail {
   const ClassDetail({
     required this.id,
     required this.name,
+    this.description,
     this.parent,
     this.container = false,
     this.path = const [],
@@ -611,6 +612,7 @@ class ClassDetail {
   factory ClassDetail.fromJson(Json json) => ClassDetail(
     id: json['id'] as String,
     name: json['name'] as String,
+    description: json['description'] as String?,
     parent: json['parent'] as String?,
     container: json['container'] as bool? ?? false,
     path: _refs(json['path']),
@@ -620,6 +622,10 @@ class ClassDetail {
 
   final String id;
   final String name;
+
+  /// What it is for, any number of lines; null for none. Only in the
+  /// answers about one thing, not in lists (decision 127).
+  final String? description;
   final String? parent;
   final bool container;
   final List<NamedRef> path;
@@ -669,15 +675,15 @@ class ClassChange {
   /// amount are counted in another unit (nothing converts).
   final int relabelled;
 
-  /// "This rewrites 1,204 items and 3 stock rows.", or that it rewrites
-  /// nothing.
-  String get rewrites {
-    if (items == 0 && stock == 0) return 'No item or stock row changes.';
+  /// "This changes the values of 1,204 items and 3 stock rows.", and null
+  /// when it changes none.
+  String? get rewrites {
+    if (items == 0 && stock == 0) return null;
     final parts = [
       if (items > 0) count(items, 'item'),
       if (stock > 0) count(stock, 'stock row'),
     ];
-    return 'This rewrites ${parts.join(' and ')}.';
+    return 'This changes the values of ${parts.join(' and ')}.';
   }
 }
 
@@ -695,6 +701,7 @@ class Location {
     required this.id,
     required this.code,
     required this.name,
+    this.description,
     this.parent,
     this.container = false,
     this.photo,
@@ -706,6 +713,7 @@ class Location {
     id: json['id'] as String,
     code: json['code'] as String? ?? '',
     name: json['name'] as String,
+    description: json['description'] as String?,
     parent: json['parent'] as String?,
     container: json['container'] as bool? ?? false,
     photo: FileRef.photo('/locations/${json['id']}', json['photo']),
@@ -716,6 +724,10 @@ class Location {
   final String id;
   final String code;
   final String name;
+
+  /// What it is for, any number of lines; null for none. Only in the
+  /// answers about one thing, not in lists (decision 127).
+  final String? description;
   final String? parent;
   final bool container;
   final FileRef? photo;
@@ -844,6 +856,7 @@ class ItemDetail extends ItemSummary {
     required super.code,
     required super.name,
     required this.cls,
+    this.description,
     super.counting,
     super.unit,
     super.photo,
@@ -864,6 +877,7 @@ class ItemDetail extends ItemSummary {
         name: cls['name'] as String,
         path: _refs(cls['path']),
       ),
+      description: json['description'] as String?,
       counting: s.counting,
       unit: s.unit,
       photo: s.photo,
@@ -874,6 +888,10 @@ class ItemDetail extends ItemSummary {
   }
 
   final ({String id, String name, List<NamedRef> path}) cls;
+
+  /// What it is for, any number of lines; null for none. Only in the
+  /// answers about one thing, not in lists (decision 127).
+  final String? description;
 
   @override
   String get classId => cls.id;
@@ -895,6 +913,7 @@ class Stock {
     required this.code,
     required this.item,
     required this.location,
+    this.description,
     this.amount,
     this.photo,
     this.values = const {},
@@ -910,6 +929,7 @@ class Stock {
         ? ItemSummary.fromJson(json['item'] as Json)
         : item!,
     location: json['location'] as String,
+    description: json['description'] as String?,
     amount: json['amount'] as num?,
     photo: FileRef.photo('/stock/${json['id']}', json['photo']),
     values: _values(json['values']),
@@ -920,6 +940,10 @@ class Stock {
   final String code;
   final ItemSummary item;
   final String location;
+
+  /// What it is for, any number of lines; null for none. In the answers
+  /// about one row and in an item's stock rows, not in lists (decision 127).
+  final String? description;
 
   /// In the item's unit; null: there, but not counted.
   final num? amount;

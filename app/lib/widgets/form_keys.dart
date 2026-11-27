@@ -6,7 +6,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../screens/shell.dart' show compactWidth;
+import 'common.dart' show compactWidth;
 
 class FormKeys extends StatelessWidget {
   const FormKeys({

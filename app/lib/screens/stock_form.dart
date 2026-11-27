@@ -82,6 +82,9 @@ class _StockFormState extends State<_StockForm> {
         ? ''
         : formatNumber(widget.stock!.amount!),
   );
+  late final _description = TextEditingController(
+    text: widget.stock?.description ?? '',
+  );
   late ItemDetail? _item = widget.item;
 
   // New stock's location: the one the form was opened for (from a
@@ -148,6 +151,7 @@ class _StockFormState extends State<_StockForm> {
   void dispose() {
     _untake();
     _amount.dispose();
+    _description.dispose();
     _amountFocus.dispose();
     for (final i in _inputs) {
       i.dispose();
@@ -266,6 +270,7 @@ class _StockFormState extends State<_StockForm> {
           itemId: item.id,
           locationId: location,
           amount: amount,
+          description: DescriptionField.valueOf(_description),
           values: newValues(_inputs),
         );
         final failed = await uploadFormFiles(_client, '/stock/${created.id}', [
@@ -304,6 +309,7 @@ class _StockFormState extends State<_StockForm> {
           if (location != stock.location) 'location': location,
           if (!sameNumber(amount, stock.amount)) 'amount': amount,
         });
+      DescriptionField.addChange(changes, _description, stock.description);
       final files = [_photo, ..._files.values];
       addFileRemovals(changes, files);
       if (changes.isNotEmpty) await _client.patchStock(stock.id, changes);
@@ -429,6 +435,8 @@ class _StockFormState extends State<_StockForm> {
                     onSubmitted: lastTyped(_inputs) == null ? _save : null,
                   ),
                 ],
+                const SizedBox(height: 16),
+                DescriptionField(controller: _description),
                 if (_loadError != null) ...[
                   const SizedBox(height: 16),
                   Text(

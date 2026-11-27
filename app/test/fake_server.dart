@@ -313,7 +313,11 @@ class FakeServer {
     'item': withItem
         ? _summary(items.firstWhere((i) => i['id'] == s['item']))
         : s['item'],
-    if (withValues) ...{'values': s['values'], 'defaulted': s['defaulted']},
+    if (withValues) ...{
+      'description': s['description'],
+      'values': s['values'],
+      'defaulted': s['defaulted'],
+    },
   };
 
   JsonMap itemJson(String id) {
@@ -322,6 +326,7 @@ class FakeServer {
     return {
       ..._summary(i),
       'class': {'id': c['id'], 'name': c['name'], 'path': c['path']},
+      'description': i['description'],
       'values': i['values'],
       'defaulted': i['defaulted'],
       'stock': [
@@ -652,6 +657,7 @@ class FakeServer {
           'name': body!['name'],
           'parent': body['parent'],
           'container': body['container'] == true,
+          'description': body['description'],
         };
         classes.add(c);
         return _json(classJson(c['id'] as String), 201);
@@ -853,6 +859,7 @@ class FakeServer {
           'id': _id('i'),
           'code': _code('1D'),
           'name': body['name'],
+          'description': body['description'],
           'class': body['class'],
           'photo': null,
           'values': values,
@@ -880,7 +887,7 @@ class FakeServer {
         return _json(itemJson(item['id'] as String), 201);
       case ('PATCH', ['items', final id]):
         final item = items.firstWhere((i) => i['id'] == id);
-        for (final k in ['name', 'class', 'photo']) {
+        for (final k in ['name', 'class', 'description', 'photo']) {
           if (body!.containsKey(k)) item[k] = body[k];
         }
         _patchValues(item, item['class'] as String, body!);
@@ -953,6 +960,7 @@ class FakeServer {
           'item': body['item'],
           'location': body['location'],
           'amount': body['amount'],
+          'description': body['description'],
           'photo': null,
           'values': values,
           'defaulted': defaulted,
@@ -961,7 +969,13 @@ class FakeServer {
         return _json(stockJson(row['id'] as String), 201);
       case ('PATCH', ['stock', final id]):
         final row = stock.firstWhere((s) => s['id'] == id);
-        for (final k in ['item', 'location', 'amount', 'photo']) {
+        for (final k in [
+          'item',
+          'location',
+          'amount',
+          'description',
+          'photo',
+        ]) {
           if (body!.containsKey(k)) row[k] = body[k];
         }
         final item = items.firstWhere((i) => i['id'] == row['item']);
@@ -1128,6 +1142,7 @@ class FakeServer {
           'name',
           'parent',
           'container',
+          'description',
           'photo',
           'stock_photos',
         ]) {
@@ -1144,11 +1159,18 @@ class FakeServer {
         locations.removeWhere((l) => ids.contains(l['id']));
         stock.removeWhere((s) => ids.contains(s['location']));
         return _noContent;
+      case ('PATCH', ['classes', final id]):
+        final c = classes.firstWhere((c) => c['id'] == id);
+        for (final k in ['name', 'parent', 'container', 'description']) {
+          if (body!.containsKey(k)) c[k] = body[k];
+        }
+        return _json(classJson(id));
       case ('POST', ['locations']):
         final l = {
           'id': _id('l'),
           'code': _code('1F'),
           'name': body!['name'],
+          'description': body['description'],
           'parent': body['parent'],
           'container': body['grid'] != null || body['container'] == true,
           // As its parent's unless given.

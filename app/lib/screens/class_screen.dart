@@ -63,6 +63,16 @@ class ClassScreen extends StatelessWidget {
           reload();
         }
 
+        final main = session.canWriteItems && !c.container
+            ? MainAction(
+                label: 'New item',
+                icon: Icons.add,
+                onPressed: () => open('/items/new?class=${c.id}'),
+              )
+            : null;
+        // The classes it is below, outermost first.
+        final parents = c.path.sublist(0, c.path.length - 1);
+
         Future<void> add() async {
           if (await showAttributeDialog(context, c) && context.mounted) {
             reload();
@@ -131,7 +141,9 @@ class ClassScreen extends StatelessWidget {
 
         return Scaffold(
           appBar: AppBar(
-            title: Text(c.name),
+            // The name is among the details, where a long one has room
+            // (decision 120).
+            title: const Text('Class'),
             actions: [
               // For admins, as are the class screens: changing the class,
               // and exporting it.
@@ -179,108 +191,111 @@ class ClassScreen extends StatelessWidget {
                     PopupMenuItem(value: 'delete', child: Text('Delete…')),
                   ],
                 ),
+              ?main?.inBar(context),
             ],
           ),
-          floatingActionButton: session.canWriteItems && !c.container
-              ? FloatingActionButton.extended(
-                  onPressed: () => open('/items/new?class=${c.id}'),
-                  icon: const Icon(Icons.add),
-                  label: const Text('New item'),
-                )
-              : null,
-          body: Readable(
-            child: RefreshIndicator(
-              onRefresh: reload,
-              child: ListView(
-                padding: const EdgeInsets.only(bottom: 88),
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                    child: PathLinks(
-                      parts: [
-                        for (final p in c.path)
-                          (p.name, p.id == c.id ? null : '/classes/${p.id}'),
-                      ],
-                    ),
+          floatingActionButton: main?.floating(context),
+          body: RefreshIndicator(
+            onRefresh: reload,
+            child: ListView(
+              padding: const EdgeInsets.only(bottom: 88),
+              children: [
+                Details(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const SizedBox(height: 8),
+                      Field('Name', c.name),
+                      if (c.description case final d?) Field('Description', d),
+                      if (parents.isNotEmpty)
+                        Field.content(
+                          'Below',
+                          PathLinks(
+                            parts: [
+                              for (final p in parents)
+                                (p.name, '/classes/${p.id}'),
+                            ],
+                          ),
+                        ),
+                      if (c.container)
+                        const Field(
+                          'Container',
+                          'yes',
+                          note: 'holds only other classes',
+                        ),
+                      // How its items' stock is counted, and whose rule it is
+                      // (decision 110).
+                      ListTile(
+                        dense: true,
+                        leading: const Icon(Icons.inventory_outlined),
+                        title: Text('Stock: ${c.stock.text.toLowerCase()}'),
+                        subtitle: Text(switch (c.stock.from) {
+                          null => 'the default',
+                          final from when from == c.id => 'its own',
+                          final from => 'from ${data.tree.pathOf(from)}',
+                        }),
+                        onTap: write
+                            ? () async {
+                                if (await showStockRuleDialog(context, c) &&
+                                    context.mounted) {
+                                  reload();
+                                }
+                              }
+                            : null,
+                      ),
+                    ],
                   ),
-                  if (c.container)
-                    const Field(
-                      'Container',
-                      'yes',
-                      note: 'holds only other classes',
-                    ),
-                  // How its items' stock is counted, and whose rule it is
-                  // (decision 110).
+                ),
+                ...attributeSections(),
+                SectionTitle(
+                  'Classes below',
+                  trailing: write
+                      ? TextButton.icon(
+                          onPressed: () => open('/classes/new?parent=${c.id}'),
+                          icon: const Icon(Icons.add),
+                          label: const Text('Add'),
+                        )
+                      : null,
+                ),
+                if (node == null || node.children.isEmpty)
+                  const EmptyNote('None.'),
+                for (final child in node?.children ?? const <TreeNode>[])
                   ListTile(
                     dense: true,
-                    leading: const Icon(Icons.inventory_outlined),
-                    title: Text('Stock: ${c.stock.text.toLowerCase()}'),
-                    subtitle: Text(switch (c.stock.from) {
-                      null => 'the default',
-                      final from when from == c.id => 'its own',
-                      final from => 'from ${data.tree.pathOf(from)}',
-                    }),
-                    onTap: write
-                        ? () async {
-                            if (await showStockRuleDialog(context, c) &&
-                                context.mounted) {
-                              reload();
-                            }
-                          }
-                        : null,
+                    leading: Icon(
+                      child.container
+                          ? Icons.folder_outlined
+                          : Icons.category_outlined,
+                    ),
+                    title: Text(
+                      child.container ? '${child.name}/' : child.name,
+                    ),
+                    onTap: () => open('/classes/${child.id}'),
                   ),
-                  ...attributeSections(),
-                  SectionTitle(
-                    'Classes below',
-                    trailing: write
-                        ? TextButton.icon(
-                            onPressed: () =>
-                                open('/classes/new?parent=${c.id}'),
-                            icon: const Icon(Icons.add),
-                            label: const Text('Add'),
-                          )
-                        : null,
+                const SectionTitle('Items, with the classes below'),
+                if (data.items.rows.isEmpty) const EmptyNote('No items.'),
+                for (final i in data.items.rows)
+                  ListTile(
+                    dense: true,
+                    leading: PhotoOrIcon(
+                      i.photo,
+                      icon: Icons.inventory_2_outlined,
+                    ),
+                    title: Text(i.name),
+                    subtitle: Text(
+                      '${i.code}  ·  ${data.tree.pathOf(i.classId)}',
+                    ),
+                    trailing: Text(i.stockText),
+                    onTap: () => open('/items/${i.code}'),
                   ),
-                  if (node == null || node.children.isEmpty)
-                    const EmptyNote('None.'),
-                  for (final child in node?.children ?? const <TreeNode>[])
-                    ListTile(
-                      dense: true,
-                      leading: Icon(
-                        child.container
-                            ? Icons.folder_outlined
-                            : Icons.category_outlined,
-                      ),
-                      title: Text(
-                        child.container ? '${child.name}/' : child.name,
-                      ),
-                      onTap: () => open('/classes/${child.id}'),
-                    ),
-                  const SectionTitle('Items, with the classes below'),
-                  if (data.items.rows.isEmpty) const EmptyNote('No items.'),
-                  for (final i in data.items.rows)
-                    ListTile(
-                      dense: true,
-                      leading: PhotoOrIcon(
-                        i.photo,
-                        icon: Icons.inventory_2_outlined,
-                      ),
-                      title: Text(i.name),
-                      subtitle: Text(
-                        '${i.code}  ·  ${data.tree.pathOf(i.classId)}',
-                      ),
-                      trailing: Text(i.stockText),
-                      onTap: () => open('/items/${i.code}'),
-                    ),
-                  if (data.items.more)
-                    ListTile(
-                      dense: true,
-                      title: const Text('More…'),
-                      subtitle: const Text('Search with this class'),
-                      onTap: () => context.push('/found?class=${c.id}'),
-                    ),
-                ],
-              ),
+                if (data.items.more)
+                  ListTile(
+                    dense: true,
+                    title: const Text('More…'),
+                    subtitle: const Text('Search with this class'),
+                    onTap: () => context.push('/found?class=${c.id}'),
+                  ),
+              ],
             ),
           ),
         );
@@ -290,14 +305,18 @@ class ClassScreen extends StatelessWidget {
 }
 
 /// Runs a change of a class's attributes: first as a dry run, which says
-/// what it would rewrite (or is refused as the change would be), then, when
-/// the user agrees, for real. True when it was done.
+/// what it would rewrite (or is refused as the change would be), then for
+/// real. When it rewrites items or stock rows, the user is asked first,
+/// told how many; when it rewrites none, it is done at once (decision 125),
+/// unless [unused] says something to ask about then, as a removal does
+/// ("No item or stock row has a value of Brand."). True when it was done.
 Future<bool> runChange(
   BuildContext context, {
   required String title,
   required Future<ClassChange> Function(bool dryRun) change,
   String action = 'Save',
   bool destructive = false,
+  String? unused,
 }) async {
   final ClassChange preview;
   try {
@@ -307,14 +326,17 @@ Future<bool> runChange(
     return false;
   }
   if (!context.mounted) return false;
-  final ok = await confirm(
-    context,
-    title: title,
-    message: preview.rewrites,
-    action: action,
-    destructive: destructive,
-  );
-  if (!ok || !context.mounted) return false;
+  final message = preview.rewrites ?? unused;
+  if (message != null) {
+    final ok = await confirm(
+      context,
+      title: title,
+      message: message,
+      action: action,
+      destructive: destructive,
+    );
+    if (!ok || !context.mounted) return false;
+  }
   try {
     await change(false);
     return true;
@@ -371,6 +393,7 @@ class _AttributeMenu extends StatelessWidget {
               title: 'Remove ${a.name} from ${cls.name}?',
               action: 'Remove',
               destructive: true,
+              unused: 'No item or stock row has a value of ${a.name}.',
               change: (dryRun) =>
                   client.removeAttribute(cls.id, a.name, dryRun: dryRun),
             );
@@ -729,6 +752,7 @@ Future<bool> showChoicesDialog(
           String action,
           Future<ClassChange> Function(bool dryRun) change, {
           bool destructive = false,
+          String? unused,
         }) async {
           ClassChange? last;
           final done = await runChange(
@@ -736,6 +760,7 @@ Future<bool> showChoicesDialog(
             title: title,
             action: action,
             destructive: destructive,
+            unused: unused,
             change: (dryRun) async => last = await change(dryRun),
           );
           if (!done) return;
@@ -798,6 +823,7 @@ Future<bool> showChoicesDialog(
                               dryRun: dryRun,
                             ),
                             destructive: true,
+                            unused: 'No item or stock row has $c.',
                           ),
                         ),
                       ],

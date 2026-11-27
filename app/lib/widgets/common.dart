@@ -366,17 +366,26 @@ class Field extends StatelessWidget {
     this.onTap,
     this.note,
     this.link = false,
-  });
+  }) : content = null;
+
+  /// A field whose value is [content], such as a path of links.
+  const Field.content(this.label, Widget this.content, {super.key})
+    : value = '',
+      onTap = null,
+      note = null,
+      link = false;
 
   final String label;
   final String value;
   final String? note;
   final VoidCallback? onTap;
   final bool link;
+  final Widget? content;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final content = this.content;
     return InkWell(
       onTap: onTap,
       child: Padding(
@@ -394,38 +403,42 @@ class Field extends StatelessWidget {
               ),
             ),
             Expanded(
-              child: link
-                  ? Wrap(
-                      children: [
-                        LinkText(value),
-                        if (note != null)
-                          Text(
-                            '  $note',
-                            style: TextStyle(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                      ],
-                    )
-                  : Text.rich(
-                      TextSpan(
-                        children: [
-                          TextSpan(
-                            text: value,
-                            style: onTap == null
-                                ? null
-                                : TextStyle(color: theme.colorScheme.primary),
-                          ),
-                          if (note != null)
-                            TextSpan(
-                              text: '  $note',
-                              style: TextStyle(
-                                color: theme.colorScheme.onSurfaceVariant,
+              child:
+                  content ??
+                  (link
+                      ? Wrap(
+                          children: [
+                            LinkText(value),
+                            if (note != null)
+                              Text(
+                                '  $note',
+                                style: TextStyle(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
                               ),
-                            ),
-                        ],
-                      ),
-                    ),
+                          ],
+                        )
+                      : Text.rich(
+                          TextSpan(
+                            children: [
+                              TextSpan(
+                                text: value,
+                                style: onTap == null
+                                    ? null
+                                    : TextStyle(
+                                        color: theme.colorScheme.primary,
+                                      ),
+                              ),
+                              if (note != null)
+                                TextSpan(
+                                  text: '  $note',
+                                  style: TextStyle(
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        )),
             ),
           ],
         ),
@@ -482,6 +495,107 @@ class EmptyNote extends StatelessWidget {
       style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
     ),
   );
+}
+
+/// A screen's details above its lists: no wider than is pleasant to read,
+/// from the left, while the lists below take the whole width (decision 123).
+class Details extends StatelessWidget {
+  const Details({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Align(
+    alignment: Alignment.topLeft,
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 840),
+      child: child,
+    ),
+  );
+}
+
+/// The description of a class, item, location or stock row on its form
+/// (decision 127): 4 lines at first, growing with the text up to 20, and
+/// scrolling past that. Enter starts a new line; Ctrl+Enter still saves.
+class DescriptionField extends StatelessWidget {
+  const DescriptionField({super.key, required this.controller});
+
+  final TextEditingController controller;
+
+  /// What it holds, for a new one: null when it is blank.
+  static String? valueOf(TextEditingController controller) {
+    final text = controller.text.trim();
+    return text.isEmpty ? null : text;
+  }
+
+  /// Adds the change of [current] to [changes], when there is one: the
+  /// text, or null removing it.
+  static void addChange(
+    Map<String, Object?> changes,
+    TextEditingController controller,
+    String? current,
+  ) {
+    final now = valueOf(controller);
+    if (now != current) changes['description'] = now;
+  }
+
+  @override
+  Widget build(BuildContext context) => TextFormField(
+    controller: controller,
+    keyboardType: TextInputType.multiline,
+    textInputAction: TextInputAction.newline,
+    minLines: 4,
+    maxLines: 20,
+    decoration: const InputDecoration(
+      labelText: 'Description',
+      alignLabelWithHint: true,
+      border: OutlineInputBorder(),
+    ),
+  );
+}
+
+/// Below this width (logical pixels) the app is laid out for a phone: the
+/// navigation is a bottom bar, and a screen's main action a button at the
+/// bottom right.
+const compactWidth = 600.0;
+
+/// The main thing to do on a screen, such as "Add stock here" (decision
+/// 124): on a phone, a button at the bottom right, where the thumb reaches
+/// it; on wider screens, a button in the top bar, where it covers nothing.
+/// A screen puts [floating] in its Scaffold and [inBar] last among its top
+/// bar's actions; only one of them shows.
+class MainAction {
+  const MainAction({
+    required this.label,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  static bool _compact(BuildContext context) =>
+      MediaQuery.sizeOf(context).width < compactWidth;
+
+  Widget? floating(BuildContext context) => _compact(context)
+      ? FloatingActionButton.extended(
+          onPressed: onPressed,
+          icon: Icon(icon),
+          label: Text(label),
+        )
+      : null;
+
+  Widget? inBar(BuildContext context) => _compact(context)
+      ? null
+      : Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: FilledButton.icon(
+            onPressed: onPressed,
+            icon: Icon(icon),
+            label: Text(label),
+          ),
+        );
 }
 
 /// Content no wider than is pleasant to read, centred on wide screens.
