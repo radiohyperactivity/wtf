@@ -12,7 +12,7 @@ A stock row has a photo only where its location takes stock photos (`stock_photo
 ## The model
 
 - **A file is its hash:** the photo and an attachment's value are the hex SHA-256 of the file's content, and nothing more. Its size is read from the file. Its media type is found from its first bytes, at upload and when serving, not taken from the client: sniffing tells images and PDF well, while Word and Excel files come out as ZIP archives, and CSV as plain text.
-- **Content on disk:** the contents live in `wtfd`'s files directory (`--files-directory`), named by their hash: `<directory>/ab/abcdef…`. A stored file never changes, and the same content is stored once, however many items, stock rows and locations have it.
+- **Content on disk:** the contents live in `wtfd`'s files directory (`--files-directory`), named by their hash: `<directory>/uploads/ab/abcdef…`. A stored file never changes, and the same content is stored once, however many items, stock rows and locations have it.
 - **Removing** a file is a patch: `{"photo": null}`, or `{"values": {"Manual": null}}`. `wtfd gc` removes a file once nothing has its hash any more (see [WTFD.md](../WTFD.md)), and deleting an item, stock row or location leaves its files to `gc` too.
 
 ## Functions

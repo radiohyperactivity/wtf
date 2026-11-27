@@ -3,7 +3,7 @@
 WtF keeps its data in two places, and a backup needs both:
 
 - **The database,** in PostgreSQL: everything but the contents of files. Backing it up is the PostgreSQL administrator's job, as for any other database on the server.
-- **The files directory** (`files-directory` in `wtfd.conf`): the contents of photos and attachments, under their hash. Backing it up is the job of whoever runs `wtfd`.
+- **The files** of photos and attachments, under their hash, in the `uploads` directory of the files directory (`files-directory` in `wtfd.conf`). Backing them up is the job of whoever runs `wtfd`.
 
 They belong together: a database restored without its files has photos and attachments that can't be opened.
 
@@ -44,22 +44,27 @@ On Windows, Task Scheduler runs the command above in the same way.
 
 Copy the dumps to another machine as well; a backup on the same disk doesn't survive that disk.
 
-## The files directory
+## The files
 
-Files are stored under their content hash and never change, so incremental copies are cheap. On Linux and macOS:
+The files directory has three directories, and only `uploads` is backed up:
+
+- **`uploads`:** the files of photos and attachments, under their content hash. They never change, so incremental copies are cheap.
+- **`thumbnails`:** small copies of photos for the apps' lists, which `wtfd` makes again when they are missing.
+- **`tmp`:** uploads and thumbnails while they are being written.
+
+On Linux and macOS:
 
 ```sh
-rsync -a /var/lib/wtf/files/ backup-host:/backups/wtf/files/
+rsync -a /var/lib/wtf/files/uploads/ backup-host:/backups/wtf/uploads/
 ```
 
 On Windows, in an administrator's PowerShell, as `C:\ProgramData\WtF` is for administrators only:
 
 ```powershell
-robocopy C:\ProgramData\WtF\files \\backup-host\backups\wtf\files /E
+robocopy C:\ProgramData\WtF\files\uploads \\backup-host\backups\wtf\uploads /E
 ```
 
 - **Database first, files afterwards:** then every file the dump refers to is in the copy. Files that arrive in between are harmless; `wtfd gc` removes any that nothing references.
-- **The thumbnails can be left out:** the `thumbnails` directory holds small copies of photos for the apps' lists, which `wtfd` makes again when they are missing. Leave it out with `--exclude /thumbnails/` for `rsync`, or `/XD thumbnails` for `robocopy`.
 - **No deleting in the copy:** no `--delete` for `rsync`, no `/MIR` or `/PURGE` for `robocopy`. The files of deleted attachments then stay in the backup after `wtfd gc` removes them from the server, for a restore of an older dump.
 
 ## Restoring
@@ -76,11 +81,11 @@ Restore into a new, empty database prepared exactly like the original, so that o
 
    - **`--single-transaction`**: the restore either completes fully or leaves the database empty.
    - **`--exit-on-error`**: stop at the first error instead of carrying on.
-3. **Restore the files** into the files directory, with `rsync` or `robocopy` the other way. On Windows, the copied files take their access from the folder, so the service can read them; copy them without their own permissions (`robocopy`'s default, not `/COPYALL` or `/SEC`).
+3. **Restore the files** into the `uploads` directory of the files directory, with `rsync` or `robocopy` the other way. On Windows, the copied files take their access from the folder, so the service can read them; copy them without their own permissions (`robocopy`'s default, not `/COPYALL` or `/SEC`).
 4. **Check it:** `wtfd schema --database-name wtf_restored --dry-run` must report "up to date". After that, `wtfd serve` can use it.
 
 Test a restore now and then. A backup that has never been restored is only a hope.
 
 ## Getting one thing back
 
-To get back something deleted by mistake, without losing what changed since, restore the backup *beside* the live database, as `wtf_restored` (steps 1 and 2 above), and look the thing up there, for example with `psql` as `wtf_dba`. Then enter it again through the app or the CLI, or copy its rows across by hand. Its photos and attachments are in the backup of the files directory, under their hash. Drop `wtf_restored` afterwards.
+To get back something deleted by mistake, without losing what changed since, restore the backup *beside* the live database, as `wtf_restored` (steps 1 and 2 above), and look the thing up there, for example with `psql` as `wtf_dba`. Then enter it again through the app or the CLI, or copy its rows across by hand. Its photos and attachments are in the backup of `uploads`, under their hash. Drop `wtf_restored` afterwards.

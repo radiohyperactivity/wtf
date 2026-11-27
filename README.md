@@ -305,7 +305,7 @@ See [CLI.md](CLI.md).
 
 ## Backups
 
-A backup of WtF is the database and the files directory, taken together. The database is backed up by the PostgreSQL administrator, as any other database on the server; the files directory by whoever runs `wtfd`. A delete in WtF is final, so a backup is the only way back from a mistake. [BACKUP.md](BACKUP.md) shows how to make one, and how to restore it.
+A backup of WtF is the database and the `uploads` directory of the files directory, taken together. The database is backed up by the PostgreSQL administrator, as any other database on the server; the files by whoever runs `wtfd`. A delete in WtF is final, so a backup is the only way back from a mistake. [BACKUP.md](BACKUP.md) shows how to make one, and how to restore it.
 
 ## Tests
 

@@ -1,9 +1,12 @@
 // Package files stores the files of photos and attachment values on disk,
-// addressed by their SHA-256 hash: <directory>/<first two hex
+// addressed by their SHA-256 hash: <directory>/uploads/<first two hex
 // characters>/<hex hash>. A file never changes once stored, and the same
-// content is stored only once.
+// content is stored only once. Beside uploads are the thumbnails, which are
+// made again when missing, and tmp, so a backup of uploads alone has all
+// there is to keep.
 //
-// Uploads are written to <directory>/tmp first and renamed into place, so a half-written file never appears under a hash. Placing a file and
+// Uploads are written to <directory>/tmp first and renamed into place, so a
+// half-written file never appears under a hash. Placing a file and
 // recording it in the database happen under a per-hash advisory lock, which
 // "wtfd gc" also takes before removing a file (see GC).
 package files
@@ -29,6 +32,13 @@ var ErrTooLarge = errors.New("file too large")
 
 var hashPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
+// uploadDir is the directory of the stored files in the files directory.
+const uploadDir = "uploads"
+
+// prefixPattern is the name of a directory of stored files whose hashes
+// start with the same two characters.
+var prefixPattern = regexp.MustCompile(`^[0-9a-f]{2}$`)
+
 // Store is the files directory.
 type Store struct {
 	dir string
@@ -39,10 +49,14 @@ type Store struct {
 	makers chan struct{}
 }
 
-// Open opens the files directory, creating it if needed.
+// Open opens the files directory, creating it if needed, and moves stored
+// files that are still where versions before uploads kept them.
 func Open(dir string) (*Store, error) {
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, uploadDir), 0o750); err != nil {
 		return nil, fmt.Errorf("files directory: %w", err)
+	}
+	if err := moveToUploads(dir); err != nil {
+		return nil, fmt.Errorf("files directory: moving the files into %s: %w", uploadDir, err)
 	}
 	return &Store{dir: dir, makers: make(chan struct{}, min(4, max(1, runtime.NumCPU()/2)))}, nil
 }
@@ -57,7 +71,62 @@ func (s *Store) path(hash string) (string, error) {
 	if !hashPattern.MatchString(hash) {
 		return "", fmt.Errorf("invalid file hash %q", hash)
 	}
-	return filepath.Join(s.dir, hash[:2], hash), nil
+	return filepath.Join(s.dir, uploadDir, hash[:2], hash), nil
+}
+
+// moveToUploads moves the stored files of versions before uploads, in
+// <directory>/<first two hex characters>, into the uploads directory. A
+// directory is renamed whole when uploads hasn't one of the same name;
+// otherwise its files are moved one by one, and one that is in uploads
+// already is the same content, so the old copy is removed. Once nothing is
+// left at the top, this does nothing. Another wtfd moving the same files at
+// the same time (serve and gc) is harmless: what it moved first is gone.
+//
+// It is for installations made before 1.0.0, and is removed before 1.0.0,
+// with its call in Open and its test.
+func moveToUploads(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !prefixPattern.MatchString(e.Name()) {
+			continue
+		}
+		old := filepath.Join(dir, e.Name())
+		target := filepath.Join(dir, uploadDir, e.Name())
+		if _, err := os.Stat(target); errors.Is(err, fs.ErrNotExist) {
+			if err := os.Rename(old, target); err == nil || errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			// Made by another wtfd in between: move the files one by one.
+		}
+		if err := os.MkdirAll(target, 0o750); err != nil {
+			return err
+		}
+		files, err := os.ReadDir(old)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		for _, f := range files {
+			from, to := filepath.Join(old, f.Name()), filepath.Join(target, f.Name())
+			if _, err := os.Stat(to); err == nil {
+				err = os.Remove(from)
+			} else {
+				err = os.Rename(from, to)
+			}
+			if err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
+		}
+		if err := os.Remove(old); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 // OpenFile opens a stored file for reading.
@@ -178,20 +247,15 @@ func (st *Staged) Discard() {
 // Walk calls fn for every stored file. A directory that doesn't exist yet
 // has none.
 func (s *Store) Walk(fn func(hash string, modTime time.Time) error) error {
-	if _, err := os.Stat(s.dir); errors.Is(err, fs.ErrNotExist) {
+	root := filepath.Join(s.dir, uploadDir)
+	if _, err := os.Stat(root); errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
-	return filepath.WalkDir(s.dir, func(p string, d fs.DirEntry, err error) error {
+	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
-			if p != s.dir && (d.Name() == "tmp" || d.Name() == thumbnailDir) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !hashPattern.MatchString(d.Name()) {
+		if d.IsDir() || !hashPattern.MatchString(d.Name()) {
 			return nil
 		}
 		info, err := d.Info()
