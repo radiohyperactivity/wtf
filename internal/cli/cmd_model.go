@@ -45,10 +45,10 @@ func treeCommand(kind, path string) command {
 // parents are listed and created after asking, or at once with --create-parents.
 func nodeAddCommand(kind, path string, resolve func(*env, string) (string, error), show func(*env, json.RawMessage) error) command {
 	plural := map[string]string{"class": "classes", "location": "locations"}[kind]
-	usage := "<name or path> [--parent P] [--create-parents] [--container] [--edit]"
+	usage := "<name or path> [--parent P] [--create-parents] [--container] [--description TEXT] [--edit]"
 	flags := map[string]param{"parent": arg("Parent", kindCompleters[kind])}
 	if kind == "location" {
-		usage = "<name or path> [--parent P] [--create-parents] [--container | --grid COLUMNSxROWS [--yes]] [--stock-photos yes|no] [--edit]"
+		usage = "<name or path> [--parent P] [--create-parents] [--container | --grid COLUMNSxROWS [--yes]] [--stock-photos yes|no] [--description TEXT] [--edit]"
 		flags["stock-photos"] = arg("Stock photos", words("yes", "no"))
 	}
 	return command{
@@ -62,6 +62,7 @@ func nodeAddCommand(kind, path string, resolve func(*env, string) (string, error
 			parents := fs.Bool("create-parents", false, "create missing parents without asking")
 			container := fs.Bool("container", false, "make it a container: it holds only other "+plural+", "+map[string]string{"class": "no items", "location": "no stock"}[kind])
 			editAfter := fs.Bool("edit", false, "open the new "+kind+" in the edit form")
+			description := fs.String("description", "", "what it is for; \\n starts a new line")
 			grid, yes := new(string), new(bool)
 			var stockPhotos optString
 			if kind == "location" {
@@ -151,6 +152,9 @@ func nodeAddCommand(kind, path string, resolve func(*env, string) (string, error
 				body := newNode(kind, name, parentID, *container)
 				if photos != nil {
 					body["stock_photos"] = *photos
+				}
+				if *description != "" {
+					body["description"] = descriptionText(*description)
 				}
 				if columns > 0 {
 					body["grid"] = object{"columns": columns, "rows": rows, "confirm": confirmed}
@@ -284,15 +288,15 @@ func parentPaths(c completer) completer {
 
 // nodeSetCommand renames or moves a class or location.
 func nodeSetCommand(kind, prefix string, resolve func(*env, string) (string, error), show func(*env, json.RawMessage) error) command {
-	args := "<" + kind + "> [--name N] [--parent P|none] [--container yes|no]"
-	summary := "Rename a " + kind + ", move it under another parent (none: make it a root), or (un)mark it as a container."
+	args := "<" + kind + "> [--name N] [--parent P|none] [--container yes|no] [--description TEXT]"
+	summary := "Rename a " + kind + ", move it under another parent (none: make it a root), (un)mark it as a container, or change its description."
 	flags := map[string]param{
 		"parent":    arg("Parent", kindCompleters[kind]),
 		"container": arg("Container", words("yes", "no")),
 	}
 	if kind == "location" {
 		args += " [--stock-photos yes|no]"
-		summary = "Rename a location, move it under another parent (none: make it a root), (un)mark it as a container, or say whether its stock rows may have photos."
+		summary = "Rename a location, move it under another parent (none: make it a root), (un)mark it as a container, change its description, or say whether its stock rows may have photos."
 		flags["stock-photos"] = arg("Stock photos", words("yes", "no"))
 	}
 	return command{
@@ -302,8 +306,9 @@ func nodeSetCommand(kind, prefix string, resolve func(*env, string) (string, err
 		params:  []param{objectParam(kind)},
 		flags:   flags,
 		setup: func(fs *flag.FlagSet) func(*env, []string) error {
-			var name, parent, container, stockPhotos optString
+			var name, parent, container, stockPhotos, description optString
 			fs.Var(&name, "name", "new name")
+			fs.Var(&description, "description", descriptionHelp)
 			fs.Var(&parent, "parent", "new parent, or none")
 			fs.Var(&container, "container", "yes: holds only other nodes; no: may hold items or stock")
 			if kind == "location" {
@@ -335,6 +340,9 @@ func nodeSetCommand(kind, prefix string, resolve func(*env, string) (string, err
 						return usagef("--container must be yes or no")
 					}
 					body["container"] = b
+				}
+				if description.set {
+					body["description"] = descriptionText(description.value)
 				}
 				photos, err := optYesNo(stockPhotos, "--stock-photos")
 				if err != nil {
@@ -409,6 +417,7 @@ func (e *env) printLocationJSON(data json.RawMessage) error {
 		"Path", pathNames(l.Path),
 		"Photo", photoText(l.Photo),
 		"Id", l.ID)
+	printDescription(e.stdout, l.Description)
 	return nil
 }
 
@@ -547,6 +556,7 @@ func (e *env) printClass(c class) {
 		"Path", pathNames(c.Path),
 		"Stock", e.stockRuleText(c),
 		"Id", c.ID)
+	printDescription(w, c.Description)
 	for _, scope := range []string{"item", "stock"} {
 		header := false
 		var t *table

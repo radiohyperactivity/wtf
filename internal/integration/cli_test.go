@@ -135,6 +135,35 @@ func TestCLIStockPhotos(t *testing.T) {
 	contains(t, stderr, "--stock-photos must be yes or no")
 }
 
+// Descriptions from the CLI: --description on add and set, "\n" starting a
+// new line and "" removing it; get shows them under the fields; a merge
+// asks which to keep.
+func TestCLIDescriptions(t *testing.T) {
+	e := setup(t)
+	e.reset(t)
+	c := e.cli(t)
+
+	contains(t, c.ok("class", "add", "Sensors", "--description", `Boards with a sensor.\nI2C or SPI.`),
+		"Description:\n  Boards with a sensor.\n  I2C or SPI.\n")
+	if out := c.ok("class", "set", "Sensors", "--description", ""); strings.Contains(out, "Description") {
+		t.Errorf("after --description \"\":\n%s", out)
+	}
+	contains(t, c.ok("location", "add", "Box 001", "--description", "The grey one."), "Description:\n  The grey one.\n")
+	contains(t, c.ok("location", "set", "Box 001", "--description", "The grey one, left."), "  The grey one, left.\n")
+	contains(t, c.ok("item", "add", "BMP280", "--class", "Sensors", "--description", "Pressure."), "Description:\n  Pressure.\n")
+	contains(t, c.ok("item", "set", "BMP280", "--description", `Pressure\nand temperature.`), "  Pressure\n  and temperature.\n")
+	contains(t, c.ok("find", "temperature"), "BMP280")
+	contains(t, c.ok("stock", "add", "BMP280", "Box 001", "10", "--description", "First order."), "Description:\n  First order.\n")
+
+	// A part moved off takes it along; merging back, the rows differ in it.
+	c.ok("location", "add", "Shelf")
+	contains(t, c.ok("stock", "move", "BMP280@Box 001", "Shelf", "4"), "  First order.\n")
+	c.ok("stock", "set", "BMP280@Shelf", "--description", "Tested.")
+	_, stderr := c.run(1, "", "stock", "merge", "BMP280@Shelf", "BMP280@Box 001")
+	contains(t, stderr, "description: Tested. in", "First order. in")
+	contains(t, c.ok("stock", "merge", "BMP280@Shelf", "BMP280@Box 001", "--keep", "description=from"), "  Tested.\n")
+}
+
 func TestCLIPreferences(t *testing.T) {
 	e := setup(t)
 	e.reset(t)

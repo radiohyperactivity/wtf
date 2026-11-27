@@ -389,3 +389,7 @@ Built with the refactored API ([API.md](API.md), API revision 1 again; 2026-10-3
 ### Preferences (23 November 2026)
 
 81. **`wtf preferences list`, `set <name> <value>` and `reset <name>`:** the account's preferences, which the apps follow (ACCOUNTS.md, "Preferences"). The CLI knows none of them by name, so a new one needs no new CLI: `set` sends the value as JSON where it is one (`true`, `12`) and as text otherwise (`off`), and the server says what it takes. The CLI follows none of them itself.
+
+### Descriptions (27 November 2026)
+
+82. **`--description TEXT` on `add` and `set`** for classes, locations, items and stock rows (APP.md, decision 127): `\n` in the text starts a new line, and on `set`, `--description ""` removes it. Like `--name`, the flag takes the place of an attribute named Description, which `--value Description=…` still reaches. `get` shows a description under the fields, each line indented. The edit forms ask for it after the name (a stock row's after its location), on one line with `\n` for a new line, empty for none. `stock merge` counts a different description as a difference, settled with `--keep description=from|into` or by asking.

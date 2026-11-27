@@ -43,7 +43,8 @@ $$;
 -- ignored), is imported into: it gets the attributes it hasn't got; an
 -- attribute it has already must be the same, or the import is refused, and
 -- so must its rule for counting stock, when the file gives one. A class
--- that is added gets the file's rule as its own, or inherits.
+-- that is added gets the file's rule as its own, or inherits, and the
+-- file's description; one that was there already keeps its own.
 -- Counts what it adds and what was there already in p_report, {classes:
 -- {added, existing}, attributes: {added, existing}}, and adds every class
 -- that was there already and got attributes to p_changed, whose items and
@@ -78,12 +79,12 @@ BEGIN
     END IF;
     FOR v_node IN SELECT n FROM jsonb_array_elements(p_nodes) n LOOP
         IF jsonb_typeof(v_node) <> 'object' THEN
-            PERFORM error.invalid(format('%sa class must be an object {name, container, stock, attributes, classes}',
+            PERFORM error.invalid(format('%sa class must be an object {name, description, container, stock, attributes, classes}',
                                          coalesce(p_path || ': ', '')));
         END IF;
         FOR v_key IN SELECT jsonb_object_keys(v_node) LOOP
-            IF NOT v_key = ANY (ARRAY['name', 'container', 'stock', 'attributes', 'classes']) THEN
-                PERFORM error.invalid(format('%sunknown field %L in a class; allowed: name, container, stock, attributes, classes',
+            IF NOT v_key = ANY (ARRAY['name', 'description', 'container', 'stock', 'attributes', 'classes']) THEN
+                PERFORM error.invalid(format('%sunknown field %L in a class; allowed: name, description, container, stock, attributes, classes',
                                              coalesce(p_path || ': ', ''), v_key));
             END IF;
         END LOOP;
@@ -92,6 +93,9 @@ BEGIN
         END IF;
         v_name := util.trim_and_check_path_name(v_node ->> 'name', 'class');
         v_path := concat_ws('/', p_path, v_name);
+        IF jsonb_typeof(v_node -> 'description') NOT IN ('string', 'null') THEN
+            PERFORM error.invalid(format('%s: description must be a text', v_path));
+        END IF;
         IF jsonb_typeof(v_node -> 'container') NOT IN ('boolean', 'null') THEN
             PERFORM error.invalid(format('%s: container must be true or false', v_path));
         END IF;
@@ -110,9 +114,10 @@ BEGIN
         FOR UPDATE;
         v_added := NOT FOUND;
         IF v_added THEN
-            INSERT INTO public.class (parent, name, container, attributes, counting, unit, stock_from)
+            INSERT INTO public.class (parent, name, container, attributes, counting, unit, stock_from, description)
             SELECT p_parent, v_name, coalesce((v_node ->> 'container')::boolean, false),
-                   coalesce(p.attributes, '{}'), coalesce(p.counting, 'optional'), p.unit, p.stock_from
+                   coalesce(p.attributes, '{}'), coalesce(p.counting, 'optional'), p.unit, p.stock_from,
+                   util.description(v_node ->> 'description')
             FROM (SELECT 1) one
             LEFT JOIN public.class p ON p.id = p_parent
             RETURNING * INTO v_class;
@@ -206,10 +211,11 @@ BEGIN
     IF p_data IS NULL OR jsonb_typeof(p_data) <> 'object' OR p_data ->> 'format' IS DISTINCT FROM 'wtf-model' THEN
         PERFORM error.invalid('This is not a model file: it needs "format": "wtf-model"');
     END IF;
-    -- Version 2 had no rules for counting stock, as units were the items';
-    -- it reads as version 3 without them.
-    IF p_data -> 'version' IS DISTINCT FROM '3' AND p_data -> 'version' IS DISTINCT FROM '2' THEN
-        PERFORM error.invalid(format('This model file is of version %s; this WtF reads versions 2 and 3',
+    -- Version 3 had no descriptions of classes; it reads as version 4
+    -- without them. Version 2 had no rules for counting stock either, as
+    -- units were the items'; it reads as version 4 without those too.
+    IF NOT coalesce(p_data -> 'version' IN ('2', '3', '4'), false) THEN
+        PERFORM error.invalid(format('This model file is of version %s; this WtF reads versions 2, 3 and 4',
                                      coalesce(p_data ->> 'version', '(none)')));
     END IF;
     FOR v_key IN SELECT jsonb_object_keys(p_data) LOOP
@@ -260,6 +266,7 @@ BEGIN
     RETURN jsonb_strip_nulls(jsonb_build_object(
         'name',       v_class.name,
         'container',  v_class.container,
+        'description', v_class.description,
         'stock',      CASE WHEN v_class.stock_from = v_class.id OR p_all AND v_class.stock_from IS NOT NULL
                            THEN jsonb_build_object('counting', v_class.counting, 'unit', v_class.unit) END,
         'attributes', (SELECT coalesce(jsonb_object_agg(e.key, e.value - 'class'), '{}')
@@ -311,7 +318,7 @@ BEGIN
     END IF;
     RETURN jsonb_build_object(
         'format',  'wtf-model',
-        'version', 3,
+        'version', 4,
         'meta',    jsonb_build_object('name', v_name),
         'classes', jsonb_build_array(model.class_json(p_class, true)));
 END;

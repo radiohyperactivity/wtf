@@ -4,7 +4,7 @@ The SQL is in [`db/repeatable/40_location.sql`](../db/repeatable/40_location.sql
 
 ## Locations
 
-`location.list(p_known_version)` is the location tree, flat, which `wtfd` nests (`GET /locations`, with `ETag` and `If-None-Match`); its version is `meta.location_version`. `location.get` is a location with its code and path. `location.create` and `location.patch` take `name`, `parent` and `container`; a move below itself is refused. A location's `photo` is the hash of its photo's file, or null ([attachment.md](attachment.md)), in the tree too; `location.patch` removes it with `{"photo": null}`. Both are for admins.
+`location.list(p_known_version)` is the location tree, flat, which `wtfd` nests (`GET /locations`, with `ETag` and `If-None-Match`); its version is `meta.location_version`. `location.get` is a location with its code and path. `location.create` and `location.patch` take `name`, `parent`, `container` and `description` ([API.md](../API.md), "Descriptions"), which `location.get` has; a move below itself is refused. A location's `photo` is the hash of its photo's file, or null ([attachment.md](attachment.md)), in the tree too; `location.patch` removes it with `{"photo": null}`. Both are for admins.
 
 **`stock_photos`** says whether the stock rows at a location may have a photo of their own: `false` for every location there was when it came (migration `0005`). `location.create` takes it optionally (`p_stock_photos`; in `POST /locations`, `"stock_photos": true`): left out, a new location has its parent's, and one at the top has none; the compartments of a grid have their box's. Afterwards each location is changed on its own, with `location.patch` (`true` or `false`, not null): its locations keep theirs. Where it is false, `attachment.set` refuses a stock row's photo (23514, 422), from the upload route and from a phone's camera alike; a photo a row has stays, also when it moves there or the location turns it off. It is in the tree and in every answer that shows a location.
 
@@ -16,9 +16,9 @@ A stock row is an item at a location, with:
 - **`photo`**, the hash of its photo's file, or null;
 - **`values`** and **`defaulted`**, for its item's class's attributes with scope `stock` ([attribute.md](attribute.md)). An order number or a serial number is one of these, where a class wants it: a stock row has no fields of its own for them.
 
-`stock.create(p_item, p_location, p_amount, p_values)` makes one; `stock.patch` changes its item, location, amount, photo (null only) and values, in one transaction.
+`stock.create(p_item, p_location, p_amount, p_values, p_description)` makes one; `stock.patch` changes its item, location, amount, description, photo (null only) and values, in one transaction. A part split off by `stock.move` takes the description along with the rest.
 
-`stock.list(p_item, p_location, p_search, p_limit, p_after)` (`GET /stock`) is a page of stock rows by item name, paged by key as `item.list` is: of an item, in a location or below it, or with `p_search`, words that must each occur, letter case ignored, in the row's text, url and choice values.
+`stock.list(p_item, p_location, p_search, p_limit, p_after)` (`GET /stock`) is a page of stock rows by item name, paged by key as `item.list` is: of an item, in a location or below it, or with `p_search`, words that must each occur, letter case ignored, in the row's description and its text, url and choice values.
 
 ## Moving and merging
 
@@ -27,10 +27,10 @@ A stock row is an item at a location, with:
 `stock.merge(p_stock, p_into, p_amount, p_resolve)` adds `p_amount` of a row (null: all of it) to another row, `p_into`, which may be at another location; it is the user's own action, not a side effect of moving.
 
 - **Both rows** must be of the same item and counted, and not the same row.
-- **Where they differ** (their photo, or a value), `p_resolve` says which row's to keep, for each difference:
+- **Where they differ** (their photo, description, or a value), `p_resolve` says which row's to keep, for each difference:
 
   ```json
-  {"photo": "into", "values": {"Colour": "from", "Serial": "into"}}
+  {"photo": "into", "description": "from", "values": {"Colour": "from", "Serial": "into"}}
   ```
 
   `from` is `p_stock`'s, `into` is `p_into`'s. Without a resolution for every difference, the merge is refused (422, naming the differences), so that the client can ask the user. `p_into` takes what is resolved `from`.

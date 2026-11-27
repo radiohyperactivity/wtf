@@ -326,13 +326,14 @@ LANGUAGE sql STABLE AS $$
 $$;
 
 -- An item's search text (item.search): in lower case, its name p_name,
--- the names of the classes in its path p_path, and its text, url and choice
--- values p_values, as its class's attributes p_attributes say which they
--- are.
-CREATE FUNCTION class.search_text(p_name text, p_path text, p_values jsonb, p_attributes jsonb)
+-- its description p_description, the names of the classes in its path
+-- p_path, and its text, url and choice values p_values, as its class's
+-- attributes p_attributes say which they are. A stock row's, for a search
+-- of stock, is its description and values.
+CREATE FUNCTION class.search_text(p_name text, p_description text, p_path text, p_values jsonb, p_attributes jsonb)
 RETURNS text
 LANGUAGE sql IMMUTABLE AS $$
-    SELECT lower(concat_ws(' ', p_name, p_path,
+    SELECT lower(concat_ws(' ', p_name, p_description, p_path,
                            (SELECT string_agg(e.value #>> '{}', ' ' ORDER BY e.key)
                             FROM jsonb_each(p_values) e
                             WHERE p_attributes -> e.key ->> 'type' IN ('text', 'url', 'choice'))));
@@ -476,7 +477,7 @@ BEGIN
     DROP TABLE IF EXISTS pg_temp.checked;
     CREATE TEMPORARY TABLE pg_temp.checked ON COMMIT DROP AS
     SELECT i.id, i.name, n.new_values AS values, n.new_defaulted AS defaulted, n.problem,
-           class.search_text(i.name, t.path, n.new_values, t.attributes) AS search,
+           class.search_text(i.name, i.description, t.path, n.new_values, t.attributes) AS search,
            i.values AS old_values, i.defaulted AS old_defaulted, i.search AS old_search
     FROM public.item i
     JOIN pg_temp.subtree t ON t.id = i.class
@@ -709,12 +710,13 @@ LANGUAGE sql IMMUTABLE AS $$
                               'from', p_class.stock_from);
 $$;
 
--- A class as class.get shows it: its path from the top, its attributes, and
--- its rule for counting stock.
+-- A class as class.get shows it: its description (null for none), its path
+-- from the top, its attributes, and its rule for counting stock.
 CREATE FUNCTION class.detail_json(p_class public.class)
 RETURNS jsonb
 LANGUAGE sql STABLE AS $$
     SELECT class.json(p_class) || jsonb_build_object(
+        'description', p_class.description,
         'path',       class.path_json(p_class.id),
         'attributes', class.attributes_json(p_class),
         'stock',      class.stock_json(p_class));
@@ -806,13 +808,15 @@ $$;
 -- the parent's attributes and its rule for counting stock (at the top, the
 -- default: counted, optional, in pieces). Its name can't contain "/" (it separates the
 -- names in a path), and must not be one of its siblings' already (letter
--- case ignored). A container holds only other classes, never items. For
+-- case ignored). A container holds only other classes, never items.
+-- p_description is its description, NULL for none (util.description). For
 -- admins.
 CREATE FUNCTION class.create(
     p_request   public.request,
     p_name      text,
     p_parent    uuid,
-    p_container boolean
+    p_container boolean,
+    p_description text DEFAULT NULL
 ) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
@@ -839,9 +843,10 @@ BEGIN
     END IF;
     PERFORM class.check_sibling_name(p_parent, v_name, NULL);
 
-    INSERT INTO public.class (name, parent, container, attributes, counting, unit, stock_from)
+    INSERT INTO public.class (name, parent, container, attributes, counting, unit, stock_from, description)
     VALUES (v_name, p_parent, p_container, v_attributes,
-            coalesce(v_parent.counting, 'optional'), v_parent.unit, v_parent.stock_from)
+            coalesce(v_parent.counting, 'optional'), v_parent.unit, v_parent.stock_from,
+            util.description(p_description))
     RETURNING * INTO v_class;
     PERFORM util.bump_version('class');
     RETURN class.detail_json(v_class);
@@ -849,7 +854,8 @@ END;
 $$;
 
 -- Changes the fields of a class that p_patch has:
--- name, parent (null: to the top) and container. A move into one of its
+-- name, parent (null: to the top), container and description (null for
+-- none). A move into one of its
 -- own subclasses is refused, and so is becoming a container while it has
 -- items. Moving it gives it and the classes below it what they inherit from
 -- their new place, which is checked against every item and stock row below
@@ -873,7 +879,8 @@ DECLARE
     v_units     jsonb;
     v_relabelled bigint;
 BEGIN
-    PERFORM util.check_patch(p_patch, ARRAY['name', 'parent', 'container'], ARRAY['name', 'container']);
+    PERFORM util.check_patch(p_patch, ARRAY['name', 'parent', 'container', 'description'],
+                             ARRAY['name', 'container']);
     v_class := class.lock_subtree(p_class);
 
     v_name      := CASE WHEN p_patch ? 'name'
@@ -900,7 +907,8 @@ BEGIN
 
     v_units := class.units_json(p_class);
     UPDATE public.class c
-    SET name = v_name, parent = v_parent, container = v_container
+    SET name = v_name, parent = v_parent, container = v_container,
+        description = util.patched_description(p_patch, c.description)
     WHERE c.id = p_class;
     IF v_parent IS DISTINCT FROM v_class.parent THEN
         PERFORM class.rebuild(p_class);

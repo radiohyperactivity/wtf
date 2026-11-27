@@ -48,13 +48,14 @@ type tree struct {
 }
 
 type class struct {
-	ID         string      `json:"id"`
-	Name       string      `json:"name"`
-	Parent     *string     `json:"parent"`
-	Container  bool        `json:"container"`
-	Path       []ref       `json:"path"`
-	Attributes []attribute `json:"attributes"`
-	Stock      stockRule   `json:"stock"`
+	ID          string      `json:"id"`
+	Name        string      `json:"name"`
+	Description *string     `json:"description"`
+	Parent      *string     `json:"parent"`
+	Container   bool        `json:"container"`
+	Path        []ref       `json:"path"`
+	Attributes  []attribute `json:"attributes"`
+	Stock       stockRule   `json:"stock"`
 }
 
 // stockRule is how a class's items' stock is counted: Counting none,
@@ -84,6 +85,8 @@ type location struct {
 	Parent    *string `json:"parent"`
 	Container bool    `json:"container"`
 	Photo     *string `json:"photo"`
+	// Nil for none.
+	Description *string `json:"description"`
 	// Whether the stock rows there may have a photo of their own.
 	StockPhotos bool  `json:"stock_photos"`
 	Path        []ref `json:"path"`
@@ -109,16 +112,17 @@ type stockTotal struct {
 }
 
 type item struct {
-	ID        string      `json:"id"`
-	Code      string      `json:"code"`
-	Name      string      `json:"name"`
-	Class     class       `json:"class"`
-	Counting  string      `json:"counting"` // its class's: none, optional or required
-	Unit      *string     `json:"unit"`     // its class's; nil: pieces
-	Photo     *string     `json:"photo"`
-	Values    values      `json:"values"`
-	Defaulted []string    `json:"defaulted"`
-	Stock     []itemStock `json:"stock"`
+	ID          string      `json:"id"`
+	Code        string      `json:"code"`
+	Name        string      `json:"name"`
+	Description *string     `json:"description"`
+	Class       class       `json:"class"`
+	Counting    string      `json:"counting"` // its class's: none, optional or required
+	Unit        *string     `json:"unit"`     // its class's; nil: pieces
+	Photo       *string     `json:"photo"`
+	Values      values      `json:"values"`
+	Defaulted   []string    `json:"defaulted"`
+	Stock       []itemStock `json:"stock"`
 }
 
 type itemStock struct {
@@ -132,14 +136,15 @@ type itemStock struct {
 }
 
 type stock struct {
-	ID        string       `json:"id"`
-	Code      string       `json:"code"`
-	Item      itemRow      `json:"item"`
-	Location  string       `json:"location"`
-	Amount    *json.Number `json:"amount"`
-	Photo     *string      `json:"photo"`
-	Values    values       `json:"values"`
-	Defaulted []string     `json:"defaulted"`
+	ID          string       `json:"id"`
+	Code        string       `json:"code"`
+	Description *string      `json:"description"`
+	Item        itemRow      `json:"item"`
+	Location    string       `json:"location"`
+	Amount      *json.Number `json:"amount"`
+	Photo       *string      `json:"photo"`
+	Values      values       `json:"values"`
+	Defaulted   []string     `json:"defaulted"`
 }
 
 // page is one page of a list: its rows, whether more follow, and the row

@@ -25,18 +25,21 @@ LANGUAGE sql IMMUTABLE AS $$
     );
 $$;
 
--- An item as item.get shows it: its class with its path, its values and
+-- An item as item.get shows it: its description (null for none), its class
+-- with its path, its values and
 -- those of them that follow the class's defaults, and its stock rows, by
 -- location name, each with its values.
 CREATE FUNCTION item.detail_json(p_item public.item)
 RETURNS jsonb
 LANGUAGE sql STABLE AS $$
     SELECT item.json(p_item, c) || jsonb_build_object(
+        'description', p_item.description,
         'class',     jsonb_build_object('id', c.id, 'name', c.name, 'path', class.path_json(c.id)),
         'values',    p_item.values,
         'defaulted', to_jsonb(p_item.defaulted),
         'stock',     coalesce((
-            SELECT jsonb_agg(stock.json(s) || jsonb_build_object('values', s.values,
+            SELECT jsonb_agg(stock.json(s) || jsonb_build_object('description', s.description,
+                                                                  'values', s.values,
                                                                   'defaulted', to_jsonb(s.defaulted))
                              ORDER BY l.name COLLATE public.natural, s.id)
             FROM public.stock s
@@ -156,7 +159,8 @@ BEGIN
     UPDATE public.item i
     SET values    = v_checked.new_values,
         defaulted = v_checked.new_defaulted,
-        search    = class.search_text(i.name, class.path_text(p_class.id), v_checked.new_values, p_class.attributes)
+        search    = class.search_text(i.name, i.description, class.path_text(p_class.id),
+                                      v_checked.new_values, p_class.attributes)
     WHERE i.id = p_item.id
     RETURNING * INTO v_item;
     RETURN v_item;
@@ -409,7 +413,8 @@ CREATE FUNCTION item.create(
     p_class   uuid,
     p_name    text,
     p_values  jsonb,
-    p_stock   jsonb DEFAULT NULL
+    p_stock   jsonb DEFAULT NULL,
+    p_description text DEFAULT NULL
 ) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
@@ -417,6 +422,7 @@ AS $$
 DECLARE
     v_session record := util.session(p_request, 'user');
     v_name    text := util.trim_and_check(p_name);
+    v_description text := util.description(p_description);
     v_values  jsonb := util.given_values(p_values);
     v_class   public.class;
     v_checked record;
@@ -441,10 +447,11 @@ BEGIN
         PERFORM error.not_allowed(format('Item "%s" %s', v_name, v_checked.problem));
     END IF;
 
-    INSERT INTO public.item (code, class, name, values, defaulted, search)
-    VALUES (util.take_codes(1), p_class, v_name,
+    INSERT INTO public.item (code, class, name, description, values, defaulted, search)
+    VALUES (util.take_codes(1), p_class, v_name, v_description,
             v_checked.new_values, v_checked.new_defaulted,
-            class.search_text(v_name, class.path_text(p_class), v_checked.new_values, v_class.attributes))
+            class.search_text(v_name, v_description, class.path_text(p_class),
+                              v_checked.new_values, v_class.attributes))
     RETURNING * INTO v_item;
     IF p_stock IS NOT NULL THEN
         PERFORM stock.create(p_request, v_item.id, (p_stock ->> 'location')::uuid,
@@ -454,7 +461,8 @@ BEGIN
 END;
 $$;
 
--- Changes the fields of an item that p_patch has: class, name, photo (null
+-- Changes the fields of an item that p_patch has: class, name, description
+-- (null for none), photo (null
 -- only: a photo is uploaded), and its values: values, {"<name>": <value or
 -- null>, ...}, and default, ["<name>", ...], as class.patch_values says.
 -- All in one transaction, and checked together. In another class, its
@@ -514,7 +522,7 @@ DECLARE
     v_old_class uuid;
     v_changed record;
 BEGIN
-    PERFORM util.check_patch(p_patch, ARRAY['class', 'name', 'photo', 'values', 'default'],
+    PERFORM util.check_patch(p_patch, ARRAY['class', 'name', 'description', 'photo', 'values', 'default'],
                              ARRAY['class', 'name']);
     IF p_patch ? 'photo' AND jsonb_typeof(p_patch -> 'photo') <> 'null' THEN
         PERFORM error.invalid('A photo is uploaded; photo can only be set to null here, which removes it');
@@ -531,6 +539,7 @@ BEGIN
     UPDATE public.item i
     SET class = v_class.id,
         name  = CASE WHEN p_patch ? 'name' THEN util.trim_and_check(p_patch ->> 'name') ELSE i.name END,
+        description = util.patched_description(p_patch, i.description),
         photo = CASE WHEN p_patch ? 'photo' THEN NULL ELSE i.photo END
     WHERE i.id = p_item
     RETURNING * INTO v_item;

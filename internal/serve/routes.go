@@ -39,6 +39,8 @@ func (s *server) routes() []route {
 			field{key: "name", name: "p_name", typ: "text"},
 			field{key: "parent", name: "p_parent", typ: "uuid"},
 			field{key: "container", name: "p_container", typ: "boolean"},
+			// Optional, as it came after the rest.
+			field{key: "description", name: "p_description", typ: "text", optional: true},
 		))},
 		{"GET /classes/{id}", s.read("class.get", class)},
 		{"PATCH /classes/{id}", s.update("class.patch", class, patch("p_patch"))},
@@ -82,6 +84,7 @@ func (s *server) routes() []route {
 			// The item's first stock row, made with it; optional, as it came
 			// after the rest.
 			field{key: "stock", name: "p_stock", typ: "jsonb", optional: true},
+			field{key: "description", name: "p_description", typ: "text", optional: true},
 		))},
 		{"GET /items/{id}", s.read("item.get", path("p_item", "id"))},
 		{"PATCH /items/{id}", s.update("item.patch", path("p_item", "id"), patch("p_patch"))},
@@ -108,6 +111,8 @@ func (s *server) routes() []route {
 			field{key: "location", name: "p_location", typ: "uuid"},
 			field{key: "amount", name: "p_amount", typ: "numeric"},
 			field{key: "values", name: "p_values", typ: "jsonb"},
+			// Optional, as it came after the rest.
+			field{key: "description", name: "p_description", typ: "text", optional: true},
 		))},
 		{"GET /stock/{id}", s.read("stock.get", path("p_stock", "id"))},
 		{"PATCH /stock/{id}", s.update("stock.patch", path("p_stock", "id"), patch("p_patch"))},
@@ -200,7 +205,8 @@ func flag(name, key string) param {
 }
 
 // locationBody takes POST /locations' body apart: name, parent,
-// container, stock_photos (optional: its parent's when left out), and grid
+// container, stock_photos (optional: its parent's when left out),
+// description (optional: none when left out), and grid
 // ({columns, rows, confirm}, or null for none) into p_columns, p_rows and
 // p_confirm.
 func locationBody() param {
@@ -219,6 +225,7 @@ func locationBody() param {
 			{key: "parent", name: "p_parent", typ: "uuid"},
 			{key: "container", name: "p_container", typ: "boolean"},
 			{key: "stock_photos", name: "p_stock_photos", typ: "boolean", optional: true},
+			{key: "description", name: "p_description", typ: "text", optional: true},
 		})
 		if err != nil {
 			return nil, err

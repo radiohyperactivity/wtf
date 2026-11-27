@@ -52,8 +52,9 @@ The files are applied by `wtfd schema` (see [WTFD.md](WTFD.md)). Migrations run 
   - Other objects refer to classes and locations by id; clients resolve them from the trees they keep. `class.get` and `location.get` include the `path` from the top.
 - **Attributes and values.** A class's attributes are in the class, its own and those it inherits; an item's or a stock row's values are a JSON object by attribute name, with the names of those that follow the class's default. See [api/attribute.md](api/attribute.md).
 - **Units are labels.** An attribute's `unit` and an item's `unit` say what numbers are in ("mm", "m"); nothing converts.
+- **Descriptions.** A class, an item, a location and a stock row may have a `description`: text of any length and any number of lines, null for none (migration `0007`). The create functions take it optionally (`p_description`; `"description"` in the body, left out for none), and the patches change it, null or an empty text removing it. It is stored without blank space or empty lines at either end, with `\n` line ends (`util.description`). It is in the answers about one thing (`class.get`, `item.get`, `location.get`, `stock.get`, and what a change answers), not in lists or trees. An item's is in its search text.
 - **Files.** An item or a stock row has a photo, and the files of its class's attachment attributes, each its content's hash. See [api/attachment.md](api/attachment.md).
-- **Search.** `item.list`'s `p_search` is split into words; every word must occur, letter case ignored, as part of a word or whole, in the item's search text: its name, the names of the classes in its path, and its text, url and choice values. See [api/item.md](api/item.md).
+- **Search.** `item.list`'s `p_search` is split into words; every word must occur, letter case ignored, as part of a word or whole, in the item's search text: its name, its description, the names of the classes in its path, and its text, url and choice values. See [api/item.md](api/item.md).
 - **Attribute filters.** `item.list`'s `p_where` is a list of conditions on attribute values, by name, all of which must pass; see [api/item.md](api/item.md).
 - **Dry runs.** The changes of a class's attributes, model imports and recursive deletes take `p_dry_run`: the change does all its work, undoes it, and answers what it would have done.
 - **Deleting removes** a row for good, with what belongs to it alone; something others still use can't be deleted (23001, 409, naming what is in the way). See [api/deleting.md](api/deleting.md). There is no restore and no history: a backup is the way back.
@@ -117,7 +118,7 @@ The 51 functions the API calls, and the routes that call them (under `/api/v1`).
 | `account.delete(p_account)` | void | `DELETE /accounts/{id}` |
 | `class.list(p_known_version)` | `{version, nodes}` | `GET /classes` (ETag; nested by wtfd) |
 | `class.get(p_class)` | class | `GET /classes/{id}` |
-| `class.create(p_name, p_parent, p_container)` | class | `POST /classes` |
+| `class.create(p_name, p_parent, p_container, p_description)` | class | `POST /classes` |
 | `class.patch(p_class, p_patch)` | class | `PATCH /classes/{id}` |
 | `class.stock_set(p_class, p_counting, p_unit, p_dry_run)` | change | `PUT /classes/{id}/stock` |
 | `class.stock_inherit(p_class, p_dry_run)` | change | `DELETE /classes/{id}/stock` |
@@ -132,20 +133,20 @@ The 51 functions the API calls, and the routes that call them (under `/api/v1`).
 | `class.choice_remove(p_class, p_name, p_choice, p_dry_run)` | change | `DELETE /classes/{id}/attributes/{attribute}/choices/{choice}` |
 | `location.list(p_known_version)` | `{version, nodes}` | `GET /locations` (ETag; nested by wtfd) |
 | `location.get(p_location)` | location | `GET /locations/{id}` |
-| `location.create(p_name, p_parent, p_container, p_columns, p_rows, p_confirm)` | location | `POST /locations` (the body's `grid` gives the last three) |
+| `location.create(p_name, p_parent, p_container, p_columns, p_rows, p_confirm, p_stock_photos, p_description)` | location | `POST /locations` (the body's `grid` gives `p_columns`, `p_rows` and `p_confirm`) |
 | `location.patch(p_location, p_patch)` | location | `PATCH /locations/{id}` |
 | `location.delete(p_location)` | void | `DELETE /locations/{id}` |
 | `location.delete_tree(p_location, p_force, p_dry_run)` | `{locations, stock}` | `DELETE /locations/{id}?recursive=true[&force=true]`; preview `GET /locations/{id}/deletion` |
 | `stock.list(p_item, p_location, p_search, p_limit, p_after)` | page of stock | `GET /stock` |
 | `stock.get(p_stock)` | stock | `GET /stock/{id}` |
-| `stock.create(p_item, p_location, p_amount, p_values)` | stock | `POST /stock` |
+| `stock.create(p_item, p_location, p_amount, p_values, p_description)` | stock | `POST /stock` |
 | `stock.patch(p_stock, p_patch)` | stock | `PATCH /stock/{id}` |
 | `stock.move(p_stock, p_location, p_amount)` | stock (where it went) | `POST /stock/{id}/move` |
 | `stock.merge(p_stock, p_into, p_amount, p_resolve)` | stock (`p_into`) | `POST /stock/{id}/merge` |
 | `stock.delete(p_stock)` | void | `DELETE /stock/{id}` |
 | `item.list(p_class, p_search, p_where, p_limit, p_after)` | page of items (list form) | `GET /items` |
 | `item.get(p_item)` | item | `GET /items/{id}` |
-| `item.create(p_class, p_name, p_values, p_stock)` | item, with its first stock row when `p_stock` is given | `POST /items` |
+| `item.create(p_class, p_name, p_values, p_stock, p_description)` | item, with its first stock row when `p_stock` is given | `POST /items` |
 | `item.patch(p_item, p_patch)` | item | `PATCH /items/{id}` |
 | `item.delete(p_item)` | void | `DELETE /items/{id}` |
 | `attachment.lock(p_hash)` | void | `PUT /{kind}/{id}/photo`, `PUT /{kind}/{id}/files/{attribute}` (multipart; wtfd stores the file between the two calls) |

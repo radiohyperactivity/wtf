@@ -69,6 +69,18 @@ func fields(w io.Writer, pairs ...string) {
 	t.flush()
 }
 
+// printDescription prints a description under its fields, each of its
+// lines indented; nothing when there is none.
+func printDescription(w io.Writer, d *string) {
+	if d == nil {
+		return
+	}
+	fmt.Fprintln(w, "Description:")
+	for _, line := range strings.Split(*d, "\n") {
+		fmt.Fprintln(w, strings.TrimRight("  "+line, " "))
+	}
+}
+
 // formatAmount is a stock amount, with the item's unit (nil: pieces), or
 // "uncounted".
 func formatAmount(q *json.Number, unit *string) string {

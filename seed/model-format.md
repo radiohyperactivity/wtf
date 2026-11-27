@@ -6,18 +6,19 @@ A model file describes part of an installation's model in JSON: a tree of classe
 - **Export:** a class's menu → Export as a model file in the app; `wtf model export CLASS` in the CLI; `GET /api/v1/classes/{id}/model`.
 - **Example:** [models/mcu.json](models/mcu.json), a model of microcontrollers.
 
-"Model" is WtF's word for classes and their attributes, as against the data: items, stock and locations. A model file carries no data. Version 3 of the format, from 22 November 2026, adds a class's rule for counting stock (`stock`, [2026-11-22-stock-rules-on-classes.md](../2026-11-22-stock-rules-on-classes.md)); version 2, from 2 November 2026, has a class's attributes in the same JSON as the database keeps them ([2026-11-02-attributes-in-json.md](../2026-11-02-attributes-in-json.md), decision 31), and is still read, as version 3 without rules; version 1, with units and separate attributes, is no longer read.
+"Model" is WtF's word for classes and their attributes, as against the data: items, stock and locations. A model file carries no data. Version 4 of the format, from 27 November 2026, adds a class's description (`description`, [APP.md](../APP.md), decision 127); version 3, from 22 November 2026, adds a class's rule for counting stock (`stock`, [2026-11-22-stock-rules-on-classes.md](../2026-11-22-stock-rules-on-classes.md)); version 2, from 2 November 2026, has a class's attributes in the same JSON as the database keeps them ([2026-11-02-attributes-in-json.md](../2026-11-02-attributes-in-json.md), decision 31), and is still read, as version 4 without rules; version 3 is read as version 4 without descriptions; version 1, with units and separate attributes, is no longer read.
 
 ## An example
 
 ```json
 {
   "format": "wtf-model",
-  "version": 3,
+  "version": 4,
   "meta": { "name": "Microcontrollers", "description": "MCUs by family, with what tells them apart." },
   "classes": [
     {
       "name": "MCU",
+      "description": "Microcontrollers, as chips; boards are under Boards.",
       "container": true,
       "attributes": {
         "Clock":     { "scope": "item", "type": "decimal", "unit": "MHz", "required": true, "order": 1 },
@@ -45,7 +46,7 @@ The file is a JSON object (UTF-8):
 | Key | | |
 |-----|-|-|
 | `format` | required | Always `"wtf-model"`. Tells a model file from any other JSON. |
-| `version` | required | The version of this format: `3` (`2` is still read). |
+| `version` | required | The version of this format: `4` (`2` and `3` are still read). |
 | `meta` | optional | About the file, for people: never read by an import. Apps show its `name` and `description`; an export writes the class's `name`. |
 | `classes` | optional | The top classes it defines, below; each may have classes of its own. |
 
@@ -54,6 +55,7 @@ The file is a JSON object (UTF-8):
 | Key | | |
 |-----|-|-|
 | `name` | required | Its name, without "/". |
+| `description` | optional | What it is for, as text of any number of lines. A class the import adds gets it; one that is there already keeps its own. |
 | `container` | optional | `true`: it holds only other classes, no items. |
 | `stock` | optional | Its own rule for counting its items' stock, `{counting, unit}`: `counting` `none`, `optional` or `required`, and `unit` a label or null for pieces (none when nothing is counted), as [api/class.md](../api/class.md) describes. Left out, it inherits its parent's. |
 | `attributes` | optional | The attributes it defines, by name, each a definition as [api/attribute.md](../api/attribute.md) describes: `scope`, `type`, `required`, `unit`, `default`, `choices`, `media` and `order`. |

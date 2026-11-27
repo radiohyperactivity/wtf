@@ -127,6 +127,22 @@ func (e *env) valueField(label, current string, a attribute) (string, any, error
 	}
 }
 
+// descriptionField asks for a description, with current filled in, on one
+// line, where "\n" stands for a new line; empty for none. It plans the change
+// in the patch.
+func (e *env) descriptionField(p *editPlan, current *string) error {
+	old := ""
+	if current != nil {
+		old = strings.ReplaceAll(*current, "\n", `\n`)
+	}
+	v, err := e.field(`Description (\n: a new line; empty: none)`, old, nil)
+	if err != nil || v == old {
+		return err
+	}
+	p.patch["description"] = descriptionText(v)
+	return nil
+}
+
 // editTitle introduces a form.
 func (e *env) editTitle(what string) {
 	fmt.Fprintf(e.stderr, "Editing %s. Enter keeps a value, Tab completes, Ctrl-C cancels without saving.\n", what)
@@ -225,6 +241,9 @@ func (e *env) editLocation(id string) error {
 	if err := e.editTreeFields(p, ix, "location", l.Name, l.Parent, l.Container, completeLocations); err != nil {
 		return err
 	}
+	if err := e.descriptionField(p, l.Description); err != nil {
+		return err
+	}
 	photos, err := e.yesNoField("Stock photos (its stock rows may have one)", l.StockPhotos)
 	if err != nil {
 		return err
@@ -250,6 +269,9 @@ func (e *env) editClass(id string) error {
 	e.editTitle("class " + pathNames(c.Path) + " (its attributes change with 'wtf class attribute')")
 	p := newPlan("/classes/" + id)
 	if err := e.editTreeFields(p, ix, "class", c.Name, c.Parent, c.Container, completeClasses); err != nil {
+		return err
+	}
+	if err := e.descriptionField(p, c.Description); err != nil {
 		return err
 	}
 	if err := e.apply(p); err != nil {
@@ -348,6 +370,9 @@ func (e *env) editItem(id string) error {
 	if v != it.Name {
 		p.patch["name"] = v
 	}
+	if err := e.descriptionField(p, it.Description); err != nil {
+		return err
+	}
 	classPath := pathNames(it.Class.Path)
 	if v, err = e.requiredField("Class", classPath, completeItemClasses); err != nil {
 		return err
@@ -417,6 +442,9 @@ func (e *env) editStock(id string) error {
 			return err
 		}
 	}
+	if err := e.descriptionField(p, s.Description); err != nil {
+		return err
+	}
 	c, err := e.classDetail(s.Item.Class)
 	if err != nil {
 		return err
@@ -428,6 +456,29 @@ func (e *env) editStock(id string) error {
 		return err
 	}
 	return e.showAfterEdit("/stock/"+id, func(e *env, d json.RawMessage) error { return e.printStockJSON(d) })
+}
+
+// descriptionHelp is the help of --description on the set commands.
+const descriptionHelp = `new description, \n starting a new line; "" removes it`
+
+// descriptionText is a description as typed on one line, with "\n" for a
+// new line, for the API, which drops the blank space at its ends; nil for
+// an empty one, which removes it.
+func descriptionText(typed string) any {
+	text := strings.TrimSpace(strings.ReplaceAll(typed, `\n`, "\n"))
+	if text == "" {
+		return nil
+	}
+	return text
+}
+
+// descriptionLine is a description on one line, with "\n" for its line
+// breaks, as a merge shows a difference; "(none)" for none.
+func descriptionLine(d *string) string {
+	if d == nil {
+		return "(none)"
+	}
+	return strings.ReplaceAll(*d, "\n", `\n`)
 }
 
 // orNil is nil for "", for a patch that clears a field.

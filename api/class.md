@@ -5,9 +5,9 @@ The SQL is in [`db/repeatable/31_class.sql`](../db/repeatable/31_class.sql). A c
 ## The tree
 
 - **`class.list(p_known_version)`** is the class tree, flat, which `wtfd` nests (`GET /classes`, with `ETag` and `If-None-Match`): `{id, name, parent, container}` for every class. The tree's version is `meta.class_version`; any change of a class, its attributes included, moves it on.
-- **`class.get(p_class)`** is a class with its path from the top, its attributes, and its rule for counting stock, `stock: {counting, unit, from}`.
-- **`class.create(p_name, p_parent, p_container)`** makes a class below `p_parent` (null: at the top), with the parent's attributes and rule for counting stock. Names are unique among siblings, letter case ignored, and can't contain "/".
-- **`class.patch(p_class, p_patch)`** changes `name`, `parent` and `container`.
+- **`class.get(p_class)`** is a class with its `description` (null for none; [API.md](../API.md), "Descriptions"), its path from the top, its attributes, and its rule for counting stock, `stock: {counting, unit, from}`.
+- **`class.create(p_name, p_parent, p_container, p_description)`** makes a class below `p_parent` (null: at the top), with the parent's attributes and rule for counting stock. Names are unique among siblings, letter case ignored, and can't contain "/".
+- **`class.patch(p_class, p_patch)`** changes `name`, `parent`, `container` and `description`.
   - **A move** below itself is refused. Moving a class gives it and the classes below it what they inherit from the new place; every item and stock row below it is then checked, and refused as a whole if one doesn't fit (a value of an attribute it no longer has, a required value missing).
   - **A move** that changes the rule for counting stock it inherits is checked against the stock below it too, and refused when a row doesn't fit the new rule, or when counted stock would get another unit (nothing converts: give the class a rule of its own first).
   - **A rename or a move** rewrites the search texts of the items below it, which have the names of their classes ([item.md](item.md)).

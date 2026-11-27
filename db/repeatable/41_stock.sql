@@ -25,8 +25,8 @@ LANGUAGE sql IMMUTABLE AS $$
     );
 $$;
 
--- A stock row as stock.get shows it: with its item, its values and those
--- of them that follow the class's defaults. (PL/pgSQL, as it uses
+-- A stock row as stock.get shows it: with its description (null for none),
+-- its item, its values and those of them that follow the class's defaults. (PL/pgSQL, as it uses
 -- item.json, which is made after this script.)
 CREATE FUNCTION stock.detail_json(p_stock public.stock)
 RETURNS jsonb
@@ -34,6 +34,7 @@ LANGUAGE plpgsql STABLE AS $$
 BEGIN
     RETURN (
         SELECT stock.json(p_stock) || jsonb_build_object(
+            'description', p_stock.description,
             'item',      item.json(i, c),
             'values',    p_stock.values,
             'defaulted', to_jsonb(p_stock.defaulted))
@@ -225,7 +226,7 @@ BEGIN
                          OR i.name COLLATE public.natural >= v_after
                             AND (i.name COLLATE public.natural > v_after OR s.id > p_after))
                     AND NOT EXISTS (SELECT 1 FROM unnest(v_words) w
-                                    WHERE strpos(class.search_text(NULL, NULL, s.values, c.attributes), w) = 0)
+                                    WHERE strpos(class.search_text(NULL, s.description, NULL, s.values, c.attributes), w) = 0)
                   ORDER BY i.name COLLATE public.natural, s.id
                   LIMIT p_limit + 1) x
         )
@@ -270,13 +271,15 @@ $$;
 -- where it is required, whole in pieces; NULL means present but not
 -- counted. p_values sets its stock values, as item.create does an item's:
 -- {"Bought": "2026-11-02", ...}; the others get their defaults, and follow
--- them. Returns the row as stock.get does.
+-- them. p_description is its description, NULL for none
+-- (util.description). Returns the row as stock.get does.
 CREATE FUNCTION stock.create(
     p_request  public.request,
     p_item     uuid,
     p_location uuid,
     p_amount   numeric,
-    p_values   jsonb
+    p_values   jsonb,
+    p_description text DEFAULT NULL
 ) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
@@ -298,15 +301,16 @@ BEGIN
         PERFORM error.not_allowed(format('A stock row of item "%s" %s', v_item.name, v_checked.problem));
     END IF;
 
-    INSERT INTO public.stock (code, item, location, amount, values, defaulted)
-    VALUES (util.take_codes(1), p_item, p_location, p_amount, v_checked.new_values, v_checked.new_defaulted)
+    INSERT INTO public.stock (code, item, location, amount, values, defaulted, description)
+    VALUES (util.take_codes(1), p_item, p_location, p_amount, v_checked.new_values, v_checked.new_defaulted,
+            util.description(p_description))
     RETURNING * INTO v_stock;
     RETURN stock.detail_json(v_stock);
 END;
 $$;
 
 -- Changes the fields of a stock row that p_patch has: item, location,
--- amount (null: not counted), photo (null only: a photo is uploaded), and
+-- amount (null: not counted), description (null for none), photo (null only: a photo is uploaded), and
 -- its values, as item.patch does an item's.
 -- To move things, use stock.move; a location here is for corrections.
 -- Given another item, its values are checked against that item's class. Returns the row as stock.get does.
@@ -326,7 +330,7 @@ DECLARE
     v_changed record;
     v_was     public.class;
 BEGIN
-    PERFORM util.check_patch(p_patch, ARRAY['item', 'location', 'amount', 'photo', 'values', 'default'],
+    PERFORM util.check_patch(p_patch, ARRAY['item', 'location', 'amount', 'description', 'photo', 'values', 'default'],
                              ARRAY['item', 'location']);
     IF p_patch ? 'amount' AND jsonb_typeof(p_patch -> 'amount') NOT IN ('number', 'null') THEN
         PERFORM error.invalid('amount must be a number, or null for not counted');
@@ -361,6 +365,7 @@ BEGIN
     SET item     = v_item.id,
         location = coalesce((p_patch ->> 'location')::uuid, s.location),
         amount   = v_amount,
+        description = util.patched_description(p_patch, s.description),
         photo    = CASE WHEN p_patch ? 'photo' THEN NULL ELSE s.photo END
     WHERE s.id = p_stock
     RETURNING * INTO v_stock;
@@ -375,8 +380,8 @@ $$;
 -- location. p_amount NULL moves the whole row; otherwise it is the amount
 -- to move, and the row must be counted. A whole row changes location and
 -- keeps its code; a part is split off into a new row at the destination,
--- with a code of its own and everything else the row has: its photo and
--- values. It never merges into a row at the destination:
+-- with a code of its own and everything else the row has: its photo,
+-- description and values. It never merges into a row at the destination:
 -- stock.merge does that, when the user asks. Returns the row at the
 -- destination, as stock.get does.
 CREATE FUNCTION stock.move(p_request public.request, p_stock uuid, p_location uuid, p_amount numeric)
@@ -409,15 +414,16 @@ BEGIN
 
     -- A part, split off into a new row.
     UPDATE public.stock s SET amount = s.amount - p_amount WHERE s.id = p_stock;
-    INSERT INTO public.stock (code, item, location, amount, values, defaulted, photo)
+    INSERT INTO public.stock (code, item, location, amount, values, defaulted, photo, description)
     VALUES (util.take_codes(1), v_stock.item, p_location, p_amount,
-            v_stock.values, v_stock.defaulted, v_stock.photo)
+            v_stock.values, v_stock.defaulted, v_stock.photo, v_stock.description)
     RETURNING * INTO v_split;
     RETURN stock.detail_json(v_split);
 END;
 $$;
 
--- What differs between stock rows p_a and p_b: "photo" when it does, and
+-- What differs between stock rows p_a and p_b: "photo" and "description"
+-- when they do, and
 -- each value one row has and the other hasn't, or has with another value,
 -- as "values.<name>". Empty when they are the same.
 CREATE FUNCTION stock.differences(p_a public.stock, p_b public.stock)
@@ -426,6 +432,8 @@ LANGUAGE sql IMMUTABLE AS $$
     SELECT ARRAY(
         SELECT f FROM (
             SELECT 'photo' AS f WHERE p_a.photo IS DISTINCT FROM p_b.photo
+            UNION ALL
+            SELECT 'description' WHERE p_a.description IS DISTINCT FROM p_b.description
             UNION ALL
             SELECT 'values.' || k
             FROM (SELECT jsonb_object_keys(p_a.values) UNION SELECT jsonb_object_keys(p_b.values)) n (k)
@@ -436,9 +444,9 @@ $$;
 -- Adds p_amount of a stock row (NULL: all of it) to
 -- another row, p_into, which may be at another location. Both rows
 -- must be of the same item and counted. Where they differ (their photo,
--- or a value), p_resolve must say which row's to keep, for each
--- difference: {"photo": "from" | "into", "values": {"<name>": "from" |
--- "into"}}, where "from" is
+-- description, or a value), p_resolve must say which row's to keep, for
+-- each difference: {"photo": "from" | "into", "description": "from" |
+-- "into", "values": {"<name>": "from" | "into"}}, where "from" is
 -- p_stock's and "into" is p_into's. Without one for every difference, the
 -- merge is refused (422, naming the differences), so that the client can
 -- ask the user. p_into takes what is resolved "from". Merging all of it
@@ -471,12 +479,12 @@ DECLARE
 BEGIN
     IF jsonb_typeof(v_resolve) <> 'object'
        OR EXISTS (SELECT 1 FROM jsonb_each(v_resolve) e
-                  WHERE e.key NOT IN ('photo', 'values')
+                  WHERE e.key NOT IN ('photo', 'description', 'values')
                      OR e.key <> 'values' AND e.value NOT IN ('"from"', '"into"')
                      OR e.key = 'values' AND (jsonb_typeof(e.value) <> 'object'
                                               OR EXISTS (SELECT 1 FROM jsonb_each(e.value) v
                                                          WHERE v.value NOT IN ('"from"', '"into"')))) THEN
-        PERFORM error.invalid('resolve must be {"photo": "from" or "into", '
+        PERFORM error.invalid('resolve must be {"photo": "from" or "into", "description": "from" or "into", '
                               '"values": {"<name>": "from" or "into"}}');
     END IF;
     -- Both rows, the class first and then the rows in the order of their
@@ -542,7 +550,9 @@ BEGIN
     END LOOP;
     UPDATE public.stock s
     SET amount = s.amount + v_amount,
-        photo  = CASE WHEN v_resolve ->> 'photo' = 'from' THEN v_stock.photo ELSE s.photo END
+        photo  = CASE WHEN v_resolve ->> 'photo' = 'from' THEN v_stock.photo ELSE s.photo END,
+        description = CASE WHEN v_resolve ->> 'description' = 'from' THEN v_stock.description
+                           ELSE s.description END
     WHERE s.id = p_into
     RETURNING * INTO v_into;
     v_into := stock.store_values(v_into, v_class, v_values, v_defaulted);

@@ -351,10 +351,10 @@ func TestStockRules(t *testing.T) {
 	e.expect(t, 200, "DELETE", "/classes/"+cables+"/stock", nil)
 	sameJSON(t, "inheriting again", rule(cables), obj("counting", "optional", "unit", nil, "from", nil))
 
-	// Model files: version 3, with the rules; read back where they are, they
+	// Model files: version 4, with the rules; read back where they are, they
 	// change nothing.
 	model := e.expect(t, 200, "GET", "/classes/"+furniture+"/model", nil).body
-	if num(t, model, "version") != 3 {
+	if num(t, model, "version") != 4 {
 		t.Errorf("model version: %v", get(t, model, "version"))
 	}
 	sameJSON(t, "a rule in a model file", get(t, model, "classes", 0, "stock"), obj("counting", "none"))

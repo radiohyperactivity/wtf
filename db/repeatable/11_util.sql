@@ -234,6 +234,31 @@ BEGIN
 END;
 $$;
 
+-- A description as it is stored: its line ends as "\n", without blank
+-- space or empty lines at either end; NULL for none, which an empty or
+-- blank one is too.
+CREATE FUNCTION util.description(p_text text)
+RETURNS text
+LANGUAGE sql IMMUTABLE AS $$
+    SELECT nullif(btrim(replace(replace(p_text, E'\r\n', E'\n'), E'\r', E'\n'), E' \t\n'), '');
+$$;
+
+-- The description p_patch gives (util.description), or p_current when it
+-- has none. Refused unless it is a text, or null for none.
+CREATE FUNCTION util.patched_description(p_patch jsonb, p_current text)
+RETURNS text
+LANGUAGE plpgsql IMMUTABLE AS $$
+BEGIN
+    IF NOT p_patch ? 'description' THEN
+        RETURN p_current;
+    END IF;
+    IF jsonb_typeof(p_patch -> 'description') NOT IN ('string', 'null') THEN
+        PERFORM error.invalid('description is a text, or null for none');
+    END IF;
+    RETURN util.description(p_patch ->> 'description');
+END;
+$$;
+
 -- Refuses a patch (a change of some fields of an object) unless it is a
 -- JSON object with only keys from p_allowed, and none of the keys in
 -- p_required (fields that can't be empty) set to null.

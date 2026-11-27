@@ -438,6 +438,13 @@
                   "name": {
                     "type": "string"
                   },
+                  "description": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "What it is for, any number of lines; null or left out for none. Blank space and empty lines at either end are dropped, line ends become \"\\n\", and an empty one is none."
+                  },
                   "values": {
                     "allOf": [
                       {
@@ -547,6 +554,13 @@
                   },
                   "name": {
                     "type": "string"
+                  },
+                  "description": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "A new description; null, or an empty text, removes it."
                   },
                   "photo": {
                     "type": "null",
@@ -824,6 +838,13 @@
                   "location": {
                     "$ref": "#/components/schemas/Uuid"
                   },
+                  "description": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "What it is for, any number of lines; null or left out for none. Blank space and empty lines at either end are dropped, line ends become \"\\n\", and an empty one is none."
+                  },
                   "amount": {
                     "type": [
                       "number",
@@ -908,6 +929,13 @@
                   },
                   "location": {
                     "$ref": "#/components/schemas/Uuid"
+                  },
+                  "description": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "A new description; null, or an empty text, removes it."
                   },
                   "amount": {
                     "type": [
@@ -1839,7 +1867,7 @@
                       "object",
                       "null"
                     ],
-                    "description": "{\"photo\": \"from\" | \"into\", \"values\": {\"<name>\": \"from\" | \"into\"}}"
+                    "description": "{\"photo\": \"from\" | \"into\", \"description\": \"from\" | \"into\", \"values\": {\"<name>\": \"from\" | \"into\"}}"
                   }
                 },
                 "required": [
@@ -2551,6 +2579,13 @@
                 "name": {
                   "type": "string"
                 },
+                "description": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "What it is for, any number of lines; null or left out for none. Blank space and empty lines at either end are dropped, line ends become \"\\n\", and an empty one is none."
+                },
                 "parent": {
                   "oneOf": [
                     {
@@ -2613,6 +2648,13 @@
               "properties": {
                 "name": {
                   "type": "string"
+                },
+                "description": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "A new description; null, or an empty text, removes it."
                 },
                 "parent": {
                   "oneOf": [
@@ -3091,6 +3133,13 @@
           "name": {
             "type": "string"
           },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its description, null for none. Only here, not in lists."
+          },
           "parent": {
             "oneOf": [
               {
@@ -3164,6 +3213,13 @@
           },
           "name": {
             "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its description, null for none. Only here, not in lists."
           },
           "parent": {
             "oneOf": [
@@ -3290,6 +3346,13 @@
               "values": {
                 "$ref": "#/components/schemas/Values"
               },
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Its description, null for none. Not in lists."
+              },
               "defaulted": {
                 "$ref": "#/components/schemas/Defaulted"
               },
@@ -3313,6 +3376,13 @@
           "code": {
             "type": "string",
             "description": "Label code (Crockford Base32), e.g. 1A7K."
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Its description, null for none. In GET /stock/{id}, what changes a row, and an item's stock rows; not in GET /stock lists."
           },
           "item": {
             "description": "Its id in an item's stock rows; the item otherwise.",

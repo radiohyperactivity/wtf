@@ -39,12 +39,14 @@ LANGUAGE sql STABLE AS $$
     FROM up;
 $$;
 
--- A location as location.get shows it: with its path. Shared by the
--- functions that return a location after changing it.
+-- A location as location.get shows it: with its description (null for
+-- none) and its path. Shared by the functions that return a location after
+-- changing it.
 CREATE FUNCTION location.detail_json(p_location public.location)
 RETURNS jsonb
 LANGUAGE sql STABLE AS $$
-    SELECT location.json(p_location) || jsonb_build_object('path', location.path_json(p_location.id));
+    SELECT location.json(p_location) || jsonb_build_object('description', p_location.description,
+                                                           'path', location.path_json(p_location.id));
 $$;
 
 -- Refuses p_name for a location below p_parent (NULL: at the top) when a
@@ -141,7 +143,8 @@ CREATE FUNCTION location.create(
     p_columns   integer,
     p_rows      integer,
     p_confirm   boolean,
-    p_stock_photos boolean DEFAULT NULL
+    p_stock_photos boolean DEFAULT NULL,
+    p_description  text DEFAULT NULL
 ) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = pg_catalog, pg_temp SET jit = off
@@ -175,8 +178,9 @@ BEGIN
     END IF;
 
     v_code := util.take_codes(1 + coalesce(p_columns * p_rows, 0));
-    INSERT INTO public.location (code, name, parent, container, stock_photos)
-    VALUES (v_code, v_name, p_parent, p_container OR p_columns IS NOT NULL, v_photos)
+    INSERT INTO public.location (code, name, parent, container, stock_photos, description)
+    VALUES (v_code, v_name, p_parent, p_container OR p_columns IS NOT NULL, v_photos,
+            util.description(p_description))
     RETURNING * INTO v_location;
 
     -- The compartments, coded in the order of the cells: A1, A2, …, B1, …
@@ -192,8 +196,8 @@ END;
 $$;
 
 -- Changes the fields of a location that p_patch has:
--- name, parent (null: to the top), container, photo (null only: a photo
--- is uploaded) and stock_photos (true or false; turned off, the stock rows
+-- name, parent (null: to the top), container, description (null for none),
+-- photo (null only: a photo is uploaded) and stock_photos (true or false; turned off, the stock rows
 -- there keep the photos they have). Moving a location takes everything in and below it along.
 -- A move into one of its own locations is refused, and so is becoming a
 -- container while it has stock. Returns the location as location.get does.
@@ -209,7 +213,7 @@ DECLARE
     v_name     text;
     v_parent   uuid;
 BEGIN
-    PERFORM util.check_patch(p_patch, ARRAY['name', 'parent', 'container', 'photo', 'stock_photos'],
+    PERFORM util.check_patch(p_patch, ARRAY['name', 'parent', 'container', 'description', 'photo', 'stock_photos'],
                              ARRAY['name', 'container', 'stock_photos']);
     -- A boolean, not text PostgreSQL would read as one ("yes").
     IF p_patch ? 'stock_photos' AND jsonb_typeof(p_patch -> 'stock_photos') <> 'boolean' THEN
@@ -256,6 +260,7 @@ BEGIN
     SET name      = v_name,
         parent    = v_parent,
         container = coalesce((p_patch ->> 'container')::boolean, l.container),
+        description = util.patched_description(p_patch, l.description),
         photo     = CASE WHEN p_patch ? 'photo' THEN NULL ELSE l.photo END,
         stock_photos = coalesce((p_patch ->> 'stock_photos')::boolean, l.stock_photos)
     WHERE l.id = p_location

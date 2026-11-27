@@ -48,17 +48,17 @@ func TestCLIEdit(t *testing.T) {
 
 	// Class form: name, parent and container; its attributes change with
 	// 'class attribute'.
-	_, prompts := c.interact([]string{"\r", "\r", "\r"}, false, "class", "edit", "Hardware/Screws")
+	_, prompts := c.interact([]string{"\r", "\r", "\r", "\r"}, false, "class", "edit", "Hardware/Screws")
 	contains(t, prompts, "Editing class Hardware/Screws", "Name: Screws", "Parent (empty: top level): Hardware",
-		"Container (holds only other classes): no", "No changes.")
+		"Container (holds only other classes): no", `Description (\n: a new line; empty: none): `, "No changes.")
 
 	// Becoming a container is refused while the class has items.
-	_, prompts = c.interactExit(1, []string{"\r", "\r", clear + "yes\r"}, false, "class", "edit", "Hardware/Screws")
+	_, prompts = c.interactExit(1, []string{"\r", "\r", clear + "yes\r", "\r"}, false, "class", "edit", "Hardware/Screws")
 	contains(t, prompts, "can't become a container")
 
 	// Item form: rename, keep the class, change Length, set Colour, which
 	// followed its default. (Its unit is its class's.)
-	out, prompts := c.interact([]string{clear + "M3x10\r", "\r", clear + "15\r", clear + "blue\r"}, false, "item", "edit", "M3")
+	out, prompts := c.interact([]string{clear + "M3x10\r", "\r", "\r", clear + "15\r", clear + "blue\r"}, false, "item", "edit", "M3")
 	contains(t, prompts, "Class: Hardware/Screws", "Length (required) (mm): 12", "Colour [default red] (red, blue): default",
 		"Saved: changed name, changed values.")
 	contains(t, out, "Name:   M3x10", "blue", "15 mm")
@@ -69,11 +69,11 @@ func TestCLIEdit(t *testing.T) {
 
 	// Stock form.
 	c.ok("stock", "add", "M3x10", "Garage/Shelf", "5")
-	out, _ = c.interact([]string{clear + "8\r", "\r"}, false, "stock", "edit", "M3x10")
+	out, _ = c.interact([]string{clear + "8\r", "\r", "\r"}, false, "stock", "edit", "M3x10")
 	contains(t, out, "Amount:    8", "Garage/Shelf")
 
 	// Location form.
-	out, _ = c.interact([]string{clear + "Shelf A\r", "\r", "\r", clear + "yes\r"}, false, "location", "edit", "Garage/Shelf")
+	out, _ = c.interact([]string{clear + "Shelf A\r", "\r", "\r", "\r", clear + "yes\r"}, false, "location", "edit", "Garage/Shelf")
 	contains(t, out, "Stock photos:  yes", "Path:          Garage/Shelf A")
 
 	// Account form: a user, keeping the email and the password.
@@ -83,10 +83,10 @@ func TestCLIEdit(t *testing.T) {
 	c.ok("account", "delete", "editor@test.local")
 
 	// --edit on add opens the form for the new object.
-	out, _ = c.interact([]string{"\r", "\r", clear + "yes\r", "\r"}, false, "location", "add", "Cellar", "--edit")
+	out, _ = c.interact([]string{"\r", "\r", clear + "yes\r", "\r", "\r"}, false, "location", "add", "Cellar", "--edit")
 	contains(t, out, "Container:  yes")
 	// With --edit, item add ends with the form: no question about stock.
-	out, prompts = c.interact([]string{"\r", "\r", clear + "3\r", "\r"},
+	out, prompts = c.interact([]string{"\r", "\r", "\r", clear + "3\r", "\r"},
 		false, "item", "add", "M2", "--class", "Hardware/Screws", "--length", "2", "--edit")
 	contains(t, out, "Name:   M2", "Colour:", "red", "(default)", "3 mm")
 	if strings.Contains(prompts, "Add stock") {
